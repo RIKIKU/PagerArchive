@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 ## Status
 
-Proposed
+Accepted (2026-10-09, by the owner)
 
 ## Context
 
@@ -258,4 +258,4 @@ Indicative numbers from a throwaway spike (Go 1.27.2 on Windows, not a container
 3. **Unlisted keys in golden tables mean `null`/`false`** in network tables as in agency tables (2.5). The resulting change to the private heartbeat row is proposed for the owner's approval.
 4. **Addresses that can't be split get an admin-only flag**, `address_unsplit` (2.1).
 
-Still awaiting the owner: approval of the street fixture and the heartbeat row change, and confirmation of the `format` exception in 2.5.
+Resolved: the owner approved and committed the street fixture and the heartbeat row change in the private repo (commit `78786be`), and accepted this ADR, including the `format` exception in 2.5.
