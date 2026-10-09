@@ -11,7 +11,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `priority_markers` | 2-character prefixes and their priority: `Emergency`, `Non-emergency` or `Admin`. Case-sensitive |
 | `ignored_capcodes` | Capcodes or ranges (`"0000040-0000049"`) whose pages are dropped and never stored |
 | `heartbeat_capcodes` | Capcodes or ranges of network heartbeats |
-| `redaction_rules` | Ordered `{name, pattern, must_not_match}`. Each match becomes one `REDACTED`. A rule that changes one of its own `must_not_match` examples stops the server |
+| `redaction_rules` | Ordered `{name, pattern, must_not_match}`. Each match becomes one `REDACTED`. If the pattern has a group named `redact`, only that group is replaced, so text around it (a preceding space, a trailing `[group]`) is kept; RE2 has no lookaround. A rule that changes one of its own `must_not_match` examples stops the server |
 | `job_number_patterns` | Tried in order on every page whose format extracts no `job_number`. The first match is used |
 | `event_categories` | `{category, codes}` for reports. `HSF*` matches by prefix. Unmapped codes count as Other |
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file |

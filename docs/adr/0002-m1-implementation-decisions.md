@@ -28,6 +28,7 @@ Proposed
 - Priority markers must be exactly 2 characters. This is checked in code rather than in the schema, so the error names the marker.
 - **Address dataset format.** For M1 the dataset is a JSON file with `attribution` and `streets` (`street`, `locality`), the same shape as a golden street fixture (`schemas/address-dataset.schema.json`). Its `path` is relative to the network profile. M4 adds coordinates, and an importer for real datasets.
 - Event-category codes ending in `*` match by prefix (`HSF*`).
+- **Redaction `redact` group.** If a redaction pattern has a group named `redact`, only that group is replaced by `REDACTED`. RE2 has no lookaround, so this is how a rule keeps context, for example redacting a mid-text label up to, but not including, a trailing paging group. The must-not-match check applies the rule and fails if the example changes. (Needed by a private profile's patient-detail rules, owner decision 2026-10-09.)
 
 ### 3. Golden tables
 

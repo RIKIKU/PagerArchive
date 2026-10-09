@@ -37,7 +37,7 @@
       "items": { "$ref": "#/$defs/capcodeRange" }
     },
     "redaction_rules": {
-      "description": "Applied in order. Each match is replaced by one REDACTED. A rule that alters one of its own must_not_match examples is an error.",
+      "description": "Applied in order. Each match is replaced by one REDACTED; if the pattern has a group named redact, only that group is replaced. A rule that alters one of its own must_not_match examples is an error.",
       "type": "array",
       "items": {
         "type": "object",

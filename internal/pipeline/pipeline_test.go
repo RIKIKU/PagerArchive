@@ -56,6 +56,38 @@ func TestPrepare(t *testing.T) {
 	}
 }
 
+// A rule with a "redact" group replaces only that group: here a mid-text
+// NOTE: up to, but not including, a trailing [group].
+func TestRedactGroup(t *testing.T) {
+	set, err := loadAgencyJSON(t, `{
+	  "kind": "network", "name": "n",
+	  "priority_markers": {"QD": "Admin"}, "ignored_capcodes": [], "heartbeat_capcodes": [],
+	  "redaction_rules": [{
+	    "name": "note",
+	    "pattern": "\\s(?P<redact>NOTE:.*?)(?: ?\\[[^\\[\\]]*\\])?$",
+	    "must_not_match": ["QDNOTE: leading label is a page type [GRP1]"]
+	  }],
+	  "job_number_patterns": [], "event_categories": [],
+	  "address_dataset": {"path": "x.json", "attribution": "x"}, "street_types": {}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := set.Networks["n"]
+	tests := map[string]string{
+		"QDsee NOTE: secret stuff [GRP1]": "QDsee REDACTED [GRP1]",
+		"QDsee NOTE: secret [x] y [GRP1]": "QDsee REDACTED [GRP1]",
+		"QDsee NOTE: secret to the end":   "QDsee REDACTED",
+		"QDNOTE: leading stays [GRP1]":    "QDNOTE: leading stays [GRP1]",
+		"QDno label here [GRP1]":          "QDno label here [GRP1]",
+	}
+	for in, want := range tests {
+		if got := Redact(n, in); got != want {
+			t.Errorf("Redact(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestDedupKeyUsesRedactedText(t *testing.T) {
 	n, _ := example(t)
 	a := Prepare(n, "0100001", "QDCall 0412 345 678")

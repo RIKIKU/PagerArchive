@@ -40,7 +40,7 @@ func CleanControlTokens(s string) string {
 // Redact applies the network's redaction rules in order (R18).
 func Redact(n *profile.Network, s string) string {
 	for _, r := range n.Redactions {
-		s = r.Re.ReplaceAllLiteralString(s, Redacted)
+		s = r.Apply(s, Redacted)
 	}
 	return s
 }

@@ -58,10 +58,32 @@ type CapcodeRange struct{ From, To int }
 
 func (r CapcodeRange) Contains(c int) bool { return c >= r.From && c <= r.To }
 
-// Redaction is one named redaction rule.
+// Redaction is one named redaction rule. If its pattern has a group named
+// "redact", only that group is replaced; otherwise the whole match is.
 type Redaction struct {
-	Name string
-	Re   *regexp.Regexp
+	Name  string
+	Re    *regexp.Regexp
+	Group int // index of the "redact" group, or 0 for the whole match
+}
+
+// Apply replaces each match (or its "redact" group) with replacement.
+func (r Redaction) Apply(s, replacement string) string {
+	if r.Group == 0 {
+		return r.Re.ReplaceAllLiteralString(s, replacement)
+	}
+	var b strings.Builder
+	last := 0
+	for _, m := range r.Re.FindAllStringSubmatchIndex(s, -1) {
+		start, end := m[2*r.Group], m[2*r.Group+1]
+		if start < 0 || end == start {
+			continue
+		}
+		b.WriteString(s[last:start])
+		b.WriteString(replacement)
+		last = end
+	}
+	b.WriteString(s[last:])
+	return b.String()
 }
 
 // Category maps event-type codes to a report category.
@@ -265,14 +287,18 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 			fail(p+"/pattern", "pattern matches empty text")
 			continue
 		}
+		rule := Redaction{Name: r.Name, Re: re}
+		if g := re.SubexpIndex("redact"); g > 0 {
+			rule.Group = g
+		}
 		// Section 14: a rule that alters one of its own must-not-match
 		// examples stops the server.
 		for k, ex := range r.MustNotMatch {
-			if re.MatchString(ex) {
+			if rule.Apply(ex, "REDACTED") != ex {
 				fail(fmt.Sprintf("%s/must_not_match/%d", p, k), fmt.Sprintf("rule %q alters its own must-not-match example", r.Name))
 			}
 		}
-		n.Redactions = append(n.Redactions, Redaction{Name: r.Name, Re: re})
+		n.Redactions = append(n.Redactions, rule)
 	}
 	for i, s := range j.JobPatterns {
 		re, err := regexp.Compile(s)
