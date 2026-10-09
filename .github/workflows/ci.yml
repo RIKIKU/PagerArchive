@@ -44,7 +44,8 @@ jobs:
         shell: bash
       - name: Acceptance check summary
         if: always()
-        run: grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
+        run: |
+          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
 
   images:
     name: Images and client replay (${{ matrix.arch }})
