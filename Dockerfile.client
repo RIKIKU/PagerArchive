@@ -1,0 +1,18 @@
+# Client image: amd64 and arm64 (SPEC.md section 8). Go cross-compiles the
+# binary on the build platform; the runtime stage adds rtl_fm and multimon-ng.
+FROM --platform=$BUILDPLATFORM golang:1.27.2 AS build
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+ARG TARGETOS TARGETARCH VERSION=dev
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/pagerarchive-client ./cmd/pagerarchive-client
+
+FROM debian:trixie-slim
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends rtl-sdr multimon-ng ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=build /out/pagerarchive-client /usr/local/bin/pagerarchive-client
+# Runs as root so the mapped USB dongle is readable whatever the host's
+# device permissions are. Page text is never written to disk (R13a, R15).
+ENTRYPOINT ["/usr/local/bin/pagerarchive-client"]

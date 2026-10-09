@@ -111,7 +111,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R12.** The client reads `multimon-ng` output lines on stdin, e.g. `POCSAG512: Address:  579064  Function: 0  Alpha:   <text>`, and posts each page to the server with: capcode (zero-padded to 7 digits), raw text, receive time (UTC) and client ID. POCSAG at 512, 1200 and 2400 baud. Numeric pages are stored as text. Tone-only pages (no text) are ignored. The client turns decoder output into an internal record (capcode, function code, baud rate, text, receive time) through a **decoder adapter**; v1 ships only the `multimon-ng` adapter, so other decoders can be added later without redesign.
 - **R13.** Clients run as a Docker container with the USB dongle mapped through, or natively on a Raspberry Pi (arm64). The client container **runs the radio pipeline itself** (`rtl_fm` and `multimon-ng` in v1, configured by settings: frequency, gain, PPM, baud rates); reading lines from stdin stays supported. Clients must keep their clocks in sync with NTP.
 - **R13a.** The client may print decoded page text to its console (stdout) for troubleshooting. This is **off by default** (setting `PRINT_PAGES=true`). The client never writes page text to a file. The docs warn that Docker's default logging driver stores container output on disk, and show how to limit or disable that.
-- **R14.** `OPEN`: how clients authenticate to the server (suggestion: one API key per client, issued and revoked by an admin).
+- **R14.** Each client authenticates with **its own API key**, issued and revoked by an admin; the key determines the client ID (owner decision, 2026-10-09; details in ADR 0002).
 - **R15.** When the server is unreachable, the client buffers pages **in memory only** (never on disk, because client-side text isn't redacted) and retries with backoff, keeping the original receive times. The buffer is capped (implementer's choice), and its contents are lost if the client restarts.
 
 ### 7.2 Ingest (in this order, before storing)
@@ -255,7 +255,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 
 ## 13. Open questions
 
-R11 extraction language · R14 client authentication · R26 location-mismatch distance · R27 alias "ignore" · R30 alias import in v1? · R33 search criteria list · R37 per-user integrations in v1? · R44 roles and the first admin.
+R11 extraction language · R26 location-mismatch distance · R27 alias "ignore" · R30 alias import in v1? · R33 search criteria list · R37 per-user integrations in v1? · R44 roles and the first admin.
 
 ## 14. Accepted defaults
 

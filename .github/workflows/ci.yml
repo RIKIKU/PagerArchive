@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Tests, golden tables and acceptance checks
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PAGERARCHIVE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
+      PAGERARCHIVE_REQUIRE_DB: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: PostGIS smoke test
+        run: PGPASSWORD=test psql -h localhost -U postgres -tAc 'SELECT postgis_full_version()'
+      - name: gofmt
+        run: test -z "$(gofmt -l . | tee /dev/stderr)"
+      - name: go vet
+        run: go vet ./...
+      - name: sqlc generated code is up to date
+        run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
+      - name: validate-profile (example golden tables)
+        run: go run ./cmd/pagerarchive validate-profile -v profiles/example
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14)
+        run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
+        shell: bash
+      - name: Acceptance check summary
+        if: always()
+        run: grep -E '^(=== RUN|--- (PASS|FAIL)|ok|FAIL)' test.log | grep -E 'Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup)|^(ok|FAIL)' || true
+
+  images:
+    name: Images and client replay (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            server: true
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            server: false
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build client image (native ${{ matrix.arch }})
+        run: docker build -f Dockerfile.client --build-arg VERSION=${{ github.sha }} -t pagerarchive-client:ci .
+      - name: Client --version
+        run: docker run --rm pagerarchive-client:ci --version
+      - name: Build server image (amd64 only)
+        if: matrix.server
+        run: docker build --build-arg VERSION=${{ github.sha }} -t pagerarchive:ci .
+      - name: Server image runs validate-profile
+        if: matrix.server
+        run: docker run --rm -v "$PWD/profiles/example:/profiles:ro" pagerarchive:ci validate-profile /profiles
+      - name: Client stdin replay into the server image
+        if: matrix.server
+        run: sh scripts/ci/client-replay.sh pagerarchive:ci pagerarchive-client:ci
+      - name: Client stdin replay (arm64 client, amd64 server image built under emulation)
+        if: ${{ !matrix.server }}
+        run: |
+          docker run --privileged --rm tonistiigi/binfmt --install amd64
+          docker build --platform linux/amd64 -t pagerarchive:ci .
+          sh scripts/ci/client-replay.sh pagerarchive:ci pagerarchive-client:ci
