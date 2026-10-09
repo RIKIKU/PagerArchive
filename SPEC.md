@@ -176,7 +176,7 @@ Many clients post to one server. Each client records its own receive time. The s
 |---|---|
 | Docker Compose on a home Linux server; API and frontend may be separate containers | Simple installs and upgrades for self-hosters |
 | All dependencies inside images | Install and maintenance stay easy |
-| Linux only; images for **amd64 and arm64** | Servers are usually x86; receivers may be Raspberry Pis |
+| Linux only. **Server** images (API, frontend, database) for **amd64 only**; **client** images for **amd64 and arm64** | Servers are x86 PCs, so official amd64 images (e.g. PostGIS) can be used; receivers may be Raspberry Pis |
 | **Resource budget:** the app's containers (API, frontend, PostgreSQL; Authentik excluded) ≤ **1 GB RAM** total in steady state; API ≤ **256 MB** with 20 viewers at 1,500 pages/day; idle CPU < 5% of one core | Target host: an old small-form-factor PC (e.g. 15 GB RAM, spinning HDD) shared with other self-hosted apps |
 | **PostgreSQL + PostGIS**; **no separate message queue** | Best fit for map data and search; ~1 page/minute doesn't justify a queue |
 | **Authentik** for identity | Invitations, email codes and domain rules out of the box |
@@ -279,6 +279,6 @@ Settled by the owner after the second cold read (2026-10-09):
 - A template still used by aliases can't be deleted. Icons come from a bundled icon set.
 - Unmapped report codes are listed one row per raw code inside "Other". Report date ranges are inclusive, in the deployment time zone. Reports are per capcode in v1.
 - Jobs left with no messages, per-client receive records and geocode results are deleted along with their messages.
-- Server images are also built for arm64. WCAG 2.1 AA is checked with automated accessibility tests plus a manual checklist.
+- Only client images are multi-arch; server images are amd64 only (owner correction, 2026-10-09). WCAG 2.1 AA is checked with automated accessibility tests plus a manual checklist.
 - A12 and A13 use a controllable clock and a test-only trigger for the nightly job. The §11 "clean host" is a GitHub Actions Ubuntu runner, with a local mail catcher (e.g. Mailpit) and `example.test` as the allowed domain.
 - For A15, "20 viewers" means 20 live-update connections, and the page stream is generated from the example formats. The test runs once by hand with evidence, plus a short version in CI.
