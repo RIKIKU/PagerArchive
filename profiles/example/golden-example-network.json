@@ -1,0 +1,42 @@
+{
+  "_comment": "Golden table for the made-up example network profile: priority markers, ignored capcodes and redaction. OWNED BY THE PROJECT OWNER. 'stored_text' null means the page is dropped. Text is shown after control-token removal and redaction.",
+  "profile": "example-network",
+  "cases": [
+    {
+      "name": "phone number redacted, job number survives",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   QDCheck the shed Saturday. Text 0412 345 678 if available. EX0000001",
+      "expect": { "priority": "Admin", "stored_text": "QDCheck the shed Saturday. Text REDACTED if available. EX0000001" }
+    },
+    {
+      "name": "phone number without spaces redacted",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   QDCall 0412345678 to confirm",
+      "expect": { "priority": "Admin", "stored_text": "QDCall REDACTED to confirm" }
+    },
+    {
+      "name": "age and sex redacted, condition and address kept",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000005 MED1 PERSON COLLAPSED AGE: 52 SEX: M @ 1 EXAMPLE ST, MADEUPTON #STN1",
+      "expect": { "priority": "Emergency", "stored_text": "@@EX0000005 MED1 PERSON COLLAPSED REDACTED REDACTED @ 1 EXAMPLE ST, MADEUPTON #STN1" }
+    },
+    {
+      "name": "control tokens removed",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   QDHall unlocked from 6pm<NUL><NUL>",
+      "expect": { "priority": "Admin", "stored_text": "QDHall unlocked from 6pm" }
+    },
+    {
+      "name": "ignored capcode dropped",
+      "raw": "POCSAG512: Address:     42  Function: 0  Alpha:   @@SYSTEM CLOCK 0000",
+      "expect": { "stored_text": null }
+    },
+    {
+      "name": "heartbeat capcode kept",
+      "status": "confirmed",
+      "raw": "POCSAG512: Address:     50  Function: 0  Alpha:   QDNetwork heartbeat 000123",
+      "expect": { "priority": "Admin", "stored_text": "QDNetwork heartbeat 000123", "heartbeat": true }
+    },
+    {
+      "name": "unknown marker gives null priority",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   Plain text with no marker",
+      "expect": { "priority": null, "stored_text": "Plain text with no marker" }
+    }
+  ]
+}

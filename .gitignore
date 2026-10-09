@@ -1,0 +1,6 @@
+# Never commit private material: real captures, names, phone numbers, health details, or members-only documents
+*.PRIVATE.*
+*PRIVATE*
+.env
+*.env
+.secrets/

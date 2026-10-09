@@ -1,0 +1,58 @@
+{
+  "_comment": "Golden table for the made-up 'Example Fire' agency profile. OWNED BY THE PROJECT OWNER: propose new rows, never change expected values to make a test pass. Raw lines are never edited. Fields not listed in 'expect' must be null.",
+  "profile": "example-fire",
+  "cases": [
+    {
+      "name": "emergency with grid reference and units",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1",
+      "expect": {
+        "capcode": "0100001",
+        "priority": "Emergency",
+        "format": "emergency",
+        "job_number": "EX0000001",
+        "event_type": "HSF1",
+        "description": "SMOKE FROM ROOF",
+        "address": "12 FICTION ST",
+        "locality": "MADEUPTON",
+        "grid_ref": "123456",
+        "units": ["T1", "T2"],
+        "group": "STN1"
+      }
+    },
+    {
+      "name": "emergency without grid reference or units, no house number",
+      "raw": "POCSAG512: Address:  100002  Function: 0  Alpha:   @@EX0000002 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2",
+      "expect": {
+        "capcode": "0100002",
+        "priority": "Emergency",
+        "format": "emergency",
+        "job_number": "EX0000002",
+        "event_type": "GRS3",
+        "description": "GRASS FIRE",
+        "address": "SAMPLE RD",
+        "locality": "MADEUPTON",
+        "group": "STN2"
+      }
+    },
+    {
+      "name": "non-emergency follow-up keeps the job number only",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   HbRE EX0000001 CREWS RETURNING #STN1",
+      "expect": {
+        "capcode": "0100001",
+        "priority": "Non-emergency",
+        "format": "follow-up",
+        "job_number": "EX0000001",
+        "group": "STN1"
+      }
+    },
+    {
+      "name": "freeform admin page matches the text-only format",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   QDTraining Tuesday 7pm at the station",
+      "expect": {
+        "capcode": "0100001",
+        "priority": "Admin",
+        "format": "freeform"
+      }
+    }
+  ]
+}
