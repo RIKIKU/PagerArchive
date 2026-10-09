@@ -32,7 +32,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: PostGIS smoke test
-        run: PGPASSWORD=test psql -h localhost -U postgres -tAc 'SELECT postgis_full_version()'
+        run: docker exec ${{ job.services.postgres.id }} psql -U postgres -tAc 'SELECT postgis_full_version()'
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: go vet
