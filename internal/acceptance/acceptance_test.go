@@ -267,7 +267,7 @@ func TestPostGIS(t *testing.T) {
 	}
 }
 
-const row1 ="@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1"
+const row1 = "@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1"
 
 // A2. Deduplication across clients.
 func TestA2DeduplicationAcrossClients(t *testing.T) {
