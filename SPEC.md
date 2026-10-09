@@ -146,7 +146,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R35.** A **map** shows located messages, using **self-hosted map tiles** (e.g. an OpenStreetMap extract), so no third party sees what users view.
 - **R35a.** **Times** are stored in UTC and shown in the deployment's time zone (setting `TZ`, e.g. `Australia/Melbourne`), with en-AU style dates. English only. Report days and the retention cut-off use the same time zone. (Showing times in each browser's own time zone may come later.)
 - **R35b.** Heartbeat pages are shown with a **heartbeat badge** and are excluded from reports. They appear in the default message list.
-- **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed` and `location_mismatch` flags are shown **to admins only**.
+- **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed`, `location_mismatch` and `address_unsplit` flags are shown **to admins only**. (`address_unsplit`: a format matched, but no street from the address dataset ended the address text, so `address` is `null`; see ADR 0001.)
 - **R36.** Supports current Chrome, Firefox, Brave and Safari on desktop and mobile; dark and light mode; layout adapts to screen orientation.
 - **R37.** `OPEN`: **per-user integrations** (e.g. forwarding selected pages to a user's own notification service). In v1 or later?
 
