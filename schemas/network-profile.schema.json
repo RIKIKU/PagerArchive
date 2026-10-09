@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RIKIKU/PagerArchive/schemas/network-profile.schema.json",
+  "title": "PagerArchive network profile",
+  "description": "Rules that apply to every page on one paging network (SPEC.md section 6.3). Patterns use RE2 syntax (ADR 0001).",
+  "type": "object",
+  "required": [
+    "kind",
+    "name",
+    "priority_markers",
+    "ignored_capcodes",
+    "heartbeat_capcodes",
+    "redaction_rules",
+    "job_number_patterns",
+    "event_categories",
+    "address_dataset",
+    "street_types"
+  ],
+  "properties": {
+    "$schema": { "type": "string" },
+    "kind": { "const": "network" },
+    "name": { "$ref": "#/$defs/name" },
+    "description": { "type": "string" },
+    "priority_markers": {
+      "description": "Two-character text prefixes and the priority each one means. Case-sensitive.",
+      "type": "object",
+      "additionalProperties": { "enum": ["Emergency", "Non-emergency", "Admin"] }
+    },
+    "ignored_capcodes": {
+      "description": "Capcodes or ranges whose pages are dropped and never stored.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/capcodeRange" }
+    },
+    "heartbeat_capcodes": {
+      "description": "Capcodes or ranges whose pages are network heartbeats.",
+      "type": "array",
+      "items": { "$ref": "#/$defs/capcodeRange" }
+    },
+    "redaction_rules": {
+      "description": "Applied in order. Each match is replaced by one REDACTED. A rule that alters one of its own must_not_match examples is an error.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "pattern", "must_not_match"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "pattern": { "type": "string", "minLength": 1 },
+          "must_not_match": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        },
+        "patternProperties": { "^_": {} },
+        "additionalProperties": false
+      }
+    },
+    "job_number_patterns": {
+      "description": "Tried in order on every page when its format extracts no job_number. The first match is the job number.",
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "event_categories": {
+      "description": "Report categories. A code ending in * matches by prefix. Unmapped codes count as Other.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["category", "codes"],
+        "properties": {
+          "category": { "type": "string", "minLength": 1, "not": { "const": "Other" } },
+          "codes": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+        },
+        "patternProperties": { "^_": {} },
+        "additionalProperties": false
+      }
+    },
+    "address_dataset": {
+      "description": "The local address dataset used for address_split and geocoding. path is relative to this file.",
+      "type": "object",
+      "required": ["path", "attribution"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "attribution": { "type": "string", "minLength": 1 }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false
+    },
+    "grid_reference": {
+      "description": "How grid references are interpreted (used from milestone M4).",
+      "type": "object",
+      "required": ["system"],
+      "properties": {
+        "system": { "enum": ["mgrs-6-digit-in-locality-square"] }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false
+    },
+    "street_types": {
+      "description": "Street type spellings and the abbreviation they normalise to, e.g. STREET: ST.",
+      "type": "object",
+      "additionalProperties": { "type": "string", "minLength": 1 }
+    }
+  },
+  "patternProperties": { "^_": {} },
+  "additionalProperties": false,
+  "$defs": {
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "capcodeRange": { "type": "string", "pattern": "^[0-9]{1,7}(-[0-9]{1,7})?$" }
+  }
+}

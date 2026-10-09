@@ -1,0 +1,56 @@
+{
+  "$schema": "../../schemas/network-profile.schema.json",
+  "_comment": "Network profile for a made-up example network (SPEC.md section 10). It documents the profile format and drives the tests. It isn't modelled on any real network.",
+  "kind": "network",
+  "name": "example-network",
+  "description": "Imaginary paging network used for documentation and tests.",
+  "priority_markers": {
+    "@@": "Emergency",
+    "Hb": "Non-emergency",
+    "QD": "Admin"
+  },
+  "ignored_capcodes": ["0000040-0000049"],
+  "heartbeat_capcodes": ["0000050"],
+  "redaction_rules": [
+    {
+      "name": "mobile-number",
+      "_comment": "Australian-style mobile numbers: 04XX XXX XXX, with or without spaces.",
+      "pattern": "\\b04[0-9]{2} ?[0-9]{3} ?[0-9]{3}\\b",
+      "must_not_match": ["EX0000001", "EX0400000", "GRID 123456", "0100001"]
+    },
+    {
+      "name": "age",
+      "pattern": "\\bAGE: ?[0-9]+\\b",
+      "must_not_match": ["PERSON COLLAPSED", "STAGE 2"]
+    },
+    {
+      "name": "sex",
+      "pattern": "\\bSEX: ?[A-Z]\\b",
+      "must_not_match": ["PERSON COLLAPSED", "ESSEX ST"]
+    }
+  ],
+  "job_number_patterns": ["\\bEX[0-9]{7}\\b"],
+  "event_categories": [
+    { "category": "Structure fire", "codes": ["HSF*"] },
+    { "category": "Grass fire", "codes": ["GRS*"] },
+    { "category": "Medical", "codes": ["MED*"] }
+  ],
+  "address_dataset": {
+    "path": "example-addresses.json",
+    "attribution": "Example address data, made up for PagerArchive"
+  },
+  "grid_reference": { "system": "mgrs-6-digit-in-locality-square" },
+  "street_types": {
+    "STREET": "ST",
+    "ROAD": "RD",
+    "PLACE": "PL",
+    "DRIVE": "DR",
+    "TERRACE": "TCE",
+    "HIGHWAY": "HWY",
+    "AVENUE": "AVE",
+    "COURT": "CT",
+    "CRESCENT": "CRES",
+    "PARADE": "PDE",
+    "BOULEVARD": "BVD"
+  }
+}

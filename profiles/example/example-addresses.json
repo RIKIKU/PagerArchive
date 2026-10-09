@@ -1,0 +1,12 @@
+{
+  "$schema": "../../schemas/address-dataset.schema.json",
+  "_comment": "Small made-up address dataset for the example network. Every street and locality is invented. Coordinates for geocoding are added in milestone M4.",
+  "attribution": "Example address data, made up for PagerArchive",
+  "streets": [
+    { "street": "EXAMPLE ST", "locality": "MADEUPTON" },
+    { "street": "FICTION ST", "locality": "MADEUPTON" },
+    { "street": "SAMPLE RD", "locality": "MADEUPTON" },
+    { "street": "DEMO PL", "locality": "MADEUPTON" },
+    { "street": "FICTION ST", "locality": "TESTVILLE" }
+  ]
+}

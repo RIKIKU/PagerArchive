@@ -1,0 +1,37 @@
+{
+  "$schema": "../../schemas/agency-profile.schema.json",
+  "_comment": "Agency profile 'Example Fire' for the made-up example network (SPEC.md section 10).",
+  "kind": "agency",
+  "name": "example-fire",
+  "description": "Example Fire Service",
+  "formats": [
+    {
+      "name": "emergency",
+      "_comment": "<job> <type> <description> @ <address>, <locality> [GRID <6 digits>] [UNITS <unit> ...] #<group>",
+      "priorities": ["Emergency"],
+      "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>.+?) @ (?P<address>.+?), (?P<locality>[A-Z][A-Z ]*?)(?: GRID (?P<grid_ref>[0-9]{6}))?(?: UNITS (?P<units>[^#]+?))? #(?P<group>\\S+)$",
+      "fields": {
+        "units": { "split": " " }
+      }
+    },
+    {
+      "name": "follow-up",
+      "_comment": "RE <job> <free text> #<group>",
+      "priorities": ["Non-emergency"],
+      "match": "^RE (?P<job_number>EX[0-9]{7}) .*#(?P<group>\\S+)$"
+    },
+    {
+      "name": "freeform",
+      "_comment": "Text-only format: matches anything, extracts nothing.",
+      "priorities": ["Admin", "Non-emergency"],
+      "match": ""
+    }
+  ],
+  "labels": {
+    "event_type": {
+      "HSF1": "House fire",
+      "GRS3": "Grass fire",
+      "MED1": "Medical assistance"
+    }
+  }
+}

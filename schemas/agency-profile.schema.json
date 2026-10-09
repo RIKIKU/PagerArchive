@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RIKIKU/PagerArchive/schemas/agency-profile.schema.json",
+  "title": "PagerArchive agency profile",
+  "description": "One agency's page formats (SPEC.md section 6.4, ADR 0001 section 2). Formats are tried in order on the redacted text with the priority marker removed.",
+  "type": "object",
+  "required": ["kind", "name", "formats"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "kind": { "const": "agency" },
+    "name": { "type": "string", "pattern": "^[a-z0-9][a-z0-9-]*$" },
+    "description": { "type": "string" },
+    "formats": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/format" }
+    },
+    "labels": {
+      "description": "Display labels per field: field name to (code to label). Display only (P3).",
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": { "type": "string" }
+      }
+    }
+  },
+  "patternProperties": { "^_": {} },
+  "additionalProperties": false,
+  "$defs": {
+    "format": {
+      "type": "object",
+      "required": ["name", "match"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "priorities": {
+          "description": "Priorities this format applies to. Omitted: every priority, including none.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "enum": ["Emergency", "Non-emergency", "Admin"] }
+        },
+        "match": {
+          "description": "RE2 regular expression. Named groups become fields; groups starting with _ are intermediate. Empty matches everything (text-only format).",
+          "type": "string"
+        },
+        "fields": {
+          "description": "Post-processing for captured groups, keyed by group name.",
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/fieldOptions" }
+        }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false
+    },
+    "fieldOptions": {
+      "type": "object",
+      "properties": {
+        "split": {
+          "description": "RE2 pattern that splits the value into a list. Elements are trimmed; empty ones are dropped. An empty pattern splits into single characters.",
+          "type": "string"
+        },
+        "address_split": {
+          "description": "Splits the value at the longest suffix that is [house number] <street> <locality> from the address dataset.",
+          "type": "object",
+          "required": ["description", "address"],
+          "properties": {
+            "description": { "type": "string", "minLength": 1 },
+            "address": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false,
+      "maxProperties": 1
+    }
+  }
+}

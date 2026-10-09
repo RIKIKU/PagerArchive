@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RIKIKU/PagerArchive/schemas/golden-table.schema.json",
+  "title": "PagerArchive golden table",
+  "description": "Raw decoder lines and what they must produce (SPEC.md R6, R10; ADR 0001 section 2.5). A key a row doesn't list means null, or false for flags; format is checked only when listed.",
+  "type": "object",
+  "required": ["profile", "cases"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "profile": { "type": "string", "minLength": 1 },
+    "cases": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["name", "raw", "expect"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "status": { "enum": ["confirmed", "proposed"] },
+          "raw": { "type": "string", "minLength": 1 },
+          "expect": {
+            "type": "object",
+            "properties": {
+              "priority": { "enum": ["Emergency", "Non-emergency", "Admin", null] },
+              "stored_text": { "type": ["string", "null"] },
+              "heartbeat": { "type": "boolean" },
+              "capcode": { "type": "string", "pattern": "^[0-9]{7}$" },
+              "format": { "type": ["string", "null"] },
+              "job_number": { "$ref": "#/$defs/text" },
+              "event_type": { "$ref": "#/$defs/text" },
+              "description": { "$ref": "#/$defs/text" },
+              "address": { "$ref": "#/$defs/text" },
+              "locality": { "$ref": "#/$defs/text" },
+              "grid_ref": { "$ref": "#/$defs/text" },
+              "group": { "$ref": "#/$defs/text" },
+              "units": { "$ref": "#/$defs/list" },
+              "extra": {
+                "type": "object",
+                "additionalProperties": { "anyOf": [{ "$ref": "#/$defs/text" }, { "$ref": "#/$defs/list" }] }
+              },
+              "parse_failed": { "type": "boolean" },
+              "address_unsplit": { "type": "boolean" }
+            },
+            "additionalProperties": false
+          }
+        },
+        "patternProperties": { "^_": {} },
+        "additionalProperties": false
+      }
+    }
+  },
+  "patternProperties": { "^_": {} },
+  "additionalProperties": false,
+  "$defs": {
+    "text": { "type": ["string", "null"] },
+    "list": { "type": ["array", "null"], "items": { "type": "string" } }
+  }
+}

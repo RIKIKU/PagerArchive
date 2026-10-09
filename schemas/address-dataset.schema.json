@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/RIKIKU/PagerArchive/schemas/address-dataset.schema.json",
+  "title": "PagerArchive address dataset or street fixture",
+  "description": "Streets by locality, written as the dataset writes them. Used by address_split (ADR 0001 section 2.1). Geocoding coordinates are added in milestone M4.",
+  "type": "object",
+  "required": ["streets"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "attribution": { "type": "string" },
+    "streets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["street", "locality"],
+        "properties": {
+          "street": { "type": "string", "minLength": 1 },
+          "locality": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "patternProperties": { "^_": {} },
+  "additionalProperties": false
+}
