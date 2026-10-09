@@ -252,7 +252,22 @@ func deref(s *string) string {
 	return *s
 }
 
-const row1 = "@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1"
+// The database is the pinned PostGIS image, with the extensions the
+// migrations need.
+func TestPostGIS(t *testing.T) {
+	e := setup(t)
+	var version string
+	if err := e.st.Pool.QueryRow(e.ctx, `SELECT postgis_full_version()`).Scan(&version); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("postgis: %.60s", version)
+	var n int
+	if err := e.st.Pool.QueryRow(e.ctx, `SELECT count(*) FROM pg_extension WHERE extname IN ('postgis', 'pg_trgm')`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("extensions: %d, %v", n, err)
+	}
+}
+
+const row1 ="@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1"
 
 // A2. Deduplication across clients.
 func TestA2DeduplicationAcrossClients(t *testing.T) {

@@ -31,8 +31,6 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: PostGIS smoke test
-        run: docker exec ${{ job.services.postgres.id }} psql -U postgres -tAc 'SELECT postgis_full_version()'
       - name: gofmt
         run: test -z "$(gofmt -l . | tee /dev/stderr)"
       - name: go vet
@@ -46,7 +44,7 @@ jobs:
         shell: bash
       - name: Acceptance check summary
         if: always()
-        run: grep -E '^(=== RUN|--- (PASS|FAIL)|ok|FAIL)' test.log | grep -E 'Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup)|^(ok|FAIL)' || true
+        run: grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
 
   images:
     name: Images and client replay (${{ matrix.arch }})
