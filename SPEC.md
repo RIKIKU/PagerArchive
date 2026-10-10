@@ -63,7 +63,7 @@ Receiving clients, ingest and redaction, profile-driven parsing, job grouping, m
 - **Linking several email addresses to one person.** Accepted risk: one person may hold more than one account. Invite attribution and invite-tree deactivation (section 7.9) are the remedy.
 - **Public geocoding services** (section 8).
 - **Code plugins.** Network knowledge is configuration (JSON profiles), not code.
-- **Building an alerting or notification system.** Integration with an existing one may come later.
+- **System monitoring and alerting** (uptime, performance, a receiver going quiet). The app exposes metrics (R52) for an external stack such as Grafana + Prometheus to alert on. Forwarding **pages** to users' own systems is in scope (section 7.11).
 - **Anti-harassment features beyond invite-only access** (for example an audit log of searches) in v1.
 
 ## 5. Architecture (decided)
@@ -148,13 +148,13 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R35b.** Heartbeat pages are shown with a **heartbeat badge** and are excluded from reports. They appear in the default message list.
 - **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed`, `location_mismatch` and `address_unsplit` flags are shown **to admins only**. (`address_unsplit`: a format matched, but no street from the address dataset ended the address text, so `address` is `null`; see ADR 0001.)
 - **R36.** Supports current Chrome, Firefox, Brave and Safari on desktop and mobile; dark and light mode; layout adapts to screen orientation.
-- **R37.** `OPEN`: **per-user integrations** (e.g. forwarding selected pages to a user's own notification service). In v1 or later?
+- **R37.** **Per-user integrations** forward pages to a user's own systems: see section 7.11 (milestone M5).
 
 ### 7.7 Reports
 - **R38.** A report shows, for a **capcode** and date range, the number of Emergency **messages** per **event category** (network profile, R5). Unmapped codes and parse failures are counted under "Other" (with the raw code shown where there is one).
 
 ### 7.8 Client liveness
-- **R39.** A client is flagged **not receiving** after **30 minutes with no message of any kind**, heartbeats included. (Networks may only send heartbeats at certain hours, so missing heartbeats alone must not raise an alarm.) The flag is **shown on screen only**. Notifications are out of scope for v1. Client status is visible **to admins only** (client names may reveal where receivers are).
+- **R39.** A client is flagged **not receiving** after **30 minutes with no message of any kind**, heartbeats included. (Networks may only send heartbeats at certain hours, so missing heartbeats alone must not raise an alarm.) The flag is **shown on screen** and exposed as a metric (R52), so an external monitoring stack can alert on it. The app doesn't send system alerts itself. Client status is visible **to admins only** (client names may reveal where receivers are).
 
 ### 7.9 Accounts and access
 - **R40.** Sign-in is handled by **Authentik** (self-hosted, in the same compose file) via **OIDC**. The app never handles passwords. Authentik runs on **its own subdomain**, shares the app's PostgreSQL container (its own database), and is configured automatically from **blueprints** shipped in the repo.
@@ -169,6 +169,14 @@ Many clients post to one server. Each client records its own receive time. The s
 ### 7.10 Retention
 - **R45.** Messages are kept for a configurable period, set **in days** in the admin UI (default **3,650 days**, minimum 30), then deleted completely (text, metadata and everything linked to them) by a nightly job. **Backups are out of scope.** The docs must say that deleted messages may survive in a deployment's own backups. The cut-off is a **calendar date** in the deployment time zone. The nightly job runs at **03:00** (configurable).
 - **R46.** Shortening the period requires confirming the cut-off date ("All messages older than 9 October 2024 will be deleted at the next nightly run. Confirm?"). No row count is shown. Deletion happens at the next nightly run.
+
+### 7.11 Integrations (per user) and metrics
+- **R47.** Each user can create their own **integrations**. An integration is a **selection**, a **filter** and a **destination**. Integrations belong to their owner: other users can't see them, and admins can see that they exist (and pause them) but never their secrets.
+- **R48.** **Selection (required):** one or more capcodes and/or aliases. An integration with no selection can't be saved, so nobody forwards the whole network by accident.
+- **R49.** **Filter (user-defined):** which **event types** to send, chosen by event category (R5) or by raw event-type code, optionally narrowed by priority and by any other search criterion (R33). Only **new** pages are sent (no backfill), after redaction (P1), and never including admin-only fields unless the owner is an admin.
+- **R50.** **Destinations in v1:** a **webhook** (HTTP POST of a documented JSON payload: text without the marker, priority, parsed and extra fields, alias, capcode, sent time, job number; optional custom auth header) and **MQTT publish** (broker URL, topic, optional username/password, TLS). Together these cover Home Assistant, Node-RED, ntfy, n8n and most message queues. Service-specific formats (Discord, Slack, …) may come later.
+- **R51.** **Safety:** by default an integration may not reach private, loopback or link-local addresses (protection against server-side request forgery). An admin can allow specific hosts or ranges (e.g. the owner's Home Assistant). Secrets are encrypted when stored and never shown again after saving. Failed deliveries retry with backoff. An integration that keeps failing is **paused**, and its owner sees its status and last error (without page text). Deactivating a user stops their integrations.
+- **R52.** **Metrics for external monitoring:** a Prometheus-format endpoint (access-controlled, no page text) exposing at least: each client's last-seen time and "not receiving" / "clock ahead" state, pages received and stored, `parse_failed` and `address_unsplit` counts, integration delivery successes and failures, and nightly-job results. System alerting (e.g. via Grafana) is the deployment's job, not the app's.
 
 ## 8. Constraints
 
@@ -209,6 +217,9 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A13. Client liveness.** **Given** client A's last message (of any kind) was received 31 minutes ago and client B's 5 minutes ago, **when** an admin views client status, **then** A is shown as not receiving and B as receiving.
 - **A14. Invalid profile.** **Given** an agency profile with a missing required key, **when** the server starts, **then** it exits with an error naming the file and the missing key.
 - **A15. Resource budget.** **Given** the full stack running in Docker Compose with 20 connected viewers and fixtures replayed at 1,500 pages/day, **when** memory is measured after 1 hour, **then** the API uses ≤ 256 MB and the app's containers (excluding Authentik) ≤ 1 GB in total.
+- **A16. Integration selection and filter.** **Given** user A has a webhook integration selecting alias "Station 1" (`0100001`) filtered to event category Structure fire, and a test receiver standing in for the webhook, **when** pages arrive for `0100001` with event types `HSF1` and `GRS3`, and for `0100002` with `HSF1`, **then** within 5 seconds the webhook has received exactly 1 request (the `HSF1` page for `0100001`), its JSON contains the text without the marker, and user B, who has no integrations, triggered nothing.
+- **A17. Integration safety.** **Given** an admin has not allowed private addresses, **when** a user saves a webhook pointing at `http://127.0.0.1:8080/` or `http://192.168.1.10/`, **then** it is rejected with a clear message. **And given** a working integration whose endpoint starts failing, **when** delivery has failed repeatedly, **then** the integration is paused and its owner sees "paused" with the last error and no page text.
+- **A18. Metrics.** **Given** two clients, one last heard 31 minutes ago, **when** the metrics endpoint is scraped with valid credentials, **then** it reports that client as not receiving and the other as receiving, contains no page text, and refuses scrapes without credentials.
 
 ## 10. Example profile (made-up network)
 
@@ -252,10 +263,11 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M2** | Browser UI, live updates, search, job and detail views | A1, A3, A4, A6 (search), A10 |
 | **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
+| **M5** | Per-user integrations (webhook, MQTT), metrics endpoint | A16, A17, A18 |
 
 ## 13. Open questions
 
-R11 extraction language · R26 location-mismatch distance · R27 alias "ignore" · R30 alias import in v1? · R33 search criteria list · R37 per-user integrations in v1? · R44 roles and the first admin.
+R11 extraction language · R51 default retry and pause thresholds (implementer's choice) · R26 location-mismatch distance · R27 alias "ignore" · R30 alias import in v1? · R33 search criteria list · R37 per-user integrations in v1? · R44 roles and the first admin.
 
 ## 14. Accepted defaults
 
