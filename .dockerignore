@@ -5,3 +5,7 @@ docs
 *PRIVATE*
 .env
 *.env
+web/node_modules
+web/build
+web/.svelte-kit
+web/test-results

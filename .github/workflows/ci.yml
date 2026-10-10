@@ -47,6 +47,31 @@ jobs:
         run: |
           grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
 
+  web:
+    name: Browser app and browser tests (A1, A3, A4, A10, R31, WCAG)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --no-fund --no-audit
+      - name: svelte-check
+        working-directory: web
+        run: npm run check
+      - name: Install browsers
+        working-directory: web
+        run: npx playwright install --with-deps chromium firefox webkit
+      - name: Browser tests against a real API and PostGIS
+        run: sh scripts/e2e.sh
+
   images:
     name: Images and client replay (${{ matrix.arch }})
     strategy:

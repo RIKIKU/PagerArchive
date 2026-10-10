@@ -1,0 +1,100 @@
+<script lang="ts">
+	import type { Message } from './api.ts';
+	import { date, time, isoAttr } from './format.ts';
+	import PriorityBadge from './PriorityBadge.svelte';
+
+	let { m, tz, fresh = false }: { m: Message; tz: string; fresh?: boolean } = $props();
+</script>
+
+<article class="row" class:fresh aria-labelledby="m{m.id}-who" data-message-id={m.id}>
+	<header>
+		<time datetime={isoAttr(m.sent_at)}>
+			<span class="date">{date(m.sent_at, tz)}</span>
+			<span class="time">{time(m.sent_at, tz)}</span>
+		</time>
+		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+		<a id="m{m.id}-who" class="who" href="/messages/{m.id}" style:--agency={m.colour ?? 'transparent'}
+			>{m.alias ?? m.capcode}</a
+		>
+		{#if m.group}<span class="group">{m.group}</span>{/if}
+	</header>
+	<p class="text">{m.display_text}</p>
+	{#if m.job_number || m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
+		<footer>
+			{#if m.job_number}<a href="/jobs/{encodeURIComponent(m.job_number)}">Job {m.job_number}</a>{/if}
+			{#if m.flags?.parse_failed}<span class="flag">parse failed</span>{/if}
+			{#if m.flags?.address_unsplit}<span class="flag">address unsplit</span>{/if}
+			{#if m.flags?.location_mismatch}<span class="flag">location mismatch</span>{/if}
+		</footer>
+	{/if}
+</article>
+
+<style>
+	.row {
+		padding: 0.6rem 0.75rem;
+		border-bottom: 1px solid var(--border);
+		min-width: 0;
+	}
+	.fresh {
+		animation: fresh 3s ease-out;
+	}
+	@keyframes fresh {
+		from {
+			background: var(--highlight);
+		}
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.fresh {
+			animation: none;
+			background: var(--highlight);
+		}
+	}
+	header {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: baseline;
+		gap: 0.25rem 0.5rem;
+		font-size: 0.85rem;
+	}
+	time {
+		color: var(--muted);
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
+	}
+	.who {
+		font-weight: 600;
+		color: var(--fg);
+		text-decoration: none;
+		border-left: 0.3rem solid var(--agency);
+		padding-left: 0.3rem;
+		overflow-wrap: anywhere;
+	}
+	.who:hover,
+	.who:focus-visible {
+		text-decoration: underline;
+	}
+	.group {
+		color: var(--muted);
+		font-family: var(--mono);
+	}
+	.text {
+		margin: 0.25rem 0 0;
+		font-family: var(--mono);
+		font-size: 0.9rem;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
+	}
+	footer {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.75rem;
+		margin-top: 0.25rem;
+		font-size: 0.8rem;
+	}
+	.flag {
+		color: var(--warn-fg);
+		background: var(--warn-bg);
+		padding: 0 0.3rem;
+		border-radius: 0.2rem;
+	}
+</style>
