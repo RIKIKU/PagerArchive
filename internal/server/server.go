@@ -89,8 +89,14 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnprocessableEntity, "received_at is required")
 		return
 	case req.ReceivedAt.After(s.Now().Add(MaxFuture)):
-		s.Log.Warn("page rejected: receive time in the future", "client", clientID)
-		problem(w, http.StatusUnprocessableEntity, "received_at is more than 60 s in the future")
+		s.Log.Warn("page rejected: client clock ahead", "client", clientID)
+		if err := s.Store.MarkClockAhead(ctx, clientID); err != nil {
+			s.Log.Error("mark clock ahead", "client", clientID, "error", store.SafeError(err))
+		}
+		writeJSON(w, http.StatusUnprocessableEntity, Problem{
+			Error: "received_at is more than 60 s ahead of the server's clock",
+			Code:  CodeClockAhead,
+		})
 		return
 	}
 	outcome, id, err := s.Ingest.Ingest(ctx, clientID, ingest.Page{
@@ -128,8 +134,19 @@ func (s *Server) authenticate(ctx context.Context, w http.ResponseWriter, r *htt
 	return id, true
 }
 
+// Problem is the body of an error response. Code, when set, is stable for
+// clients to act on.
+type Problem struct {
+	Error string `json:"error"`
+	Code  string `json:"code,omitempty"`
+}
+
+// CodeClockAhead: the receive time is more than MaxFuture ahead of the
+// server's clock (ADR 0002).
+const CodeClockAhead = "clock_ahead"
+
 func problem(w http.ResponseWriter, status int, msg string) {
-	writeJSON(w, status, map[string]string{"error": msg})
+	writeJSON(w, status, Problem{Error: msg})
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

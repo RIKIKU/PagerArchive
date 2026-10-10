@@ -27,7 +27,7 @@ The key is printed once. `pagerarchive client revoke <id>` revokes it immediatel
 | `BUFFER_SIZE` | `1000` | Pages held **in memory** while the server is unreachable. The oldest are dropped when full; all are lost on restart |
 | `PRINT_PAGES` | `false` | `true` prints decoded pages to the console for troubleshooting |
 
-Keep the client's clock in sync with NTP. The server rejects receive times more than 60 seconds ahead of its own clock.
+Keep the client's clock in sync with NTP. The server rejects receive times more than 60 seconds ahead of its own clock. The client then logs a warning (without page text) and drops the page, and `pagerarchive client list` shows the client as `clock ahead` until it next sends a page the server accepts.
 
 ## Docker
 

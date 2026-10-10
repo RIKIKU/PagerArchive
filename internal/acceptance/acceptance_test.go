@@ -245,6 +245,21 @@ func (e *env) rowsContaining(s string) []string {
 	return hits
 }
 
+func (e *env) clockAhead(id string) bool {
+	e.t.Helper()
+	clients, err := e.st.ListClients(e.ctx)
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	for _, c := range clients {
+		if c.ID == id {
+			return c.ClockAheadSince != nil
+		}
+	}
+	e.t.Fatalf("no client %s", id)
+	return false
+}
+
 func deref(s *string) string {
 	if s == nil {
 		return "<null>"
@@ -431,6 +446,13 @@ func TestClientAuthentication(t *testing.T) {
 	}
 	if code, _ := e.post("a", "0100001", "QDfuture", time.Now().Add(2*time.Minute)); code != http.StatusUnprocessableEntity {
 		t.Errorf("future receive time: %d", code)
+	}
+	if !e.clockAhead("a") {
+		t.Error("client a should be flagged clock ahead")
+	}
+	// The next accepted page clears the flag.
+	if code, _ := e.post("a", "0100001", "QDnow", e.now); code != http.StatusOK || e.clockAhead("a") {
+		t.Errorf("accepted page: %d, clock ahead %v", code, e.clockAhead("a"))
 	}
 	if n, err := e.st.RevokeClient(e.ctx, "a"); err != nil || n != 1 {
 		t.Fatal(err, n)

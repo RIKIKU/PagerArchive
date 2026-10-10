@@ -4,7 +4,7 @@ Date: 2026-10-09
 
 ## Status
 
-Proposed
+Accepted (2026-10-10, by the owner)
 
 ## Context
 
@@ -41,7 +41,7 @@ Proposed
 - **Deduplication** compares a copy's receive time with the message's sent time (its earliest copy so far), 10 s either side. A PostgreSQL advisory lock on the dedup key makes concurrent copies from two clients safe. Every copy's receive time is recorded in `receptions`, including repeats from the same client.
 - **Jobs.** A job is the set of messages sharing a `job_number`. M1 has no separate jobs table.
 - The **POCSAG function code and baud rate** are stored with the message (section 14).
-- The server rejects receive times more than **60 s ahead of its own clock** (422, logged without text). Section 14 puts this check on the client, but the client stamps its own receive times, so only the server can catch a client clock that's ahead. **Owner: please confirm.**
+- The server rejects receive times more than **60 s ahead of its own clock** (422 with `"code": "clock_ahead"`, logged without text). Section 14 puts this check on the client, but the client stamps its own receive times, so only the server can catch a client clock that's ahead (owner confirmed, 2026-10-10). The client prints a warning without page text ("this client's clock is more than 60 s ahead of the server's; check NTP") and drops the page. The server marks the client **clock ahead** (`clients.clock_ahead_since`), which admin client status shows (`pagerarchive client list` now, the admin UI from M2); the next accepted page clears it.
 - Text is limited to 4096 bytes of UTF-8. A capcode is 1 to 7 digits and is zero-padded.
 
 ### 5. P1 in code
@@ -64,4 +64,4 @@ Proposed
 
 - Profile repositories can use any directory layout.
 - Key rotation is "add a new client ID, then revoke the old one" until the admin UI adds rotation.
-- The 60-second check sits on the server, not the client, unless the owner decides otherwise.
+- The 60-second check sits on the server, not the client; a client with a fast clock shows as "clock ahead" to admins.

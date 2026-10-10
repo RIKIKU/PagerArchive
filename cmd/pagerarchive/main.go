@@ -190,8 +190,11 @@ func clientCmd(args []string, stdout io.Writer) error {
 		fmt.Fprintln(tw, "ID\tNAME\tSTATUS\tLAST SEEN")
 		for _, c := range rows {
 			status, seen := "active", "never"
-			if c.RevokedAt != nil {
+			switch {
+			case c.RevokedAt != nil:
 				status = "revoked"
+			case c.ClockAheadSince != nil:
+				status = "clock ahead"
 			}
 			if c.LastSeenAt != nil {
 				seen = c.LastSeenAt.UTC().Format(time.RFC3339)

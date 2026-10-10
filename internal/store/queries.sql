@@ -5,14 +5,18 @@ INSERT INTO clients (id, name, key_hash) VALUES ($1, $2, $3);
 UPDATE clients SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL;
 
 -- name: ListClients :many
-SELECT id, name, created_at, revoked_at, last_seen_at FROM clients ORDER BY id;
+SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since FROM clients ORDER BY id;
+
+-- name: MarkClockAhead :exec
+UPDATE clients SET clock_ahead_since = COALESCE(clock_ahead_since, now()) WHERE id = $1;
 
 -- name: ActiveClientByKeyHash :one
 SELECT id FROM clients WHERE key_hash = $1 AND revoked_at IS NULL;
 
 -- name: TouchClient :exec
 UPDATE clients
-SET last_seen_at = GREATEST(COALESCE(last_seen_at, sqlc.arg(seen_at)::timestamptz), sqlc.arg(seen_at)::timestamptz)
+SET last_seen_at = GREATEST(COALESCE(last_seen_at, sqlc.arg(seen_at)::timestamptz), sqlc.arg(seen_at)::timestamptz),
+    clock_ahead_since = NULL
 WHERE id = sqlc.arg(id);
 
 -- name: CreateTemplate :one

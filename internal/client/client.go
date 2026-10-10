@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -130,6 +131,10 @@ func (rd *Reader) Run(r io.Reader) error {
 	return sc.Err()
 }
 
+// ErrClockAhead means the server rejected a page because its receive time
+// is more than 60 s ahead of the server's clock.
+var ErrClockAhead = errors.New("receive time ahead of the server's clock")
+
 // Sender posts buffered pages in order, retrying with backoff.
 type Sender struct {
 	URL        string // server base URL
@@ -159,6 +164,11 @@ func (s *Sender) Run(ctx context.Context) {
 		case err == nil:
 			s.Buffer.Pop(p)
 			backoff = s.MinBackoff
+			continue
+		case errors.Is(err, ErrClockAhead):
+			// Dropped like any rejected page; the warning says how to fix it.
+			s.Log.Warn("page rejected by server, dropped: this client's clock is more than 60 s ahead of the server's; check NTP")
+			s.Buffer.Pop(p)
 			continue
 		case !retry:
 			// The server will never accept it; don't block the queue.
@@ -197,8 +207,13 @@ func (s *Sender) post(ctx context.Context, p Page) (retry bool, err error) {
 		return true, fmt.Errorf("post: %w", err)
 	}
 	defer resp.Body.Close()
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4096))
+	var problem struct {
+		Code string `json:"code"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, 4096)).Decode(&problem)
 	switch {
+	case resp.StatusCode == http.StatusUnprocessableEntity && problem.Code == "clock_ahead":
+		return false, ErrClockAhead
 	case resp.StatusCode < 300:
 		return false, nil
 	case resp.StatusCode == http.StatusRequestTimeout, resp.StatusCode == http.StatusTooManyRequests,

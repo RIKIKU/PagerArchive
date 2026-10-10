@@ -16,12 +16,13 @@ type Alias struct {
 }
 
 type Client struct {
-	ID         string
-	Name       string
-	KeyHash    []byte
-	CreatedAt  time.Time
-	RevokedAt  *time.Time
-	LastSeenAt *time.Time
+	ID              string
+	Name            string
+	KeyHash         []byte
+	CreatedAt       time.Time
+	RevokedAt       *time.Time
+	LastSeenAt      *time.Time
+	ClockAheadSince *time.Time
 }
 
 type Message struct {

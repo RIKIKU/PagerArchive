@@ -241,15 +241,16 @@ func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAt
 }
 
 const listClients = `-- name: ListClients :many
-SELECT id, name, created_at, revoked_at, last_seen_at FROM clients ORDER BY id
+SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since FROM clients ORDER BY id
 `
 
 type ListClientsRow struct {
-	ID         string
-	Name       string
-	CreatedAt  time.Time
-	RevokedAt  *time.Time
-	LastSeenAt *time.Time
+	ID              string
+	Name            string
+	CreatedAt       time.Time
+	RevokedAt       *time.Time
+	LastSeenAt      *time.Time
+	ClockAheadSince *time.Time
 }
 
 func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
@@ -267,6 +268,7 @@ func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
 			&i.CreatedAt,
 			&i.RevokedAt,
 			&i.LastSeenAt,
+			&i.ClockAheadSince,
 		); err != nil {
 			return nil, err
 		}
@@ -287,6 +289,15 @@ func (q *Queries) LockDedupKey(ctx context.Context, dedupKey []byte) error {
 	return err
 }
 
+const markClockAhead = `-- name: MarkClockAhead :exec
+UPDATE clients SET clock_ahead_since = COALESCE(clock_ahead_since, now()) WHERE id = $1
+`
+
+func (q *Queries) MarkClockAhead(ctx context.Context, id string) error {
+	_, err := q.db.Exec(ctx, markClockAhead, id)
+	return err
+}
+
 const revokeClient = `-- name: RevokeClient :execrows
 UPDATE clients SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
 `
@@ -301,7 +312,8 @@ func (q *Queries) RevokeClient(ctx context.Context, id string) (int64, error) {
 
 const touchClient = `-- name: TouchClient :exec
 UPDATE clients
-SET last_seen_at = GREATEST(COALESCE(last_seen_at, $1::timestamptz), $1::timestamptz)
+SET last_seen_at = GREATEST(COALESCE(last_seen_at, $1::timestamptz), $1::timestamptz),
+    clock_ahead_since = NULL
 WHERE id = $2
 `
 

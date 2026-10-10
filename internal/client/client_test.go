@@ -16,6 +16,55 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 )
 
+// When the server says the receive time is ahead of its clock, the client
+// warns without page text, drops the page and carries on (ADR 0002).
+func TestSenderWarnsWhenClockAhead(t *testing.T) {
+	var mu sync.Mutex
+	var accepted []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var p Page
+		_ = json.NewDecoder(r.Body).Decode(&p)
+		if p.Text == "QDsecret future page" {
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"error":"received_at is more than 60 s ahead of the server's clock","code":"clock_ahead"}`))
+			return
+		}
+		mu.Lock()
+		accepted = append(accepted, p.Text)
+		mu.Unlock()
+	}))
+	defer srv.Close()
+
+	var logs bytes.Buffer
+	b := NewBuffer(10)
+	b.Push(Page{Capcode: "0000001", Text: "QDsecret future page"})
+	b.Push(Page{Capcode: "0000001", Text: "QDnext"})
+	s := &Sender{URL: srv.URL, Key: "k", HTTP: srv.Client(), Buffer: b, Log: slog.New(slog.NewTextHandler(&logs, nil)), MinBackoff: time.Millisecond, MaxBackoff: time.Millisecond}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { s.Run(ctx); close(done) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for b.Len() > 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+	<-done
+
+	out := logs.String()
+	t.Logf("client log: %s", out)
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "clock is more than 60 s ahead") {
+		t.Error("no clock-ahead warning")
+	}
+	if strings.Contains(out, "secret") {
+		t.Error("warning contains page text")
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(accepted) != 1 || accepted[0] != "QDnext" {
+		t.Errorf("accepted %v", accepted)
+	}
+}
+
 func TestBufferDropsOldest(t *testing.T) {
 	b := NewBuffer(2)
 	b.Push(Page{Text: "1"})
