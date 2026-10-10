@@ -10,6 +10,8 @@ set -eu
 API_IMAGE=$1
 CLIENT_IMAGE=$2
 NET=pa-replay-$$
+# Server images are amd64 only (SPEC.md section 8); on an arm64 host they run under emulation.
+SERVER_PLATFORM=linux/amd64
 DB_URL="postgres://postgres:test@pa-db-$$:5432/postgres?sslmode=disable"
 
 cleanup() {
@@ -20,7 +22,7 @@ trap cleanup EXIT
 
 docker network create "$NET" >/dev/null
 # PostgreSQL logging settings from ADR 0001 section 5 (P1).
-docker run -d --name "pa-db-$$" --network "$NET" -e POSTGRES_PASSWORD=test postgis/postgis:18-3.6 \
+docker run -d --platform "$SERVER_PLATFORM" --name "pa-db-$$" --network "$NET" -e POSTGRES_PASSWORD=test postgis/postgis:18-3.6 \
 	postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse >/dev/null
 i=0
 until docker exec "pa-db-$$" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do
@@ -32,7 +34,7 @@ sleep 3
 until docker exec "pa-db-$$" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
 docker exec "pa-db-$$" psql -U postgres -tAc 'SELECT postgis_full_version()' | cut -c1-60
 
-docker run -d --name "pa-api-$$" --network "$NET" -e DATABASE_URL="$DB_URL" \
+docker run -d --platform "$SERVER_PLATFORM" --name "pa-api-$$" --network "$NET" -e DATABASE_URL="$DB_URL" \
 	-v "$PWD/profiles/example:/profiles:ro" "$API_IMAGE" >/dev/null
 i=0
 until docker run --rm --network "$NET" curlimages/curl:latest -sf "http://pa-api-$$:8080/healthz" >/dev/null 2>&1; do
@@ -40,7 +42,7 @@ until docker run --rm --network "$NET" curlimages/curl:latest -sf "http://pa-api
 	sleep 1
 done
 
-KEY=$(docker run --rm --network "$NET" -e DATABASE_URL="$DB_URL" "$API_IMAGE" client add replay "CI replay" | tail -n 1)
+KEY=$(docker run --rm --platform "$SERVER_PLATFORM" --network "$NET" -e DATABASE_URL="$DB_URL" "$API_IMAGE" client add replay "CI replay" | tail -n 1)
 
 LINES=$(mktemp)
 jq -r '.cases[].raw' profiles/example/golden-*.json >"$LINES"
