@@ -8,6 +8,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -16,16 +18,42 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sort"
 	"syscall"
 	"text/tabwriter"
 	"time"
+	_ "time/tzdata" // the server image has no zoneinfo (R35a)
 
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
+	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
+	"github.com/RIKIKU/PagerArchive/web"
 )
+
+// profileHash identifies the profiles and address dataset in use, so a
+// change triggers a re-parse (section 14, R23a).
+func profileHash(set *profile.Set, net *profile.Network) (string, error) {
+	data, err := os.ReadFile(net.DatasetPath)
+	if err != nil {
+		return "", fmt.Errorf("address dataset: %w", err)
+	}
+	h := sha256.New()
+	fmt.Fprintf(h, "network %s %s\n", net.Name, net.Hash)
+	names := make([]string, 0, len(set.Agencies))
+	for n := range set.Agencies {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	for _, n := range names {
+		fmt.Fprintf(h, "agency %s %s\n", n, set.Agencies[n].Hash)
+	}
+	fmt.Fprintf(h, "dataset %x\n", sha256.Sum256(data))
+	return hex.EncodeToString(h.Sum(nil)), nil
+}
 
 // version is set at build time with -ldflags "-X main.version=...".
 var version = "dev"
@@ -38,13 +66,23 @@ commands:
   client add <id> [name]      add a receiving client and print its API key
   client revoke <id>          revoke a client's API key
   client list                 list clients
+  template add|set <name> --agency A [--profile P] [--icon I] [--colour C]
+  template delete <name>      delete a template no alias uses
+  template list               list templates
+  alias add|set <pattern> <name> --template T [--ignored]
+  alias delete <pattern>      delete an alias
+  alias list                  list aliases
   version                     print the version
+
+Alias and template changes re-parse the affected messages (R23a).
 
 serve reads its settings from the environment:
   DATABASE_URL     PostgreSQL connection string (required)
   PROFILES_DIR     directory of profile files (default /profiles)
   NETWORK_PROFILE  network profile name (default: the only one in PROFILES_DIR)
   LISTEN_ADDR      address to listen on (default :8080)
+  TZ               deployment time zone, e.g. Australia/Melbourne (default UTC)
+  DEV_VIEWER_ROLE  user or admin: every viewer's role until sign-in (M3) (default user)
 `
 
 func main() {
@@ -64,6 +102,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = validateProfile(args, stdout, stderr)
 	case "client":
 		err = clientCmd(args, stdout)
+	case "template":
+		err = templateCmd(args, stdout, stderr)
+	case "alias":
+		err = aliasCmd(args, stdout, stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "pagerarchive", version)
 	case "help", "-h", "--help":
@@ -121,22 +163,52 @@ func serve(stderr io.Writer) error {
 	}
 	defer st.Close()
 
+	loc, err := time.LoadLocation(getenv("TZ", "UTC"))
+	if err != nil {
+		return fmt.Errorf("TZ: %w", err)
+	}
+	role := getenv("DEV_VIEWER_ROLE", "user")
+	if role != "user" && role != "admin" {
+		return errors.New(`DEV_VIEWER_ROLE must be "user" or "admin"`)
+	}
+	hash, err := profileHash(set, net)
+	if err != nil {
+		return err
+	}
+
+	ix := streets.NewIndex(ds.Streets, net.StreetTypes)
+	worker := &reparse.Worker{
+		Store: st, Network: net, Agencies: set.Agencies, Streets: ix,
+		ProfileHash: hash, Log: log, Poll: time.Minute,
+	}
+	if err := worker.CheckProfiles(ctx); err != nil {
+		return fmt.Errorf("profile change check: %s", store.SafeError(err))
+	}
+	go worker.Run(ctx)
+
 	srv := &server.Server{
 		Store: st,
 		Ingest: &ingest.Service{
 			Store:    st,
 			Network:  net,
 			Agencies: set.Agencies,
-			Streets:  streets.NewIndex(ds.Streets, net.StreetTypes),
+			Streets:  ix,
 		},
-		Log: log,
-		Now: time.Now,
+		Log:        log,
+		Now:        time.Now,
+		Hub:        live.NewHub(),
+		Location:   loc,
+		ViewerRole: role,
+		UI:         web.Handler(),
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	log.Info("listening", "addr", addr, "network", net.Name, "agencies", len(set.Agencies), "version", version)
+	log.Info("listening", "addr", addr, "network", net.Name, "agencies", len(set.Agencies), "version", version, "viewer_role", role)
+	if role == "admin" {
+		log.Warn("DEV_VIEWER_ROLE=admin: every viewer is an admin until sign-in arrives (M3)")
+	}
 	select {
 	case err := <-errc:
 		return err

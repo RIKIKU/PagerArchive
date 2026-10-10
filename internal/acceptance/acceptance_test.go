@@ -21,8 +21,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
+	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -39,6 +42,10 @@ type env struct {
 	logs  *syncBuffer
 	posts []string // every page text posted, for the log check
 	now   time.Time
+
+	srv    *server.Server
+	cat    *catalog.Catalog
+	worker *reparse.Worker
 }
 
 type syncBuffer struct {
@@ -115,12 +122,20 @@ func setup(t *testing.T) *env {
 		}
 		e.keys[id] = key
 	}
+	ix := streets.NewIndex(ds.Streets, n.StreetTypes)
+	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	srv := &server.Server{
-		Store:  st,
-		Ingest: &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: streets.NewIndex(ds.Streets, n.StreetTypes)},
-		Log:    slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})),
-		Now:    time.Now,
+		Store:      st,
+		Ingest:     &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix},
+		Log:        log,
+		Now:        time.Now,
+		Hub:        live.NewHub(),
+		Location:   time.UTC,
+		ViewerRole: "user",
 	}
+	e.srv = srv
+	e.cat = &catalog.Catalog{Store: st}
+	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Log: log, Poll: time.Minute}
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 	e.url = hs.URL

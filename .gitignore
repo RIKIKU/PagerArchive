@@ -4,3 +4,11 @@
 .env
 *.env
 .secrets/
+
+# Browser app build output and dependencies
+web/build/*
+!web/build/.gitkeep
+web/node_modules/
+web/.svelte-kit/
+web/test-results/
+web/playwright-report/

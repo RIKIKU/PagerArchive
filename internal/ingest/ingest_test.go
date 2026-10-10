@@ -2,17 +2,15 @@ package ingest
 
 import (
 	"testing"
-
-	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
 // R27: an exact capcode wins, then fewer wildcards; patterns starting with a
 // wildcard come last.
 func TestBestAlias(t *testing.T) {
-	rows := func(patterns ...string) []db.AliasesMatchingRow {
-		var r []db.AliasesMatchingRow
+	rows := func(patterns ...string) []Candidate {
+		var r []Candidate
 		for i, p := range patterns {
-			r = append(r, db.AliasesMatchingRow{ID: int64(i + 1), Pattern: p})
+			r = append(r, Candidate{ID: int64(i + 1), Pattern: p})
 		}
 		return r
 	}

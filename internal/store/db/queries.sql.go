@@ -21,6 +21,47 @@ func (q *Queries) ActiveClientByKeyHash(ctx context.Context, keyHash []byte) (st
 	return id, err
 }
 
+const aliasByPattern = `-- name: AliasByPattern :one
+SELECT id, pattern, name, template_id, ignored FROM aliases WHERE pattern = $1
+`
+
+func (q *Queries) AliasByPattern(ctx context.Context, pattern string) (Alias, error) {
+	row := q.db.QueryRow(ctx, aliasByPattern, pattern)
+	var i Alias
+	err := row.Scan(
+		&i.ID,
+		&i.Pattern,
+		&i.Name,
+		&i.TemplateID,
+		&i.Ignored,
+	)
+	return i, err
+}
+
+const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
+SELECT pattern FROM aliases WHERE template_id = $1
+`
+
+func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, aliasPatternsForTemplate, templateID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var pattern string
+		if err := rows.Scan(&pattern); err != nil {
+			return nil, err
+		}
+		items = append(items, pattern)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aliasesMatching = `-- name: AliasesMatching :many
 SELECT a.id, a.pattern, a.name, t.agency_profile
 FROM aliases a
@@ -60,18 +101,93 @@ func (q *Queries) AliasesMatching(ctx context.Context, capcode string) ([]Aliase
 	return items, nil
 }
 
+const allAliases = `-- name: AllAliases :many
+SELECT a.id, a.pattern, a.name, a.ignored, t.agency_profile
+FROM aliases a
+JOIN templates t ON t.id = a.template_id
+`
+
+type AllAliasesRow struct {
+	ID            int64
+	Pattern       string
+	Name          string
+	Ignored       bool
+	AgencyProfile *string
+}
+
+func (q *Queries) AllAliases(ctx context.Context) ([]AllAliasesRow, error) {
+	rows, err := q.db.Query(ctx, allAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllAliasesRow
+	for rows.Next() {
+		var i AllAliasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.Ignored,
+			&i.AgencyProfile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const claimReparseRequests = `-- name: ClaimReparseRequests :many
+DELETE FROM reparse_requests RETURNING capcode_pattern, reason
+`
+
+type ClaimReparseRequestsRow struct {
+	CapcodePattern string
+	Reason         string
+}
+
+func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseRequestsRow, error) {
+	rows, err := q.db.Query(ctx, claimReparseRequests)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ClaimReparseRequestsRow
+	for rows.Next() {
+		var i ClaimReparseRequestsRow
+		if err := rows.Scan(&i.CapcodePattern, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const createAlias = `-- name: CreateAlias :one
-INSERT INTO aliases (pattern, name, template_id) VALUES ($1, $2, $3) RETURNING id
+INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4) RETURNING id
 `
 
 type CreateAliasParams struct {
 	Pattern    string
 	Name       string
 	TemplateID int64
+	Ignored    bool
 }
 
 func (q *Queries) CreateAlias(ctx context.Context, arg CreateAliasParams) (int64, error) {
-	row := q.db.QueryRow(ctx, createAlias, arg.Pattern, arg.Name, arg.TemplateID)
+	row := q.db.QueryRow(ctx, createAlias,
+		arg.Pattern,
+		arg.Name,
+		arg.TemplateID,
+		arg.Ignored,
+	)
 	var id int64
 	err := row.Scan(&id)
 	return id, err
@@ -119,6 +235,30 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 	return id, err
 }
 
+const deleteAlias = `-- name: DeleteAlias :execrows
+DELETE FROM aliases WHERE id = $1
+`
+
+func (q *Queries) DeleteAlias(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAlias, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteTemplate = `-- name: DeleteTemplate :execrows
+DELETE FROM templates WHERE id = $1
+`
+
+func (q *Queries) DeleteTemplate(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteTemplate, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const findDuplicate = `-- name: FindDuplicate :one
 SELECT id, sent_at
 FROM messages
@@ -147,13 +287,24 @@ func (q *Queries) FindDuplicate(ctx context.Context, arg FindDuplicateParams) (F
 	return i, err
 }
 
+const getSetting = `-- name: GetSetting :one
+SELECT value FROM settings WHERE key = $1
+`
+
+func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
+	row := q.db.QueryRow(ctx, getSetting, key)
+	var value string
+	err := row.Scan(&value)
+	return value, err
+}
+
 const insertMessage = `-- name: InsertMessage :one
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud
+    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
 )
 RETURNING id
 `
@@ -179,6 +330,7 @@ type InsertMessageParams struct {
 	AddressUnsplit bool
 	Function       *int16
 	Baud           *int32
+	AliasID        *int64
 }
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (int64, error) {
@@ -203,6 +355,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 		arg.AddressUnsplit,
 		arg.Function,
 		arg.Baud,
+		arg.AliasID,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -238,6 +391,47 @@ type KeepEarliestSentAtParams struct {
 func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAtParams) error {
 	_, err := q.db.Exec(ctx, keepEarliestSentAt, arg.ReceivedAt, arg.ID)
 	return err
+}
+
+const listAliases = `-- name: ListAliases :many
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name
+FROM aliases a
+JOIN templates t ON t.id = a.template_id
+ORDER BY a.pattern
+`
+
+type ListAliasesRow struct {
+	ID           int64
+	Pattern      string
+	Name         string
+	Ignored      bool
+	TemplateName string
+}
+
+func (q *Queries) ListAliases(ctx context.Context) ([]ListAliasesRow, error) {
+	rows, err := q.db.Query(ctx, listAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAliasesRow
+	for rows.Next() {
+		var i ListAliasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.Ignored,
+			&i.TemplateName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listClients = `-- name: ListClients :many
@@ -280,6 +474,51 @@ func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
 	return items, nil
 }
 
+const listTemplates = `-- name: ListTemplates :many
+SELECT t.id, t.name, t.agency, t.icon, t.colour, t.agency_profile,
+       (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
+FROM templates t
+ORDER BY t.name
+`
+
+type ListTemplatesRow struct {
+	ID            int64
+	Name          string
+	Agency        string
+	Icon          *string
+	Colour        *string
+	AgencyProfile *string
+	AliasCount    int64
+}
+
+func (q *Queries) ListTemplates(ctx context.Context) ([]ListTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, listTemplates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListTemplatesRow
+	for rows.Next() {
+		var i ListTemplatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Agency,
+			&i.Icon,
+			&i.Colour,
+			&i.AgencyProfile,
+			&i.AliasCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const lockDedupKey = `-- name: LockDedupKey :exec
 SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))
 `
@@ -298,6 +537,106 @@ func (q *Queries) MarkClockAhead(ctx context.Context, id string) error {
 	return err
 }
 
+const messageReceptions = `-- name: MessageReceptions :many
+SELECT r.client_id, c.name AS client_name, r.received_at
+FROM receptions r
+JOIN clients c ON c.id = r.client_id
+WHERE r.message_id = $1
+ORDER BY r.received_at, r.client_id
+`
+
+type MessageReceptionsRow struct {
+	ClientID   string
+	ClientName string
+	ReceivedAt time.Time
+}
+
+func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]MessageReceptionsRow, error) {
+	rows, err := q.db.Query(ctx, messageReceptions, messageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageReceptionsRow
+	for rows.Next() {
+		var i MessageReceptionsRow
+		if err := rows.Scan(&i.ClientID, &i.ClientName, &i.ReceivedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const messagesToReparse = `-- name: MessagesToReparse :many
+SELECT id, capcode, text, priority, heartbeat
+FROM messages
+WHERE capcode LIKE $1::text AND id > $2::bigint
+ORDER BY id
+LIMIT $3::int
+`
+
+type MessagesToReparseParams struct {
+	Pattern string
+	AfterID int64
+	Batch   int32
+}
+
+type MessagesToReparseRow struct {
+	ID        int64
+	Capcode   string
+	Text      string
+	Priority  *string
+	Heartbeat bool
+}
+
+func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparseParams) ([]MessagesToReparseRow, error) {
+	rows, err := q.db.Query(ctx, messagesToReparse, arg.Pattern, arg.AfterID, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessagesToReparseRow
+	for rows.Next() {
+		var i MessagesToReparseRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Capcode,
+			&i.Text,
+			&i.Priority,
+			&i.Heartbeat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const requestReparse = `-- name: RequestReparse :exec
+WITH r AS (
+    INSERT INTO reparse_requests (capcode_pattern, reason) VALUES ($1, $2)
+)
+SELECT pg_notify('pagerarchive_reparse', '')
+`
+
+type RequestReparseParams struct {
+	CapcodePattern string
+	Reason         string
+}
+
+// R23a: queue a re-parse and wake the API's worker.
+func (q *Queries) RequestReparse(ctx context.Context, arg RequestReparseParams) error {
+	_, err := q.db.Exec(ctx, requestReparse, arg.CapcodePattern, arg.Reason)
+	return err
+}
+
 const revokeClient = `-- name: RevokeClient :execrows
 UPDATE clients SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL
 `
@@ -308,6 +647,198 @@ func (q *Queries) RevokeClient(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const searchMessages = `-- name: SearchMessages :many
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
+       m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
+       m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
+       m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
+       t.agency, t.icon, t.colour, t.agency_profile
+FROM messages m
+LEFT JOIN aliases a ON a.id = m.alias_id
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE ($1::bigint IS NULL OR m.id = $1)
+  AND ($2::text IS NULL OR m.text ILIKE $2
+       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE $2))
+  AND ($3::text IS NULL OR m.capcode = $3)
+  AND ($4::text IS NULL OR a.name ILIKE $4)
+  AND ($5::text IS NULL OR t.agency ILIKE $5)
+  AND ($6::text IS NULL OR upper(m.paging_group) = upper($6))
+  AND ($7::text IS NULL
+       OR ($7 = 'none' AND m.priority IS NULL)
+       OR m.priority = $7)
+  AND ($8::bool IS NULL
+       OR COALESCE(m.event_type = ANY($9::text[])
+                   OR m.event_type LIKE ANY($10::text[]), false) = $8)
+  AND ($11::text IS NULL OR m.job_number = $11)
+  AND ($12::timestamptz IS NULL OR m.sent_at >= $12)
+  AND ($13::timestamptz IS NULL OR m.sent_at < $13)
+  AND (NOT $14::bool OR m.alias_id IS NULL)
+  AND ($15::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $16::bool OR m.parse_failed)
+  AND (NOT $17::bool OR m.address_unsplit)
+  AND (NOT $18::bool OR m.location_mismatch)
+  AND ($19::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($19, $20::bigint))
+ORDER BY m.sent_at DESC, m.id DESC
+LIMIT $21::int
+`
+
+type SearchMessagesParams struct {
+	OnlyID           *int64
+	Q                *string
+	Capcode          *string
+	Alias            *string
+	Agency           *string
+	PagingGroup      *string
+	Priority         *string
+	CatWant          *bool
+	CatCodes         []string
+	CatPrefixes      []string
+	JobNumber        *string
+	SentFrom         *time.Time
+	SentTo           *time.Time
+	Unaliased        bool
+	IncludeIgnored   bool
+	ParseFailed      bool
+	AddressUnsplit   bool
+	LocationMismatch bool
+	BeforeSent       *time.Time
+	BeforeID         *int64
+	MaxRows          int32
+}
+
+type SearchMessagesRow struct {
+	ID               int64
+	Capcode          string
+	Text             string
+	Priority         *string
+	Heartbeat        bool
+	SentAt           time.Time
+	Format           *string
+	JobNumber        *string
+	EventType        *string
+	Description      *string
+	Address          *string
+	Locality         *string
+	GridRef          *string
+	PagingGroup      *string
+	Units            []string
+	Extra            []byte
+	ParseFailed      bool
+	AddressUnsplit   bool
+	LocationMismatch bool
+	AliasName        *string
+	AliasIgnored     bool
+	Agency           *string
+	Icon             *string
+	Colour           *string
+	AgencyProfile    *string
+}
+
+// R33. Every filter is optional (NULL = any). Keyset pagination on
+// (sent_at, id), newest first. cat_want compares "event_type is in the
+// category's codes" with true (that category) or false (Other).
+func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
+	rows, err := q.db.Query(ctx, searchMessages,
+		arg.OnlyID,
+		arg.Q,
+		arg.Capcode,
+		arg.Alias,
+		arg.Agency,
+		arg.PagingGroup,
+		arg.Priority,
+		arg.CatWant,
+		arg.CatCodes,
+		arg.CatPrefixes,
+		arg.JobNumber,
+		arg.SentFrom,
+		arg.SentTo,
+		arg.Unaliased,
+		arg.IncludeIgnored,
+		arg.ParseFailed,
+		arg.AddressUnsplit,
+		arg.LocationMismatch,
+		arg.BeforeSent,
+		arg.BeforeID,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchMessagesRow
+	for rows.Next() {
+		var i SearchMessagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Capcode,
+			&i.Text,
+			&i.Priority,
+			&i.Heartbeat,
+			&i.SentAt,
+			&i.Format,
+			&i.JobNumber,
+			&i.EventType,
+			&i.Description,
+			&i.Address,
+			&i.Locality,
+			&i.GridRef,
+			&i.PagingGroup,
+			&i.Units,
+			&i.Extra,
+			&i.ParseFailed,
+			&i.AddressUnsplit,
+			&i.LocationMismatch,
+			&i.AliasName,
+			&i.AliasIgnored,
+			&i.Agency,
+			&i.Icon,
+			&i.Colour,
+			&i.AgencyProfile,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setSetting = `-- name: SetSetting :exec
+INSERT INTO settings (key, value) VALUES ($1, $2)
+ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+`
+
+type SetSettingParams struct {
+	Key   string
+	Value string
+}
+
+func (q *Queries) SetSetting(ctx context.Context, arg SetSettingParams) error {
+	_, err := q.db.Exec(ctx, setSetting, arg.Key, arg.Value)
+	return err
+}
+
+const templateByName = `-- name: TemplateByName :one
+SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE name = $1
+`
+
+func (q *Queries) TemplateByName(ctx context.Context, name string) (Template, error) {
+	row := q.db.QueryRow(ctx, templateByName, name)
+	var i Template
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Agency,
+		&i.Icon,
+		&i.Colour,
+		&i.AgencyProfile,
+	)
+	return i, err
 }
 
 const touchClient = `-- name: TouchClient :exec
@@ -324,5 +855,129 @@ type TouchClientParams struct {
 
 func (q *Queries) TouchClient(ctx context.Context, arg TouchClientParams) error {
 	_, err := q.db.Exec(ctx, touchClient, arg.SeenAt, arg.ID)
+	return err
+}
+
+const unaliasedCapcodes = `-- name: UnaliasedCapcodes :many
+SELECT capcode, count(*) AS messages, max(sent_at)::timestamptz AS last_seen
+FROM messages
+WHERE alias_id IS NULL
+GROUP BY capcode
+ORDER BY max(sent_at) DESC
+`
+
+type UnaliasedCapcodesRow struct {
+	Capcode  string
+	Messages int64
+	LastSeen time.Time
+}
+
+// R33: capcodes with no alias, with message count and last-seen time.
+func (q *Queries) UnaliasedCapcodes(ctx context.Context) ([]UnaliasedCapcodesRow, error) {
+	rows, err := q.db.Query(ctx, unaliasedCapcodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UnaliasedCapcodesRow
+	for rows.Next() {
+		var i UnaliasedCapcodesRow
+		if err := rows.Scan(&i.Capcode, &i.Messages, &i.LastSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const updateAlias = `-- name: UpdateAlias :exec
+UPDATE aliases SET name = $2, template_id = $3, ignored = $4 WHERE id = $1
+`
+
+type UpdateAliasParams struct {
+	ID         int64
+	Name       string
+	TemplateID int64
+	Ignored    bool
+}
+
+func (q *Queries) UpdateAlias(ctx context.Context, arg UpdateAliasParams) error {
+	_, err := q.db.Exec(ctx, updateAlias,
+		arg.ID,
+		arg.Name,
+		arg.TemplateID,
+		arg.Ignored,
+	)
+	return err
+}
+
+const updateParsed = `-- name: UpdateParsed :exec
+UPDATE messages SET
+    alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
+    address = $7, locality = $8, grid_ref = $9, paging_group = $10, units = $11,
+    extra = $12, parse_failed = $13, address_unsplit = $14
+WHERE id = $1
+`
+
+type UpdateParsedParams struct {
+	ID             int64
+	AliasID        *int64
+	Format         *string
+	JobNumber      *string
+	EventType      *string
+	Description    *string
+	Address        *string
+	Locality       *string
+	GridRef        *string
+	PagingGroup    *string
+	Units          []string
+	Extra          []byte
+	ParseFailed    bool
+	AddressUnsplit bool
+}
+
+func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) error {
+	_, err := q.db.Exec(ctx, updateParsed,
+		arg.ID,
+		arg.AliasID,
+		arg.Format,
+		arg.JobNumber,
+		arg.EventType,
+		arg.Description,
+		arg.Address,
+		arg.Locality,
+		arg.GridRef,
+		arg.PagingGroup,
+		arg.Units,
+		arg.Extra,
+		arg.ParseFailed,
+		arg.AddressUnsplit,
+	)
+	return err
+}
+
+const updateTemplate = `-- name: UpdateTemplate :exec
+UPDATE templates SET agency = $2, icon = $3, colour = $4, agency_profile = $5 WHERE id = $1
+`
+
+type UpdateTemplateParams struct {
+	ID            int64
+	Agency        string
+	Icon          *string
+	Colour        *string
+	AgencyProfile *string
+}
+
+func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) error {
+	_, err := q.db.Exec(ctx, updateTemplate,
+		arg.ID,
+		arg.Agency,
+		arg.Icon,
+		arg.Colour,
+		arg.AgencyProfile,
+	)
 	return err
 }

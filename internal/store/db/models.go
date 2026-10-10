@@ -13,6 +13,7 @@ type Alias struct {
 	Pattern    string
 	Name       string
 	TemplateID int64
+	Ignored    bool
 }
 
 type Client struct {
@@ -26,34 +27,48 @@ type Client struct {
 }
 
 type Message struct {
-	ID             int64
-	Capcode        string
-	Text           string
-	Priority       *string
-	Heartbeat      bool
-	SentAt         time.Time
-	DedupKey       []byte
-	Format         *string
-	JobNumber      *string
-	EventType      *string
-	Description    *string
-	Address        *string
-	Locality       *string
-	GridRef        *string
-	PagingGroup    *string
-	Units          []string
-	Extra          []byte
-	ParseFailed    bool
-	AddressUnsplit bool
-	Function       *int16
-	Baud           *int32
-	CreatedAt      time.Time
+	ID               int64
+	Capcode          string
+	Text             string
+	Priority         *string
+	Heartbeat        bool
+	SentAt           time.Time
+	DedupKey         []byte
+	Format           *string
+	JobNumber        *string
+	EventType        *string
+	Description      *string
+	Address          *string
+	Locality         *string
+	GridRef          *string
+	PagingGroup      *string
+	Units            []string
+	Extra            []byte
+	ParseFailed      bool
+	AddressUnsplit   bool
+	Function         *int16
+	Baud             *int32
+	CreatedAt        time.Time
+	AliasID          *int64
+	LocationMismatch bool
 }
 
 type Reception struct {
 	MessageID  int64
 	ClientID   string
 	ReceivedAt time.Time
+}
+
+type ReparseRequest struct {
+	ID             int64
+	CapcodePattern string
+	Reason         string
+	RequestedAt    time.Time
+}
+
+type Setting struct {
+	Key   string
+	Value string
 }
 
 type Template struct {

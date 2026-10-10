@@ -16,6 +16,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 )
 
@@ -27,20 +28,47 @@ const MaxTextBytes = 4096
 
 // Server serves the API.
 type Server struct {
-	Store  *store.Store
-	Ingest *ingest.Service
-	Log    *slog.Logger
-	Now    func() time.Time
+	Store    *store.Store
+	Ingest   *ingest.Service
+	Log      *slog.Logger
+	Now      func() time.Time
+	Hub      *live.Hub
+	Location *time.Location // deployment time zone (R35a)
+	// ViewerRole is every viewer's role until sign-in arrives in M3
+	// ("admin" or "user"; ADR 0003).
+	ViewerRole string
+	// UI serves the browser app; nil serves none.
+	UI http.Handler
 }
 
 // Handler returns the API's routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/pages", s.postPage)
+	mux.HandleFunc("GET /api/v1/meta", s.getMeta)
+	mux.HandleFunc("GET /api/v1/messages", s.listMessages)
+	mux.HandleFunc("GET /api/v1/messages/{id}", s.getMessage)
+	mux.HandleFunc("GET /api/v1/jobs/{job}", s.getJob)
+	mux.HandleFunc("GET /api/v1/capcodes/unaliased", s.unaliased)
+	mux.HandleFunc("GET /api/v1/stream", s.stream)
+	mux.HandleFunc("GET /api/v1/admin/clients", s.adminOnly(s.listClients))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
-	return mux
+	if s.UI != nil {
+		mux.Handle("/", s.UI)
+	}
+	return securityHeaders(mux)
+}
+
+// securityHeaders sets headers every response gets.
+func securityHeaders(h http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("X-Frame-Options", "DENY")
+		h.ServeHTTP(w, r)
+	})
 }
 
 // PageRequest is the body of POST /api/v1/pages.
@@ -112,6 +140,9 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("page", "client", clientID, "outcome", string(outcome), "message_id", id)
+	if outcome == ingest.Stored && s.Hub != nil {
+		s.Hub.Publish(id)
+	}
 	writeJSON(w, http.StatusOK, PageResponse{Outcome: outcome, MessageID: id})
 }
 

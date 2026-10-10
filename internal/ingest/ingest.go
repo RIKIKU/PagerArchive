@@ -63,15 +63,27 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 		return Ignored, 0, nil
 	}
 
-	agency, err := s.agencyFor(ctx, pg.Capcode)
+	rows, err := s.Store.AliasesMatching(ctx, pg.Capcode)
 	if err != nil {
-		return "", 0, err
+		return "", 0, fmt.Errorf("aliases: %s", store.SafeError(err))
+	}
+	cands := make([]Candidate, len(rows))
+	for i, r := range rows {
+		cands[i] = Candidate{ID: r.ID, Pattern: r.Pattern, AgencyProfile: r.AgencyProfile}
+	}
+	alias := BestAlias(cands)
+	var aliasID *int64
+	var agency *profile.Agency
+	if alias != nil {
+		aliasID = &alias.ID
+		agency = s.agencyFor(alias.AgencyProfile)
 	}
 	parsed := pipeline.Parse(s.Network, agency, s.Streets, prep)
 	params, err := messageParams(prep, parsed, pg)
 	if err != nil {
 		return "", 0, err
 	}
+	params.AliasID = aliasID
 
 	outcome, id := Stored, int64(0)
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
@@ -101,25 +113,90 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 	return outcome, id, nil
 }
 
-// agencyFor resolves capcode → alias → template → agency profile (R3).
-// nil means text only (R4).
-func (s *Service) agencyFor(ctx context.Context, capcode string) (*profile.Agency, error) {
-	rows, err := s.Store.AliasesMatching(ctx, capcode)
+// agencyFor resolves a template's agency profile name (R3). nil means text
+// only (R4); a template pointing at a missing profile is text only too
+// (section 14).
+func (s *Service) agencyFor(name *string) *profile.Agency {
+	if name == nil {
+		return nil
+	}
+	return s.Agencies[*name]
+}
+
+// LikeMatch reports whether capcode matches an alias pattern, with SQL LIKE
+// semantics: % is any run of characters, _ is one character (R27).
+func LikeMatch(pattern, s string) bool {
+	if pattern == "" {
+		return s == ""
+	}
+	switch pattern[0] {
+	case '%':
+		for i := 0; i <= len(s); i++ {
+			if LikeMatch(pattern[1:], s[i:]) {
+				return true
+			}
+		}
+		return false
+	case '_':
+		return s != "" && LikeMatch(pattern[1:], s[1:])
+	default:
+		return s != "" && s[0] == pattern[0] && LikeMatch(pattern[1:], s[1:])
+	}
+}
+
+// Fields maps parsed fields to columns, shared by insert and re-parse.
+type Fields struct {
+	Format, JobNumber, EventType, Description, Address, Locality, GridRef, Group *string
+	Units                                                                        []string
+	Extra                                                                        []byte
+	ParseFailed, AddressUnsplit                                                  bool
+}
+
+// FieldsOf converts a parse result to column values.
+func FieldsOf(parsed pipeline.Parsed) (Fields, error) {
+	str := func(name string) *string { return nilIfEmpty(parsed.String(name)) }
+	extra := map[string]any{}
+	std := map[string]bool{}
+	for _, f := range profile.StandardFields {
+		std[f] = true
+	}
+	for k, v := range parsed.Fields {
+		if !std[k] {
+			extra[k] = v
+		}
+	}
+	extraJSON, err := json.Marshal(extra)
 	if err != nil {
-		return nil, fmt.Errorf("aliases: %s", store.SafeError(err))
+		return Fields{}, errors.New("encode extra fields")
 	}
-	a := BestAlias(rows)
-	if a == nil || a.AgencyProfile == nil {
-		return nil, nil
-	}
-	// A template pointing at a missing profile makes its pages text only (section 14).
-	return s.Agencies[*a.AgencyProfile], nil
+	units, _ := parsed.Fields["units"].([]string)
+	return Fields{
+		Format:         nilIfEmpty(parsed.Format),
+		JobNumber:      str("job_number"),
+		EventType:      str("event_type"),
+		Description:    str("description"),
+		Address:        str("address"),
+		Locality:       str("locality"),
+		GridRef:        str("grid_ref"),
+		Group:          str("group"),
+		Units:          units,
+		Extra:          extraJSON,
+		ParseFailed:    parsed.ParseFailed,
+		AddressUnsplit: parsed.AddressUnsplit,
+	}, nil
+}
+
+// Candidate is an alias that may apply to a capcode.
+type Candidate struct {
+	ID            int64
+	Pattern       string
+	AgencyProfile *string
 }
 
 // BestAlias picks the alias that wins for a capcode among those whose pattern
 // matches it (R27): an exact capcode, then fewer wildcards, with patterns that
 // start with a wildcard last.
-func BestAlias(rows []db.AliasesMatchingRow) *db.AliasesMatchingRow {
+func BestAlias(rows []Candidate) *Candidate {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -142,27 +219,10 @@ func BestAlias(rows []db.AliasesMatchingRow) *db.AliasesMatchingRow {
 }
 
 func messageParams(prep pipeline.Prepared, parsed pipeline.Parsed, pg Page) (db.InsertMessageParams, error) {
-	str := func(name string) *string {
-		if s := parsed.String(name); s != "" {
-			return &s
-		}
-		return nil
-	}
-	extra := map[string]any{}
-	std := map[string]bool{}
-	for _, f := range profile.StandardFields {
-		std[f] = true
-	}
-	for k, v := range parsed.Fields {
-		if !std[k] {
-			extra[k] = v
-		}
-	}
-	extraJSON, err := json.Marshal(extra)
+	f, err := FieldsOf(parsed)
 	if err != nil {
-		return db.InsertMessageParams{}, errors.New("encode extra fields")
+		return db.InsertMessageParams{}, err
 	}
-	units, _ := parsed.Fields["units"].([]string)
 	fn, baud := int16(pg.Function), int32(pg.Baud)
 	return db.InsertMessageParams{
 		Capcode:        prep.Capcode,
@@ -171,18 +231,18 @@ func messageParams(prep pipeline.Prepared, parsed pipeline.Parsed, pg Page) (db.
 		Heartbeat:      prep.Heartbeat,
 		SentAt:         pg.ReceivedAt,
 		DedupKey:       pipeline.DedupKey(prep),
-		Format:         nilIfEmpty(parsed.Format),
-		JobNumber:      str("job_number"),
-		EventType:      str("event_type"),
-		Description:    str("description"),
-		Address:        str("address"),
-		Locality:       str("locality"),
-		GridRef:        str("grid_ref"),
-		PagingGroup:    str("group"),
-		Units:          units,
-		Extra:          extraJSON,
-		ParseFailed:    parsed.ParseFailed,
-		AddressUnsplit: parsed.AddressUnsplit,
+		Format:         f.Format,
+		JobNumber:      f.JobNumber,
+		EventType:      f.EventType,
+		Description:    f.Description,
+		Address:        f.Address,
+		Locality:       f.Locality,
+		GridRef:        f.GridRef,
+		PagingGroup:    f.Group,
+		Units:          f.Units,
+		Extra:          f.Extra,
+		ParseFailed:    f.ParseFailed,
+		AddressUnsplit: f.AddressUnsplit,
 		Function:       &fn,
 		Baud:           &baud,
 	}, nil
