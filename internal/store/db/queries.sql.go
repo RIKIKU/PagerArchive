@@ -64,6 +64,33 @@ func (q *Queries) AliasByPattern(ctx context.Context, pattern string) (AliasByPa
 	return i, err
 }
 
+const aliasDetailByKey = `-- name: AliasDetailByKey :one
+SELECT a.id, a.name, a.ignored, t.name AS template_name
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE a.pattern_key = $1::text
+`
+
+type AliasDetailByKeyRow struct {
+	ID           int64
+	Name         string
+	Ignored      bool
+	TemplateName *string
+}
+
+// Import: an existing alias with its template's name, to compare with a CSV row.
+func (q *Queries) AliasDetailByKey(ctx context.Context, patternKey string) (AliasDetailByKeyRow, error) {
+	row := q.db.QueryRow(ctx, aliasDetailByKey, patternKey)
+	var i AliasDetailByKeyRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Ignored,
+		&i.TemplateName,
+	)
+	return i, err
+}
+
 const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
 SELECT pattern FROM aliases WHERE template_id = $1
 `
@@ -1006,30 +1033,4 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		arg.AgencyProfile,
 	)
 	return err
-}
-
-const upsertAlias = `-- name: UpsertAlias :one
-INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4)
-ON CONFLICT (pattern_key) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
-RETURNING (xmax = 0)::bool AS inserted
-`
-
-type UpsertAliasParams struct {
-	Pattern    string
-	Name       string
-	TemplateID *int64
-	Ignored    bool
-}
-
-// Import: add or replace an alias by pattern. inserted is false for an update.
-func (q *Queries) UpsertAlias(ctx context.Context, arg UpsertAliasParams) (bool, error) {
-	row := q.db.QueryRow(ctx, upsertAlias,
-		arg.Pattern,
-		arg.Name,
-		arg.TemplateID,
-		arg.Ignored,
-	)
-	var inserted bool
-	err := row.Scan(&inserted)
-	return inserted, err
 }

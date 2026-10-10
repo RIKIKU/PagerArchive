@@ -181,6 +181,23 @@ func (e *DuplicateAliasError) Error() string {
 		e.Pattern, e.Existing, e.Pattern)
 }
 
+// GetAlias returns an alias's current settings.
+func (c *Catalog) GetAlias(ctx context.Context, pattern string) (Alias, error) {
+	pattern, err := NormalisePattern(pattern)
+	if err != nil {
+		return Alias{}, err
+	}
+	cur, err := c.Store.AliasDetailByKey(ctx, pattern)
+	if err != nil {
+		return Alias{}, dbErr("alias "+pattern, err)
+	}
+	a := Alias{Pattern: pattern, Name: cur.Name, Ignored: cur.Ignored}
+	if cur.TemplateName != nil {
+		a.Template = *cur.TemplateName
+	}
+	return a, nil
+}
+
 // UpdateAlias changes an alias's name, template or ignored flag.
 func (c *Catalog) UpdateAlias(ctx context.Context, a Alias) error {
 	pattern, err := NormalisePattern(a.Pattern)

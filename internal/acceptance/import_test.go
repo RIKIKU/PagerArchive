@@ -122,10 +122,46 @@ func TestAliasImport(t *testing.T) {
 		}
 	}
 
-	// Importing again updates in place.
+	// Importing the same file again changes nothing.
 	again, err := e.cat.ImportCSV(e.ctx, strings.NewReader(exportCSV), catalog.ImportOptions{Mapping: m})
-	if err != nil || again.AliasesAdded != 0 || again.AliasesUpdated != 5 {
+	if err != nil || again.AliasesAdded != 0 || again.Unchanged != 5 || len(again.Differences) != 0 || again.AliasesUpdated != 0 {
 		t.Errorf("second import: %+v, %v", again, err)
+	}
+}
+
+// A21. A re-import reports differences and applies them only with Update.
+func TestA21ReimportDoesNotChangeExistingAliases(t *testing.T) {
+	e := setup(t)
+	first := "id,address,alias,agency,ignore\n1,0300001,Brigade,WX,0\n"
+	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(first), catalog.ImportOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	second := "id,address,alias,agency,ignore\n1,0300001,Brigade North,WX,1\n2,0300002,Tanker,WX,0\n"
+
+	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(second), catalog.ImportOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.AliasesAdded != 1 || res.AliasesUpdated != 0 || len(res.Differences) != 1 {
+		t.Fatalf("default re-import: %+v", res)
+	}
+	d := res.Differences[0]
+	if d.Pattern != "0300001" || strings.Join(d.Changes, "; ") != `name: "Brigade" → "Brigade North"; ignored: false → true` {
+		t.Errorf("difference: %+v", d)
+	}
+	rows, _ := e.st.ListAliases(e.ctx)
+	if !hasAlias(rows, "0300001", "Brigade") || !hasAlias(rows, "0300002", "Tanker") {
+		t.Errorf("default re-import changed an existing alias or didn't add the new one: %+v", rows)
+	}
+	t.Logf("A21: without --update: %+v", res.Differences)
+
+	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(second), catalog.ImportOptions{Update: true})
+	if err != nil || res.AliasesUpdated != 1 || res.Unchanged != 1 {
+		t.Fatalf("--update: %v %+v", err, res)
+	}
+	a, err := e.cat.GetAlias(e.ctx, "0300001")
+	if err != nil || a.Name != "Brigade North" || !a.Ignored || a.Template != "WX" {
+		t.Errorf("after --update: %+v, %v", a, err)
 	}
 }
 
@@ -247,8 +283,9 @@ func TestA20CSVDuplicatesNeedOverrides(t *testing.T) {
 	}
 
 	// keep_row and skip work too.
+	// (The alias exists now, so the change needs Update: A21.)
 	ov = catalog.Overrides{Duplicates: map[string]catalog.Override{"0300001": {KeepRow: 2}}}
-	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov}); err != nil {
+	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov, Update: true}); err != nil {
 		t.Fatal(err)
 	}
 	if rows, _ := e.st.ListAliases(e.ctx); !hasAlias(rows, "0300001", "Brigade (old name)") {
@@ -257,6 +294,21 @@ func TestA20CSVDuplicatesNeedOverrides(t *testing.T) {
 	ov = catalog.Overrides{Duplicates: map[string]catalog.Override{"0300001": {Skip: true}}}
 	if res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov}); err != nil || res.Skipped != 2 {
 		t.Fatalf("skip: %v %+v", err, res)
+	}
+
+	// Rows identical in every imported field are squashed without an override;
+	// a real conflict alongside them still stops the import.
+	identicalCSV := "id,address,alias,agency,icon,color,ignore\n" +
+		"20,0300003,Weather,WX,cloud,#1565c0,0\n" +
+		"21,300003,Weather,WX,cloud,#1565c0,0\n"
+	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(identicalCSV), catalog.ImportOptions{})
+	if err != nil || res.Squashed != 1 || res.AliasesAdded != 1 {
+		t.Fatalf("identical rows: %v %+v", err, res)
+	}
+	t.Logf("A20: identical rows squashed: %d", res.Squashed)
+	conflict := identicalCSV + "22,0300003,Weather (new),WX,cloud,#1565c0,0\n"
+	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(conflict), catalog.ImportOptions{}); !errors.Is(err, catalog.ErrUnresolved) {
+		t.Errorf("identical rows plus a conflicting one: err = %v", err)
 	}
 
 	// An overrides file must give exactly one choice per capcode.
