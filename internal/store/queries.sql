@@ -189,5 +189,9 @@ ORDER BY r.received_at, r.client_id;
 -- name: UpsertAlias :one
 -- Import: add or replace an alias by pattern. inserted is false for an update.
 INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4)
-ON CONFLICT (pattern) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
+ON CONFLICT (pattern_key) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
 RETURNING (xmax = 0)::bool AS inserted;
+
+-- name: AliasByKey :one
+-- R27a: the alias for a normalised capcode or pattern, if any.
+SELECT id, pattern, name FROM aliases WHERE pattern_key = sqlc.arg(pattern_key)::text;

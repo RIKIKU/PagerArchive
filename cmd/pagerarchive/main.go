@@ -70,7 +70,7 @@ commands:
   template delete <name>      delete a template no alias uses
   template list               list templates
   alias add|set <pattern> <name> [--template T] [--ignored]
-  alias import <file.csv> [--mapping M.json] [--dry-run]
+  alias import <file.csv> [--mapping M.json] [--overrides O.json] [--dry-run]
                               add or update aliases from a CSV export (R30)
   alias delete <pattern>      delete an alias
   alias list                  list aliases

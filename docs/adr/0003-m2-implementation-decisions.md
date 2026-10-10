@@ -33,8 +33,14 @@ R35c shows every client's receive time. R39 keeps client status to admins becaus
 - `pagerarchive alias import <file.csv> [--mapping M.json] [--dry-run]` reads a CSV with a header row and these columns, by name: `address` (capcode or pattern), `alias`, `agency`, `icon`, `color` (or `colour`), `ignore`. **Every other column is never read, stored, logged or printed**; an export's plugin settings column can hold credentials. Even so, the owner strips that column before import.
 - One template per agency name, created only if missing (existing templates are left unchanged). Its icon and colour are the most common pair among that agency's aliases. The mapping file (`{"agency_profiles": {"<agency>": "<profile>"}}`, owned by the deployment) attaches agency profiles; unmapped agencies get a template with no profile (text only).
 - An empty agency, or the literal `null` some exports write, means **no template**: the alias name is still used, and its pages are text only. Aliases may therefore have no template (migration 00004).
-- Existing aliases with the same pattern are updated in place, so an import can be re-run. A capcode that appears twice keeps the later row.
-- The whole import is one transaction, followed by one full re-parse request (R23a). The report gives counts and row numbers only, never alias data.
+- An alias already in the database for the same capcode is updated in place, so an import can be re-run.
+- **Duplicates (R27a, owner 2026-10-11).** Rows for the same capcode (after zero-padding) are never picked silently. Each must be resolved in an overrides file, `--overrides O.json`: `{"duplicates": {"<capcode>": {"keep_id": "<export id>"} | {"keep_row": <CSV line>} | {"skip": true}}}`. Otherwise the import stops before changing anything and lists every duplicate's rows (line, export id, name, agency). An override for a capcode that has no duplicate rows, or that matches no row or more than one, also stops the import, so stale overrides don't linger.
+- The report lists alias names used for more than one capcode (allowed, for checking).
+- The whole import is one transaction, followed by one full re-parse request (R23a). Apart from the duplicate and repeated-name listings, the report gives counts and row numbers only.
+
+### 3b. One alias per capcode (R27a, owner 2026-10-11)
+
+A generated column `aliases.pattern_key` holds the pattern with exact capcodes zero-padded to 7 digits, and a unique constraint on it enforces one alias per capcode or pattern, whatever writes the row (A16). Creating a second alias is rejected with a message that names the existing alias and gives the `alias set` command to edit it (A17); a concurrent insert that slips past the check is caught by the constraint and gets the same message.
 
 ### 4. Search (R33)
 

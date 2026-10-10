@@ -21,13 +21,39 @@ func (q *Queries) ActiveClientByKeyHash(ctx context.Context, keyHash []byte) (st
 	return id, err
 }
 
+const aliasByKey = `-- name: AliasByKey :one
+SELECT id, pattern, name FROM aliases WHERE pattern_key = $1::text
+`
+
+type AliasByKeyRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+}
+
+// R27a: the alias for a normalised capcode or pattern, if any.
+func (q *Queries) AliasByKey(ctx context.Context, patternKey string) (AliasByKeyRow, error) {
+	row := q.db.QueryRow(ctx, aliasByKey, patternKey)
+	var i AliasByKeyRow
+	err := row.Scan(&i.ID, &i.Pattern, &i.Name)
+	return i, err
+}
+
 const aliasByPattern = `-- name: AliasByPattern :one
 SELECT id, pattern, name, template_id, ignored FROM aliases WHERE pattern = $1
 `
 
-func (q *Queries) AliasByPattern(ctx context.Context, pattern string) (Alias, error) {
+type AliasByPatternRow struct {
+	ID         int64
+	Pattern    string
+	Name       string
+	TemplateID *int64
+	Ignored    bool
+}
+
+func (q *Queries) AliasByPattern(ctx context.Context, pattern string) (AliasByPatternRow, error) {
 	row := q.db.QueryRow(ctx, aliasByPattern, pattern)
-	var i Alias
+	var i AliasByPatternRow
 	err := row.Scan(
 		&i.ID,
 		&i.Pattern,
@@ -984,7 +1010,7 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 
 const upsertAlias = `-- name: UpsertAlias :one
 INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4)
-ON CONFLICT (pattern) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
+ON CONFLICT (pattern_key) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
 RETURNING (xmax = 0)::bool AS inserted
 `
 

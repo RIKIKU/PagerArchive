@@ -14,6 +14,7 @@ type Alias struct {
 	Name       string
 	TemplateID *int64
 	Ignored    bool
+	PatternKey *string
 }
 
 type Client struct {

@@ -134,6 +134,7 @@ Many clients post to one server. Each client records its own receive time. The s
 
 ### 7.5 Aliases and templates
 - **R27.** An alias maps a capcode or capcode pattern to a name and a template. Patterns use `%` (any run of characters) and `_` (one character). Precedence: an exact capcode wins, then fewer wildcards; patterns starting with a wildcard come last. An alias can be marked **ignored**: its pages are still stored and shown in full (P2), but hidden from the default message list and live updates; a search filter shows them. Dropping pages stays the network profile's job (R16). (Owner decision, 2026-10-10.)
+- **R27a.** Each capcode or pattern has **at most one alias** (owner, 2026-10-11). Capcodes are compared after zero-padding to 7 digits (`240241` and `0240241` are the same); patterns with wildcards are compared as written. The database enforces this with a unique constraint on the normalised value, not just the UI or CLI. Creating an alias for a capcode that already has one is rejected, with a message naming the existing alias and suggesting an edit instead. A wildcard pattern that overlaps an exact capcode (`0100%` and `0100001`) is not a duplicate; precedence (R27) decides. The same alias **name** on different capcodes is allowed (a brigade can have several pagers), but the import report lists repeated names for checking. The import (R30) never silently picks between CSV rows for the same capcode: each such duplicate must be resolved in an overrides file, otherwise the import stops, changes nothing and lists them.
 - **R28.** A **template** holds agency name, icon, colour and optionally an agency profile. Aliases are **linked** to their template: editing the template updates every alias that uses it.
 - **R29.** Templates enable parsing but never gate storage or display (P2).
 - **R30.** Aliases can be **imported from a CSV file** in v1 (owner decision, 2026-10-10). The import creates one template per distinct agency name and attaches agency profiles from a mapping file the deployment owns (agency name to profile name); unmapped agencies are text only. An ignore flag in the CSV marks the alias ignored (R27).
@@ -209,6 +210,11 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A13. Client liveness.** **Given** client A's last message (of any kind) was received 31 minutes ago and client B's 5 minutes ago, **when** an admin views client status, **then** A is shown as not receiving and B as receiving.
 - **A14. Invalid profile.** **Given** an agency profile with a missing required key, **when** the server starts, **then** it exits with an error naming the file and the missing key.
 - **A15. Resource budget.** **Given** the full stack running in Docker Compose with 20 connected viewers and fixtures replayed at 1,500 pages/day, **when** memory is measured after 1 hour, **then** the API uses ≤ 256 MB and the app's containers (excluding Authentik) ≤ 1 GB in total.
+- **A16. One alias per capcode, in the database.** **Given** capcode `0240241` has an alias, **when** a second alias for `240241` is inserted directly into the database (bypassing the app), **then** the insert fails on the unique constraint.
+- **A17. Duplicate alias rejected with guidance.** **Given** capcode `0100001` has the alias "Station 1", **when** an alias is created for `100001`, **then** it is rejected with a message that names "Station 1" and suggests editing it, and "Station 1" is unchanged.
+- **A18. Overlapping patterns allowed.** **Given** capcode `0100001` has the alias "Station 1", **when** an alias is created for the pattern `0100%`, **then** it is accepted, and a page to `0100001` still shows "Station 1" while a page to `0100009` shows the pattern's alias.
+- **A19. Repeated names allowed and reported.** **When** a CSV giving capcodes `0300001` and `0300002` the same alias name is imported, **then** both aliases are created and the import report lists that name with both capcodes.
+- **A20. CSV duplicates need overrides.** **Given** a CSV with two rows for capcode `0300001`, **when** it is imported without an override for `0300001`, **then** the import stops, changes nothing, and lists both rows; **when** it is imported with an override choosing one row, **then** that row's alias is created; an override for a capcode with no duplicate rows is an error.
 
 ## 10. Example profile (made-up network)
 
@@ -249,7 +255,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 |---|---|---|
 | **M0** | Stack ADR approved | n/a |
 | **M1** | Client, ingest, redaction, dedup, profiles and schemas, `validate-profile`, golden tests, CI | Golden tables, A2, A5, A6 (storage), A7, A8, A9, A14 |
-| **M2** | Browser UI, live updates, search, job and detail views | A1, A3, A4, A6 (search), A10 |
+| **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A20 |
 | **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
 

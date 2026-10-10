@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -137,16 +138,47 @@ func (c *Catalog) AddAlias(ctx context.Context, a Alias) error {
 	if err != nil {
 		return err
 	}
-	return c.Store.InTx(ctx, func(q *db.Queries) error {
+	err = c.Store.InTx(ctx, func(q *db.Queries) error {
+		if cur, err := q.AliasByKey(ctx, pattern); err == nil {
+			return &DuplicateAliasError{Pattern: pattern, Existing: cur.Name}
+		}
 		tid, err := templateID(ctx, q, a.Template)
 		if err != nil {
 			return err
 		}
 		if _, err := q.CreateAlias(ctx, db.CreateAliasParams{Pattern: pattern, Name: a.Name, TemplateID: tid, Ignored: a.Ignored}); err != nil {
+			if isUniqueViolation(err) {
+				return errRaced
+			}
 			return dbErr("add alias "+pattern, err)
 		}
 		return reparse(ctx, q, pattern, "alias added")
 	})
+	// Another writer added it meanwhile: the database constraint caught it.
+	if errors.Is(err, errRaced) {
+		if cur, lookupErr := c.Store.AliasByKey(ctx, pattern); lookupErr == nil {
+			return &DuplicateAliasError{Pattern: pattern, Existing: cur.Name}
+		}
+		return fmt.Errorf("%s already has an alias (R27a)", pattern)
+	}
+	return err
+}
+
+var errRaced = errors.New("unique violation")
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// DuplicateAliasError rejects a second alias for a capcode or pattern (R27a).
+type DuplicateAliasError struct {
+	Pattern, Existing string
+}
+
+func (e *DuplicateAliasError) Error() string {
+	return fmt.Sprintf("%s already has the alias %q, and each capcode or pattern has one alias (R27a); edit it instead: pagerarchive alias set %s <name> [--template T]",
+		e.Pattern, e.Existing, e.Pattern)
 }
 
 // UpdateAlias changes an alias's name, template or ignored flag.

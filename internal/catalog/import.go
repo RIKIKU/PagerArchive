@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -20,34 +21,103 @@ type Mapping struct {
 	AgencyProfiles map[string]string `json:"agency_profiles"`
 }
 
-// LoadMapping reads a mapping file: {"agency_profiles": {"<agency>": "<profile>"}}.
-// Keys starting with _ are comments.
-func LoadMapping(path string) (Mapping, error) {
+// Overrides resolve CSV rows that give the same capcode (R27a). Keyed by
+// capcode or pattern, as written in the CSV or zero-padded.
+type Overrides struct {
+	Duplicates map[string]Override `json:"duplicates"`
+}
+
+// Override chooses what to import for one duplicated capcode: the row with
+// this export id, the row on this CSV line, or nothing.
+type Override struct {
+	KeepID  string `json:"keep_id,omitempty"`
+	KeepRow int    `json:"keep_row,omitempty"`
+	Skip    bool   `json:"skip,omitempty"`
+}
+
+// ImportOptions configure an import.
+type ImportOptions struct {
+	Mapping   Mapping
+	Overrides Overrides
+	DryRun    bool // report only; change nothing
+}
+
+// readJSON reads a JSON object with one known key; keys starting with _ are
+// comments.
+func readJSON(path, key string, into any) error {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Mapping{}, err
+		return err
 	}
 	var raw map[string]json.RawMessage
 	if err := json.Unmarshal(data, &raw); err != nil {
-		return Mapping{}, fmt.Errorf("%s: not valid JSON", path)
+		return fmt.Errorf("%s: not valid JSON", path)
 	}
-	var m Mapping
 	for k, v := range raw {
 		switch {
-		case k == "agency_profiles":
-			if err := json.Unmarshal(v, &m.AgencyProfiles); err != nil {
-				return Mapping{}, fmt.Errorf("%s: agency_profiles must map agency names to profile names", path)
+		case k == key:
+			dec := json.NewDecoder(strings.NewReader(string(v)))
+			dec.DisallowUnknownFields()
+			if err := dec.Decode(into); err != nil {
+				return fmt.Errorf("%s: %s: %v", path, key, err)
 			}
 		case strings.HasPrefix(k, "_"):
 		default:
-			return Mapping{}, fmt.Errorf("%s: unknown key %q", path, k)
+			return fmt.Errorf("%s: unknown key %q", path, k)
 		}
 	}
-	return m, nil
+	return nil
 }
 
-// ImportResult counts what an import did. Problems name CSV rows by number
-// only, never by content (alias data is private to the deployment).
+// LoadMapping reads {"agency_profiles": {"<agency>": "<profile>"}}.
+func LoadMapping(path string) (Mapping, error) {
+	var m Mapping
+	err := readJSON(path, "agency_profiles", &m.AgencyProfiles)
+	return m, err
+}
+
+// LoadOverrides reads {"duplicates": {"<capcode>": {"keep_id": "…"} | {"keep_row": N} | {"skip": true}}}.
+func LoadOverrides(path string) (Overrides, error) {
+	var o Overrides
+	if err := readJSON(path, "duplicates", &o.Duplicates); err != nil {
+		return o, err
+	}
+	for k, v := range o.Duplicates {
+		n := 0
+		for _, set := range []bool{v.KeepID != "", v.KeepRow != 0, v.Skip} {
+			if set {
+				n++
+			}
+		}
+		if n != 1 {
+			return o, fmt.Errorf("%s: duplicates.%s: give exactly one of keep_id, keep_row or skip", path, k)
+		}
+	}
+	return o, nil
+}
+
+// DuplicateRow is one of several CSV rows for the same capcode.
+type DuplicateRow struct {
+	Line   int
+	ID     string // the export's own row id, if it has one
+	Name   string
+	Agency string
+}
+
+// Duplicate is a capcode given by more than one CSV row (R27a).
+type Duplicate struct {
+	Pattern string
+	Rows    []DuplicateRow
+}
+
+// RepeatedName is an alias name used for several capcodes. That's allowed
+// (a brigade can have several pagers); the report lists it for checking.
+type RepeatedName struct {
+	Name     string
+	Patterns []string
+}
+
+// ImportResult says what an import did, or why it stopped.
 type ImportResult struct {
 	Rows             int
 	AliasesAdded     int
@@ -56,21 +126,31 @@ type ImportResult struct {
 	WithoutTemplate  int // agency empty or "null"
 	TemplatesCreated []string
 	TemplatesKept    []string // already existed; left unchanged
-	Skipped          int
-	Problems         []string
+	Skipped          int      // invalid rows, and duplicates an override skipped or didn't keep
+	Problems         []string // invalid rows, by line number
+	Resolved         int      // duplicated capcodes resolved by an override
+
+	// Each of these stops the import before anything changes.
+	Unresolved     []Duplicate
+	StaleOverrides []string // overrides for capcodes with no duplicate rows, or naming no row
+
+	RepeatedNames []RepeatedName
 }
 
-// The CSV columns the import reads. Every other column (an export's own
-// row id, plugin settings) is never read, stored or printed.
-var importColumns = map[string]bool{"address": true, "alias": true, "agency": true, "icon": true, "color": true, "colour": true, "ignore": true}
+// ErrUnresolved stops an import whose duplicates aren't all resolved.
+var ErrUnresolved = errors.New("the CSV has more than one row for some capcodes; resolve each one in an overrides file (R27a)")
+
+// The CSV columns the import reads. Every other column (for example an
+// export's plugin settings) is never read, stored, logged or printed.
+var importColumns = map[string]bool{"id": true, "address": true, "alias": true, "agency": true, "icon": true, "color": true, "colour": true, "ignore": true}
 
 // errDryRun rolls back a dry run.
 var errDryRun = errors.New("dry run")
 
 type importRow struct {
-	line                               int
-	pattern, name, agency, icon, color string
-	ignored                            bool
+	line                                   int
+	id, pattern, name, agency, icon, color string
+	ignored                                bool
 }
 
 // clean trims a value; the literal "null" (as some exports write) is empty.
@@ -83,17 +163,24 @@ func clean(s string) string {
 }
 
 // ImportCSV adds or updates aliases from a CSV export with a header row
-// (address, alias, agency, icon, color, ignore). It creates one template per
-// agency, with the most common icon and colour among that agency's aliases
-// and the profile from m. An empty or "null" agency means no template. It
-// runs in one transaction and then re-parses every message (R23a). With
-// dryRun, nothing is changed.
-func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, m Mapping, dryRun bool) (ImportResult, error) {
+// (id, address, alias, agency, icon, color, ignore). It creates one template
+// per agency, with the most common icon and colour among that agency's
+// aliases and the profile from the mapping. An empty or "null" agency means
+// no template. An alias already in the database for the same capcode is
+// updated in place. Several rows for one capcode must be resolved by an
+// override, or nothing is imported (ErrUnresolved). It runs in one
+// transaction and then re-parses every message (R23a).
+func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, opts ImportOptions) (ImportResult, error) {
 	var res ImportResult
-	rows, err := readImportRows(r, &res)
+	byPattern, order, err := readImportRows(r, &res)
 	if err != nil {
 		return res, err
 	}
+	rows := resolveDuplicates(byPattern, order, opts.Overrides, &res)
+	if len(res.Unresolved) > 0 || len(res.StaleOverrides) > 0 {
+		return res, ErrUnresolved
+	}
+	res.RepeatedNames = repeatedNames(rows)
 
 	type look struct{ icon, color string }
 	byAgency := map[string]map[look]int{}
@@ -129,7 +216,7 @@ func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, m Mapping, dryRun 
 				}
 			}
 			var prof *string
-			if p, ok := m.AgencyProfiles[agency]; ok && p != "" {
+			if p, ok := opts.Mapping.AgencyProfiles[agency]; ok && p != "" {
 				prof = &p
 			}
 			id, err := q.CreateTemplate(ctx, db.CreateTemplateParams{Name: agency, Agency: agency, Icon: optional(best.icon), Colour: optional(best.color), AgencyProfile: prof})
@@ -163,7 +250,7 @@ func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, m Mapping, dryRun 
 		if err := reparse(ctx, q, "%", "alias import"); err != nil {
 			return dbErr("request re-parse", err)
 		}
-		if dryRun {
+		if opts.DryRun {
 			return errDryRun
 		}
 		return nil
@@ -181,13 +268,91 @@ func optional(s string) *string {
 	return &s
 }
 
-func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
+// resolveDuplicates returns one row per capcode, applying overrides. Rows
+// for a capcode without an override are reported, never picked.
+func resolveDuplicates(byPattern map[string][]importRow, order []string, ov Overrides, res *ImportResult) []importRow {
+	overrides := map[string]Override{}
+	for k, v := range ov.Duplicates {
+		key, err := NormalisePattern(strings.TrimSpace(k))
+		if err != nil {
+			res.StaleOverrides = append(res.StaleOverrides, fmt.Sprintf("%s: not a capcode or pattern", k))
+			continue
+		}
+		overrides[key] = v
+	}
+	var out []importRow
+	for _, p := range order {
+		cands := byPattern[p]
+		o, has := overrides[p]
+		delete(overrides, p)
+		if len(cands) == 1 {
+			if has {
+				res.StaleOverrides = append(res.StaleOverrides, fmt.Sprintf("%s: only one row gives this capcode; remove the override", p))
+			}
+			out = append(out, cands[0])
+			continue
+		}
+		if !has {
+			d := Duplicate{Pattern: p}
+			for _, c := range cands {
+				d.Rows = append(d.Rows, DuplicateRow{Line: c.line, ID: c.id, Name: c.name, Agency: c.agency})
+			}
+			res.Unresolved = append(res.Unresolved, d)
+			continue
+		}
+		res.Resolved++
+		if o.Skip {
+			res.Skipped += len(cands)
+			continue
+		}
+		var keep []importRow
+		for _, c := range cands {
+			if (o.KeepID != "" && c.id == o.KeepID) || (o.KeepRow != 0 && c.line == o.KeepRow) {
+				keep = append(keep, c)
+			}
+		}
+		if len(keep) != 1 {
+			res.StaleOverrides = append(res.StaleOverrides, fmt.Sprintf("%s: the override matches %d of its %d rows; it must match exactly one", p, len(keep), len(cands)))
+			continue
+		}
+		res.Skipped += len(cands) - 1
+		out = append(out, keep[0])
+	}
+	var left []string
+	for k := range overrides {
+		left = append(left, k)
+	}
+	sort.Strings(left)
+	for _, k := range left {
+		res.StaleOverrides = append(res.StaleOverrides, fmt.Sprintf("%s: no row in the CSV gives this capcode; remove the override", k))
+	}
+	return out
+}
+
+func repeatedNames(rows []importRow) []RepeatedName {
+	by := map[string][]string{}
+	for _, r := range rows {
+		by[r.name] = append(by[r.name], r.pattern)
+	}
+	var out []RepeatedName
+	for name, ps := range by {
+		if len(ps) > 1 {
+			sort.Strings(ps)
+			out = append(out, RepeatedName{Name: name, Patterns: ps})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// readImportRows reads the CSV, grouping valid rows by normalised capcode.
+func readImportRows(r io.Reader, res *ImportResult) (map[string][]importRow, []string, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1
 	cr.ReuseRecord = true
 	header, err := cr.Read()
 	if err != nil {
-		return nil, errors.New("CSV: can't read the header row")
+		return nil, nil, errors.New("CSV: can't read the header row")
 	}
 	col := map[string]int{}
 	for i, h := range header {
@@ -201,7 +366,7 @@ func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
 	}
 	for _, need := range []string{"address", "alias"} {
 		if _, ok := col[need]; !ok {
-			return nil, fmt.Errorf("CSV: no %q column", need)
+			return nil, nil, fmt.Errorf("CSV: no %q column", need)
 		}
 	}
 	get := func(rec []string, name string) string {
@@ -212,8 +377,8 @@ func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
 		return clean(rec[i])
 	}
 
-	var rows []importRow
-	seen := map[string]int{} // pattern -> index in rows
+	byPattern := map[string][]importRow{}
+	var order []string
 	line := 1
 	for {
 		rec, err := cr.Read()
@@ -230,6 +395,7 @@ func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
 		res.Rows++
 		row := importRow{
 			line:   line,
+			id:     get(rec, "id"),
 			name:   get(rec, "alias"),
 			agency: get(rec, "agency"),
 			icon:   get(rec, "icon"),
@@ -242,7 +408,7 @@ func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
 		pattern, perr := NormalisePattern(get(rec, "address"))
 		switch {
 		case perr != nil:
-			res.Problems = append(res.Problems, fmt.Sprintf("row %d: address isn't a capcode or pattern, skipped", line))
+			res.Problems = append(res.Problems, fmt.Sprintf("row %d: address isn't a capcode or pattern (at most 7 digits, %% and _), skipped", line))
 			res.Skipped++
 			continue
 		case row.name == "":
@@ -251,14 +417,23 @@ func readImportRows(r io.Reader, res *ImportResult) ([]importRow, error) {
 			continue
 		}
 		row.pattern = pattern
-		if i, dup := seen[pattern]; dup {
-			res.Problems = append(res.Problems, fmt.Sprintf("row %d: same capcode as row %d; row %d wins", line, rows[i].line, line))
-			res.Skipped++
-			rows[i] = row
-			continue
+		if _, seen := byPattern[pattern]; !seen {
+			order = append(order, pattern)
 		}
-		seen[pattern] = len(rows)
-		rows = append(rows, row)
+		byPattern[pattern] = append(byPattern[pattern], row)
 	}
-	return rows, nil
+	return byPattern, order, nil
+}
+
+// String renders a duplicate row for the import report.
+func (d DuplicateRow) String() string {
+	s := "row " + strconv.Itoa(d.Line)
+	if d.ID != "" {
+		s += " (id " + d.ID + ")"
+	}
+	s += ": " + strconv.Quote(d.Name)
+	if d.Agency != "" {
+		s += ", " + d.Agency
+	}
+	return s
 }

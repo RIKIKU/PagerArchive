@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
@@ -54,23 +55,31 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
-// importCmd imports aliases from a CSV export (R30). It prints counts and
-// row numbers only, never alias data.
+// importCmd imports aliases from a CSV export (R30). The report names alias
+// data only where the owner needs to check it: duplicated capcodes (R27a)
+// and repeated names.
 func importCmd(ctx context.Context, cat *catalog.Catalog, args []string, stdout, stderr io.Writer) error {
 	fs := flag.NewFlagSet("alias import", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	mappingFile := fs.String("mapping", "", `JSON file: {"agency_profiles": {"<agency>": "<profile>"}}`)
+	overridesFile := fs.String("overrides", "", `JSON file resolving duplicated capcodes: {"duplicates": {"<capcode>": {"keep_id": "…"} | {"keep_row": N} | {"skip": true}}}`)
 	dryRun := fs.Bool("dry-run", false, "check the file and report, without changing anything")
 	pos, err := parseInterspersed(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 1 {
-		return errors.New("usage: alias import <file.csv> [--mapping mapping.json] [--dry-run]")
+		return errors.New("usage: alias import <file.csv> [--mapping M.json] [--overrides O.json] [--dry-run]")
 	}
-	var m catalog.Mapping
+	var opts catalog.ImportOptions
+	opts.DryRun = *dryRun
 	if *mappingFile != "" {
-		if m, err = catalog.LoadMapping(*mappingFile); err != nil {
+		if opts.Mapping, err = catalog.LoadMapping(*mappingFile); err != nil {
+			return err
+		}
+	}
+	if *overridesFile != "" {
+		if opts.Overrides, err = catalog.LoadOverrides(*overridesFile); err != nil {
 			return err
 		}
 	}
@@ -79,19 +88,41 @@ func importCmd(ctx context.Context, cat *catalog.Catalog, args []string, stdout,
 		return err
 	}
 	defer f.Close()
-	res, err := cat.ImportCSV(ctx, f, m, *dryRun)
+	res, err := cat.ImportCSV(ctx, f, opts)
+	if errors.Is(err, catalog.ErrUnresolved) {
+		fmt.Fprintln(stdout, "import stopped: nothing was changed")
+		if len(res.Unresolved) > 0 {
+			fmt.Fprintf(stdout, "%d capcodes have more than one row; add each to the overrides file:\n", len(res.Unresolved))
+			for _, d := range res.Unresolved {
+				fmt.Fprintf(stdout, "  %s\n", d.Pattern)
+				for _, r := range d.Rows {
+					fmt.Fprintf(stdout, "    %s\n", r)
+				}
+			}
+		}
+		for _, s := range res.StaleOverrides {
+			fmt.Fprintf(stdout, "override problem: %s\n", s)
+		}
+		return err
+	}
 	if err != nil {
 		return err
 	}
 	if *dryRun {
 		fmt.Fprintln(stdout, "dry run: nothing was changed")
 	}
-	fmt.Fprintf(stdout, "rows read: %d\naliases added: %d\naliases updated: %d\nmarked ignored: %d\nwithout a template: %d\nrows skipped: %d\n",
-		res.Rows, res.AliasesAdded, res.AliasesUpdated, res.Ignored, res.WithoutTemplate, res.Skipped)
+	fmt.Fprintf(stdout, "rows read: %d\naliases added: %d\naliases updated: %d\nmarked ignored: %d\nwithout a template: %d\nduplicated capcodes resolved by overrides: %d\nrows skipped: %d\n",
+		res.Rows, res.AliasesAdded, res.AliasesUpdated, res.Ignored, res.WithoutTemplate, res.Resolved, res.Skipped)
 	fmt.Fprintf(stdout, "templates created: %d %v\ntemplates already present (unchanged): %d %v\n",
 		len(res.TemplatesCreated), res.TemplatesCreated, len(res.TemplatesKept), res.TemplatesKept)
 	for _, p := range res.Problems {
 		fmt.Fprintln(stdout, "  "+p)
+	}
+	if len(res.RepeatedNames) > 0 {
+		fmt.Fprintf(stdout, "%d alias names are used for more than one capcode (allowed; please check):\n", len(res.RepeatedNames))
+		for _, n := range res.RepeatedNames {
+			fmt.Fprintf(stdout, "  %q: %s\n", n.Name, strings.Join(n.Patterns, ", "))
+		}
 	}
 	if !*dryRun {
 		fmt.Fprintln(stdout, "every message will be re-parsed by the running API")
