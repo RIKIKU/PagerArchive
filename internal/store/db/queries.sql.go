@@ -42,7 +42,7 @@ const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
 SELECT pattern FROM aliases WHERE template_id = $1
 `
 
-func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID int64) ([]string, error) {
+func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID *int64) ([]string, error) {
 	rows, err := q.db.Query(ctx, aliasPatternsForTemplate, templateID)
 	if err != nil {
 		return nil, err
@@ -65,7 +65,7 @@ func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID int64
 const aliasesMatching = `-- name: AliasesMatching :many
 SELECT a.id, a.pattern, a.name, t.agency_profile
 FROM aliases a
-JOIN templates t ON t.id = a.template_id
+LEFT JOIN templates t ON t.id = a.template_id
 WHERE $1::text LIKE a.pattern
 `
 
@@ -104,7 +104,7 @@ func (q *Queries) AliasesMatching(ctx context.Context, capcode string) ([]Aliase
 const allAliases = `-- name: AllAliases :many
 SELECT a.id, a.pattern, a.name, a.ignored, t.agency_profile
 FROM aliases a
-JOIN templates t ON t.id = a.template_id
+LEFT JOIN templates t ON t.id = a.template_id
 `
 
 type AllAliasesRow struct {
@@ -177,7 +177,7 @@ INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4
 type CreateAliasParams struct {
 	Pattern    string
 	Name       string
-	TemplateID int64
+	TemplateID *int64
 	Ignored    bool
 }
 
@@ -396,7 +396,7 @@ func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAt
 const listAliases = `-- name: ListAliases :many
 SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name
 FROM aliases a
-JOIN templates t ON t.id = a.template_id
+LEFT JOIN templates t ON t.id = a.template_id
 ORDER BY a.pattern
 `
 
@@ -405,7 +405,7 @@ type ListAliasesRow struct {
 	Pattern      string
 	Name         string
 	Ignored      bool
-	TemplateName string
+	TemplateName *string
 }
 
 func (q *Queries) ListAliases(ctx context.Context) ([]ListAliasesRow, error) {
@@ -900,7 +900,7 @@ UPDATE aliases SET name = $2, template_id = $3, ignored = $4 WHERE id = $1
 type UpdateAliasParams struct {
 	ID         int64
 	Name       string
-	TemplateID int64
+	TemplateID *int64
 	Ignored    bool
 }
 
@@ -980,4 +980,30 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		arg.AgencyProfile,
 	)
 	return err
+}
+
+const upsertAlias = `-- name: UpsertAlias :one
+INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4)
+ON CONFLICT (pattern) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
+RETURNING (xmax = 0)::bool AS inserted
+`
+
+type UpsertAliasParams struct {
+	Pattern    string
+	Name       string
+	TemplateID *int64
+	Ignored    bool
+}
+
+// Import: add or replace an alias by pattern. inserted is false for an update.
+func (q *Queries) UpsertAlias(ctx context.Context, arg UpsertAliasParams) (bool, error) {
+	row := q.db.QueryRow(ctx, upsertAlias,
+		arg.Pattern,
+		arg.Name,
+		arg.TemplateID,
+		arg.Ignored,
+	)
+	var inserted bool
+	err := row.Scan(&inserted)
+	return inserted, err
 }

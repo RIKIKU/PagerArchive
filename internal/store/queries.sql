@@ -30,7 +30,7 @@ INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4
 -- name: AliasesMatching :many
 SELECT a.id, a.pattern, a.name, t.agency_profile
 FROM aliases a
-JOIN templates t ON t.id = a.template_id
+LEFT JOIN templates t ON t.id = a.template_id
 WHERE sqlc.arg(capcode)::text LIKE a.pattern;
 
 -- name: LockDedupKey :exec
@@ -82,7 +82,7 @@ DELETE FROM templates WHERE id = $1;
 -- name: ListAliases :many
 SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name
 FROM aliases a
-JOIN templates t ON t.id = a.template_id
+LEFT JOIN templates t ON t.id = a.template_id
 ORDER BY a.pattern;
 
 -- name: AliasByPattern :one
@@ -100,7 +100,7 @@ DELETE FROM aliases WHERE id = $1;
 -- name: AllAliases :many
 SELECT a.id, a.pattern, a.name, a.ignored, t.agency_profile
 FROM aliases a
-JOIN templates t ON t.id = a.template_id;
+LEFT JOIN templates t ON t.id = a.template_id;
 
 -- name: RequestReparse :exec
 -- R23a: queue a re-parse and wake the API's worker.
@@ -185,3 +185,9 @@ FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = $1
 ORDER BY r.received_at, r.client_id;
+
+-- name: UpsertAlias :one
+-- Import: add or replace an alias by pattern. inserted is false for an update.
+INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4)
+ON CONFLICT (pattern) DO UPDATE SET name = EXCLUDED.name, template_id = EXCLUDED.template_id, ignored = EXCLUDED.ignored
+RETURNING (xmax = 0)::bool AS inserted;

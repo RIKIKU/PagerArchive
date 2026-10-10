@@ -4,7 +4,7 @@ Date: 2026-10-10
 
 ## Status
 
-Proposed
+Accepted (2026-10-11, by the owner, including the reload-on-reconnect change in section 5 and the receiver names in section 2)
 
 ## Context
 
@@ -27,6 +27,14 @@ R35c shows every client's receive time. R39 keeps client status to admins becaus
 - At start-up the API hashes the network profile, every agency profile and the address dataset. If the hash differs from the one stored in `settings`, it queues a full re-parse (section 14).
 - Re-parsing re-resolves the alias and re-runs the formats on the stored, redacted text. It never redacts: retroactive redaction stays a nightly job (M4).
 - Until the M3 admin UI, aliases and templates are managed with `pagerarchive template …` and `pagerarchive alias …`.
+
+### 3a. Alias import (R30, owner decisions 2026-10-10 and 2026-10-11)
+
+- `pagerarchive alias import <file.csv> [--mapping M.json] [--dry-run]` reads a CSV with a header row and these columns, by name: `address` (capcode or pattern), `alias`, `agency`, `icon`, `color` (or `colour`), `ignore`. **Every other column is never read, stored, logged or printed**; an export's plugin settings column can hold credentials. Even so, the owner strips that column before import.
+- One template per agency name, created only if missing (existing templates are left unchanged). Its icon and colour are the most common pair among that agency's aliases. The mapping file (`{"agency_profiles": {"<agency>": "<profile>"}}`, owned by the deployment) attaches agency profiles; unmapped agencies get a template with no profile (text only).
+- An empty agency, or the literal `null` some exports write, means **no template**: the alias name is still used, and its pages are text only. Aliases may therefore have no template (migration 00004).
+- Existing aliases with the same pattern are updated in place, so an import can be re-run. A capcode that appears twice keeps the later row.
+- The whole import is one transaction, followed by one full re-parse request (R23a). The report gives counts and row numbers only, never alias data.
 
 ### 4. Search (R33)
 

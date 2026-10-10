@@ -69,7 +69,9 @@ commands:
   template add|set <name> --agency A [--profile P] [--icon I] [--colour C]
   template delete <name>      delete a template no alias uses
   template list               list templates
-  alias add|set <pattern> <name> --template T [--ignored]
+  alias add|set <pattern> <name> [--template T] [--ignored]
+  alias import <file.csv> [--mapping M.json] [--dry-run]
+                              add or update aliases from a CSV export (R30)
   alias delete <pattern>      delete an alias
   alias list                  list aliases
   version                     print the version

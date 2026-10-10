@@ -84,7 +84,7 @@ func (c *Catalog) UpdateTemplate(ctx context.Context, t Template) error {
 		if err := q.UpdateTemplate(ctx, db.UpdateTemplateParams{ID: cur.ID, Agency: t.Agency, Icon: t.Icon, Colour: t.Colour, AgencyProfile: t.AgencyProfile}); err != nil {
 			return dbErr("update template", err)
 		}
-		patterns, err := q.AliasPatternsForTemplate(ctx, cur.ID)
+		patterns, err := q.AliasPatternsForTemplate(ctx, &cur.ID)
 		if err != nil {
 			return dbErr("aliases of template", err)
 		}
@@ -104,7 +104,7 @@ func (c *Catalog) DeleteTemplate(ctx context.Context, name string) error {
 		if err != nil {
 			return dbErr("template "+name, err)
 		}
-		patterns, err := q.AliasPatternsForTemplate(ctx, cur.ID)
+		patterns, err := q.AliasPatternsForTemplate(ctx, &cur.ID)
 		if err != nil {
 			return dbErr("aliases of template", err)
 		}
@@ -118,6 +118,19 @@ func (c *Catalog) DeleteTemplate(ctx context.Context, name string) error {
 	})
 }
 
+// templateID looks up a template by name; "" means no template (R30:
+// an alias without an agency still has a name).
+func templateID(ctx context.Context, q *db.Queries, name string) (*int64, error) {
+	if name == "" {
+		return nil, nil
+	}
+	tpl, err := q.TemplateByName(ctx, name)
+	if err != nil {
+		return nil, dbErr("template "+name, err)
+	}
+	return &tpl.ID, nil
+}
+
 // AddAlias creates an alias and re-parses the messages it matches.
 func (c *Catalog) AddAlias(ctx context.Context, a Alias) error {
 	pattern, err := NormalisePattern(a.Pattern)
@@ -125,11 +138,11 @@ func (c *Catalog) AddAlias(ctx context.Context, a Alias) error {
 		return err
 	}
 	return c.Store.InTx(ctx, func(q *db.Queries) error {
-		tpl, err := q.TemplateByName(ctx, a.Template)
+		tid, err := templateID(ctx, q, a.Template)
 		if err != nil {
-			return dbErr("template "+a.Template, err)
+			return err
 		}
-		if _, err := q.CreateAlias(ctx, db.CreateAliasParams{Pattern: pattern, Name: a.Name, TemplateID: tpl.ID, Ignored: a.Ignored}); err != nil {
+		if _, err := q.CreateAlias(ctx, db.CreateAliasParams{Pattern: pattern, Name: a.Name, TemplateID: tid, Ignored: a.Ignored}); err != nil {
 			return dbErr("add alias "+pattern, err)
 		}
 		return reparse(ctx, q, pattern, "alias added")
@@ -147,18 +160,22 @@ func (c *Catalog) UpdateAlias(ctx context.Context, a Alias) error {
 		if err != nil {
 			return dbErr("alias "+pattern, err)
 		}
-		tpl, err := q.TemplateByName(ctx, a.Template)
+		tid, err := templateID(ctx, q, a.Template)
 		if err != nil {
-			return dbErr("template "+a.Template, err)
+			return err
 		}
-		if err := q.UpdateAlias(ctx, db.UpdateAliasParams{ID: cur.ID, Name: a.Name, TemplateID: tpl.ID, Ignored: a.Ignored}); err != nil {
+		if err := q.UpdateAlias(ctx, db.UpdateAliasParams{ID: cur.ID, Name: a.Name, TemplateID: tid, Ignored: a.Ignored}); err != nil {
 			return dbErr("update alias", err)
 		}
-		if tpl.ID == cur.TemplateID {
+		if sameID(tid, cur.TemplateID) {
 			return nil // name and ignored flag are read through the join
 		}
 		return reparse(ctx, q, pattern, "alias template changed")
 	})
+}
+
+func sameID(a, b *int64) bool {
+	return (a == nil && b == nil) || (a != nil && b != nil && *a == *b)
 }
 
 // DeleteAlias deletes an alias; its messages are re-resolved to whatever

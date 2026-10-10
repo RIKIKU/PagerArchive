@@ -54,6 +54,51 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 	}
 }
 
+// importCmd imports aliases from a CSV export (R30). It prints counts and
+// row numbers only, never alias data.
+func importCmd(ctx context.Context, cat *catalog.Catalog, args []string, stdout, stderr io.Writer) error {
+	fs := flag.NewFlagSet("alias import", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	mappingFile := fs.String("mapping", "", `JSON file: {"agency_profiles": {"<agency>": "<profile>"}}`)
+	dryRun := fs.Bool("dry-run", false, "check the file and report, without changing anything")
+	pos, err := parseInterspersed(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return errors.New("usage: alias import <file.csv> [--mapping mapping.json] [--dry-run]")
+	}
+	var m catalog.Mapping
+	if *mappingFile != "" {
+		if m, err = catalog.LoadMapping(*mappingFile); err != nil {
+			return err
+		}
+	}
+	f, err := os.Open(pos[0])
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	res, err := cat.ImportCSV(ctx, f, m, *dryRun)
+	if err != nil {
+		return err
+	}
+	if *dryRun {
+		fmt.Fprintln(stdout, "dry run: nothing was changed")
+	}
+	fmt.Fprintf(stdout, "rows read: %d\naliases added: %d\naliases updated: %d\nmarked ignored: %d\nwithout a template: %d\nrows skipped: %d\n",
+		res.Rows, res.AliasesAdded, res.AliasesUpdated, res.Ignored, res.WithoutTemplate, res.Skipped)
+	fmt.Fprintf(stdout, "templates created: %d %v\ntemplates already present (unchanged): %d %v\n",
+		len(res.TemplatesCreated), res.TemplatesCreated, len(res.TemplatesKept), res.TemplatesKept)
+	for _, p := range res.Problems {
+		fmt.Fprintln(stdout, "  "+p)
+	}
+	if !*dryRun {
+		fmt.Fprintln(stdout, "every message will be re-parsed by the running API")
+	}
+	return nil
+}
+
 func templateCmd(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
 		return errors.New("usage: template add|set|delete|list")
@@ -128,14 +173,14 @@ func aliasCmd(args []string, stdout, stderr io.Writer) error {
 	case "add", "set":
 		fs := flag.NewFlagSet("alias "+args[0], flag.ContinueOnError)
 		fs.SetOutput(stderr)
-		tpl := fs.String("template", "", "template name (required)")
+		tpl := fs.String("template", "", "template name (empty: no template, text only)")
 		ignored := fs.Bool("ignored", false, "hide this alias's pages from the default list (R27)")
 		pos, err := parseInterspersed(fs, args[1:])
 		if err != nil {
 			return err
 		}
-		if len(pos) != 2 || *tpl == "" {
-			return fmt.Errorf("usage: alias %s <pattern> <name> --template T [--ignored]", args[0])
+		if len(pos) != 2 {
+			return fmt.Errorf("usage: alias %s <pattern> <name> [--template T] [--ignored]", args[0])
 		}
 		a := catalog.Alias{Pattern: pos[0], Name: pos[1], Template: *tpl, Ignored: *ignored}
 		if args[0] == "add" {
@@ -155,6 +200,8 @@ func aliasCmd(args []string, stdout, stderr io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(stdout, "alias %s deleted; affected messages will be re-parsed\n", args[1])
+	case "import":
+		return importCmd(ctx, cat, args[1:], stdout, stderr)
 	case "list":
 		rows, err := cat.Store.ListAliases(ctx)
 		if err != nil {
@@ -163,7 +210,7 @@ func aliasCmd(args []string, stdout, stderr io.Writer) error {
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
 		fmt.Fprintln(tw, "PATTERN\tNAME\tTEMPLATE\tIGNORED")
 		for _, a := range rows {
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%v\n", a.Pattern, a.Name, a.TemplateName, a.Ignored)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%v\n", a.Pattern, a.Name, deref(a.TemplateName), a.Ignored)
 		}
 		return tw.Flush()
 	default:

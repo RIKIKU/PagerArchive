@@ -109,7 +109,7 @@ func setup(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	for i := 1; i <= 4; i++ {
-		if _, err := st.CreateAlias(ctx, db.CreateAliasParams{Pattern: fmt.Sprintf("010000%d", i), Name: fmt.Sprintf("Station %d", i), TemplateID: tpl}); err != nil {
+		if _, err := st.CreateAlias(ctx, db.CreateAliasParams{Pattern: fmt.Sprintf("010000%d", i), Name: fmt.Sprintf("Station %d", i), TemplateID: &tpl}); err != nil {
 			t.Fatal(err)
 		}
 	}

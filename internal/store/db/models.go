@@ -12,7 +12,7 @@ type Alias struct {
 	ID         int64
 	Pattern    string
 	Name       string
-	TemplateID int64
+	TemplateID *int64
 	Ignored    bool
 }
 
