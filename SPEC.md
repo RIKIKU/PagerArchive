@@ -133,15 +133,15 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R26.** If both exist and are more than `OPEN` (suggestion: 1 km) apart, the message is flagged `location_mismatch`.
 
 ### 7.5 Aliases and templates
-- **R27.** An alias maps a capcode or capcode pattern to a name and a template. Patterns use `%` (any run of characters) and `_` (one character). Precedence: an exact capcode wins, then fewer wildcards; patterns starting with a wildcard come last. `OPEN`: should an alias be able to mark a capcode as ignored, and does that hide it or stop it being stored?
+- **R27.** An alias maps a capcode or capcode pattern to a name and a template. Patterns use `%` (any run of characters) and `_` (one character). Precedence: an exact capcode wins, then fewer wildcards; patterns starting with a wildcard come last. An alias can be marked **ignored**: its pages are still stored and shown in full (P2), but hidden from the default message list and live updates; a search filter shows them. Dropping pages stays the network profile's job (R16). (Owner decision, 2026-10-10.)
 - **R28.** A **template** holds agency name, icon, colour and optionally an agency profile. Aliases are **linked** to their template: editing the template updates every alias that uses it.
 - **R29.** Templates enable parsing but never gate storage or display (P2).
-- **R30.** `OPEN`: importing aliases from a CSV file in v1?
+- **R30.** Aliases can be **imported from a CSV file** in v1 (owner decision, 2026-10-10). The import creates one template per distinct agency name and attaches agency profiles from a mapping file the deployment owns (agency name to profile name); unmapped agencies are text only. An ignore flag in the CSV marks the alias ignored (R27).
 
 ### 7.6 Browser UI
 - **R31.** The message list shows, for every message: the text **without the priority marker** (as a pager displays it), a priority badge, date and time, alias (or capcode), and group. On phone-width screens (375 px), date, time and alias stay visible with no horizontal scrolling.
 - **R32.** **Live updates:** a new message appears in every open browser within **2 seconds** of a client posting it, with no refresh. Any mechanism is fine. A message that doesn't match a viewer's current filter isn't added to their list.
-- **R33.** **Search** combines any of: text, capcode, alias, agency, group, priority, event category, job number, date range, and **"capcodes with no alias"**. The last one also lists each unknown capcode with its message count and last-seen time, so it can be identified and aliased. `OPEN`: confirm the list.
+- **R33.** **Search** combines any of: text, capcode, alias, agency, group, priority, event category, job number, date range, and **"capcodes with no alias"**. The last one also lists each unknown capcode with its message count and last-seen time, so it can be identified and aliased. **Admins** can also filter by flag: `parse_failed`, `address_unsplit`, `location_mismatch`. (List confirmed by the owner, 2026-10-10.)
 - **R34.** A **job view** shows all messages for a job number.
 - **R35.** A **map** shows located messages, using **self-hosted map tiles** (e.g. an OpenStreetMap extract), so no third party sees what users view.
 - **R35a.** **Times** are stored in UTC and shown in the deployment's time zone (setting `TZ`, e.g. `Australia/Melbourne`), with en-AU style dates. English only. Report days and the retention cut-off use the same time zone. (Showing times in each browser's own time zone may come later.)
@@ -255,7 +255,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 
 ## 13. Open questions
 
-R11 extraction language · R26 location-mismatch distance · R27 alias "ignore" · R30 alias import in v1? · R33 search criteria list · R37 per-user integrations in v1? · R44 roles and the first admin.
+R11 extraction language · R26 location-mismatch distance · R37 per-user integrations in v1? · R44 roles and the first admin.
 
 ## 14. Accepted defaults
 
