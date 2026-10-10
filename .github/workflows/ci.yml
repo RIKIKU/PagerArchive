@@ -71,6 +71,16 @@ jobs:
         run: npx playwright install --with-deps chromium firefox webkit
       - name: Browser tests against a real API and PostGIS
         run: sh scripts/e2e.sh
+      - name: Upload Playwright report, screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   images:
     name: Images and client replay (${{ matrix.arch }})
