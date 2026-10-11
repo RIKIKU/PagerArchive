@@ -148,6 +148,15 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R35a.** **Times** are stored in UTC and shown in the deployment's time zone (setting `TZ`, e.g. `Australia/Melbourne`), with en-AU style dates. English only. Report days and the retention cut-off use the same time zone. (Showing times in each browser's own time zone may come later.)
 - **R35b.** Heartbeat pages are shown with a **heartbeat badge** and are excluded from reports. They appear in the default message list.
 - **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed`, `location_mismatch` and `address_unsplit` flags are shown **to admins only**. (`address_unsplit`: a format matched, but no street from the address dataset ended the address text, so `address` is `null`; see ADR 0001.)
+- **R35d. Navigation from a message** (owner, 2026-10-12). Tapping a **message** (anywhere on
+  its row except the links below) opens its **detail view** (R35c). Tapping the **alias**
+  opens the **alias view** (R35e); if the capcode has no alias, tapping the capcode opens it.
+  Tapping the **job number** opens the **job view** (R34). The whole row is the tap target.
+- **R35e. Alias view** (owner, 2026-10-12). Shows the alias name, its capcode or pattern,
+  agency, icon, colour and whether it's ignored, then the messages from the capcodes it
+  covers, newest first, with live updates and the same filters as the main list. For a
+  capcode with no alias: the capcode, its message count, and first and last seen (as in
+  R33). Read-only in v1; aliases are changed by import or CLI.
 - **R36.** Supports current Chrome, Firefox, Brave and Safari on desktop and mobile; dark and light mode; layout adapts to screen orientation.
 - **R37.** `OPEN`: **per-user integrations** (e.g. forwarding selected pages to a user's own notification service). In v1 or later?
 
@@ -216,6 +225,10 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A19. Repeated names allowed and reported.** **When** a CSV giving capcodes `0300001` and `0300002` the same alias name is imported, **then** both aliases are created and the import report lists that name with both capcodes.
 - **A20. CSV duplicates need overrides.** **Given** a CSV with two rows for capcode `0300001`, **when** it is imported without an override for `0300001`, **then** the import stops, changes nothing, and lists both rows; **when** it is imported with an override choosing one row, **then** that row's alias is created; an override for a capcode with no duplicate rows is an error. **Given** two rows for capcode `0300003` identical in every imported field, **when** the CSV is imported without an override for it, **then** one alias is created from the first row and the report counts one squashed row.
 - **A21. Re-import doesn't change existing aliases by default.** **Given** capcode `0300001` has the alias "Brigade" from an earlier import, **when** a CSV naming it "Brigade North" is imported, **then** the alias is still "Brigade" and the report lists the difference (`name: "Brigade" → "Brigade North"`); **when** the same CSV is imported with `--update`, **then** the alias becomes "Brigade North". New capcodes in the CSV are added either way.
+- **A22. Tap targets.** **Given** the message list at 375 px, **when** the user taps a
+  message's text, **then** its detail view opens; **when** they tap its alias, **then** the
+  alias view opens and lists only messages from that alias's capcodes; **when** they tap the
+  job number, **then** the job view opens.
 
 ## 10. Example profile (made-up network)
 
@@ -256,7 +269,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 |---|---|---|
 | **M0** | Stack ADR approved | n/a |
 | **M1** | Client, ingest, redaction, dedup, profiles and schemas, `validate-profile`, golden tests, CI | Golden tables, A2, A5, A6 (storage), A7, A8, A9, A14 |
-| **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A21 |
+| **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A22 |
 | **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { Meta } from './api.ts';
 	import { labels, isFiltered } from './filters.ts';
@@ -14,8 +15,9 @@
 
 <details class="filters" bind:open>
 	<summary>Search{#if isFiltered(query)} <span class="active">(active)</span>{/if}</summary>
-	<!-- A GET form: the criteria live in the URL (shareable, survive reloads). -->
-	<form method="GET" action="/" role="search" aria-label="Search messages">
+	<!-- A GET form: the criteria live in the URL (shareable, survive reloads).
+	     It searches within the current view (the alias view, say). -->
+	<form method="GET" action={page.url.pathname} role="search" aria-label="Search messages">
 		<div class="grid">
 			<label class="wide">{labels.q}<input name="q" type="search" value={v('q')} autocomplete="off" /></label>
 			<label>{labels.capcode}<input name="capcode" inputmode="numeric" pattern="[0-9]{'{1,7}'}" value={v('capcode')} /></label>
@@ -62,7 +64,7 @@
 		{/if}
 		<div class="actions">
 			<button type="submit">Search</button>
-			{#if isFiltered(query)}<a href="/">Clear</a>{/if}
+			{#if isFiltered(query)}<a href={page.url.pathname}>Clear</a>{/if}
 		</div>
 	</form>
 </details>

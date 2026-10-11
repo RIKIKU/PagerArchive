@@ -21,6 +21,7 @@ type Filter struct {
 	Text      string // case-insensitive substring of the text or an extra field
 	Capcode   string
 	Alias     string // substring of the alias name
+	AliasID   *int64 // messages that resolved to this alias (R35e)
 	Agency    string // substring of the template's agency
 	Group     string // exact, case-insensitive
 	Priority  string // Emergency, Non-emergency, Admin, or none
@@ -46,6 +47,13 @@ func Parse(v url.Values, admin bool, loc *time.Location) (Filter, error) {
 		Priority: v.Get("priority"),
 		Category: v.Get("category"),
 		Job:      strings.TrimSpace(v.Get("job")),
+	}
+	if s := strings.TrimSpace(v.Get("alias_id")); s != "" {
+		id, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			return f, errors.New("alias_id must be a number")
+		}
+		f.AliasID = &id
 	}
 	if c := strings.TrimSpace(v.Get("capcode")); c != "" {
 		p, err := catalog.NormalisePattern(c)
@@ -106,6 +114,9 @@ func (f Filter) Values() url.Values {
 	set("q", f.Text)
 	set("capcode", f.Capcode)
 	set("alias", f.Alias)
+	if f.AliasID != nil {
+		v.Set("alias_id", strconv.FormatInt(*f.AliasID, 10))
+	}
 	set("agency", f.Agency)
 	set("group", f.Group)
 	set("priority", f.Priority)
@@ -154,6 +165,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		Q:                likeContains(f.Text),
 		Capcode:          ptr(f.Capcode),
 		Alias:            likeContains(f.Alias),
+		AliasID:          f.AliasID,
 		Agency:           likeContains(f.Agency),
 		PagingGroup:      ptr(f.Group),
 		Priority:         ptr(f.Priority),

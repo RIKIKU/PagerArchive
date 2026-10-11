@@ -137,7 +137,7 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 -- R33. Every filter is optional (NULL = any). Keyset pagination on
 -- (sent_at, id), newest first. cat_want compares "event_type is in the
 -- category's codes" with true (that category) or false (Other).
-SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
+SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
@@ -150,6 +150,7 @@ WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE sqlc.narg(q)))
   AND (sqlc.narg(capcode)::text IS NULL OR m.capcode = sqlc.narg(capcode))
   AND (sqlc.narg(alias)::text IS NULL OR a.name ILIKE sqlc.narg(alias))
+  AND (sqlc.narg(alias_id)::bigint IS NULL OR m.alias_id = sqlc.narg(alias_id))
   AND (sqlc.narg(agency)::text IS NULL OR t.agency ILIKE sqlc.narg(agency))
   AND (sqlc.narg(paging_group)::text IS NULL OR upper(m.paging_group) = upper(sqlc.narg(paging_group)))
   AND (sqlc.narg(priority)::text IS NULL
@@ -172,8 +173,9 @@ ORDER BY m.sent_at DESC, m.id DESC
 LIMIT sqlc.arg(max_rows)::int;
 
 -- name: UnaliasedCapcodes :many
--- R33: capcodes with no alias, with message count and last-seen time.
-SELECT capcode, count(*) AS messages, max(sent_at)::timestamptz AS last_seen
+-- R33: capcodes with no alias, with message count and first- and last-seen times.
+SELECT capcode, count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
+       max(sent_at)::timestamptz AS last_seen
 FROM messages
 WHERE alias_id IS NULL
 GROUP BY capcode
@@ -196,3 +198,18 @@ SELECT a.id, a.name, a.ignored, t.name AS template_name
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE a.pattern_key = sqlc.arg(pattern_key)::text;
+
+-- name: AliasView :one
+-- R35e: an alias with its template's presentation.
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.agency, t.icon, t.colour
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE a.id = $1;
+
+-- name: UnaliasedCapcode :many
+-- R35e: one capcode's pages with no alias (no rows if it has none).
+SELECT count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
+       max(sent_at)::timestamptz AS last_seen
+FROM messages
+WHERE capcode = $1 AND alias_id IS NULL
+GROUP BY capcode;

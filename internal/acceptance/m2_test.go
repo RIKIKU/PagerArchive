@@ -82,7 +82,7 @@ func TestA6UnknownCapcodeSearch(t *testing.T) {
 	}
 	var caps []server.UnaliasedCapcode
 	e.getJSON("/api/v1/capcodes/unaliased", &caps)
-	if len(caps) != 1 || caps[0].Capcode != "0999999" || caps[0].Messages != 2 || !caps[0].LastSeen.Equal(e.now) {
+	if len(caps) != 1 || caps[0].Capcode != "0999999" || caps[0].Messages != 2 || !caps[0].LastSeen.Equal(e.now) || !caps[0].FirstSeen.Equal(e.now.Add(-time.Minute)) {
 		t.Fatalf("unaliased capcodes: %+v", caps)
 	}
 	t.Logf("A6: unaliased capcodes %+v", caps)
@@ -378,4 +378,58 @@ func TestLiveUpdatesRespectFilters(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("STN2 viewer didn't get the STN2 page")
 	}
+}
+
+// A22 (API part; the taps are browser tests). The alias view lists only
+// messages from the alias's capcodes, and a capcode with no alias has its own
+// summary (R35d, R35e).
+func TestA22AliasAndCapcodeViews(t *testing.T) {
+	e := setup(t)
+	e.mustPost("a", "0100001", row1, e.now.Add(-2*time.Minute))
+	e.mustPost("a", "0100002", "@@EX0000002 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2", e.now.Add(-time.Minute))
+	e.mustPost("a", "0100001", "HbRE EX0000001 CREWS RETURNING #STN1", e.now)
+	e.mustPost("a", "0999999", "QDFirst page to an unknown pager", e.now.Add(-3*time.Minute))
+	e.mustPost("a", "0999999", "@@Second page to an unknown pager", e.now)
+
+	ms := e.list("capcode=0100001")
+	if len(ms) != 2 || ms[0].AliasID == nil {
+		t.Fatalf("station 1 messages: %+v", ms)
+	}
+	id := *ms[0].AliasID
+	var a server.AliasView
+	if code := e.getJSON(fmt.Sprintf("/api/v1/aliases/%d", id), &a); code != http.StatusOK {
+		t.Fatalf("alias view: %d", code)
+	}
+	if a.Name != "Station 1" || a.Pattern != "0100001" || s(a.Agency) != "Example Fire Service" || a.Ignored {
+		t.Errorf("alias view %+v", a)
+	}
+	got := e.list(fmt.Sprintf("alias_id=%d", id))
+	if len(got) != 2 {
+		t.Fatalf("alias_id filter: %d messages, want 2", len(got))
+	}
+	for _, m := range got {
+		if m.Capcode != "0100001" {
+			t.Errorf("alias view lists capcode %s", m.Capcode)
+		}
+	}
+	if code := e.getJSON("/api/v1/aliases/999999", nil); code != http.StatusNotFound {
+		t.Errorf("missing alias: %d, want 404", code)
+	}
+
+	var c server.CapcodeView
+	if code := e.getJSON("/api/v1/capcodes/999999", &c); code != http.StatusOK {
+		t.Fatalf("capcode view: %d", code)
+	}
+	if c.Capcode != "0999999" || c.AliasID != nil || c.Messages != 2 ||
+		c.FirstSeen == nil || !c.FirstSeen.Equal(e.now.Add(-3*time.Minute)) || c.LastSeen == nil || !c.LastSeen.Equal(e.now) {
+		t.Errorf("capcode view %+v", c)
+	}
+	var aliased server.CapcodeView
+	if code := e.getJSON("/api/v1/capcodes/0100001", &aliased); code != http.StatusOK || aliased.AliasID == nil || *aliased.AliasID != id {
+		t.Errorf("aliased capcode: %d, %+v", code, aliased)
+	}
+	if code := e.getJSON("/api/v1/capcodes/0123456", nil); code != http.StatusNotFound {
+		t.Errorf("unheard capcode: %d, want 404", code)
+	}
+	t.Logf("A22: alias %d (%s) lists %d messages; capcode 0999999 has %d messages", id, a.Name, len(got), c.Messages)
 }

@@ -50,7 +50,7 @@ status=0
 (cd web && npx playwright test "$@") || status=$?
 
 # P1: no page text in the API logs.
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG' "$BIN"-*.log; then
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER' "$BIN"-*.log; then
 	echo "page text found in the API logs" >&2
 	status=1
 else

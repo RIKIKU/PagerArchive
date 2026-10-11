@@ -21,6 +21,7 @@ export interface Message {
 	priority: Priority | null;
 	heartbeat: boolean;
 	sent_at: string;
+	alias_id: number | null;
 	alias: string | null;
 	agency: string | null;
 	icon: string | null;
@@ -57,7 +58,27 @@ export interface MessagePage {
 export interface UnaliasedCapcode {
 	capcode: string;
 	messages: number;
+	first_seen: string;
 	last_seen: string;
+}
+
+export interface AliasView {
+	id: number;
+	pattern: string;
+	name: string;
+	template: string | null;
+	agency: string | null;
+	icon: string | null;
+	colour: string | null;
+	ignored: boolean;
+}
+
+export interface CapcodeView {
+	capcode: string;
+	alias_id: number | null;
+	messages: number;
+	first_seen: string | null;
+	last_seen: string | null;
 }
 
 export interface ClientStatus {
@@ -105,5 +126,7 @@ export const api = {
 	job: (job: string) =>
 		get<{ job_number: string; messages: Message[] }>(`/api/v1/jobs/${encodeURIComponent(job)}`),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
+	capcode: (capcode: string) => get<CapcodeView>(`/api/v1/capcodes/${encodeURIComponent(capcode)}`),
+	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
 	clients: () => get<ClientStatus[]>('/api/v1/admin/clients')
 };

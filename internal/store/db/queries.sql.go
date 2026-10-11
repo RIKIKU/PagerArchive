@@ -115,6 +115,41 @@ func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID *int6
 	return items, nil
 }
 
+const aliasView = `-- name: AliasView :one
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.agency, t.icon, t.colour
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE a.id = $1
+`
+
+type AliasViewRow struct {
+	ID           int64
+	Pattern      string
+	Name         string
+	Ignored      bool
+	TemplateName *string
+	Agency       *string
+	Icon         *string
+	Colour       *string
+}
+
+// R35e: an alias with its template's presentation.
+func (q *Queries) AliasView(ctx context.Context, id int64) (AliasViewRow, error) {
+	row := q.db.QueryRow(ctx, aliasView, id)
+	var i AliasViewRow
+	err := row.Scan(
+		&i.ID,
+		&i.Pattern,
+		&i.Name,
+		&i.Ignored,
+		&i.TemplateName,
+		&i.Agency,
+		&i.Icon,
+		&i.Colour,
+	)
+	return i, err
+}
+
 const aliasesMatching = `-- name: AliasesMatching :many
 SELECT a.id, a.pattern, a.name, t.agency_profile
 FROM aliases a
@@ -703,7 +738,7 @@ func (q *Queries) RevokeClient(ctx context.Context, id string) (int64, error) {
 }
 
 const searchMessages = `-- name: SearchMessages :many
-SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
+SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
@@ -716,26 +751,27 @@ WHERE ($1::bigint IS NULL OR m.id = $1)
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE $2))
   AND ($3::text IS NULL OR m.capcode = $3)
   AND ($4::text IS NULL OR a.name ILIKE $4)
-  AND ($5::text IS NULL OR t.agency ILIKE $5)
-  AND ($6::text IS NULL OR upper(m.paging_group) = upper($6))
-  AND ($7::text IS NULL
-       OR ($7 = 'none' AND m.priority IS NULL)
-       OR m.priority = $7)
-  AND ($8::bool IS NULL
-       OR COALESCE(m.event_type = ANY($9::text[])
-                   OR m.event_type LIKE ANY($10::text[]), false) = $8)
-  AND ($11::text IS NULL OR m.job_number = $11)
-  AND ($12::timestamptz IS NULL OR m.sent_at >= $12)
-  AND ($13::timestamptz IS NULL OR m.sent_at < $13)
-  AND (NOT $14::bool OR m.alias_id IS NULL)
-  AND ($15::bool OR a.ignored IS NOT TRUE)
-  AND (NOT $16::bool OR m.parse_failed)
-  AND (NOT $17::bool OR m.address_unsplit)
-  AND (NOT $18::bool OR m.location_mismatch)
-  AND ($19::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($19, $20::bigint))
+  AND ($5::bigint IS NULL OR m.alias_id = $5)
+  AND ($6::text IS NULL OR t.agency ILIKE $6)
+  AND ($7::text IS NULL OR upper(m.paging_group) = upper($7))
+  AND ($8::text IS NULL
+       OR ($8 = 'none' AND m.priority IS NULL)
+       OR m.priority = $8)
+  AND ($9::bool IS NULL
+       OR COALESCE(m.event_type = ANY($10::text[])
+                   OR m.event_type LIKE ANY($11::text[]), false) = $9)
+  AND ($12::text IS NULL OR m.job_number = $12)
+  AND ($13::timestamptz IS NULL OR m.sent_at >= $13)
+  AND ($14::timestamptz IS NULL OR m.sent_at < $14)
+  AND (NOT $15::bool OR m.alias_id IS NULL)
+  AND ($16::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $17::bool OR m.parse_failed)
+  AND (NOT $18::bool OR m.address_unsplit)
+  AND (NOT $19::bool OR m.location_mismatch)
+  AND ($20::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($20, $21::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $21::int
+LIMIT $22::int
 `
 
 type SearchMessagesParams struct {
@@ -743,6 +779,7 @@ type SearchMessagesParams struct {
 	Q                *string
 	Capcode          *string
 	Alias            *string
+	AliasID          *int64
 	Agency           *string
 	PagingGroup      *string
 	Priority         *string
@@ -765,6 +802,7 @@ type SearchMessagesParams struct {
 type SearchMessagesRow struct {
 	ID               int64
 	Capcode          string
+	AliasID          *int64
 	Text             string
 	Priority         *string
 	Heartbeat        bool
@@ -799,6 +837,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.Q,
 		arg.Capcode,
 		arg.Alias,
+		arg.AliasID,
 		arg.Agency,
 		arg.PagingGroup,
 		arg.Priority,
@@ -827,6 +866,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		if err := rows.Scan(
 			&i.ID,
 			&i.Capcode,
+			&i.AliasID,
 			&i.Text,
 			&i.Priority,
 			&i.Heartbeat,
@@ -911,8 +951,44 @@ func (q *Queries) TouchClient(ctx context.Context, arg TouchClientParams) error 
 	return err
 }
 
+const unaliasedCapcode = `-- name: UnaliasedCapcode :many
+SELECT count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
+       max(sent_at)::timestamptz AS last_seen
+FROM messages
+WHERE capcode = $1 AND alias_id IS NULL
+GROUP BY capcode
+`
+
+type UnaliasedCapcodeRow struct {
+	Messages  int64
+	FirstSeen time.Time
+	LastSeen  time.Time
+}
+
+// R35e: one capcode's pages with no alias (no rows if it has none).
+func (q *Queries) UnaliasedCapcode(ctx context.Context, capcode string) ([]UnaliasedCapcodeRow, error) {
+	rows, err := q.db.Query(ctx, unaliasedCapcode, capcode)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UnaliasedCapcodeRow
+	for rows.Next() {
+		var i UnaliasedCapcodeRow
+		if err := rows.Scan(&i.Messages, &i.FirstSeen, &i.LastSeen); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const unaliasedCapcodes = `-- name: UnaliasedCapcodes :many
-SELECT capcode, count(*) AS messages, max(sent_at)::timestamptz AS last_seen
+SELECT capcode, count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
+       max(sent_at)::timestamptz AS last_seen
 FROM messages
 WHERE alias_id IS NULL
 GROUP BY capcode
@@ -920,12 +996,13 @@ ORDER BY max(sent_at) DESC
 `
 
 type UnaliasedCapcodesRow struct {
-	Capcode  string
-	Messages int64
-	LastSeen time.Time
+	Capcode   string
+	Messages  int64
+	FirstSeen time.Time
+	LastSeen  time.Time
 }
 
-// R33: capcodes with no alias, with message count and last-seen time.
+// R33: capcodes with no alias, with message count and first- and last-seen times.
 func (q *Queries) UnaliasedCapcodes(ctx context.Context) ([]UnaliasedCapcodesRow, error) {
 	rows, err := q.db.Query(ctx, unaliasedCapcodes)
 	if err != nil {
@@ -935,7 +1012,12 @@ func (q *Queries) UnaliasedCapcodes(ctx context.Context) ([]UnaliasedCapcodesRow
 	var items []UnaliasedCapcodesRow
 	for rows.Next() {
 		var i UnaliasedCapcodesRow
-		if err := rows.Scan(&i.Capcode, &i.Messages, &i.LastSeen); err != nil {
+		if err := rows.Scan(
+			&i.Capcode,
+			&i.Messages,
+			&i.FirstSeen,
+			&i.LastSeen,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

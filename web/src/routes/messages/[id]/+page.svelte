@@ -58,6 +58,11 @@
 
 		<h2>Details</h2>
 		<dl>
+			<dt>Alias</dt>
+			<dd>
+				{#if m.alias_id != null}<a href="/aliases/{m.alias_id}">{m.alias}</a>
+				{:else}<a href="/capcodes/{m.capcode}">None (capcode {m.capcode})</a>{/if}
+			</dd>
 			<dt>Capcode</dt>
 			<dd>{m.capcode}</dd>
 			{#if m.agency}<dt>Agency</dt>

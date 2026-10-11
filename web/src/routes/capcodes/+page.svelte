@@ -24,13 +24,14 @@
 {#if rows.length}
 	<table>
 		<thead>
-			<tr><th scope="col">Capcode</th><th scope="col">Messages</th><th scope="col">Last seen</th></tr>
+			<tr><th scope="col">Capcode</th><th scope="col">Messages</th><th scope="col">First seen</th><th scope="col">Last seen</th></tr>
 		</thead>
 		<tbody>
 			{#each rows as r (r.capcode)}
 				<tr>
-					<td><a href="/?capcode={r.capcode}&unaliased=true">{r.capcode}</a></td>
+					<td><a href="/capcodes/{r.capcode}">{r.capcode}</a></td>
 					<td>{r.messages}</td>
+					<td><time datetime={isoAttr(r.first_seen)}>{dateTime(r.first_seen, meta?.time_zone ?? 'UTC')}</time></td>
 					<td><time datetime={isoAttr(r.last_seen)}>{dateTime(r.last_seen, meta?.time_zone ?? 'UTC')}</time></td>
 				</tr>
 			{/each}

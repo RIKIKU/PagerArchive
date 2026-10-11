@@ -116,25 +116,86 @@ test('R35c flags are shown to admins only', async ({ page, request }) => {
 	await expect(page.getByRole('link', { name: 'Clients' })).toBeVisible();
 });
 
+// A22. Tap targets at 375 px (R35d): the text opens the detail view, the
+// alias opens the alias view (only that alias's capcodes), the job number
+// opens the job view, and a capcode with no alias opens its own view.
+test('A22 tap targets at 375 px', async ({ browser, request }) => {
+	const job = uniqueJob();
+	await post(request, '0100002', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN2`);
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
+	const ref = job.slice(2); // not a job number, so this page stays out of the job
+	await post(request, '0999998', `QDPAGE TO AN UNKNOWN PAGER REF ${ref}`);
+	const ctx = await browser.newContext({ viewport: { width: 375, height: 740 }, hasTouch: true });
+	const page = await ctx.newPage();
+	const list = page.getByTestId('message-list');
+	const row = list.locator('article').filter({ hasText: 'Station 1' });
+
+	// The text opens the detail view, and so does the rest of the row (here
+	// its top-left corner, over the date).
+	for (const target of ['text', 'row'] as const) {
+		await page.goto(`/?job=${job}`);
+		await expect(list.locator('article')).toHaveCount(2);
+		if (target === 'text') await row.locator('p.text').tap();
+		else await row.tap({ position: { x: 16, y: 12 } });
+		await expect(page).toHaveURL(/\/messages\/\d+$/);
+		await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+		await expect(page.locator('main')).toContainText('#STN1');
+	}
+
+	// The alias opens the alias view, listing only that alias's capcodes.
+	await page.goto(`/?job=${job}`);
+	await row.getByRole('link', { name: 'Station 1' }).tap();
+	await expect(page).toHaveURL(/\/aliases\/\d+$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Station 1' })).toBeVisible();
+	await expect(page.getByText('0100001', { exact: true })).toBeVisible();
+	await waitLive(page);
+	await expect(list).toContainText(job);
+	const who = await list.locator('article .who').allTextContents();
+	expect(who.length).toBeGreaterThan(0);
+	expect(new Set(who)).toEqual(new Set(['Station 1']));
+	await expect(list).not.toContainText('#STN2');
+
+	// The job number opens the job view.
+	await page.goto(`/?job=${job}`);
+	await row.getByRole('link', { name: `Job ${job}` }).tap();
+	await expect(page).toHaveURL(new RegExp(`/jobs/${job}$`));
+	await expect(page.getByRole('heading', { level: 1, name: `Job ${job}` })).toBeVisible();
+	await expect(page.locator('main article')).toHaveCount(2);
+
+	// A capcode with no alias opens its own view: count, first and last seen.
+	await page.goto(`/?q=UNKNOWN+PAGER+REF+${ref}`);
+	await list.locator('article').first().getByRole('link', { name: '0999998' }).tap();
+	await expect(page).toHaveURL(/\/capcodes\/0999998$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Capcode 0999998' })).toBeVisible();
+	await expect(page.getByText('First seen')).toBeVisible();
+	await expect(list).toContainText(ref);
+	await ctx.close();
+});
+
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', '/admin/clients'];
+// The alias view (R35e) is checked for an alias and for a capcode with none.
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/admin/clients'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
+			const res = await request.get(`${USER_URL}/api/v1/messages?capcode=0100001`);
+			const aliasID = (await res.json()).messages[0].alias_id;
 			const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width, height: 900 } });
 			const page = await ctx.newPage();
 			for (const view of views) {
 				const base = view === '/admin/clients' ? ADMIN_URL : USER_URL;
 				if (view === 'detail') {
 					await page.goto(`${ADMIN_URL}/`);
-					await page.getByTestId('message-list').locator('article a').first().click();
+					await page.getByTestId('message-list').locator('article a.open').first().click();
 					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
 				} else {
-					await page.goto(base + view);
+					const path = view === 'alias' ? `/aliases/${aliasID}` : view;
+					await page.goto(base + path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
-					if (view.startsWith('/?') || view === '/') await waitLive(page);
+					if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
 					else await page.waitForTimeout(300);
 				}
 				const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();

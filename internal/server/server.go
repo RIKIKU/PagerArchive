@@ -50,6 +50,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/messages/{id}", s.getMessage)
 	mux.HandleFunc("GET /api/v1/jobs/{job}", s.getJob)
 	mux.HandleFunc("GET /api/v1/capcodes/unaliased", s.unaliased)
+	mux.HandleFunc("GET /api/v1/capcodes/{capcode}", s.getCapcode)
+	mux.HandleFunc("GET /api/v1/aliases/{id}", s.getAlias)
 	mux.HandleFunc("GET /api/v1/stream", s.stream)
 	mux.HandleFunc("GET /api/v1/admin/clients", s.adminOnly(s.listClients))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

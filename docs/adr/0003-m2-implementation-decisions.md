@@ -65,10 +65,17 @@ A generated column `aliases.pattern_key` holds the pattern with exact capcodes z
 - The server sets a Content Security Policy that allows only its own origin.
 - Templates have a colour, shown as a stripe beside the alias. The bundled icon set (section 14) comes with the template admin screens in M3.
 
+### 6a. Navigation and the alias view (R35d, R35e, owner 2026-10-12)
+
+- The message text is a link to the detail view whose hit area is stretched over the whole row. The alias and job links sit above it, so each tap goes to one place, and keyboard and screen-reader users get three ordinary links.
+- The alias view lists the messages whose stored alias (section 3) is that alias: what the list showed under that name. With overlapping patterns, a capcode is covered by the alias that wins for it (R27). Pages to an ignored alias are shown in its own view.
+- A capcode with no alias has the same view at `/capcodes/<capcode>`. If an alias covers it by the time it's opened, the alias view opens instead.
+- The search form searches within the current view, so the alias view has the main list's filters and live updates.
+
 ### 7. Tests
 
 - API-level Go tests for A1, A6 (search), A10, every search criterion, admin-only data, ignored aliases, re-parsing and filtered live updates.
-- Browser tests (Playwright) on Chromium, Firefox and WebKit (R36) for A1, A3, A4, A10, R31 at 375 px and R35c, plus axe-core (WCAG 2.1 AA) on every view in light and dark at 375 px and 1280 px. `scripts/e2e.sh` runs them against a real API and a fresh PostGIS database, and fails if the API log contains page text (P1).
+- Browser tests (Playwright) on Chromium, Firefox and WebKit (R36) for A1, A3, A4, A10, A22, R31 at 375 px and R35c, plus axe-core (WCAG 2.1 AA) on every view, the alias view included, in light and dark at 375 px and 1280 px. `scripts/e2e.sh` runs them against a real API and a fresh PostGIS database, and fails if the API log contains page text (P1).
 
 ## Consequences
 

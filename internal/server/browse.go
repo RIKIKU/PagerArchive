@@ -2,16 +2,21 @@ package server
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/search"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -40,6 +45,7 @@ type Message struct {
 	Priority    *string   `json:"priority"`
 	Heartbeat   bool      `json:"heartbeat"`
 	SentAt      time.Time `json:"sent_at"`
+	AliasID     *int64    `json:"alias_id"` // for the alias view (R35d)
 	Alias       *string   `json:"alias"`
 	Agency      *string   `json:"agency"`
 	Icon        *string   `json:"icon"`
@@ -80,7 +86,7 @@ type Reception struct {
 func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 	out := Message{
 		ID: m.ID, Capcode: m.Capcode, Text: m.Text, DisplayText: m.Text, Priority: m.Priority,
-		Heartbeat: m.Heartbeat, SentAt: m.SentAt.UTC(), Alias: m.AliasName, Agency: m.Agency,
+		Heartbeat: m.Heartbeat, SentAt: m.SentAt.UTC(), AliasID: m.AliasID, Alias: m.AliasName, Agency: m.Agency,
 		Icon: m.Icon, Colour: m.Colour, Ignored: m.AliasIgnored,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
 		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, Group: m.PagingGroup,
@@ -250,9 +256,10 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 
 // UnaliasedCapcode is a capcode with no alias (R33).
 type UnaliasedCapcode struct {
-	Capcode  string    `json:"capcode"`
-	Messages int64     `json:"messages"`
-	LastSeen time.Time `json:"last_seen"`
+	Capcode   string    `json:"capcode"`
+	Messages  int64     `json:"messages"`
+	FirstSeen time.Time `json:"first_seen"`
+	LastSeen  time.Time `json:"last_seen"`
 }
 
 func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
@@ -264,7 +271,7 @@ func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []UnaliasedCapcode{}
 	for _, c := range rows {
-		out = append(out, UnaliasedCapcode{Capcode: c.Capcode, Messages: c.Messages, LastSeen: c.LastSeen.UTC()})
+		out = append(out, UnaliasedCapcode{Capcode: c.Capcode, Messages: c.Messages, FirstSeen: c.FirstSeen.UTC(), LastSeen: c.LastSeen.UTC()})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -341,4 +348,82 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// AliasView is an alias as the alias view shows it (R35e). Read-only in v1.
+type AliasView struct {
+	ID       int64   `json:"id"`
+	Pattern  string  `json:"pattern"` // capcode, or pattern with % and _
+	Name     string  `json:"name"`
+	Template *string `json:"template"`
+	Agency   *string `json:"agency"`
+	Icon     *string `json:"icon"`
+	Colour   *string `json:"colour"`
+	Ignored  bool    `json:"ignored"`
+}
+
+func (s *Server) getAlias(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		problem(w, http.StatusNotFound, "no such alias")
+		return
+	}
+	a, err := s.Store.AliasView(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		problem(w, http.StatusNotFound, "no such alias")
+		return
+	}
+	if err != nil {
+		s.Log.Error("alias", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, AliasView{ID: a.ID, Pattern: a.Pattern, Name: a.Name, Template: a.TemplateName,
+		Agency: a.Agency, Icon: a.Icon, Colour: a.Colour, Ignored: a.Ignored})
+}
+
+// CapcodeView is a capcode as the alias view shows it when the capcode has
+// no alias (R35e). AliasID is set instead when an alias now covers it.
+type CapcodeView struct {
+	Capcode   string     `json:"capcode"`
+	AliasID   *int64     `json:"alias_id"`
+	Messages  int64      `json:"messages"`
+	FirstSeen *time.Time `json:"first_seen"`
+	LastSeen  *time.Time `json:"last_seen"`
+}
+
+func (s *Server) getCapcode(w http.ResponseWriter, r *http.Request) {
+	capcode, err := catalog.NormalisePattern(r.PathValue("capcode"))
+	if err != nil || strings.ContainsAny(capcode, "%_") {
+		problem(w, http.StatusNotFound, "no such capcode")
+		return
+	}
+	out := CapcodeView{Capcode: capcode}
+	cands, err := s.Store.AliasesMatching(r.Context(), capcode)
+	if err == nil {
+		c := make([]ingest.Candidate, len(cands))
+		for i, a := range cands {
+			c[i] = ingest.Candidate{ID: a.ID, Pattern: a.Pattern, AgencyProfile: a.AgencyProfile}
+		}
+		if best := ingest.BestAlias(c); best != nil {
+			out.AliasID = &best.ID
+		}
+	}
+	var rows []db.UnaliasedCapcodeRow
+	if err == nil {
+		rows, err = s.Store.UnaliasedCapcode(r.Context(), capcode)
+	}
+	if err != nil {
+		s.Log.Error("capcode", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	if len(rows) > 0 {
+		first, last := rows[0].FirstSeen.UTC(), rows[0].LastSeen.UTC()
+		out.Messages, out.FirstSeen, out.LastSeen = rows[0].Messages, &first, &last
+	} else if out.AliasID == nil {
+		problem(w, http.StatusNotFound, "no messages to this capcode")
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
 }
