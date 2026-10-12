@@ -1,5 +1,5 @@
 #!/bin/sh
-# Runs the account checks A23-A28 (internal/stacktest) against the full
+# Runs the account checks A23-A28 and A33 (internal/stacktest) against the full
 # compose stack: API, PostgreSQL, Authentik and a Mailpit mail catcher, from
 # a fresh install with A23's settings. Never uses a real mail server.
 #
@@ -18,7 +18,8 @@ trap '[ -n "${STACK_KEEP:-}" ] || stack_down' EXIT
 stack_up
 
 export PA_STACK_APP_URL=http://localhost:8080 PA_STACK_AUTHENTIK_URL=http://localhost:9000 \
-	PA_STACK_MAILPIT_URL=http://localhost:8025 PA_STACK_AUTHENTIK_TOKEN="$AUTHENTIK_API_TOKEN"
+	PA_STACK_MAILPIT_URL=http://localhost:8025 PA_STACK_AUTHENTIK_TOKEN="$AUTHENTIK_API_TOKEN" \
+	PA_STACK_AKADMIN_EMAIL="$AUTHENTIK_ADMIN_EMAIL" PA_STACK_AKADMIN_PASSWORD="$AUTHENTIK_ADMIN_PASSWORD"
 status=0
 PA_STACK_PHASE=first go test -count=1 -v ./internal/stacktest/ "$@" || status=1
 

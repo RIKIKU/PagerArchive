@@ -79,6 +79,72 @@ entries:
       zxcvbn_score_threshold: 2
       error_message: Choose a longer or less guessable password (at least 10 characters).
 
+  # ---------------------------------------------- guessing protection (R44a)
+  # After 5 wrong attempts for one account (passwords, password-reset codes
+  # and the enrolment code together), attempts are refused for 15 minutes
+  # from the 5th, even if the flow is restarted or a new code is requested.
+  #
+  # Each stage that checks a password or code is bound to "not-locked",
+  # which is re-evaluated on every request to it. When the account is
+  # locked, the policy marks the flow and fails, so Authentik drops the
+  # stage; the deny stage bound right after it (policy "locked", which
+  # reads the mark) then refuses. The mark makes the pair decide together,
+  # so a check stage can never be dropped without the deny stage running.
+  #
+  # Failures: wrong passwords and reset codes are Authentik's login_failed
+  # events for the account; wrong enrolment codes are counted on the
+  # account's email device. A successful sign-in starts the count again.
+  - model: authentik_policies_expression.expressionpolicy
+    id: not-locked
+    identifiers:
+      name: pagerarchive-not-locked
+    attrs:
+      expression: |
+        from datetime import timedelta
+        from django.utils.timezone import now
+        from authentik.events.models import Event, EventAction
+        from authentik.stages.authenticator_email.models import EmailDevice
+
+        LIMIT, WINDOW = 5, timedelta(minutes=15)
+        user = request.user
+        if user is None or getattr(user, "pk", None) is None or user.is_anonymous:
+            return True  # no account behind this (an unknown address)
+        t = now()
+        since = t - 2 * WINDOW
+        last_login = (Event.objects.filter(action=EventAction.LOGIN, user__pk=user.pk, created__gt=since)
+                      .order_by("-created").values_list("created", flat=True).first())
+        if last_login:
+            since = last_login
+        failures = (Event.objects.filter(action=EventAction.LOGIN_FAILED, context__username=user.username, created__gt=since)
+                    .order_by("created").values_list("created", flat=True))
+        locked_until, run = None, []
+        for f in failures:
+            run = [x for x in run if f - x < WINDOW] + [f]
+            if len(run) >= LIMIT:
+                locked_until, run = f + WINDOW, []
+        for d in EmailDevice.objects.filter(user=user):
+            ts = d.throttling_failure_timestamp
+            if d.throttling_failure_count >= LIMIT and ts is not None:
+                locked_until = max(locked_until or ts + WINDOW, ts + WINDOW)
+        if locked_until is not None and locked_until > t:
+            request.context["flow_plan"].context["pagerarchive_locked"] = True
+            return False
+        return True
+  - model: authentik_policies_expression.expressionpolicy
+    id: locked
+    identifiers:
+      name: pagerarchive-locked
+    attrs:
+      expression: |
+        # Set by pagerarchive-not-locked in the same flow when it refused.
+        return bool(request.context["flow_plan"].context.get("pagerarchive_locked"))
+  - model: authentik_stages_deny.denystage
+    id: too-many-attempts
+    identifiers:
+      name: pagerarchive-too-many-attempts
+    attrs:
+      deny_message: Too many wrong attempts for this account. Wait 15 minutes, then try again.
+
   # -------------------------------------------------------------- enrolment
   - model: authentik_flows.flow
     id: enrolment
@@ -175,10 +241,33 @@ entries:
       stage: !KeyOf enrolment-create
       order: 30
   - model: authentik_flows.flowstagebinding
+    id: enrolment-code-binding
     identifiers:
       target: !KeyOf enrolment
       stage: !KeyOf enrolment-code
       order: 40
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true # on every request: each attempt is checked
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding
+      policy: !KeyOf not-locked
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: enrolment-code-binding-deny
+    identifiers:
+      target: !KeyOf enrolment
+      stage: !KeyOf too-many-attempts
+      order: 45
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding-deny
+      policy: !KeyOf locked
+      order: 0
   - model: authentik_flows.flowstagebinding
     id: enrolment-activate-binding
     identifiers:
@@ -251,10 +340,33 @@ entries:
       stage: !KeyOf recovery-identification
       order: 10
   - model: authentik_flows.flowstagebinding
+    id: recovery-code-binding
     identifiers:
       target: !KeyOf recovery
       stage: !KeyOf recovery-code
       order: 20
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true # on every request: each attempt is checked
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf recovery-code-binding
+      policy: !KeyOf not-locked
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: recovery-code-binding-deny
+    identifiers:
+      target: !KeyOf recovery
+      stage: !KeyOf too-many-attempts
+      order: 25
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf recovery-code-binding-deny
+      policy: !KeyOf locked
+      order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !KeyOf recovery
@@ -298,7 +410,7 @@ entries:
       name: pagerarchive-authentication-identification
     attrs:
       user_fields: [email]
-      password_stage: !KeyOf authentication-password
+      password_stage: null # its own stage, so each password attempt is checked (R44a)
       recovery_flow: !KeyOf recovery
       pretend_user_exists: true
   - model: authentik_flows.flowstagebinding
@@ -306,6 +418,70 @@ entries:
       target: !KeyOf authentication
       stage: !KeyOf authentication-identification
       order: 10
+  - model: authentik_flows.flowstagebinding
+    id: authentication-password-binding
+    identifiers:
+      target: !KeyOf authentication
+      stage: !KeyOf authentication-password
+      order: 20
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true # on every request: each attempt is checked
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf authentication-password-binding
+      policy: !KeyOf not-locked
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: authentication-password-binding-deny
+    identifiers:
+      target: !KeyOf authentication
+      stage: !KeyOf too-many-attempts
+      order: 25
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf authentication-password-binding-deny
+      policy: !KeyOf locked
+      order: 0
+  # Authentik's own administrators (akadmin) also sign in here, and their
+  # account can change everything in Authentik: they must use a second
+  # factor (an authenticator app, a passkey or recovery codes), set up on
+  # first sign-in. PagerArchive users never see this stage.
+  - model: authentik_policies_expression.expressionpolicy
+    id: authentik-admin
+    identifiers:
+      name: pagerarchive-authentik-admin
+    attrs:
+      expression: |
+        user = request.user
+        return getattr(user, "pk", None) is not None and not user.is_anonymous and user.is_superuser
+  - model: authentik_stages_authenticator_validate.authenticatorvalidatestage
+    id: admin-second-factor
+    identifiers:
+      name: pagerarchive-authentik-admin-second-factor
+    attrs:
+      device_classes: [totp, webauthn, static]
+      not_configured_action: configure
+      configuration_stages:
+        - !Find [authentik_stages_authenticator_totp.authenticatortotpstage, [name, default-authenticator-totp-setup]]
+      last_auth_threshold: seconds=0
+  - model: authentik_flows.flowstagebinding
+    id: admin-second-factor-binding
+    identifiers:
+      target: !KeyOf authentication
+      stage: !KeyOf admin-second-factor
+      order: 30
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf admin-second-factor-binding
+      policy: !KeyOf authentik-admin
+      order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !KeyOf authentication

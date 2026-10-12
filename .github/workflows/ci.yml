@@ -83,7 +83,7 @@ jobs:
           retention-days: 14
 
   stack:
-    name: Accounts against Authentik (A23-A28, section 11 step 2)
+    name: Accounts against Authentik (A23-A28, A33, section 11 step 2)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -101,7 +101,7 @@ jobs:
       - name: Install browser
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: A23-A28 against the compose stack (API, PostgreSQL, Authentik, Mailpit)
+      - name: A23-A28 and A33 against the compose stack (API, PostgreSQL, Authentik, Mailpit)
         run: sh scripts/stack-checks.sh
       - name: Section 11 step 2 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium

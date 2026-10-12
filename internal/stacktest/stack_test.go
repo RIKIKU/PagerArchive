@@ -140,7 +140,7 @@ func TestA23FirstAdmin(t *testing.T) {
 	}
 	o := s.browser(t, "owner@example.org")
 	var wrong string
-	end, c := o.walk(s.app.JoinPath("/auth/first-admin").String(), o.enrolAnswers("000000", &wrong))
+	end, c := o.walk(o.postForRedirect("/auth/first-admin"), o.enrolAnswers("000000", &wrong))
 	if wrong == "" {
 		t.Fatal("the wrong code wasn't refused")
 	}
@@ -169,7 +169,7 @@ func TestA23SecondAddressCantEnrol(t *testing.T) {
 		t.Error("first-admin set-up still offered")
 	}
 	b := s.browser(t, "second@example.org")
-	end, _ := b.walk(s.app.JoinPath("/auth/first-admin").String(), b.enrolAnswers("", nil))
+	end, _ := b.walk(b.postForRedirect("/auth/first-admin"), b.enrolAnswers("", nil))
 	if end == nil || end.Path != "/signin" || !strings.Contains(end.RawQuery, "admin_exists") {
 		t.Errorf("first-admin link: ended at %v", end)
 	}
@@ -465,4 +465,25 @@ func TestPasswordResetWithEmailedCode(t *testing.T) {
 		t.Error("old password still works")
 	}
 	t.Log("password reset with the emailed code: the new password works, the old one doesn't")
+}
+
+// Authentik's own administrator (akadmin) must set up and use a second
+// factor when signing in through the public sign-in flow (ADR 0004).
+func TestAuthentikAdminNeedsSecondFactor(t *testing.T) {
+	s := setup(t, "restarted")
+	email, password := os.Getenv("PA_STACK_AKADMIN_EMAIL"), os.Getenv("PA_STACK_AKADMIN_PASSWORD")
+	if email == "" {
+		t.Skip("PA_STACK_AKADMIN_EMAIL is not set")
+	}
+	a := s.browser(t, email)
+	a.pw = password
+	ok, c := a.signIn()
+	if ok || (c.Component != "ak-stage-authenticator-totp" && c.Component != "ak-stage-authenticator-validate") {
+		t.Fatalf("akadmin after the password: signed in %v, at %s %s", ok, c.Component, c.errorText())
+	}
+	t.Logf("akadmin after a correct password: %s (second factor required)", c.Component)
+	// An ordinary user isn't asked.
+	if ok, msg := s.passwordAttempt(t, "owner@example.org", s.owner(t).pw); !ok {
+		t.Errorf("owner: %s", msg)
+	}
 }

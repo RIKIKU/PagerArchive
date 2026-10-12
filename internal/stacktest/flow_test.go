@@ -42,7 +42,8 @@ type challenge struct {
 	Errors    map[string][]struct {
 		String string `json:"string"`
 	} `json:"response_errors"`
-	raw []byte
+	raw   []byte
+	query string // the flow's query, when walk stopped inside a flow
 }
 
 func (c challenge) errorText() string {
@@ -84,6 +85,7 @@ func (b *browser) walk(start string, answers answer) (*url.URL, challenge) {
 				}
 				body := answers(c)
 				if body == nil {
+					c.query = next.RawQuery
 					return nil, c
 				}
 				body["component"] = c.Component
@@ -170,8 +172,14 @@ func (b *browser) enrolAnswers(wrongCode string, seenWrong *string) answer {
 // signInAnswers fills in the sign-in flow: email and password.
 func (b *browser) signInAnswers() answer {
 	return func(c challenge) map[string]any {
-		if c.Component == "ak-stage-identification" && len(c.Errors) == 0 && c.Error == "" {
+		if len(c.Errors) > 0 || c.Error != "" {
+			return nil // a wrong password, or refused: stop there
+		}
+		switch c.Component {
+		case "ak-stage-identification": // with the password on the same page, or not
 			return map[string]any{"uid_field": b.email, "password": b.pw}
+		case "ak-stage-password":
+			return map[string]any{"password": b.pw}
 		}
 		return nil
 	}
@@ -283,4 +291,22 @@ func (m mailpit) invitationLink(t *testing.T, address string, since time.Time) s
 		t.Fatalf("no invitation link in the email to %s", address)
 	}
 	return link
+}
+
+// postForRedirect submits an empty form to an app path, as the sign-in
+// page's buttons do, and returns where it redirects.
+func (b *browser) postForRedirect(path string) string {
+	b.t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, b.s.app.JoinPath(path).String(), nil)
+	req.Header.Set("Origin", b.s.app.Scheme+"://"+b.s.app.Host) // same-site form post
+	resp, err := b.client.Do(req)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	resp.Body.Close()
+	loc, err := resp.Request.URL.Parse(resp.Header.Get("Location"))
+	if err != nil || resp.StatusCode != http.StatusSeeOther {
+		b.t.Fatalf("POST %s: %d %v", path, resp.StatusCode, err)
+	}
+	return loc.String()
 }
