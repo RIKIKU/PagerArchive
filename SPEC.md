@@ -174,7 +174,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R43a.** Invitations are created **in the app** (which records who invited whom, and creates them through Authentik's API) and are **single-use**, expiring after **7 days**. The inviter enters the invitee's email address, which must be in an allowed domain (admins included). The emailed link only works for that address.
 - **R43b.** Deactivation takes effect **immediately**: the user is disabled in Authentik and their live sessions and connections are closed. Admins can reactivate users one at a time (reactivating doesn't reactivate their invite tree). The re-invite block (R43) goes by email address.
 - **R43c.** Users can delete their own account. People they invited keep their accounts, credited to "deleted user".
-- **R44.** `OPEN`: roles (suggestion: `user` and `admin`, where admin manages aliases, templates, users, clients and retention), and how the first admin is created.
+- **R44. Roles and the first admin** (owner, 2026-10-12). Two roles: `user` and `admin`. Users browse, search and invite (R41). Admins can also manage aliases, templates, users, clients and retention, and see flags (R35c) and receiver status (R39). The deployment setting `INITIAL_ADMIN_EMAIL` names the first admin: **while no admin exists**, that address may enrol without an invitation, still verifying the emailed code, and is exempt from `ALLOWED_EMAIL_DOMAINS`; it becomes admin. Once any admin exists, the setting is ignored. That is the only exception to the allowed-domain rule: every invitation made in the app is to an allowed domain. Admins can promote users to admin and demote admins. The **last active admin** can't be demoted, deactivated or deleted, including through deactivating an invite tree that contains them.
 
 ### 7.10 Retention
 - **R45.** Messages are kept for a configurable period, set **in days** in the admin UI (default **3,650 days**, minimum 30), then deleted completely (text, metadata and everything linked to them) by a nightly job. **Backups are out of scope.** The docs must say that deleted messages may survive in a deployment's own backups. The cut-off is a **calendar date** in the deployment time zone. The nightly job runs at **03:00** (configurable).
@@ -237,6 +237,13 @@ All checks use the **example profile** and the **standard test fixture** (sectio
   message's text, **then** its detail view opens; **when** they tap its alias, **then** the
   alias view opens and lists only messages from that alias's capcodes; **when** they tap the
   job number, **then** the job view opens.
+- **A23. First admin.** **Given** a fresh install with `ALLOWED_EMAIL_DOMAINS=example.com` and `INITIAL_ADMIN_EMAIL=owner@example.org`, **when** someone enrols as `owner@example.org` with no invitation and enters a wrong code, **then** enrolment is refused; **when** they enter the code sent to that address, **then** they are signed in as an admin. **When** `INITIAL_ADMIN_EMAIL` is then changed to `second@example.org` and the server restarted, **then** `second@example.org` can't enrol without an invitation.
+- **A24. Invitations.** **Given** user A, **when** A invites `b@example.com` and B enrols with the emailed code, **then** B is a `user` and the app records A as B's inviter; **when** the same invitation is used again, **then** it is refused. **When** A invites `c@example.org` (not an allowed domain), **then** the invitation is rejected. **Given** an invitation created 7 days and 1 minute ago, **when** it is used, **then** it is refused.
+- **A25. Deactivating an invite tree.** **Given** the admin invited A, A invited B and B invited C, and B and C have the message list open with live updates, **when** the admin deactivates A and A's invite tree, **then** within 5 seconds B's and C's live connections are closed, every API request from A, B or C (including `/api/v1/stream`) is refused with 401, and all three are disabled in Authentik. **When** user D invites B's email address, **then** the invitation is rejected; **when** the admin invites it, **then** it is accepted.
+- **A26. Reactivating one user.** **Given** A, B and C deactivated as in A25, **when** the admin reactivates A, **then** A can sign in again and B and C are still deactivated.
+- **A27. Deleting your own account.** **Given** B invited C, **when** B deletes their own account, **then** B can't sign in, C still can, and C's inviter is shown as "deleted user".
+- **A28. The last admin stays.** **Given** exactly one admin, **when** that admin is demoted, deactivated, deleted, or included in an invite tree being deactivated, **then** each action is refused and they are still an admin. **Given** a second admin, **when** the first is demoted, **then** it succeeds.
+- **A29. Signed in, and roles enforced by the server.** **Given** no session, **when** any `/api/v1/` endpoint except client page posting is requested, **then** it returns 401. **Given** a signed-in `user`, **when** an admin endpoint is requested, **then** it returns 403, and message responses contain no flags. **Given** an admin, **then** the same requests succeed. The `DEV_VIEWER_ROLE` switch no longer exists.
 - **A30. Integration selection and filter.** **Given** user A has a webhook integration selecting alias "Station 1" (`0100001`) filtered to event category Structure fire, and a test receiver standing in for the webhook, **when** pages arrive for `0100001` with event types `HSF1` and `GRS3`, and for `0100002` with `HSF1`, **then** within 5 seconds the webhook has received exactly 1 request (the `HSF1` page for `0100001`), its JSON contains the text without the marker, and user B, who has no integrations, triggered nothing.
 - **A31. Integration safety.** **Given** an admin has not allowed private addresses, **when** a user saves a webhook pointing at `http://127.0.0.1:8080/` or `http://192.168.1.10/`, **then** it is rejected with a clear message. **And given** a working integration whose endpoint starts failing, **when** delivery has failed repeatedly, **then** the integration is paused and its owner sees "paused" with the last error and no page text.
 - **A32. Metrics.** **Given** two clients, one last heard 31 minutes ago, **when** the metrics endpoint is scraped with valid credentials, **then** it reports that client as not receiving and the other as receiving, contains no page text, and refuses scrapes without credentials.
@@ -281,13 +288,13 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M0** | Stack ADR approved | n/a |
 | **M1** | Client, ingest, redaction, dedup, profiles and schemas, `validate-profile`, golden tests, CI | Golden tables, A2, A5, A6 (storage), A7, A8, A9, A14 |
 | **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A22 |
-| **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2 |
+| **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2, A23–A29 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
 | **M5** | Per-user integrations (webhook, MQTT), metrics endpoint | A30, A31, A32 |
 
 ## 13. Open questions
 
-R11 extraction language · R26 location-mismatch distance · R44 roles and the first admin · R51 default retry and pause thresholds (implementer's choice).
+R11 extraction language · R26 location-mismatch distance · R51 default retry and pause thresholds (implementer's choice).
 
 ## 14. Accepted defaults
 
