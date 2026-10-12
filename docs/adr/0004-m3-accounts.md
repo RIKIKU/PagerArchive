@@ -43,7 +43,7 @@ Before the build, the implementer raised the gaps below. The owner decided those
 The blueprint is applied automatically. It sets up:
 
 - **Enrolment flow.** Invitation (required) → name and password → user created *inactive* → one-time code emailed to the invited address (Authentik's Email Authenticator stage) → user activated → signed in → back to the app. The invitation's fixed data sets the email, the username (the normalised key) and the app's invitation ID, and the invitee is never asked for an address. So the link only enrols the invited address (R43a), and a wrong code leaves no usable account (A23). Authentik's ordinary email stage sends a link, not a code, so it isn't used.
-- **Sign-in flow:** email and password. **Password reset:** the emailed code, then a new password.
+- **Sign-in flow:** email, then password, on separate pages so each password attempt can be checked for guessing (section 9). **Password reset:** the emailed code, then a new password.
 - **User settings: name only.** Authentik's default settings page lets users change their email address, which would get around the allowed domains (R41).
 - **The OIDC provider and application**, with a `pagerarchive` scope that carries the invitation ID.
 - **The app's API account**, a service account with a least-privilege role: invitations, plus viewing, changing and deleting users. It isn't a superuser.
@@ -57,8 +57,8 @@ Other Authentik settings:
 
 ### 4. Invitations
 
-- **Single-use and 7 days**, enforced by Authentik: single-use invitations are deleted when used, and expired ones are filtered out. The app keeps its own record (`pending`, `used` or `cancelled`, with expiry shown as `expired`).
-- **One open invitation per address.** A second invitation is refused and names the first one's inviter.
+- **Single-use and 7 days.** Authentik deletes a single-use invitation when it's used and refuses an expired one when enrolment starts. The app also checks its own expiry at first sign-in, so an enrolment begun just before expiry and finished after it is refused, and its Authentik user removed (owner review, 2026-10-13). The app keeps its own record (`pending`, `used` or `cancelled`, with expiry shown as `expired`).
+- **One open invitation per address**, enforced by the database: a unique index on the address of pending invitations (migration 00007), so no writer can make a second. A second invitation is refused and names the first one's inviter. Expired invitations are cancelled before a new one is made, so they don't block it.
 - **Admins' invitations also need an allowed domain.** The only exception is the first admin's (R44).
 - **A cancelled invitation is deleted in Authentik**, so its link stops working. If someone was midway through enrolling when it was cancelled, the app refuses their first sign-in and removes the Authentik user it created.
 - **Leftover Authentik users are cleaned up.** An inactive Authentik user is left behind if someone abandons enrolment before entering the code. It's removed when that address is next invited, if no account owns it.
@@ -66,7 +66,7 @@ Other Authentik settings:
 
 ### 5. The first admin (R44)
 
-While no active admin exists and `INITIAL_ADMIN_EMAIL` is set, the sign-in page offers "Set up the first admin". `/auth/first-admin` creates a fresh one-hour, domain-exempt invitation for that address and sends the browser straight to enrolment. Only the address's owner can finish, because the code goes to that address. Once any admin exists, the link and the setting do nothing (A23).
+While no active admin exists and `INITIAL_ADMIN_EMAIL` is set, the sign-in page offers "Set up the first admin". The button posts to `/auth/first-admin` (a same-site POST, never a GET, because it changes state; owner review, 2026-10-13), which creates a fresh one-hour, domain-exempt invitation for that address and sends the browser straight to enrolment. Only the address's owner can finish, because the code goes to that address. Once any admin exists, the link and the setting do nothing (A23).
 
 ### 6. Who may do what
 
@@ -88,11 +88,51 @@ Each live-update subscription records its user. Deactivation, sign-out and accou
 - **`compose.yaml`** adds `authentik-server` and `authentik-worker` (no Redis, since 2025.10). An init script creates Authentik's database in the shared PostgreSQL container (R40, ADR 0001). The API reaches Authentik over the compose network (`AUTHENTIK_INTERNAL_URL`) while keeping the public host, so issuer and link URLs match what browsers see. Publishing images to GHCR stays with M4 (ADR 0002 allows M2–M4).
 - **Tests run at three levels:**
   - API-level Go tests for A24–A29, invitation rules, CSRF and the first-admin set-up, with a fake Authentik (`internal/acceptance`).
-  - `scripts/stack-checks.sh`: A23–A28 against the real compose stack, with Authentik and a Mailpit mail catcher, through Authentik's flow executor API, across an API restart for A23.
+  - `scripts/stack-checks.sh`: A23–A28 and A33 against the real compose stack, with Authentik and a Mailpit mail catcher, through Authentik's flow executor API, across an API restart for A23. A33 shifts the recorded failure times in Authentik's database to check the 15 minutes without waiting.
   - `scripts/stack-e2e.sh`: section 11 step 2 in a real browser, on Authentik's own pages.
 
   The M2 browser tests seed a user and an admin session directly into their throwaway database.
 - **A test-only mail catcher.** `deploy/test/compose.yaml` adds Mailpit, with made-up settings in `deploy/test/stack.vars`. No real mail server is used in tests.
+
+### 9. Guessing protection (R44a, A33; owner review 2026-10-13)
+
+**What happened before.** A33 was first run against the stack as built in the first round. Five wrong reset codes, five wrong passwords, or five wrong enrolment codes, each followed at once by the right one, ended in the right one being accepted every time, including 14 minutes later. Authentik's only built-in limits were:
+
+- the email device's own throttle, which doubles a short delay after each wrong code (1, 2, 4, 8 … seconds), so guessing slows but never stops;
+- the password stage's "cancel after 5 failures", which only ends that one flow.
+
+**Why not Authentik's reputation policy.** Its score is kept per (address, IP), so it does track an account. But two things don't fit R44a:
+
+- Its expiry is set when the first failure is recorded and isn't extended. A lock would end 15 minutes after the *first* failure, not the fifth.
+- A wrong enrolment code doesn't lower it at all, because that stage doesn't report failed sign-ins.
+
+**What was built** (in the blueprint):
+
+- **Counting failures.** An expression policy, `pagerarchive-not-locked`, counts an account's failures:
+  - Authentik's `login_failed` events cover wrong passwords and wrong reset codes. They're per account, whichever flow or IP they came from.
+  - The failure count on the account's email device covers wrong enrolment codes.
+- **When the lock applies.** Five failures within 15 minutes lock the account until 15 minutes after the fifth. A successful sign-in starts the count again.
+- **Checking every attempt.** The policy is bound to each stage that checks a secret: the password stage, the reset-code stage and the enrolment-code stage. These bindings are re-evaluated by Authentik on every request, so every attempt is checked: in a restarted flow, within one flow, and when a new code is requested.
+- **How a locked attempt is refused.** When the policy fails, Authentik drops the stage. So each of those stages is followed by a deny stage ("Too many wrong attempts for this account. Wait 15 minutes, then try again."). Its policy reads a mark the first policy sets in the same request, so dropping a check stage always means denial. It can never skip ahead without the secret.
+- **The password gets its own page.** It used to be on the email page. A password typed with the email can't be tied to an account until after the stage has run, so it had to move to a separate stage.
+
+**What A33 checks:**
+- the right answer after five wrong ones, for reset codes and passwords in new flows each time, and for the enrolment code within one enrolment;
+- that the right answer is still refused 14 minutes later and accepted at 16;
+- a reset code within one flow;
+- that another account is unaffected.
+
+**Limits:**
+- The lock is per account, so anyone who knows an address can lock it for 15 minutes at a time. R44a accepts this.
+- An enrolment can't be restarted with the same invitation, which is single-use. If the inviter sends a fresh invitation, the half-finished enrolment, and its count, is replaced.
+- Authentik's exponential code throttle stays on underneath, as an extra limit.
+
+### 10. Authentik's administrator (owner review, 2026-10-13)
+
+Authentik's own superusers (`akadmin`) sign in through the same public sign-in flow, and Authentik's API is shared with the pages users need. Hiding `/if/admin/` at the proxy therefore doesn't protect the account on its own.
+
+- **A second factor for superusers.** The sign-in flow has an extra stage that applies only to them: a TOTP app, passkey or recovery codes, with a TOTP app set up on first sign-in. PagerArchive users never see it.
+- **Deployment guidance.** `docs/deploy.md` keeps `/if/admin/` LAN-only in the proxy example. It also says to set up the first admin while both hostnames are still LAN-only, then open the app.
 
 ## Consequences
 
@@ -100,4 +140,5 @@ Each live-update subscription records its user. Deactivation, sign-out and accou
 - Authentik's database load is now part of the stack. It counts against the `db` budget measured by A15 (M4), as ADR 0001 planned.
 - A deleted user's placeholder row stays forever. It has no personal data, and it keeps the invite tree connected.
 - Users change their name and password on Authentik's pages, linked from the app's account page.
+- Signing in takes two pages (email, then password), and the lock can refuse a person who made five typos. The message says to wait 15 minutes.
 - Authentik's email stage templates and flows are now part of the app. An Authentik upgrade must re-run `scripts/stack-checks.sh`.

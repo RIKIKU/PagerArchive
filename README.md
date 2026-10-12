@@ -38,7 +38,7 @@ cd .. && sh scripts/e2e.sh                           # browser tests against a r
 The account checks run against the full compose stack, with Authentik and a [Mailpit](https://mailpit.axllent.org) mail catcher (never a real mail server). They need Docker with compose and ports 8080, 9000 and 8025 free:
 
 ```
-sh scripts/stack-checks.sh                 # A23-A28 through Authentik's flow executor API
+sh scripts/stack-checks.sh                 # A23-A28 and A33 through Authentik's flow executor API
 sh scripts/stack-e2e.sh --project=chromium # section 11 step 2 in a browser
 ```
 
