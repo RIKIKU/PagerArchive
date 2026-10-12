@@ -59,6 +59,7 @@ Receiving clients, ingest and redaction, profile-driven parsing, job grouping, m
 - **Incident state or resource tracking.** The app never infers or shows whether an incident is active, cancelled or finished, or where resources are. Pages carry too little information for that. Follow-up pages (cancellations, updates) are stored and grouped like any other page and never interpreted.
 - **A native mobile app.** The browser UI must work well on phones instead.
 - **Automatic client updates** (wanted later). v1 publishes multi-arch images and documents manual updates.
+- **Managing aliases, templates and clients in the browser** (wanted later, owner 2026-10-13). In v1 they are changed by import or CLI; the browser admin screens cover users, invitations, roles and retention.
 - **Writing an identity provider.**
 - **Linking several email addresses to one person.** Accepted risk: one person may hold more than one account. Invite attribution and invite-tree deactivation (section 7.9) are the remedy.
 - **Public geocoding services** (section 8).
