@@ -80,7 +80,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/callback", s.callback)
 	mux.HandleFunc("POST /auth/logout", s.logout)
 	mux.HandleFunc("GET /auth/status", s.authStatus)
-	mux.HandleFunc("GET /auth/first-admin", s.firstAdmin)
+	mux.HandleFunc("POST /auth/first-admin", s.firstAdmin)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

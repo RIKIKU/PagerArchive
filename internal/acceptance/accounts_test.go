@@ -637,3 +637,72 @@ func TestFirstAdminSetUp(t *testing.T) {
 		t.Error("set-up still offered after the first admin enrolled")
 	}
 }
+
+// The app checks an invitation's expiry itself at first sign-in, not only
+// Authentik at the start of enrolment (R43a).
+func TestInvitationExpiredAtSignIn(t *testing.T) {
+	e := setup(t)
+	if code, _ := e.user.call(http.MethodPost, "/api/v1/invitations", server.InviteRequest{Email: "slow@example.com"}, nil); code != http.StatusCreated {
+		t.Fatal("invite")
+	}
+	id, _ := e.dir.invitationFor("slow@example.com")
+	c, err := e.dir.enrol(id, "") // enrolment started in time…
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.acc.Now = func() time.Time { return time.Now().Add(accounts.InvitationLifetime + time.Minute) } // …finished too late
+	if _, err := e.signIn(c); err == nil || !strings.Contains(err.Error(), "expired") {
+		t.Fatalf("sign-in with an expired invitation: %v", err)
+	}
+	if e.dir.signInAllowed(c.Subject) {
+		t.Error("the Authentik user from the expired invitation is still there")
+	}
+}
+
+// At most one pending invitation per address, in the database (ADR 0004).
+func TestOnePendingInvitationInDatabase(t *testing.T) {
+	e := setup(t)
+	if code, _ := e.user.call(http.MethodPost, "/api/v1/invitations", server.InviteRequest{Email: "once@example.com"}, nil); code != http.StatusCreated {
+		t.Fatal("invite")
+	}
+	_, err := e.st.Pool.Exec(e.ctx, `INSERT INTO invitations (email, email_key, expires_at) VALUES ('Once@example.com', 'once@example.com', now() + interval '1 day')`)
+	if err == nil || !strings.Contains(err.Error(), "23505") {
+		t.Fatalf("second pending invitation inserted directly: %v", err)
+	}
+	t.Logf("second pending invitation refused by the database: %v", err)
+}
+
+// First-admin set-up changes state, so it's a same-site POST, never a GET.
+func TestFirstAdminSetUpIsPost(t *testing.T) {
+	e := setup(t)
+	e.acc.InitialAdmin = "owner@example.org"
+	if _, err := e.st.Pool.Exec(e.ctx, "UPDATE users SET role = 'user'"); err != nil {
+		t.Fatal(err)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	do := func(method string, headers map[string]string) *http.Response {
+		req, _ := http.NewRequest(method, e.url+"/auth/first-admin", nil)
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		resp, err := noRedirect.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		return resp
+	}
+	if r := do(http.MethodGet, nil); r.StatusCode != http.StatusMethodNotAllowed {
+		t.Errorf("GET: %d", r.StatusCode)
+	}
+	if r := do(http.MethodPost, map[string]string{"Origin": "https://evil.example", "Sec-Fetch-Site": "cross-site"}); r.StatusCode != http.StatusForbidden {
+		t.Errorf("cross-site POST: %d", r.StatusCode)
+	}
+	if n := len(e.dir.invites); n != 0 {
+		t.Errorf("%d set-up invitations made by refused requests", n)
+	}
+	r := do(http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-origin"})
+	if r.StatusCode != http.StatusSeeOther || !strings.HasPrefix(r.Header.Get("Location"), "http://authentik.test/if/flow/enrol/?itoken=") {
+		t.Errorf("same-site POST: %d %s", r.StatusCode, r.Header.Get("Location"))
+	}
+}

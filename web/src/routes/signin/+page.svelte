@@ -8,6 +8,7 @@
 		not_invited: "This sign-in isn't linked to a PagerArchive invitation. You need an invitation from an existing user.",
 		invitation_cancelled: 'Your invitation was cancelled before you finished enrolling. Ask for a new one.',
 		invitation_used: 'That invitation has already been used.',
+		invitation_expired: 'Your invitation expired before you finished enrolling. Ask for a new one.',
 		admin_exists: 'PagerArchive already has an admin. Ask an existing user for an invitation.',
 		no_first_admin: "First-admin set-up isn't available.",
 		directory_unavailable: "The sign-in service couldn't be reached. Try again shortly.",
@@ -43,7 +44,9 @@
 			No admin exists yet. The address this deployment names as its first admin can enrol now, without an
 			invitation. A code will be emailed to that address.
 		</p>
-		<a class="button secondary" href="/auth/first-admin">Set up the first admin</a>
+		<form method="post" action="/auth/first-admin">
+			<button class="secondary" type="submit">Set up the first admin</button>
+		</form>
 	</section>
 {/if}
 

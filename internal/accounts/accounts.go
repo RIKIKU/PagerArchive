@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -183,6 +184,9 @@ func (s *Service) Invite(ctx context.Context, inviter db.User, address string) (
 			ExpiresAt: s.now().Add(InvitationLifetime),
 		})
 		if err != nil {
+			if isUniqueViolation(err) { // another invitation to this address, made just now
+				return refuse(http.StatusConflict, "already_invited", "%s already has an invitation.", e.Address)
+			}
 			return dbErr("create invitation", err)
 		}
 		return s.createInDirectory(ctx, q, &inv, e, true)
@@ -370,6 +374,12 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 		if inv.Status != "pending" {
 			cancelled = true
 			return refuse(http.StatusForbidden, "invitation_cancelled", "Your invitation was cancelled before you finished enrolling.")
+		}
+		// Authentik checks expiry when enrolment starts; the app checks it again
+		// here, so its own record decides (R43a).
+		if !inv.ExpiresAt.After(s.now()) {
+			cancelled = true
+			return refuse(http.StatusForbidden, "invitation_expired", "Your invitation expired before you finished enrolling. Ask for a new one.")
 		}
 		name := &c.Name
 		if c.Name == "" {
@@ -677,4 +687,10 @@ func firstOr(s []string, def string) string {
 		return s[0]
 	}
 	return def
+}
+
+// isUniqueViolation reports a unique-constraint failure (SQLSTATE 23505).
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

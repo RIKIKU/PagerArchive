@@ -43,7 +43,7 @@ test('§11 step 2: the first admin invites a test user, who enrols with an email
 	// The first admin (INITIAL_ADMIN_EMAIL) sets up their account.
 	const admin = await (await browser.newContext()).newPage();
 	await admin.goto('/signin');
-	await admin.getByRole('link', { name: 'Set up the first admin' }).click();
+	await admin.getByRole('button', { name: 'Set up the first admin' }).click();
 	await expect(admin.locator('input[name="password"]')).toBeVisible();
 	await enrol(admin, request, OWNER, 'Owner Person');
 	await admin.waitForURL((u) => u.origin === app && u.pathname === '/');
