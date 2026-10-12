@@ -1,6 +1,12 @@
 #!/bin/sh
-# Runs the browser acceptance tests (web/tests) against a real API and a
-# fresh PostGIS database with the standard test fixture (SPEC.md section 10).
+# Runs the browser acceptance tests (web/tests/e2e.spec.ts) against a real
+# API and a fresh PostGIS database with the standard test fixture (SPEC.md
+# section 10).
+#
+# There's no Authentik here: a user and an admin are seeded straight into
+# the database with a session each, and the tests carry those session
+# cookies. Signing in through Authentik is tested by scripts/stack-checks.sh
+# and scripts/stack-e2e.sh.
 #
 # usage: scripts/e2e.sh [playwright arguments]
 # needs: Docker, Go, Node with web/ dependencies installed, Playwright browsers
@@ -36,24 +42,38 @@ done
 PA_CLIENT_KEY=$("$BIN" client add e2e "E2E client" | tail -n 1)
 export PA_CLIENT_KEY
 
-start() { # port role
-	PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR="127.0.0.1:$1" DEV_VIEWER_ROLE="$2" \
-		"$BIN" serve 2>>"$BIN-$1.log" &
-	PIDS="$PIDS $!"
-	until curl -sf "http://127.0.0.1:$1/healthz" >/dev/null; do sleep 0.2; done
-}
-start 18080 user
-start 18081 admin
-export PA_USER_URL=http://127.0.0.1:18080 PA_ADMIN_URL=http://127.0.0.1:18081
+# A user and an admin, each with a session (the cookie holds the token; the
+# database holds its SHA-256).
+PA_USER_SESSION=e2e-user-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+PA_ADMIN_SESSION=e2e-admin-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+export PA_USER_SESSION PA_ADMIN_SESSION
+docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <<SQL
+INSERT INTO users (subject, email, email_key, name, role) VALUES
+  ('e2e-admin', 'admin@example.test', 'admin@example.test', 'Test Admin', 'admin');
+INSERT INTO users (subject, email, email_key, name, role, invited_by)
+  SELECT 'e2e-user', 'user@example.test', 'user@example.test', 'Test User', 'user', id FROM users WHERE subject = 'e2e-admin';
+INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('$PA_USER_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';
+INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('$PA_ADMIN_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-admin';
+SQL
+
+# Authentik isn't running: sign-in reports it unavailable, which one test checks.
+PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080 \
+	APP_URL=http://127.0.0.1:18080 AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
+	ALLOWED_EMAIL_DOMAINS=example.test "$BIN" serve 2>>"$BIN.log" &
+PIDS="$PIDS $!"
+until curl -sf "http://127.0.0.1:18080/healthz" >/dev/null; do sleep 0.2; done
+export PA_URL=http://127.0.0.1:18080
 
 status=0
-(cd web && npx playwright test "$@") || status=$?
+(cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?
 
-# P1: no page text in the API logs.
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER' "$BIN"-*.log; then
-	echo "page text found in the API logs" >&2
+# P1: no page text in the API log.
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER' "$BIN.log"; then
+	echo "page text found in the API log" >&2
 	status=1
 else
-	echo "API log lines checked: $(cat "$BIN"-*.log | wc -l), page texts found: 0"
+	echo "API log lines checked: $(wc -l <"$BIN.log"), page texts found: 0"
 fi
 exit $status

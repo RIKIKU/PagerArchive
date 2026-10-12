@@ -39,7 +39,7 @@ jobs:
         run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
-      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks)
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level)
         run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
         shell: bash
       - name: Acceptance check summary
@@ -48,7 +48,7 @@ jobs:
           grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
-    name: Browser app and browser tests (A1, A3, A4, A10, A22, R31, WCAG)
+    name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, R31, WCAG)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -76,6 +76,40 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  stack:
+    name: Accounts against Authentik (A23-A28, section 11 step 2)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --no-fund --no-audit
+      - name: Install browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: A23-A28 against the compose stack (API, PostgreSQL, Authentik, Mailpit)
+        run: sh scripts/stack-checks.sh
+      - name: Section 11 step 2 in a browser, on a fresh stack
+        run: sh scripts/stack-e2e.sh --project=chromium
+      - name: Upload Playwright report, screenshots and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stack-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
             web/playwright-report/
             web/test-results/

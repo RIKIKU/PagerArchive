@@ -6,6 +6,8 @@ Date: 2026-10-10
 
 Accepted (2026-10-11, by the owner, including the reload-on-reconnect change in section 5 and the receiver names in section 2)
 
+Section 1 (the `DEV_VIEWER_ROLE` switch) and the template admin screens promised in sections 3 and 6 are superseded by ADR 0004 (milestone M3): roles come from accounts, and aliases, templates and clients stay on the CLI in v1 (owner, 2026-10-13).
+
 ## Context
 
 Milestone M2 adds the browser UI, live updates, search, and the job and detail views (checks A1, A3, A4, A6 search, A10). The owner settled R27, R30 and R33 on 2026-10-10 (recorded in `SPEC.md`) and chose how M2 handles admins before sign-in exists. This ADR records those decisions and the implementer's choices where the spec is silent ("How to use", item 7).

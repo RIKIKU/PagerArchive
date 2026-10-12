@@ -21,6 +21,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
@@ -46,6 +47,14 @@ type env struct {
 	srv    *server.Server
 	cat    *catalog.Catalog
 	worker *reparse.Worker
+
+	// Accounts (M3): a fake Authentik, the first admin and a user. Requests
+	// are made as e.as (the user unless a test changes it).
+	acc   *accounts.Service
+	dir   *fakeDir
+	admin *member
+	user  *member
+	as    *member
 }
 
 type syncBuffer struct {
@@ -124,14 +133,17 @@ func setup(t *testing.T) *env {
 	}
 	ix := streets.NewIndex(ds.Streets, n.StreetTypes)
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	hub := live.NewHub()
+	e.dir = newFakeDir()
+	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, SignedOut: hub.CloseUsers}
 	srv := &server.Server{
-		Store:      st,
-		Ingest:     &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix},
-		Log:        log,
-		Now:        time.Now,
-		Hub:        live.NewHub(),
-		Location:   time.UTC,
-		ViewerRole: "user",
+		Store:    st,
+		Ingest:   &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix},
+		Log:      log,
+		Now:      time.Now,
+		Hub:      hub,
+		Location: time.UTC,
+		Accounts: e.acc,
 	}
 	e.srv = srv
 	e.cat = &catalog.Catalog{Store: st}
@@ -139,6 +151,9 @@ func setup(t *testing.T) *env {
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 	e.url = hs.URL
+	e.admin = e.newMember("admin@example.com", accounts.RoleAdmin, nil)
+	e.user = e.newMember("user@example.com", accounts.RoleUser, e.admin)
+	e.as = e.user
 	// P1: no server log line contains page text.
 	t.Cleanup(func() {
 		logs := e.logs.String()

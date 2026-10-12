@@ -1,12 +1,27 @@
 /// <reference types="node" />
-// Browser acceptance checks for milestone M2 (SPEC.md section 9).
-// scripts/e2e.sh starts the API on a fresh database with the standard test
-// fixture, a client key, a user-role server and an admin-role server.
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+// Browser acceptance checks (SPEC.md section 9). scripts/e2e.sh starts the API
+// on a fresh database with the standard test fixture, a client key, and a
+// signed-in user and admin (their session tokens).
+import { test, expect, type Browser, type BrowserContextOptions, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 
-const USER_URL = process.env.PA_USER_URL ?? 'http://127.0.0.1:18080';
-const ADMIN_URL = process.env.PA_ADMIN_URL ?? 'http://127.0.0.1:18081';
+const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
+const SESSIONS = { user: process.env.PA_USER_SESSION ?? '', admin: process.env.PA_ADMIN_SESSION ?? '' };
+type Role = keyof typeof SESSIONS;
+
+const sessionCookie = (role: Role) => ({ name: 'pa_session', value: SESSIONS[role], url: URL });
+
+/** A browser context signed in as role. */
+async function signedIn(browser: Browser, role: Role = 'user', opts: BrowserContextOptions = {}) {
+	const ctx = await browser.newContext(opts);
+	await ctx.addCookies([sessionCookie(role)]);
+	return ctx;
+}
+
+// The page fixture is signed in as the user.
+test.beforeEach(async ({ context }) => {
+	await context.addCookies([sessionCookie('user')]);
+});
 const KEY = process.env.PA_CLIENT_KEY ?? '';
 
 let seq = 0;
@@ -17,7 +32,7 @@ function uniqueJob(): string {
 }
 
 async function post(request: APIRequestContext, capcode: string, text: string) {
-	const res = await request.post(`${USER_URL}/api/v1/pages`, {
+	const res = await request.post(`${URL}/api/v1/pages`, {
 		headers: { Authorization: `Bearer ${KEY}` },
 		data: { capcode, text, received_at: new Date().toISOString(), baud: 512 }
 	});
@@ -31,8 +46,8 @@ async function waitLive(page: Page) {
 // A3. Live update: two users on the unfiltered list both see a new page at
 // the top within 2 seconds of the post, without a refresh.
 test('A3 live update reaches two viewers within 2 s', async ({ browser, request }) => {
-	const a = await (await browser.newContext()).newPage();
-	const b = await (await browser.newContext()).newPage();
+	const a = await (await signedIn(browser)).newPage();
+	const b = await (await signedIn(browser)).newPage();
 	await Promise.all([a.goto('/'), b.goto('/')]);
 	await Promise.all([waitLive(a), waitLive(b)]);
 
@@ -51,8 +66,8 @@ test('A3 live update reaches two viewers within 2 s', async ({ browser, request 
 
 // A4. Live update respects filters.
 test('A4 live update respects filters', async ({ browser, request }) => {
-	const a = await (await browser.newContext()).newPage();
-	const b = await (await browser.newContext()).newPage();
+	const a = await (await signedIn(browser)).newPage();
+	const b = await (await signedIn(browser)).newPage();
 	await Promise.all([a.goto('/?group=STN2'), b.goto('/')]);
 	await Promise.all([waitLive(a), waitLive(b)]);
 
@@ -81,7 +96,7 @@ test('A10 marker hidden, Emergency badge shown', async ({ page, request }) => {
 test('R31 phone width keeps date, time and alias visible', async ({ browser, request }) => {
 	const job = uniqueJob();
 	await post(request, '0100004', `@@${job} HSF1 AN EXTREMELY_LONG_UNBROKEN_DESCRIPTION_THAT_MUST_WRAP_RATHER_THAN_SCROLL @ 3 FICTION ST, MADEUPTON #STN4`);
-	const page = await (await browser.newContext({ viewport: { width: 375, height: 740 } })).newPage();
+	const page = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 740 } })).newPage();
 	await page.goto(`/?job=${job}`);
 	const row = page.getByTestId('message-list').locator('article').first();
 	await expect(row).toContainText(job);
@@ -104,16 +119,51 @@ test('A1 job view shows every copy', async ({ page, request }) => {
 });
 
 // R35c: flags only for admins.
-test('R35c flags are shown to admins only', async ({ page, request }) => {
+test('R35c flags are shown to admins only', async ({ page, browser, request }) => {
 	await post(request, '0100001', '@@GARBLED E2E ' + uniqueJob());
-	await page.goto(`${USER_URL}/?q=GARBLED+E2E`);
+	await page.goto(`/?q=GARBLED+E2E`);
 	await expect(page.getByTestId('message-list').locator('article').first()).toBeVisible();
 	await expect(page.getByText('parse failed')).toHaveCount(0);
 	await expect(page.getByText('Flags (admins only)')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Users' })).toHaveCount(0);
 
-	await page.goto(`${ADMIN_URL}/?q=GARBLED+E2E`);
-	await expect(page.getByText('parse failed').first()).toBeVisible();
-	await expect(page.getByRole('link', { name: 'Clients' })).toBeVisible();
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto(`/?q=GARBLED+E2E`);
+	await expect(admin.getByText('parse failed').first()).toBeVisible();
+	await expect(admin.getByRole('link', { name: 'Clients' })).toBeVisible();
+	await expect(admin.getByRole('link', { name: 'Users' })).toBeVisible();
+});
+
+// A29 in the browser: without a session the app sends you to sign in. (No
+// Authentik runs here, so the sign-in page says it can't be reached.)
+test('A29 signed-out visitors are sent to sign in', async ({ browser }) => {
+	const page = await (await browser.newContext()).newPage();
+	await page.goto('/jobs/EX0000001');
+	await expect(page).toHaveURL(/\/signin\?error=directory_unavailable$/);
+	await expect(page.getByRole('alert')).toContainText("couldn't be reached");
+	await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+});
+
+// R44 screens: the account page shows who you are and who invited you; the
+// users page lists users for admins, with their inviter.
+test('account and users pages', async ({ page, browser }) => {
+	await page.goto('/account');
+	await expect(page.getByRole('heading', { level: 1, name: 'Your account' })).toBeVisible();
+	await expect(page.locator('dl')).toContainText('user@example.test');
+	await expect(page.locator('dl')).toContainText('Test Admin (admin@example.test)');
+	await expect(page.getByRole('button', { name: 'Send invitation' })).toBeVisible();
+	await page.goto('/admin/users');
+	await expect(page.getByRole('alert')).toContainText('admins only');
+
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin/users');
+	const user = admin.locator('li').filter({ hasText: 'user@example.test' });
+	await expect(user).toContainText('Invited by Test Admin (admin@example.test)');
+	await expect(user.getByRole('button', { name: 'Deactivate with invite tree: Test User (user@example.test)' })).toBeVisible();
+	// No actions on your own row.
+	const self = admin.locator('li').filter({ has: admin.getByText('Test Admin (admin@example.test)', { exact: true }) });
+	await expect(self).toContainText('You');
+	await expect(self.getByRole('button')).toHaveCount(0);
 });
 
 // A22. Tap targets at 375 px (R35d): the text opens the detail view, the
@@ -125,7 +175,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
 	const ref = job.slice(2); // not a job number, so this page stays out of the job
 	await post(request, '0999998', `QDPAGE TO AN UNKNOWN PAGER REF ${ref}`);
-	const ctx = await browser.newContext({ viewport: { width: 375, height: 740 }, hasTouch: true });
+	const ctx = await signedIn(browser, 'user', { viewport: { width: 375, height: 740 }, hasTouch: true });
 	const page = await ctx.newPage();
 	const list = page.getByTestId('message-list');
 	const row = list.locator('article').filter({ hasText: 'Station 1' });
@@ -174,25 +224,28 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/admin/clients'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/admin/clients', '/admin/users', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
-			const res = await request.get(`${USER_URL}/api/v1/messages?capcode=0100001`);
+			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			const aliasID = (await res.json()).messages[0].alias_id;
-			const ctx = await browser.newContext({ colorScheme: scheme, viewport: { width, height: 900 } });
-			const page = await ctx.newPage();
+			// Admin views need the admin; the rest are seen as the user.
+			const ctx = await signedIn(browser, 'admin', { colorScheme: scheme, viewport: { width, height: 900 } });
+			const userCtx = await signedIn(browser, 'user', { colorScheme: scheme, viewport: { width, height: 900 } });
+			const adminPage = await ctx.newPage();
+			const userPage = await userCtx.newPage();
 			for (const view of views) {
-				const base = view === '/admin/clients' ? ADMIN_URL : USER_URL;
+				const page = view === 'detail' || view.startsWith('/admin/') ? adminPage : userPage;
 				if (view === 'detail') {
-					await page.goto(`${ADMIN_URL}/`);
+					await page.goto('/');
 					await page.getByTestId('message-list').locator('article a.open').first().click();
 					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
 				} else {
 					const path = view === 'alias' ? `/aliases/${aliasID}` : view;
-					await page.goto(base + path);
+					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
 					if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);

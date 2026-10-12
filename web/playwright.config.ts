@@ -1,8 +1,8 @@
 /// <reference types="node" />
 import { defineConfig, devices } from '@playwright/test';
 
-// The API is started by scripts/e2e.sh, which sets these.
-const baseURL = process.env.PA_USER_URL ?? 'http://127.0.0.1:18080';
+// The API is started by scripts/e2e.sh or scripts/stack-e2e.sh, which set PA_URL.
+const baseURL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
 
 export default defineConfig({
 	testDir: 'tests',

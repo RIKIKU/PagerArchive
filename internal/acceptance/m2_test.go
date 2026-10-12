@@ -17,7 +17,7 @@ import (
 
 func (e *env) getJSON(path string, v any) int {
 	e.t.Helper()
-	resp, err := http.Get(e.url + path)
+	resp, err := e.as.do(http.MethodGet, e.url+path, nil)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -182,7 +182,7 @@ func TestAdminOnlyData(t *testing.T) {
 		t.Errorf("user client status: %d", code)
 	}
 
-	e.srv.ViewerRole = "admin"
+	e.as = e.admin
 	ms = e.list("parse_failed=true")
 	if len(ms) != 1 || ms[0].Flags == nil || !ms[0].Flags.ParseFailed {
 		t.Fatalf("admin flag filter: %+v", ms)
@@ -313,6 +313,7 @@ func (e *env) stream(query string) <-chan server.Message {
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.t.Cleanup(cancel)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.url+"/api/v1/stream?"+query, nil)
+	req.AddCookie(e.as.cookie)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		e.t.Fatalf("stream: %v %v", err, resp)

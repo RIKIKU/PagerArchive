@@ -34,7 +34,11 @@ sleep 3
 until docker exec "pa-db-$$" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
 docker exec "pa-db-$$" psql -U postgres -tAc 'SELECT postgis_full_version()' | cut -c1-60
 
+# No Authentik here: the sign-in settings are required but unused, since
+# clients post with API keys.
 docker run -d --platform "$SERVER_PLATFORM" --name "pa-api-$$" --network "$NET" -e DATABASE_URL="$DB_URL" \
+	-e APP_URL=http://pa-api:8080 -e AUTHENTIK_URL=http://authentik.invalid -e OIDC_CLIENT_SECRET=unused \
+	-e AUTHENTIK_API_TOKEN=unused -e ALLOWED_EMAIL_DOMAINS=example.test \
 	-v "$PWD/profiles/example:/profiles:ro" "$API_IMAGE" >/dev/null
 i=0
 until docker run --rm --network "$NET" curlimages/curl:latest -sf "http://pa-api-$$:8080/healthz" >/dev/null 2>&1; do

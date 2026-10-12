@@ -7,8 +7,9 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
 
-**Status:** milestone M2 (browser UI, live updates, search, job and detail views) on top of M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). Sign-in arrives in M3. See [`SPEC.md`](SPEC.md).
+**Status:** milestone M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation) on top of M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
 
+- [Deploying the server](docs/deploy.md)
 - [Profiles and `validate-profile`](docs/profiles.md)
 - [Receiving client](docs/client.md)
 - [Architecture decisions](docs/adr/)
@@ -34,7 +35,14 @@ npx playwright install --with-deps chromium firefox webkit
 cd .. && sh scripts/e2e.sh                           # browser tests against a real API and PostGIS
 ```
 
-`npm run dev` serves the app with live reload and sends `/api` to an API on `127.0.0.1:8080`.
+The account checks run against the full compose stack, with Authentik and a [Mailpit](https://mailpit.axllent.org) mail catcher (never a real mail server). They need Docker with compose and ports 8080, 9000 and 8025 free:
+
+```
+sh scripts/stack-checks.sh                 # A23-A28 through Authentik's flow executor API
+sh scripts/stack-e2e.sh --project=chromium # section 11 step 2 in a browser
+```
+
+`npm run dev` serves the app with live reload and sends `/api` and `/auth` to an API on `127.0.0.1:8080`.
 
 PagerArchive is for people interested in what's happening on their network. It is not a tool for harassment.
 
