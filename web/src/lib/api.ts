@@ -45,6 +45,8 @@ export interface Message {
 
 export interface Meta {
 	role: 'admin' | 'user';
+	account_url: string;
+	allowed_email_domains: string[];
 	time_zone: string;
 	categories: string[];
 	attribution: string;
@@ -89,6 +91,37 @@ export interface ClientStatus {
 	last_seen: string | null;
 }
 
+export interface Me {
+	id: number;
+	email: string;
+	name: string | null;
+	role: 'admin' | 'user';
+	invited_by: string | null;
+}
+
+export interface Invitation {
+	id: number;
+	email: string;
+	status: 'pending' | 'expired' | 'used' | 'cancelled';
+	created_at: string;
+	expires_at: string;
+	used_at: string | null;
+	invited_by: string;
+	reinvite: boolean;
+}
+
+export interface UserRow {
+	id: number;
+	email: string;
+	name: string | null;
+	role: 'admin' | 'user';
+	status: 'active' | 'deactivated';
+	created_at: string;
+	deactivated_at: string | null;
+	invited_by_id: number | null;
+	invited_by: string | null;
+}
+
 export class ApiError extends Error {
 	constructor(
 		public status: number,
@@ -98,22 +131,37 @@ export class ApiError extends Error {
 	}
 }
 
-async function get<T>(path: string): Promise<T> {
-	const res = await fetch(path, { headers: { Accept: 'application/json' } });
+/** Sends the browser to sign in, and back here afterwards. */
+export function signIn() {
+	if (location.pathname.startsWith('/signin')) return;
+	location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const res = await fetch(path, {
+		method,
+		headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
+		body: body === undefined ? undefined : JSON.stringify(body)
+	});
+	if (res.status === 401 && path.startsWith('/api/')) signIn();
 	if (!res.ok) {
 		let msg = `${res.status} ${res.statusText}`;
 		try {
-			const body = await res.json();
-			if (body?.error) msg = body.error;
+			const b = await res.json();
+			if (b?.error) msg = b.error;
 		} catch {
 			// not JSON
 		}
 		throw new ApiError(res.status, msg);
 	}
+	if (res.status === 204) return undefined as T;
 	return res.json() as Promise<T>;
 }
 
+const get = <T>(path: string) => request<T>('GET', path);
+
 let metaPromise: Promise<Meta> | undefined;
+let mePromise: Promise<Me> | undefined;
 
 export const api = {
 	meta: () => (metaPromise ??= get<Meta>('/api/v1/meta')),
@@ -128,5 +176,23 @@ export const api = {
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
 	capcode: (capcode: string) => get<CapcodeView>(`/api/v1/capcodes/${encodeURIComponent(capcode)}`),
 	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
-	clients: () => get<ClientStatus[]>('/api/v1/admin/clients')
+	clients: () => get<ClientStatus[]>('/api/v1/admin/clients'),
+
+	// Accounts (R40-R44).
+	me: (fresh = false) => (fresh || !mePromise ? (mePromise = get<Me>('/api/v1/me')) : mePromise),
+	deleteMe: () => request<void>('DELETE', '/api/v1/me'),
+	invitations: () => get<Invitation[]>('/api/v1/invitations'),
+	invite: (email: string) => request<Invitation>('POST', '/api/v1/invitations', { email }),
+	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),
+	users: () => get<UserRow[]>('/api/v1/admin/users'),
+	allInvitations: () => get<Invitation[]>('/api/v1/admin/invitations'),
+	deactivate: (id: number, tree: boolean) =>
+		request<{ deactivated: number }>('POST', `/api/v1/admin/users/${id}/deactivate`, { tree }),
+	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
+	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
+	authStatus: () => get<{ first_admin_setup: boolean }>('/auth/status'),
+	signOut: async () => {
+		const r = await request<{ redirect: string }>('POST', '/auth/logout');
+		location.assign(r.redirect);
+	}
 };

@@ -79,20 +79,34 @@
 	}
 
 	// Load and subscribe whenever the criteria change.
+	let restarts = $state(0);
 	$effect(() => {
 		const q = new URLSearchParams(queryKey);
+		void restarts;
 		loadFirst(q);
 		const es = new EventSource(`/api/v1/stream?${q}`);
 		let opened = false;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 		es.onopen = () => {
 			// After a reconnect, reload so nothing sent meanwhile is missed.
 			if (opened) loadFirst(q);
 			opened = true;
 			live = 'live';
 		};
-		es.onerror = () => (live = 'reconnecting');
+		es.onerror = () => {
+			live = 'reconnecting';
+			// The browser gives up on a refused stream (e.g. signed out or
+			// deactivated): check the session, which goes to the sign-in
+			// page if it has ended, and otherwise try again shortly.
+			if (es.readyState === EventSource.CLOSED) {
+				timer = setTimeout(() => api.me().then(() => restarts++, () => {}), 3000);
+			}
+		};
 		es.addEventListener('message', (ev) => insert(JSON.parse((ev as MessageEvent).data)));
-		return () => es.close();
+		return () => {
+			clearTimeout(timer);
+			es.close();
+		};
 	});
 
 	// Infinite scroll, with a button as a keyboard-friendly fallback.

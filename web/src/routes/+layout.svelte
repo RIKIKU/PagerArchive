@@ -9,7 +9,11 @@
 	let theme: 'system' | 'light' | 'dark' = $state('system');
 
 	onMount(() => {
-		api.meta().then((m) => (meta = m));
+		// The sign-in page works without a session.
+		if (!page.url.pathname.startsWith('/signin')) api
+				.meta()
+				.then((m) => (meta = m))
+				.catch(() => {}); // 401 goes to the sign-in page
 		try {
 			const saved = localStorage.getItem('theme');
 			if (saved === 'light' || saved === 'dark') theme = saved;
@@ -28,10 +32,16 @@
 		}
 	});
 
-	const nav = $derived([
+	const nav = $derived(page.url.pathname.startsWith('/signin') ? [] : [
 		{ href: '/', label: 'Messages' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
-		...(meta?.role === 'admin' ? [{ href: '/admin/clients', label: 'Clients' }] : [])
+		...(meta?.role === 'admin'
+			? [
+					{ href: '/admin/users', label: 'Users' },
+					{ href: '/admin/clients', label: 'Clients' }
+				]
+			: []),
+		...(meta ? [{ href: '/account', label: 'Account' }] : [])
 	]);
 </script>
 
