@@ -59,6 +59,7 @@ Receiving clients, ingest and redaction, profile-driven parsing, job grouping, m
 - **Incident state or resource tracking.** The app never infers or shows whether an incident is active, cancelled or finished, or where resources are. Pages carry too little information for that. Follow-up pages (cancellations, updates) are stored and grouped like any other page and never interpreted.
 - **A native mobile app.** The browser UI must work well on phones instead.
 - **Automatic client updates** (wanted later). v1 publishes multi-arch images and documents manual updates.
+- **Managing aliases, templates and clients in the browser** (wanted later, owner 2026-10-13). In v1 they are changed by import or CLI; the browser admin screens cover users, invitations, roles and retention.
 - **Writing an identity provider.**
 - **Linking several email addresses to one person.** Accepted risk: one person may hold more than one account. Invite attribution and invite-tree deactivation (section 7.9) are the remedy.
 - **Public geocoding services** (section 8).
@@ -175,6 +176,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R43b.** Deactivation takes effect **immediately**: the user is disabled in Authentik and their live sessions and connections are closed. Admins can reactivate users one at a time (reactivating doesn't reactivate their invite tree). The re-invite block (R43) goes by email address. A deactivated user's unused invitations are cancelled (owner, 2026-10-13).
 - **R43c.** Users can delete their own account. People they invited keep their accounts, credited to "deleted user". Their unused invitations are cancelled (owner, 2026-10-13).
 - **R44. Roles and the first admin** (owner, 2026-10-12). Two roles: `user` and `admin`. Users browse, search and invite (R41). Admins can also manage aliases, templates, users, clients and retention, and see flags (R35c) and receiver status (R39). The deployment setting `INITIAL_ADMIN_EMAIL` names the first admin: **while no admin exists**, that address may enrol without an invitation, still verifying the emailed code, and is exempt from `ALLOWED_EMAIL_DOMAINS`; it becomes admin. Once any admin exists, the setting is ignored. That is the only exception to the allowed-domain rule: every invitation made in the app is to an allowed domain. Admins can promote users to admin and demote admins. The **last active admin** can't be demoted, deactivated or deleted, including through deactivating an invite tree that contains them.
+- **R44a. Guessing protection** (owner, 2026-10-13). Sign-in passwords, enrolment codes and password-reset codes are protected against guessing: after 5 wrong attempts for one account, further attempts for it are refused for 15 minutes, even if the flow is restarted or a new code is requested.
 
 ### 7.10 Retention
 - **R45.** Messages are kept for a configurable period, set **in days** in the admin UI (default **3,650 days**, minimum 30), then deleted completely (text, metadata and everything linked to them) by a nightly job. **Backups are out of scope.** The docs must say that deleted messages may survive in a deployment's own backups. The cut-off is a **calendar date** in the deployment time zone. The nightly job runs at **03:00** (configurable).
@@ -247,6 +249,7 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A30. Integration selection and filter.** **Given** user A has a webhook integration selecting alias "Station 1" (`0100001`) filtered to event category Structure fire, and a test receiver standing in for the webhook, **when** pages arrive for `0100001` with event types `HSF1` and `GRS3`, and for `0100002` with `HSF1`, **then** within 5 seconds the webhook has received exactly 1 request (the `HSF1` page for `0100001`), its JSON contains the text without the marker, and user B, who has no integrations, triggered nothing.
 - **A31. Integration safety.** **Given** an admin has not allowed private addresses, **when** a user saves a webhook pointing at `http://127.0.0.1:8080/` or `http://192.168.1.10/`, **then** it is rejected with a clear message. **And given** a working integration whose endpoint starts failing, **when** delivery has failed repeatedly, **then** the integration is paused and its owner sees "paused" with the last error and no page text.
 - **A32. Metrics.** **Given** two clients, one last heard 31 minutes ago, **when** the metrics endpoint is scraped with valid credentials, **then** it reports that client as not receiving and the other as receiving, contains no page text, and refuses scrapes without credentials.
+- **A33. Guessing is limited.** **Given** user B, **when** 5 wrong password-reset codes are entered for B's email, **then** the correct code is refused for 15 minutes, even if a new code is requested; **when** 5 wrong passwords are entered for B, **then** B's correct password is refused for 15 minutes, even if the sign-in flow is restarted.
 
 ## 10. Example profile (made-up network)
 
@@ -288,7 +291,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M0** | Stack ADR approved | n/a |
 | **M1** | Client, ingest, redaction, dedup, profiles and schemas, `validate-profile`, golden tests, CI | Golden tables, A2, A5, A6 (storage), A7, A8, A9, A14 |
 | **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A22 |
-| **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2, A23–A29 |
+| **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2, A23–A29, A33 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
 | **M5** | Per-user integrations (webhook, MQTT), metrics endpoint | A30, A31, A32 |
 
