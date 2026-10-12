@@ -149,7 +149,7 @@ func (b *browser) executor(slug, query string, body map[string]any) challenge {
 // enrolAnswers fills in the enrolment flow: name and password, then the
 // emailed code (wrongCode first, if set).
 func (b *browser) enrolAnswers(wrongCode string, seenWrong *string) answer {
-	since := time.Now().Add(-2 * time.Second)
+	since := time.Now() // the code is sent after this, when the prompt is answered
 	return func(c challenge) map[string]any {
 		switch c.Component {
 		case "ak-stage-prompt":

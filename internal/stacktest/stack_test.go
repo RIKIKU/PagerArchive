@@ -73,7 +73,7 @@ func (s *stack) authentikUser(t *testing.T, username string) (exists, active boo
 // invite has b invite address and returns the emailed link.
 func (b *browser) invite(address string) string {
 	b.t.Helper()
-	since := time.Now().Add(-2 * time.Second)
+	since := time.Now()
 	if code, msg := b.api(http.MethodPost, "/api/v1/invitations", map[string]string{"email": address}, nil); code != http.StatusCreated {
 		b.t.Fatalf("%s invites %s: %d %s", b.email, address, code, msg)
 	}
@@ -424,7 +424,7 @@ func TestPasswordResetWithEmailedCode(t *testing.T) {
 
 	r := s.browser(t, u.email)
 	r.pw = "a completely new pass phrase"
-	since := time.Now().Add(-2 * time.Second)
+	var since time.Time // set when the code is requested, so the enrolment code isn't picked up
 	c := r.executor("pagerarchive-recovery", "", nil)
 	for steps := 0; c.Component != "xak-flow-redirect"; steps++ {
 		if steps > 8 {
@@ -443,6 +443,7 @@ func TestPasswordResetWithEmailedCode(t *testing.T) {
 				// The email device was selected and its code sent.
 				body = map[string]any{"code": s.mailpit.code(t, u.email, since)}
 			} else if len(v.Devices) == 1 && v.Devices[0]["device_class"] == "email" {
+				since = time.Now()
 				body = map[string]any{"selected_challenge": v.Devices[0]}
 			} else {
 				t.Fatalf("code stage: %.300s", c.raw)

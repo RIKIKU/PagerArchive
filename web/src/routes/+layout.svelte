@@ -102,8 +102,23 @@
 		font-weight: 600;
 		border-bottom: 2px solid var(--accent);
 	}
+	.theme {
+		margin-left: auto;
+	}
 	.theme select {
 		font-size: 0.85rem;
+	}
+	/* Phones: brand and theme on one row, the links in a row below, so the
+	   header stays short and the first message stays on screen (R31). */
+	@media (max-width: 40rem) {
+		.top {
+			row-gap: 0.15rem;
+			padding-bottom: 0.25rem;
+		}
+		nav {
+			order: 3;
+			flex-basis: 100%;
+		}
 	}
 	main {
 		max-width: 64rem;
