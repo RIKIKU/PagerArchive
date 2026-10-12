@@ -213,3 +213,151 @@ SELECT count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
 FROM messages
 WHERE capcode = $1 AND alias_id IS NULL
 GROUP BY capcode;
+
+-- Accounts (R40-R44, ADR 0004).
+
+-- name: UserBySubject :one
+SELECT * FROM users WHERE subject = $1;
+
+-- name: UserByID :one
+SELECT * FROM users WHERE id = $1;
+
+-- name: UserByEmailKey :one
+SELECT * FROM users WHERE email_key = $1;
+
+-- name: CreateUser :one
+INSERT INTO users (subject, email, email_key, name, role, invited_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: RelinkUser :exec
+-- An admin's re-invitation was used: the same account, active again, with a
+-- new Authentik user and the admin as its inviter (owner, 2026-10-13).
+UPDATE users SET subject = $2, name = $3, invited_by = $4, status = 'active', deactivated_at = NULL
+WHERE id = $1;
+
+-- name: SetUserName :exec
+UPDATE users SET name = $2 WHERE id = $1 AND status <> 'deleted';
+
+-- name: ClearUserSubject :exec
+UPDATE users SET subject = NULL WHERE id = $1;
+
+-- name: ListUsers :many
+SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
+       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name
+FROM users u
+LEFT JOIN users i ON i.id = u.invited_by
+WHERE u.status <> 'deleted'
+ORDER BY u.created_at, u.id;
+
+-- name: LockActiveAdmins :many
+-- Taken before any change that could remove the last active admin (R44).
+SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE;
+
+-- name: CountActiveAdmins :one
+SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active';
+
+-- name: InviteTree :many
+-- A user and everyone they invited, recursively, through deleted accounts
+-- too (R42). Deleted accounts are placeholders and are returned as such.
+WITH RECURSIVE tree AS (
+    SELECT u.id FROM users u WHERE u.id = sqlc.arg(root)::bigint
+    UNION
+    SELECT c.id FROM users c JOIN tree t ON c.invited_by = t.id
+)
+SELECT u.* FROM users u JOIN tree t ON t.id = u.id ORDER BY u.id;
+
+-- name: DeactivateUsers :many
+UPDATE users SET status = 'deactivated', deactivated_at = now()
+WHERE id = ANY(sqlc.arg(ids)::bigint[]) AND status = 'active'
+RETURNING id, subject;
+
+-- name: ReactivateUser :execrows
+UPDATE users SET status = 'active', deactivated_at = NULL WHERE id = $1 AND status = 'deactivated';
+
+-- name: SetUserRole :execrows
+UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted';
+
+-- name: DeleteUserAccount :exec
+-- R43c: only an anonymous placeholder stays, so the invite tree stays
+-- connected (owner, 2026-10-13).
+UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL
+WHERE id = $1;
+
+-- name: ScrubInvitationsTo :exec
+-- The invitation that enrolled a deleted user names them: forget the address.
+UPDATE invitations SET email = NULL, email_key = NULL WHERE used_by = $1;
+
+-- name: CreateSession :exec
+INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3);
+
+-- name: SessionUser :one
+SELECT u.*, s.last_used_at AS session_used_at
+FROM sessions s JOIN users u ON u.id = s.user_id
+WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active';
+
+-- name: TouchSession :exec
+UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE token_hash = $1;
+
+-- name: DeleteSession :exec
+DELETE FROM sessions WHERE token_hash = $1;
+
+-- name: DeleteUserSessions :exec
+DELETE FROM sessions WHERE user_id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= now();
+
+-- name: CreateInvitation :one
+INSERT INTO invitations (email, email_key, invited_by, first_admin, reactivates, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING *;
+
+-- name: SetInvitationAuthentikID :exec
+UPDATE invitations SET authentik_id = $2 WHERE id = $1;
+
+-- name: InvitationByID :one
+SELECT * FROM invitations WHERE id = $1;
+
+-- name: PendingInvitationTo :one
+SELECT i.*, u.email AS inviter_email, u.name AS inviter_name
+FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
+WHERE i.email_key = $1 AND i.status = 'pending' AND i.expires_at > now()
+LIMIT 1;
+
+-- name: UseInvitation :execrows
+UPDATE invitations SET status = 'used', used_by = $2, used_at = now()
+WHERE id = $1 AND status = 'pending';
+
+-- name: CancelInvitation :one
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE id = $1 AND status = 'pending'
+RETURNING authentik_id;
+
+-- name: CancelInvitationsBy :many
+-- R43b, R43c: a deactivated or deleted user's unused invitations.
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE invited_by = ANY(sqlc.arg(ids)::bigint[]) AND status = 'pending'
+RETURNING authentik_id;
+
+-- name: CancelPendingInvitationsTo :many
+-- Expired or replaced invitations to one address.
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE email_key = $1 AND status = 'pending'
+RETURNING authentik_id;
+
+-- name: CancelFirstAdminInvitations :many
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE first_admin AND status = 'pending'
+RETURNING authentik_id;
+
+-- name: ListInvitations :many
+-- One inviter's invitations, or every one (inviter NULL), newest first.
+SELECT i.id, i.email, i.status, i.created_at, i.expires_at, i.used_at, i.cancelled_at,
+       i.first_admin, i.reactivates, i.invited_by, u.email AS inviter_email, u.name AS inviter_name, u.status AS inviter_status
+FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
+WHERE (sqlc.narg(inviter)::bigint IS NULL OR i.invited_by = sqlc.narg(inviter)::bigint)
+  AND i.email IS NOT NULL
+ORDER BY i.created_at DESC, i.id DESC
+LIMIT 200;

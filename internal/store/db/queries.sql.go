@@ -229,6 +229,99 @@ func (q *Queries) AllAliases(ctx context.Context) ([]AllAliasesRow, error) {
 	return items, nil
 }
 
+const cancelFirstAdminInvitations = `-- name: CancelFirstAdminInvitations :many
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE first_admin AND status = 'pending'
+RETURNING authentik_id
+`
+
+func (q *Queries) CancelFirstAdminInvitations(ctx context.Context) ([]*string, error) {
+	rows, err := q.db.Query(ctx, cancelFirstAdminInvitations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var authentik_id *string
+		if err := rows.Scan(&authentik_id); err != nil {
+			return nil, err
+		}
+		items = append(items, authentik_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cancelInvitation = `-- name: CancelInvitation :one
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE id = $1 AND status = 'pending'
+RETURNING authentik_id
+`
+
+func (q *Queries) CancelInvitation(ctx context.Context, id int64) (*string, error) {
+	row := q.db.QueryRow(ctx, cancelInvitation, id)
+	var authentik_id *string
+	err := row.Scan(&authentik_id)
+	return authentik_id, err
+}
+
+const cancelInvitationsBy = `-- name: CancelInvitationsBy :many
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE invited_by = ANY($1::bigint[]) AND status = 'pending'
+RETURNING authentik_id
+`
+
+// R43b, R43c: a deactivated or deleted user's unused invitations.
+func (q *Queries) CancelInvitationsBy(ctx context.Context, ids []int64) ([]*string, error) {
+	rows, err := q.db.Query(ctx, cancelInvitationsBy, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var authentik_id *string
+		if err := rows.Scan(&authentik_id); err != nil {
+			return nil, err
+		}
+		items = append(items, authentik_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const cancelPendingInvitationsTo = `-- name: CancelPendingInvitationsTo :many
+UPDATE invitations SET status = 'cancelled', cancelled_at = now()
+WHERE email_key = $1 AND status = 'pending'
+RETURNING authentik_id
+`
+
+// Expired or replaced invitations to one address.
+func (q *Queries) CancelPendingInvitationsTo(ctx context.Context, emailKey *string) ([]*string, error) {
+	rows, err := q.db.Query(ctx, cancelPendingInvitationsTo, emailKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var authentik_id *string
+		if err := rows.Scan(&authentik_id); err != nil {
+			return nil, err
+		}
+		items = append(items, authentik_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimReparseRequests = `-- name: ClaimReparseRequests :many
 DELETE FROM reparse_requests RETURNING capcode_pattern, reason
 `
@@ -256,6 +349,26 @@ func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseReque
 		return nil, err
 	}
 	return items, nil
+}
+
+const clearUserSubject = `-- name: ClearUserSubject :exec
+UPDATE users SET subject = NULL WHERE id = $1
+`
+
+func (q *Queries) ClearUserSubject(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, clearUserSubject, id)
+	return err
+}
+
+const countActiveAdmins = `-- name: CountActiveAdmins :one
+SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active'
+`
+
+func (q *Queries) CountActiveAdmins(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countActiveAdmins)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
 }
 
 const createAlias = `-- name: CreateAlias :one
@@ -296,6 +409,64 @@ func (q *Queries) CreateClient(ctx context.Context, arg CreateClientParams) erro
 	return err
 }
 
+const createInvitation = `-- name: CreateInvitation :one
+INSERT INTO invitations (email, email_key, invited_by, first_admin, reactivates, expires_at)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at
+`
+
+type CreateInvitationParams struct {
+	Email       *string
+	EmailKey    *string
+	InvitedBy   *int64
+	FirstAdmin  bool
+	Reactivates *int64
+	ExpiresAt   time.Time
+}
+
+func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationParams) (Invitation, error) {
+	row := q.db.QueryRow(ctx, createInvitation,
+		arg.Email,
+		arg.EmailKey,
+		arg.InvitedBy,
+		arg.FirstAdmin,
+		arg.Reactivates,
+		arg.ExpiresAt,
+	)
+	var i Invitation
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailKey,
+		&i.InvitedBy,
+		&i.FirstAdmin,
+		&i.Reactivates,
+		&i.AuthentikID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.UsedAt,
+		&i.CancelledAt,
+	)
+	return i, err
+}
+
+const createSession = `-- name: CreateSession :exec
+INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)
+`
+
+type CreateSessionParams struct {
+	TokenHash []byte
+	UserID    int64
+	ExpiresAt time.Time
+}
+
+func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
+	_, err := q.db.Exec(ctx, createSession, arg.TokenHash, arg.UserID, arg.ExpiresAt)
+	return err
+}
+
 const createTemplate = `-- name: CreateTemplate :one
 INSERT INTO templates (name, agency, icon, colour, agency_profile)
 VALUES ($1, $2, $3, $4, $5)
@@ -323,6 +494,78 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 	return id, err
 }
 
+const createUser = `-- name: CreateUser :one
+INSERT INTO users (subject, email, email_key, name, role, invited_by)
+VALUES ($1, $2, $3, $4, $5, $6)
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at
+`
+
+type CreateUserParams struct {
+	Subject   *string
+	Email     *string
+	EmailKey  *string
+	Name      *string
+	Role      string
+	InvitedBy *int64
+}
+
+func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
+	row := q.db.QueryRow(ctx, createUser,
+		arg.Subject,
+		arg.Email,
+		arg.EmailKey,
+		arg.Name,
+		arg.Role,
+		arg.InvitedBy,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const deactivateUsers = `-- name: DeactivateUsers :many
+UPDATE users SET status = 'deactivated', deactivated_at = now()
+WHERE id = ANY($1::bigint[]) AND status = 'active'
+RETURNING id, subject
+`
+
+type DeactivateUsersRow struct {
+	ID      int64
+	Subject *string
+}
+
+func (q *Queries) DeactivateUsers(ctx context.Context, ids []int64) ([]DeactivateUsersRow, error) {
+	rows, err := q.db.Query(ctx, deactivateUsers, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DeactivateUsersRow
+	for rows.Next() {
+		var i DeactivateUsersRow
+		if err := rows.Scan(&i.ID, &i.Subject); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteAlias = `-- name: DeleteAlias :execrows
 DELETE FROM aliases WHERE id = $1
 `
@@ -335,6 +578,24 @@ func (q *Queries) DeleteAlias(ctx context.Context, id int64) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
+DELETE FROM sessions WHERE expires_at <= now()
+`
+
+func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteExpiredSessions)
+	return err
+}
+
+const deleteSession = `-- name: DeleteSession :exec
+DELETE FROM sessions WHERE token_hash = $1
+`
+
+func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
+	_, err := q.db.Exec(ctx, deleteSession, tokenHash)
+	return err
+}
+
 const deleteTemplate = `-- name: DeleteTemplate :execrows
 DELETE FROM templates WHERE id = $1
 `
@@ -345,6 +606,28 @@ func (q *Queries) DeleteTemplate(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteUserAccount = `-- name: DeleteUserAccount :exec
+UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL
+WHERE id = $1
+`
+
+// R43c: only an anonymous placeholder stays, so the invite tree stays
+// connected (owner, 2026-10-13).
+func (q *Queries) DeleteUserAccount(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteUserAccount, id)
+	return err
+}
+
+const deleteUserSessions = `-- name: DeleteUserSessions :exec
+DELETE FROM sessions WHERE user_id = ANY($1::bigint[])
+`
+
+func (q *Queries) DeleteUserSessions(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, deleteUserSessions, ids)
+	return err
 }
 
 const findDuplicate = `-- name: FindDuplicate :one
@@ -467,6 +750,74 @@ func (q *Queries) InsertReception(ctx context.Context, arg InsertReceptionParams
 	return err
 }
 
+const invitationByID = `-- name: InvitationByID :one
+SELECT id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at FROM invitations WHERE id = $1
+`
+
+func (q *Queries) InvitationByID(ctx context.Context, id int64) (Invitation, error) {
+	row := q.db.QueryRow(ctx, invitationByID, id)
+	var i Invitation
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailKey,
+		&i.InvitedBy,
+		&i.FirstAdmin,
+		&i.Reactivates,
+		&i.AuthentikID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.UsedAt,
+		&i.CancelledAt,
+	)
+	return i, err
+}
+
+const inviteTree = `-- name: InviteTree :many
+WITH RECURSIVE tree AS (
+    SELECT u.id FROM users u WHERE u.id = $1::bigint
+    UNION
+    SELECT c.id FROM users c JOIN tree t ON c.invited_by = t.id
+)
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at FROM users u JOIN tree t ON t.id = u.id ORDER BY u.id
+`
+
+// A user and everyone they invited, recursively, through deleted accounts
+// too (R42). Deleted accounts are placeholders and are returned as such.
+func (q *Queries) InviteTree(ctx context.Context, root int64) ([]User, error) {
+	rows, err := q.db.Query(ctx, inviteTree, root)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []User
+	for rows.Next() {
+		var i User
+		if err := rows.Scan(
+			&i.ID,
+			&i.Subject,
+			&i.Email,
+			&i.EmailKey,
+			&i.Name,
+			&i.Role,
+			&i.Status,
+			&i.InvitedBy,
+			&i.CreatedAt,
+			&i.DeactivatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const keepEarliestSentAt = `-- name: KeepEarliestSentAt :exec
 UPDATE messages SET sent_at = LEAST(sent_at, $1::timestamptz) WHERE id = $2
 `
@@ -562,6 +913,67 @@ func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
 	return items, nil
 }
 
+const listInvitations = `-- name: ListInvitations :many
+SELECT i.id, i.email, i.status, i.created_at, i.expires_at, i.used_at, i.cancelled_at,
+       i.first_admin, i.reactivates, i.invited_by, u.email AS inviter_email, u.name AS inviter_name, u.status AS inviter_status
+FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
+WHERE ($1::bigint IS NULL OR i.invited_by = $1::bigint)
+  AND i.email IS NOT NULL
+ORDER BY i.created_at DESC, i.id DESC
+LIMIT 200
+`
+
+type ListInvitationsRow struct {
+	ID            int64
+	Email         *string
+	Status        string
+	CreatedAt     time.Time
+	ExpiresAt     time.Time
+	UsedAt        *time.Time
+	CancelledAt   *time.Time
+	FirstAdmin    bool
+	Reactivates   *int64
+	InvitedBy     *int64
+	InviterEmail  *string
+	InviterName   *string
+	InviterStatus *string
+}
+
+// One inviter's invitations, or every one (inviter NULL), newest first.
+func (q *Queries) ListInvitations(ctx context.Context, inviter *int64) ([]ListInvitationsRow, error) {
+	rows, err := q.db.Query(ctx, listInvitations, inviter)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListInvitationsRow
+	for rows.Next() {
+		var i ListInvitationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Status,
+			&i.CreatedAt,
+			&i.ExpiresAt,
+			&i.UsedAt,
+			&i.CancelledAt,
+			&i.FirstAdmin,
+			&i.Reactivates,
+			&i.InvitedBy,
+			&i.InviterEmail,
+			&i.InviterName,
+			&i.InviterStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT t.id, t.name, t.agency, t.icon, t.colour, t.agency_profile,
        (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
@@ -600,6 +1012,86 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]ListTemplatesRow, error)
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listUsers = `-- name: ListUsers :many
+SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
+       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name
+FROM users u
+LEFT JOIN users i ON i.id = u.invited_by
+WHERE u.status <> 'deleted'
+ORDER BY u.created_at, u.id
+`
+
+type ListUsersRow struct {
+	ID            int64
+	Email         *string
+	Name          *string
+	Role          string
+	Status        string
+	CreatedAt     time.Time
+	DeactivatedAt *time.Time
+	InvitedBy     *int64
+	InviterStatus *string
+	InviterEmail  *string
+	InviterName   *string
+}
+
+func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
+	rows, err := q.db.Query(ctx, listUsers)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListUsersRow
+	for rows.Next() {
+		var i ListUsersRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Email,
+			&i.Name,
+			&i.Role,
+			&i.Status,
+			&i.CreatedAt,
+			&i.DeactivatedAt,
+			&i.InvitedBy,
+			&i.InviterStatus,
+			&i.InviterEmail,
+			&i.InviterName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const lockActiveAdmins = `-- name: LockActiveAdmins :many
+SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE
+`
+
+// Taken before any change that could remove the last active admin (R44).
+func (q *Queries) LockActiveAdmins(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, lockActiveAdmins)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -707,6 +1199,90 @@ func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparsePa
 	return items, nil
 }
 
+const pendingInvitationTo = `-- name: PendingInvitationTo :one
+SELECT i.id, i.email, i.email_key, i.invited_by, i.first_admin, i.reactivates, i.authentik_id, i.status, i.created_at, i.expires_at, i.used_by, i.used_at, i.cancelled_at, u.email AS inviter_email, u.name AS inviter_name
+FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
+WHERE i.email_key = $1 AND i.status = 'pending' AND i.expires_at > now()
+LIMIT 1
+`
+
+type PendingInvitationToRow struct {
+	ID           int64
+	Email        *string
+	EmailKey     *string
+	InvitedBy    *int64
+	FirstAdmin   bool
+	Reactivates  *int64
+	AuthentikID  *string
+	Status       string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
+	UsedBy       *int64
+	UsedAt       *time.Time
+	CancelledAt  *time.Time
+	InviterEmail *string
+	InviterName  *string
+}
+
+func (q *Queries) PendingInvitationTo(ctx context.Context, emailKey *string) (PendingInvitationToRow, error) {
+	row := q.db.QueryRow(ctx, pendingInvitationTo, emailKey)
+	var i PendingInvitationToRow
+	err := row.Scan(
+		&i.ID,
+		&i.Email,
+		&i.EmailKey,
+		&i.InvitedBy,
+		&i.FirstAdmin,
+		&i.Reactivates,
+		&i.AuthentikID,
+		&i.Status,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.UsedBy,
+		&i.UsedAt,
+		&i.CancelledAt,
+		&i.InviterEmail,
+		&i.InviterName,
+	)
+	return i, err
+}
+
+const reactivateUser = `-- name: ReactivateUser :execrows
+UPDATE users SET status = 'active', deactivated_at = NULL WHERE id = $1 AND status = 'deactivated'
+`
+
+func (q *Queries) ReactivateUser(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, reactivateUser, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const relinkUser = `-- name: RelinkUser :exec
+UPDATE users SET subject = $2, name = $3, invited_by = $4, status = 'active', deactivated_at = NULL
+WHERE id = $1
+`
+
+type RelinkUserParams struct {
+	ID        int64
+	Subject   *string
+	Name      *string
+	InvitedBy *int64
+}
+
+// An admin's re-invitation was used: the same account, active again, with a
+// new Authentik user and the admin as its inviter (owner, 2026-10-13).
+func (q *Queries) RelinkUser(ctx context.Context, arg RelinkUserParams) error {
+	_, err := q.db.Exec(ctx, relinkUser,
+		arg.ID,
+		arg.Subject,
+		arg.Name,
+		arg.InvitedBy,
+	)
+	return err
+}
+
 const requestReparse = `-- name: RequestReparse :exec
 WITH r AS (
     INSERT INTO reparse_requests (capcode_pattern, reason) VALUES ($1, $2)
@@ -735,6 +1311,16 @@ func (q *Queries) RevokeClient(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const scrubInvitationsTo = `-- name: ScrubInvitationsTo :exec
+UPDATE invitations SET email = NULL, email_key = NULL WHERE used_by = $1
+`
+
+// The invitation that enrolled a deleted user names them: forget the address.
+func (q *Queries) ScrubInvitationsTo(ctx context.Context, usedBy *int64) error {
+	_, err := q.db.Exec(ctx, scrubInvitationsTo, usedBy)
+	return err
 }
 
 const searchMessages = `-- name: SearchMessages :many
@@ -901,6 +1487,61 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 	return items, nil
 }
 
+const sessionUser = `-- name: SessionUser :one
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, s.last_used_at AS session_used_at
+FROM sessions s JOIN users u ON u.id = s.user_id
+WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
+`
+
+type SessionUserRow struct {
+	ID            int64
+	Subject       *string
+	Email         *string
+	EmailKey      *string
+	Name          *string
+	Role          string
+	Status        string
+	InvitedBy     *int64
+	CreatedAt     time.Time
+	DeactivatedAt *time.Time
+	DeletedAt     *time.Time
+	SessionUsedAt time.Time
+}
+
+func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUserRow, error) {
+	row := q.db.QueryRow(ctx, sessionUser, tokenHash)
+	var i SessionUserRow
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+		&i.SessionUsedAt,
+	)
+	return i, err
+}
+
+const setInvitationAuthentikID = `-- name: SetInvitationAuthentikID :exec
+UPDATE invitations SET authentik_id = $2 WHERE id = $1
+`
+
+type SetInvitationAuthentikIDParams struct {
+	ID          int64
+	AuthentikID *string
+}
+
+func (q *Queries) SetInvitationAuthentikID(ctx context.Context, arg SetInvitationAuthentikIDParams) error {
+	_, err := q.db.Exec(ctx, setInvitationAuthentikID, arg.ID, arg.AuthentikID)
+	return err
+}
+
 const setSetting = `-- name: SetSetting :exec
 INSERT INTO settings (key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
@@ -914,6 +1555,37 @@ type SetSettingParams struct {
 func (q *Queries) SetSetting(ctx context.Context, arg SetSettingParams) error {
 	_, err := q.db.Exec(ctx, setSetting, arg.Key, arg.Value)
 	return err
+}
+
+const setUserName = `-- name: SetUserName :exec
+UPDATE users SET name = $2 WHERE id = $1 AND status <> 'deleted'
+`
+
+type SetUserNameParams struct {
+	ID   int64
+	Name *string
+}
+
+func (q *Queries) SetUserName(ctx context.Context, arg SetUserNameParams) error {
+	_, err := q.db.Exec(ctx, setUserName, arg.ID, arg.Name)
+	return err
+}
+
+const setUserRole = `-- name: SetUserRole :execrows
+UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted'
+`
+
+type SetUserRoleParams struct {
+	ID   int64
+	Role string
+}
+
+func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserRole, arg.ID, arg.Role)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const templateByName = `-- name: TemplateByName :one
@@ -948,6 +1620,20 @@ type TouchClientParams struct {
 
 func (q *Queries) TouchClient(ctx context.Context, arg TouchClientParams) error {
 	_, err := q.db.Exec(ctx, touchClient, arg.SeenAt, arg.ID)
+	return err
+}
+
+const touchSession = `-- name: TouchSession :exec
+UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE token_hash = $1
+`
+
+type TouchSessionParams struct {
+	TokenHash []byte
+	ExpiresAt time.Time
+}
+
+func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
+	_, err := q.db.Exec(ctx, touchSession, arg.TokenHash, arg.ExpiresAt)
 	return err
 }
 
@@ -1115,4 +1801,93 @@ func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) 
 		arg.AgencyProfile,
 	)
 	return err
+}
+
+const useInvitation = `-- name: UseInvitation :execrows
+UPDATE invitations SET status = 'used', used_by = $2, used_at = now()
+WHERE id = $1 AND status = 'pending'
+`
+
+type UseInvitationParams struct {
+	ID     int64
+	UsedBy *int64
+}
+
+func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, useInvitation, arg.ID, arg.UsedBy)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const userByEmailKey = `-- name: UserByEmailKey :one
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE email_key = $1
+`
+
+func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
+	row := q.db.QueryRow(ctx, userByEmailKey, emailKey)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const userByID = `-- name: UserByID :one
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE id = $1
+`
+
+func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
+	row := q.db.QueryRow(ctx, userByID, id)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
+}
+
+const userBySubject = `-- name: UserBySubject :one
+
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE subject = $1
+`
+
+// Accounts (R40-R44, ADR 0004).
+func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, error) {
+	row := q.db.QueryRow(ctx, userBySubject, subject)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+	)
+	return i, err
 }

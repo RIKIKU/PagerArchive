@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
@@ -34,9 +36,12 @@ type Server struct {
 	Now      func() time.Time
 	Hub      *live.Hub
 	Location *time.Location // deployment time zone (R35a)
-	// ViewerRole is every viewer's role until sign-in arrives in M3
-	// ("admin" or "user"; ADR 0003).
-	ViewerRole string
+	// Accounts and OIDC sign users in (R40-R44). AppURL is the public URL.
+	Accounts *accounts.Service
+	OIDC     *OIDC
+	AppURL   *url.URL
+	// AccountURL is where users change their name and password (Authentik).
+	AccountURL string
 	// UI serves the browser app; nil serves none.
 	UI http.Handler
 }
@@ -45,22 +50,46 @@ type Server struct {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/pages", s.postPage)
-	mux.HandleFunc("GET /api/v1/meta", s.getMeta)
-	mux.HandleFunc("GET /api/v1/messages", s.listMessages)
-	mux.HandleFunc("GET /api/v1/messages/{id}", s.getMessage)
-	mux.HandleFunc("GET /api/v1/jobs/{job}", s.getJob)
-	mux.HandleFunc("GET /api/v1/capcodes/unaliased", s.unaliased)
-	mux.HandleFunc("GET /api/v1/capcodes/{capcode}", s.getCapcode)
-	mux.HandleFunc("GET /api/v1/aliases/{id}", s.getAlias)
-	mux.HandleFunc("GET /api/v1/stream", s.stream)
-	mux.HandleFunc("GET /api/v1/admin/clients", s.adminOnly(s.listClients))
+	// Everything else under /api/v1 needs a signed-in user (A29).
+	for pattern, h := range map[string]http.HandlerFunc{
+		"GET /api/v1/meta":                         s.getMeta,
+		"GET /api/v1/messages":                     s.listMessages,
+		"GET /api/v1/messages/{id}":                s.getMessage,
+		"GET /api/v1/jobs/{job}":                   s.getJob,
+		"GET /api/v1/capcodes/unaliased":           s.unaliased,
+		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,
+		"GET /api/v1/aliases/{id}":                 s.getAlias,
+		"GET /api/v1/stream":                       s.stream,
+		"GET /api/v1/me":                           s.getMe,
+		"DELETE /api/v1/me":                        s.deleteMe,
+		"GET /api/v1/invitations":                  s.myInvitations,
+		"POST /api/v1/invitations":                 s.invite,
+		"DELETE /api/v1/invitations/{id}":          s.cancelInvitation,
+		"GET /api/v1/admin/clients":                s.adminOnly(s.listClients),
+		"GET /api/v1/admin/users":                  s.adminOnly(s.listUsers),
+		"GET /api/v1/admin/invitations":            s.adminOnly(s.allInvitations),
+		"POST /api/v1/admin/users/{id}/deactivate": s.adminOnly(s.deactivate),
+		"POST /api/v1/admin/users/{id}/reactivate": s.adminOnly(s.reactivate),
+		"PUT /api/v1/admin/users/{id}/role":        s.adminOnly(s.setRole),
+	} {
+		mux.HandleFunc(pattern, s.signedIn(h))
+	}
+	// Any other /api/v1 path: 401 without a session, 404 with one.
+	mux.HandleFunc("/api/", s.signedIn(func(w http.ResponseWriter, r *http.Request) { problem(w, http.StatusNotFound, "not found") }))
+	mux.HandleFunc("GET /auth/login", s.login)
+	mux.HandleFunc("GET /auth/callback", s.callback)
+	mux.HandleFunc("POST /auth/logout", s.logout)
+	mux.HandleFunc("GET /auth/status", s.authStatus)
+	mux.HandleFunc("GET /auth/first-admin", s.firstAdmin)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	if s.UI != nil {
 		mux.Handle("/", s.UI)
 	}
-	return securityHeaders(mux)
+	// Browsers may only change things from this site; API clients (no
+	// Origin or Sec-Fetch-Site header) are unaffected.
+	return securityHeaders(http.NewCrossOriginProtection().Handler(mux))
 }
 
 // securityHeaders sets headers every response gets.

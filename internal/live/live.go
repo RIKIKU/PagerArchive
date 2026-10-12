@@ -14,16 +14,19 @@ type Hub struct {
 // Sub is one connection's subscription.
 type Sub struct {
 	C       chan int64    // new message IDs
-	Dropped chan struct{} // closed if the connection fell too far behind
+	Dropped chan struct{} // closed if the connection fell too far behind or its user was signed out
+	user    int64
 	once    sync.Once
 }
+
+func (s *Sub) drop() { s.once.Do(func() { close(s.Dropped) }) }
 
 // NewHub returns an empty hub.
 func NewHub() *Hub { return &Hub{subs: map[*Sub]struct{}{}} }
 
-// Subscribe adds a connection.
-func (h *Hub) Subscribe() *Sub {
-	s := &Sub{C: make(chan int64, 64), Dropped: make(chan struct{})}
+// Subscribe adds a connection for a signed-in user.
+func (h *Hub) Subscribe(userID int64) *Sub {
+	s := &Sub{C: make(chan int64, 64), Dropped: make(chan struct{}), user: userID}
 	h.mu.Lock()
 	h.subs[s] = struct{}{}
 	h.mu.Unlock()
@@ -47,7 +50,24 @@ func (h *Hub) Publish(id int64) {
 		select {
 		case s.C <- id:
 		default:
-			s.once.Do(func() { close(s.Dropped) })
+			s.drop()
+			delete(h.subs, s)
+		}
+	}
+}
+
+// CloseUsers closes every connection of these users, e.g. when they are
+// deactivated (R43b).
+func (h *Hub) CloseUsers(ids []int64) {
+	want := make(map[int64]bool, len(ids))
+	for _, id := range ids {
+		want[id] = true
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for s := range h.subs {
+		if want[s.user] {
+			s.drop()
 			delete(h.subs, s)
 		}
 	}

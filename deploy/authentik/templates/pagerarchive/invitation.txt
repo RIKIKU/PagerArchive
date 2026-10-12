@@ -1,0 +1,9 @@
+{% load humanize %}You're invited to PagerArchive
+
+Someone who uses PagerArchive has invited you to join. Follow the link, choose a password, then enter the code we email you to confirm this address. The link works once, and only for this address.
+{% if expires %}
+This invitation expires {{ expires|naturaltime }}.
+{% endif %}
+Accept the invitation: {{ url }}
+
+If you weren't expecting this, you can ignore it.

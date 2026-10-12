@@ -1,0 +1,11 @@
+# Test overlay: a local mail catcher instead of a real mail server (SPEC.md
+# section 14). Used by CI and scripts/stack.sh, never in a real deployment:
+#   docker compose -f compose.yaml -f deploy/test/compose.yaml --env-file deploy/test/stack.vars up -d
+services:
+  mailpit:
+    image: axllent/mailpit:v1.31.5
+    environment:
+      MP_SMTP_AUTH_ACCEPT_ANY: "true"
+      MP_SMTP_AUTH_ALLOW_INSECURE: "true"
+    ports:
+      - "${MAILPIT_BIND:-127.0.0.1:8025}:8025"

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
@@ -24,7 +25,7 @@ const (
 	jobLimit = 500
 )
 
-func (s *Server) isAdmin(r *http.Request) bool { return s.ViewerRole == "admin" }
+func (s *Server) isAdmin(r *http.Request) bool { return currentUser(r).Role == accounts.RoleAdmin }
 
 func (s *Server) adminOnly(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -126,13 +127,15 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 // Meta tells the browser how to present data.
 type Meta struct {
 	Role        string   `json:"role"`
+	AccountURL  string   `json:"account_url"`           // Authentik's page for name and password
+	Domains     []string `json:"allowed_email_domains"` // where invitations may go (R41)
 	TimeZone    string   `json:"time_zone"`
 	Categories  []string `json:"categories"`
 	Attribution string   `json:"attribution"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
-	m := Meta{Role: s.ViewerRole, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution}
+	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}
@@ -320,7 +323,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if err := rc.Flush(); err != nil {
 		return
 	}
-	sub := s.Hub.Subscribe()
+	sub := s.Hub.Subscribe(currentUser(r).ID)
 	defer s.Hub.Unsubscribe(sub)
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()

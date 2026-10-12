@@ -27,6 +27,22 @@ type Client struct {
 	ClockAheadSince *time.Time
 }
 
+type Invitation struct {
+	ID          int64
+	Email       *string
+	EmailKey    *string
+	InvitedBy   *int64
+	FirstAdmin  bool
+	Reactivates *int64
+	AuthentikID *string
+	Status      string
+	CreatedAt   time.Time
+	ExpiresAt   time.Time
+	UsedBy      *int64
+	UsedAt      *time.Time
+	CancelledAt *time.Time
+}
+
 type Message struct {
 	ID               int64
 	Capcode          string
@@ -67,6 +83,14 @@ type ReparseRequest struct {
 	RequestedAt    time.Time
 }
 
+type Session struct {
+	TokenHash  []byte
+	UserID     int64
+	CreatedAt  time.Time
+	LastUsedAt time.Time
+	ExpiresAt  time.Time
+}
+
 type Setting struct {
 	Key   string
 	Value string
@@ -79,4 +103,18 @@ type Template struct {
 	Icon          *string
 	Colour        *string
 	AgencyProfile *string
+}
+
+type User struct {
+	ID            int64
+	Subject       *string
+	Email         *string
+	EmailKey      *string
+	Name          *string
+	Role          string
+	Status        string
+	InvitedBy     *int64
+	CreatedAt     time.Time
+	DeactivatedAt *time.Time
+	DeletedAt     *time.Time
 }

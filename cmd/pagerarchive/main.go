@@ -16,14 +16,18 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"sort"
+	"strings"
 	"syscall"
 	"text/tabwriter"
 	"time"
 	_ "time/tzdata" // the server image has no zoneinfo (R35a)
 
+	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -86,7 +90,15 @@ serve reads its settings from the environment:
   NETWORK_PROFILE  network profile name (default: the only one in PROFILES_DIR)
   LISTEN_ADDR      address to listen on (default :8080)
   TZ               deployment time zone, e.g. Australia/Melbourne (default UTC)
-  DEV_VIEWER_ROLE  user or admin: every viewer's role until sign-in (M3) (default user)
+  APP_URL                 the app.s public URL, e.g. https://pager.example.org (required)
+  AUTHENTIK_URL           Authentik.s public URL, its own subdomain (required)
+  AUTHENTIK_INTERNAL_URL  how the API reaches Authentik, e.g. http://authentik-server:9000
+                          (default: AUTHENTIK_URL)
+  AUTHENTIK_API_TOKEN     the app.s Authentik API token (required)
+  OIDC_CLIENT_ID          (default pagerarchive)
+  OIDC_CLIENT_SECRET      (required)
+  ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
+  INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
 `
 
 func main() {
@@ -171,9 +183,9 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("TZ: %w", err)
 	}
-	role := getenv("DEV_VIEWER_ROLE", "user")
-	if role != "user" && role != "admin" {
-		return errors.New(`DEV_VIEWER_ROLE must be "user" or "admin"`)
+	auth, err := authConfig()
+	if err != nil {
+		return err
 	}
 	hash, err := profileHash(set, net)
 	if err != nil {
@@ -190,6 +202,14 @@ func serve(stderr io.Writer) error {
 	}
 	go worker.Run(ctx)
 
+	hub := live.NewHub()
+	dir := &authentik.Client{URL: auth.authentikURL, Token: auth.apiToken, HTTP: auth.http}
+	acc := &accounts.Service{
+		Store: st, Dir: dir, AllowedDomains: auth.domains, InitialAdmin: auth.initialAdmin,
+		Now: time.Now, Log: log, SignedOut: hub.CloseUsers,
+	}
+	go expireSessions(ctx, st, log)
+
 	srv := &server.Server{
 		Store: st,
 		Ingest: &ingest.Service{
@@ -198,20 +218,29 @@ func serve(stderr io.Writer) error {
 			Agencies: set.Agencies,
 			Streets:  ix,
 		},
-		Log:        log,
-		Now:        time.Now,
-		Hub:        live.NewHub(),
-		Location:   loc,
-		ViewerRole: role,
+		Log:      log,
+		Now:      time.Now,
+		Hub:      hub,
+		Location: loc,
+		Accounts: acc,
+		OIDC: &server.OIDC{
+			Issuer:       auth.authentikURL.JoinPath("/application/o/pagerarchive/").String(),
+			ClientID:     auth.clientID,
+			ClientSecret: auth.clientSecret,
+			RedirectURL:  auth.appURL.JoinPath("/auth/callback").String(),
+			HTTP:         auth.http,
+		},
+		AppURL:     auth.appURL,
+		AccountURL: auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
 		UI:         web.Handler(),
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
 	go func() { errc <- hs.ListenAndServe() }()
-	log.Info("listening", "addr", addr, "network", net.Name, "agencies", len(set.Agencies), "version", version, "viewer_role", role)
-	if role == "admin" {
-		log.Warn("DEV_VIEWER_ROLE=admin: every viewer is an admin until sign-in arrives (M3)")
+	log.Info("listening", "addr", addr, "network", net.Name, "agencies", len(set.Agencies), "version", version, "app_url", auth.appURL.String(), "authentik_url", auth.authentikURL.String())
+	if ok, _ := acc.FirstAdminAvailable(ctx); ok {
+		log.Info("no admin yet: INITIAL_ADMIN_EMAIL can set up the first admin from the sign-in page")
 	}
 	select {
 	case err := <-errc:
@@ -282,4 +311,78 @@ func clientCmd(args []string, stdout io.Writer) error {
 		return errors.New("usage: client add <id> [name] | client revoke <id> | client list")
 	}
 	return nil
+}
+
+// authSettings are the sign-in settings (R40-R44, ADR 0004).
+type authSettings struct {
+	appURL, authentikURL   *url.URL
+	clientID, clientSecret string
+	apiToken               string
+	domains                []string
+	initialAdmin           string
+	http                   *http.Client
+}
+
+func authConfig() (authSettings, error) {
+	var a authSettings
+	parse := func(name string, required bool) (*url.URL, error) {
+		v := strings.TrimRight(os.Getenv(name), "/")
+		if v == "" {
+			if required {
+				return nil, fmt.Errorf("%s is not set", name)
+			}
+			return nil, nil
+		}
+		u, err := url.Parse(v)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+			return nil, fmt.Errorf("%s must be an http(s) URL", name)
+		}
+		return u, nil
+	}
+	var err error
+	if a.appURL, err = parse("APP_URL", true); err != nil {
+		return a, err
+	}
+	if a.authentikURL, err = parse("AUTHENTIK_URL", true); err != nil {
+		return a, err
+	}
+	internal, err := parse("AUTHENTIK_INTERNAL_URL", false)
+	if err != nil {
+		return a, err
+	}
+	a.http = &http.Client{Transport: authentik.Transport(a.authentikURL, internal, nil), Timeout: 30 * time.Second}
+	a.clientID = getenv("OIDC_CLIENT_ID", "pagerarchive")
+	for _, v := range []struct {
+		name string
+		dst  *string
+	}{{"OIDC_CLIENT_SECRET", &a.clientSecret}, {"AUTHENTIK_API_TOKEN", &a.apiToken}} {
+		if *v.dst = os.Getenv(v.name); *v.dst == "" {
+			return a, fmt.Errorf("%s is not set", v.name)
+		}
+	}
+	if a.domains = accounts.ParseDomains(os.Getenv("ALLOWED_EMAIL_DOMAINS")); len(a.domains) == 0 {
+		return a, errors.New("ALLOWED_EMAIL_DOMAINS is not set")
+	}
+	if a.initialAdmin = strings.TrimSpace(os.Getenv("INITIAL_ADMIN_EMAIL")); a.initialAdmin != "" {
+		if _, ok := accounts.ParseEmail(a.initialAdmin); !ok {
+			return a, errors.New("INITIAL_ADMIN_EMAIL is not an email address")
+		}
+	}
+	return a, nil
+}
+
+// expireSessions deletes expired sessions hourly.
+func expireSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if err := st.DeleteExpiredSessions(ctx); err != nil && ctx.Err() == nil {
+			log.Error("expire sessions", "error", store.SafeError(err))
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
