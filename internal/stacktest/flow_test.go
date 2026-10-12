@@ -293,20 +293,26 @@ func (m mailpit) invitationLink(t *testing.T, address string, since time.Time) s
 	return link
 }
 
-// postForRedirect submits an empty form to an app path, as the sign-in
-// page's buttons do, and returns where it redirects.
+// postForRedirect POSTs to an app path, as the sign-in page's button does,
+// and returns the absolute URL the answer says to go to.
 func (b *browser) postForRedirect(path string) string {
 	b.t.Helper()
 	req, _ := http.NewRequest(http.MethodPost, b.s.app.JoinPath(path).String(), nil)
-	req.Header.Set("Origin", b.s.app.Scheme+"://"+b.s.app.Host) // same-site form post
+	req.Header.Set("Sec-Fetch-Site", "same-origin") // as the browser app's fetch
 	resp, err := b.client.Do(req)
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	resp.Body.Close()
-	loc, err := resp.Request.URL.Parse(resp.Header.Get("Location"))
-	if err != nil || resp.StatusCode != http.StatusSeeOther {
+	defer resp.Body.Close()
+	var next struct {
+		Redirect string `json:"redirect"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&next); err != nil || resp.StatusCode != http.StatusOK {
 		b.t.Fatalf("POST %s: %d %v", path, resp.StatusCode, err)
+	}
+	loc, err := b.s.app.Parse(next.Redirect)
+	if err != nil {
+		b.t.Fatal(err)
 	}
 	return loc.String()
 }

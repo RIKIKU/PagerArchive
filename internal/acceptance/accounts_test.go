@@ -701,8 +701,8 @@ func TestFirstAdminSetUpIsPost(t *testing.T) {
 	if n := len(e.dir.invites); n != 0 {
 		t.Errorf("%d set-up invitations made by refused requests", n)
 	}
-	r := do(http.MethodPost, map[string]string{"Sec-Fetch-Site": "same-origin"})
-	if r.StatusCode != http.StatusSeeOther || !strings.HasPrefix(r.Header.Get("Location"), "http://authentik.test/if/flow/enrol/?itoken=") {
-		t.Errorf("same-site POST: %d %s", r.StatusCode, r.Header.Get("Location"))
+	var next server.Next
+	if code, _ := e.as.call(http.MethodPost, "/auth/first-admin", nil, &next); code != http.StatusOK || !strings.HasPrefix(next.Redirect, "http://authentik.test/if/flow/enrol/?itoken=") {
+		t.Errorf("same-site POST: %d %s", code, next.Redirect)
 	}
 }

@@ -228,9 +228,9 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// SignOut is the reply to a sign-out: where to send the browser next, to
-// end the Authentik session too.
-type SignOut struct {
+// Next is where the browser app should go next: after signing out (to end
+// the Authentik session too), or to start the first admin's enrolment.
+type Next struct {
 	Redirect string `json:"redirect"`
 }
 
@@ -241,7 +241,7 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.setCookie(w, sessionCookie, "", "/", -1)
-	out := SignOut{Redirect: "/signin?signed_out=1"}
+	out := Next{Redirect: "/signin?signed_out=1"}
 	if _, _, err := s.OIDC.setup(); err == nil && s.OIDC.endSession != "" {
 		out.Redirect = s.OIDC.endSession
 	}
@@ -262,18 +262,19 @@ func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, AuthStatus{FirstAdminSetup: ok})
 }
 
-// firstAdmin starts the first admin's enrolment (R44).
+// firstAdmin starts the first admin's enrolment (R44). It changes state, so it's a
+// same-site POST (from the sign-in page's button, with fetch) that answers
+// with where to go: a form post couldn't follow a redirect to Authentik's
+// host under the page's Content Security Policy (form-action 'self').
 func (s *Server) firstAdmin(w http.ResponseWriter, r *http.Request) {
 	link, err := s.Accounts.FirstAdminEnrolment(r.Context())
 	var refusal *accounts.Error
-	if errors.As(err, &refusal) {
-		signInFailed(w, r, refusal.Code)
-		return
-	}
-	if err != nil {
+	switch {
+	case errors.As(err, &refusal):
+		link = "/signin?error=" + url.QueryEscape(refusal.Code)
+	case err != nil:
 		s.Log.Error("first admin", "error", err.Error())
-		signInFailed(w, r, "error")
-		return
+		link = "/signin?error=error"
 	}
-	http.Redirect(w, r, link, http.StatusSeeOther)
+	writeJSON(w, http.StatusOK, Next{Redirect: link})
 }

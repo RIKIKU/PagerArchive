@@ -191,6 +191,10 @@ export const api = {
 	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
 	authStatus: () => get<{ first_admin_setup: boolean }>('/auth/status'),
+	firstAdmin: async () => {
+		const r = await request<{ redirect: string }>('POST', '/auth/first-admin');
+		location.assign(r.redirect);
+	},
 	signOut: async () => {
 		const r = await request<{ redirect: string }>('POST', '/auth/logout');
 		location.assign(r.redirect);

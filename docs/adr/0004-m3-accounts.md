@@ -66,7 +66,7 @@ Other Authentik settings:
 
 ### 5. The first admin (R44)
 
-While no active admin exists and `INITIAL_ADMIN_EMAIL` is set, the sign-in page offers "Set up the first admin". The button posts to `/auth/first-admin` (a same-site POST, never a GET, because it changes state; owner review, 2026-10-13), which creates a fresh one-hour, domain-exempt invitation for that address and sends the browser straight to enrolment. Only the address's owner can finish, because the code goes to that address. Once any admin exists, the link and the setting do nothing (A23).
+While no active admin exists and `INITIAL_ADMIN_EMAIL` is set, the sign-in page offers "Set up the first admin". The button sends a same-site POST to `/auth/first-admin` (never a GET, because it changes state; owner review, 2026-10-13). It's sent with `fetch`, and the reply names the enrolment link: a plain form post couldn't follow a redirect to Authentik's host, because the page's Content Security Policy allows forms to submit only to the app (`form-action 'self'`). The request creates a fresh one-hour, domain-exempt invitation for that address and sends the browser straight to enrolment. Only the address's owner can finish, because the code goes to that address. Once any admin exists, the link and the setting do nothing (A23).
 
 ### 6. Who may do what
 

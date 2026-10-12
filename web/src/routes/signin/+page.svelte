@@ -18,10 +18,10 @@
 	};
 	const error = $derived(page.url.searchParams.get('error'));
 	const signedOut = $derived(page.url.searchParams.has('signed_out'));
-	let firstAdmin = $state(false);
+	let firstAdminOffered = $state(false);
 	api
 		.authStatus()
-		.then((s) => (firstAdmin = s.first_admin_setup))
+		.then((s) => (firstAdminOffered = s.first_admin_setup))
 		.catch(() => {});
 </script>
 
@@ -37,16 +37,14 @@
 	<p>PagerArchive is invite-only. Sign in with the email address your invitation was sent to.</p>
 	<a class="button" href="/auth/login">Sign in</a>
 </div>
-{#if firstAdmin}
+{#if firstAdminOffered}
 	<section class="box" aria-labelledby="first-admin">
 		<h2 id="first-admin">Set up the first admin</h2>
 		<p>
 			No admin exists yet. The address this deployment names as its first admin can enrol now, without an
 			invitation. A code will be emailed to that address.
 		</p>
-		<form method="post" action="/auth/first-admin">
-			<button class="secondary" type="submit">Set up the first admin</button>
-		</form>
+		<button class="secondary" type="button" onclick={() => api.firstAdmin()}>Set up the first admin</button>
 	</section>
 {/if}
 
