@@ -4,6 +4,7 @@
 // and the test user enrols with a code sent to an allowed test domain,
 // caught by Mailpit. Authentik's own pages are used, as a person would.
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 
 const MAILPIT = process.env.PA_MAILPIT_URL ?? 'http://localhost:8025';
 const DOMAIN = process.env.PA_TEST_DOMAIN ?? 'example.test';
@@ -36,7 +37,7 @@ async function enrol(page: Page, request: APIRequestContext, email: string, name
 	await page.locator('button[type="submit"]').click();
 }
 
-test('§11 step 2: the first admin invites a test user, who enrols with an emailed code', async ({ browser, request, baseURL }) => {
+test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a client feeds pages they see live, parsed and on the map', async ({ browser, request, baseURL }) => {
 	test.setTimeout(180_000);
 	const app = new URL(baseURL!).origin;
 
@@ -77,4 +78,48 @@ test('§11 step 2: the first admin invites a test user, who enrols with an email
 	await admin.goto('/admin/users');
 	await expect(admin.locator('li').filter({ hasText: tester })).toContainText(`Invited by Owner Person (${OWNER})`);
 	console.log(`§11 step 2: ${OWNER} set up as admin, invited ${tester}, who enrolled with the emailed code and is signed in as a user`);
+
+	// §11 step 3: a client container is fed fixture lines through stdin (no
+	// radio). Each page appears in the signed-in browser within 2 seconds,
+	// with its parsed fields, grouping and a map point.
+	await user.goto('/');
+	await expect(user.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
+	const golden = [
+		[100001, '@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1'],
+		[100002, '@@EX0000002 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2'],
+		[100001, 'HbRE EX0000001 CREWS RETURNING #STN1'],
+		[100001, 'QDTraining Tuesday 7pm at the station']
+	] as const;
+	const lines = [
+		...golden.map(([capcode, text]) => `POCSAG512: Address:  ${capcode}  Function: 0  Alpha:   ${text}`),
+		// A1: every group's copy, one job.
+		...[1, 2, 3, 4].map((n) => `POCSAG512: Address:  10000${n}  Function: 0  Alpha:   @@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN${n}`)
+	];
+	execFileSync('docker', ['run', '-i', '--rm', '--network', process.env.PA_NETWORK!, '-e', 'SERVER_URL=http://api:8080',
+		'-e', 'CLIENT_ID=section11', '-e', `CLIENT_KEY=${process.env.PA_CLIENT_KEY}`, process.env.PA_CLIENT_IMAGE!], { input: lines.join('\n') + '\n' });
+	const posted = Date.now(); // the client has posted every line and exited
+	const list = user.getByTestId('message-list');
+	await expect(list.locator('article')).toHaveCount(lines.length, { timeout: 2000 });
+	console.log(`§11 step 3: all ${lines.length} pages shown ${Date.now() - posted} ms after the client finished posting`);
+	await expect(list.locator('article').filter({ hasText: 'SMOKE FROM ROOF' })).not.toContainText('@@');
+
+	// Parsed fields (golden row 1).
+	await list.locator('article').filter({ hasText: 'SMOKE FROM ROOF' }).locator('a.open').click();
+	const details = user.locator('dl').first();
+	for (const v of ['EX0000001', 'HSF1', 'SMOKE FROM ROOF', '12 FICTION ST', 'MADEUPTON', '123456', 'T1, T2', 'STN1']) await expect(details).toContainText(v);
+	await expect(user.getByTestId('location')).toContainText('From the address');
+	// Grouping: the follow-up joins job EX0000001, and A1's copies are one job.
+	await user.goto('/jobs/EX0000001');
+	await expect(user.locator('main article')).toHaveCount(2);
+	await user.goto('/jobs/EX0000004');
+	await expect(user.locator('main article')).toHaveCount(4);
+	// Map points for the addresses in the example address dataset.
+	await user.goto('/map');
+	await expect(user.getByTestId('map')).toHaveAttribute('data-ready', 'true', { timeout: 15_000 });
+	const located = user.getByTestId('located-list');
+	await expect(located.locator('li')).toHaveCount(6); // rows 1 and 2, and A1's 4 copies
+	await expect(located.locator('li').filter({ hasText: 'GRASS FIRE' })).toContainText('Street (approximate)');
+	await user.waitForTimeout(1500); // let the map finish drawing for the screenshot
+	await user.screenshot({ path: test.info().outputPath('3-map.png') });
+	console.log('§11 step 3: parsed fields, job grouping and 6 map points checked');
 });

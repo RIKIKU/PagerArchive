@@ -85,8 +85,14 @@ services:
       AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN}
       ALLOWED_EMAIL_DOMAINS: ${ALLOWED_EMAIL_DOMAINS:?set ALLOWED_EMAIL_DOMAINS in .env}
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
+      NIGHTLY_AT: ${NIGHTLY_AT:-03:00}
+      MAP_TILES: /map/tiles.pmtiles
+      MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
     volumes:
       - ${PROFILES_DIR:-./profiles/example}:/profiles:ro
+      # Your PMTiles map extract (docs/deploy.md). The default is the tiny
+      # made-up map that goes with the example profile.
+      - ${MAP_TILES_FILE:-./deploy/example-map/example-map.pmtiles}:/map/tiles.pmtiles:ro
     ports:
       - "${API_BIND:-127.0.0.1:8080}:8080"
     depends_on:

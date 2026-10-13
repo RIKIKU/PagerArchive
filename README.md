@@ -7,7 +7,7 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
 
-**Status:** milestone M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation) on top of M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
+**Status:** milestone M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR) on top of M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
 
 - [Deploying the server](docs/deploy.md)
 - [Profiles and `validate-profile`](docs/profiles.md)
@@ -39,8 +39,11 @@ The account checks run against the full compose stack, with Authentik and a [Mai
 
 ```
 sh scripts/stack-checks.sh                 # A23-A28 and A33 through Authentik's flow executor API
-sh scripts/stack-e2e.sh --project=chromium # section 11 step 2 in a browser
+sh scripts/stack-e2e.sh --project=chromium # section 11 steps 2 and 3 in a browser
+sh scripts/a15.sh                          # A15 resource budget: one hour plus 10 idle minutes (CI: -m 5 -w 1 -i 2 -r 30000)
 ```
+
+The example dataset and its tiny test map are generated: `go run scripts/example-map/main.go`, then `sh scripts/example-map/build-tiles.sh` (needs tippecanoe).
 
 `npm run dev` serves the app with live reload and sends `/api` and `/auth` to an API on `127.0.0.1:8080`.
 

@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"runtime"
 	"sort"
 	"strings"
 	"syscall"
@@ -198,6 +199,13 @@ func serve(stderr io.Writer) error {
 	}
 
 	ix := streets.NewIndex(ds.Streets, net.StreetTypes)
+	nStreets := len(ds.Streets)
+	ds = nil
+	// ADR 0001: the street index moves into PostgreSQL if it outgrows 50 MB.
+	var mem runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&mem)
+	log.Info("street index built", "streets", nStreets, "heap_mib", mem.HeapInuse>>20)
 	// The dataset is loaded before anything is placed or re-parsed. A large
 	// one takes a while, but only when it changes (ADR 0005).
 	dsHash, err := geocode.DatasetHash(net.DatasetPath, net.StreetTypes)
