@@ -4,7 +4,7 @@ Date: 2026-10-13
 
 ## Status
 
-Proposed
+Accepted (2026-10-13, by the owner, after the second review round: guessing protection, the admin second factor and the address-variation check)
 
 ## Context
 
