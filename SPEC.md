@@ -104,7 +104,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R8.** Standard fields that core features rely on: `job_number` (grouping), `event_type` (reports), `description`, `address`, `locality` and `grid_ref` (map), `units` (list), `group`. A format may also define **extra fields** with any name; they're stored, searchable and shown. Fields not present in a page are `null`. Values are literal (P3).
 - **R9.** Optional **label tables** map codes to display labels (e.g. an event-type code to a readable name).
 - **R10.** Each agency profile ships a **golden table**: raw lines and their exact expected fields, one row per format variant. Every row must pass in CI. The repo ships a `validate-profile` command that runs any profile's golden tables, so private profile repos can test themselves. `validate-profile` runs without a database and pairs agency tables with a named network profile.
-- **R11.** `OPEN`: the extraction language. The ADR proposes one that can express ordered alternatives and optional segments. Regular expressions with named groups are the obvious candidate, but the hardest real format has unmarked boundaries between a description, an optional premises name and an address, so the ADR must show it can handle the private profile's golden rows. Those can't be copied into this repo: build sessions run on the owner's machine with the private profile repo checked out alongside (path given by the owner), and the ADR may describe its rows only in general terms.
+- **R11.** **Decided** (ADR 0001, accepted by the owner 2026-10-09): RE2 regular expressions with named groups, plus `address_split` anchored on the address dataset's street list. Original question: the extraction language. The ADR proposes one that can express ordered alternatives and optional segments. Regular expressions with named groups are the obvious candidate, but the hardest real format has unmarked boundaries between a description, an optional premises name and an address, so the ADR must show it can handle the private profile's golden rows. Those can't be copied into this repo: build sessions run on the owner's machine with the private profile repo checked out alongside (path given by the owner), and the ADR may describe its rows only in general terms.
 
 ## 7. Requirements
 
@@ -131,7 +131,7 @@ Many clients post to one server. Each client records its own receive time. The s
 ### 7.4 Location
 - **R24.** The address (with its locality) is geocoded **locally** against the address dataset named in the network profile. If a profile doesn't extract `locality` separately, the geocoder matches the end of the address against the dataset's localities. The dataset's attribution is shown.
 - **R25.** If the address can't be geocoded and the page has a grid reference, the grid reference is resolved as the network profile describes. For the case that motivated this: a 6-digit MGRS easting/northing without zone or 100 km square, completed from the zone and square containing the page's locality, giving a point accurate to 100 m.
-- **R26.** If both exist and are more than `OPEN` (suggestion: 1 km) apart, the message is flagged `location_mismatch`.
+- **R26.** If both exist and are more than **1 km** apart (owner, 2026-10-13), the message is flagged `location_mismatch` (admins only, R35c). When the address has no house number and is placed at its street's centroid (section 14), the distance is from the grid reference's point to the **nearest address point on that street in that locality**, so a long road isn't flagged just for being long (owner, 2026-10-13).
 
 ### 7.5 Aliases and templates
 - **R27.** An alias maps a capcode or capcode pattern to a name and a template. Patterns use `%` (any run of characters) and `_` (one character). Precedence: an exact capcode wins, then fewer wildcards; patterns starting with a wildcard come last. An alias can be marked **ignored**: its pages are still stored and shown in full (P2), but hidden from the default message list and live updates; a search filter shows them. Dropping pages stays the network profile's job (R16). (Owner decision, 2026-10-10.)
@@ -297,7 +297,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 
 ## 13. Open questions
 
-R11 extraction language · R26 location-mismatch distance · R51 default retry and pause thresholds (implementer's choice).
+R51 default retry and pause thresholds (implementer's choice).
 
 ## 14. Accepted defaults
 
