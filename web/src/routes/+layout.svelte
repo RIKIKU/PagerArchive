@@ -145,9 +145,18 @@
 			row-gap: 0.15rem;
 			padding-bottom: 0.25rem;
 		}
+		/* One row of links that scrolls sideways within itself (the page
+		   never does), however many links there are. */
 		nav {
 			order: 3;
 			flex-basis: 100%;
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			white-space: nowrap;
+			scrollbar-width: none;
+		}
+		.quiet {
+			order: 4;
 		}
 	}
 	main {
