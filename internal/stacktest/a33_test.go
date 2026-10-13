@@ -35,18 +35,25 @@ func throttleWait(failures int) {
 // the flow said.
 func (s *stack) resetAttempt(t *testing.T, email string, wrong bool) (bool, string) {
 	t.Helper()
-	r := s.browser(t, email)
+	return s.resetAttemptAs(t, email, email, wrong)
+}
+
+// resetAttemptAs is resetAttempt with the address typed as typed; the code
+// still arrives in mailbox.
+func (s *stack) resetAttemptAs(t *testing.T, typed, mailbox string, wrong bool) (bool, string) {
+	t.Helper()
+	r := s.browser(t, mailbox)
 	var since time.Time
 	c := r.executor("pagerarchive-recovery", "", nil)
 	for steps := 0; steps < 8; steps++ {
 		var body map[string]any
 		switch c.Component {
 		case "ak-stage-identification":
-			body = map[string]any{"uid_field": email}
+			body = map[string]any{"uid_field": typed}
 		case "ak-stage-authenticator-validate":
 			switch {
 			case strings.Contains(c.errorText(), "Empty response"): // the code was sent
-				code := s.mailpit.code(t, email, since)
+				code := s.mailpit.code(t, mailbox, since)
 				if wrong {
 					code = otherCode(code)
 				}
@@ -260,4 +267,49 @@ func TestA33WithinOneFlow(t *testing.T) {
 	} else {
 		t.Log("A33: another account (the owner) still signs in")
 	}
+}
+
+// R44a can't be dodged by typing the address differently: wrong attempts
+// with B's address in other cases or with spaces count against B, and the
+// right answer is then refused however the address is typed.
+func TestA33AddressVariations(t *testing.T) {
+	s := setup(t, "restarted")
+	o := s.owner(t)
+	variants := func(email string) []string {
+		mixed := strings.ToUpper(email[:1]) + email[1:strings.Index(email, "@")+1] + strings.ToUpper(email[strings.Index(email, "@")+1:strings.Index(email, "@")+2]) + email[strings.Index(email, "@")+2:]
+		return []string{strings.ToUpper(email), mixed, "  " + email + "  ", " " + strings.ToUpper(email), mixed + " "}
+	}
+
+	t.Run("passwords", func(t *testing.T) {
+		b := s.inviteAndEnrol(t, o, "a33variantpw@example.com")
+		vs := variants(b.email)
+		for i, v := range vs {
+			_, msg := s.passwordAttempt(t, v, fmt.Sprintf("wrong password %d", i+1))
+			t.Logf("A33: sign-in attempt %d as %q, wrong password: %s", i+1, v, msg)
+		}
+		for _, v := range append([]string{b.email}, vs...) {
+			ok, msg := s.passwordAttempt(t, v, b.pw)
+			t.Logf("A33: then the RIGHT password as %q: %s", v, msg)
+			if ok {
+				t.Errorf("signed in as %q after 5 wrong passwords", v)
+			}
+		}
+	})
+
+	t.Run("password-reset codes", func(t *testing.T) {
+		c := s.inviteAndEnrol(t, o, "a33variantreset@example.com")
+		vs := variants(c.email)
+		for i, v := range vs {
+			_, msg := s.resetAttemptAs(t, v, c.email, true)
+			t.Logf("A33: reset attempt %d as %q, wrong code: %s", i+1, v, msg)
+			throttleWait(i + 1)
+		}
+		for _, v := range append([]string{c.email}, vs...) {
+			ok, msg := s.resetAttemptAs(t, v, c.email, false)
+			t.Logf("A33: then the RIGHT code as %q: %s", v, msg)
+			if ok {
+				t.Errorf("reset code accepted as %q after 5 wrong ones", v)
+			}
+		}
+	})
 }

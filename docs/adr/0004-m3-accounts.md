@@ -117,6 +117,7 @@ Each live-update subscription records its user. Deactivation, sign-out and accou
 - **The password gets its own page.** It used to be on the email page. A password typed with the email can't be tied to an account until after the stage has run, so it had to move to a separate stage.
 
 **What A33 checks:**
+- that typing the address differently (upper case, mixed case, leading or trailing spaces) doesn't dodge the count. Authentik resolves each variant to the same account, and records the failure under that account's username, not the text typed (owner review, 2026-10-13);
 - the right answer after five wrong ones, for reset codes and passwords in new flows each time, and for the enrolment code within one enrolment;
 - that the right answer is still refused 14 minutes later and accepted at 16;
 - a reset code within one flow;
