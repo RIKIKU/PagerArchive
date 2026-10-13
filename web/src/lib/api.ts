@@ -186,10 +186,19 @@ export class ApiError extends Error {
 	}
 }
 
-/** Sends the browser to sign in, and back here afterwards. */
-export function signIn() {
+/**
+ * Sends the browser to sign in, and back here afterwards. While the first
+ * admin can still be set up, it goes to /signin instead, so a new install's
+ * "Set up the first admin" button is seen (R44).
+ */
+export async function signIn() {
 	if (location.pathname.startsWith('/signin')) return;
-	location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
+	const firstAdmin = await fetch('/auth/status', { headers: { Accept: 'application/json' } })
+		.then((r) => (r.ok ? (r.json() as Promise<{ first_admin_setup: boolean }>) : undefined))
+		.then((s) => s?.first_admin_setup === true)
+		.catch(() => false);
+	if (firstAdmin) location.assign('/signin');
+	else location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {

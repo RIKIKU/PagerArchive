@@ -134,14 +134,28 @@ test('R35c flags are shown to admins only', async ({ page, browser, request }) =
 	await expect(admin.getByRole('link', { name: 'Users' })).toBeVisible();
 });
 
-// A29 in the browser: without a session the app sends you to sign in. (No
-// Authentik runs here, so the sign-in page says it can't be reached.)
+// A29 in the browser: without a session the app sends you to sign in. An
+// admin exists here, so that's Authentik straight away. (No Authentik runs
+// here, so the sign-in page says it can't be reached.)
 test('A29 signed-out visitors are sent to sign in', async ({ browser }) => {
 	const page = await (await browser.newContext()).newPage();
 	await page.goto('/jobs/EX0000001');
 	await expect(page).toHaveURL(/\/signin\?error=directory_unavailable$/);
 	await expect(page.getByRole('alert')).toContainText("couldn't be reached");
 	await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
+});
+
+// R44: while the first admin can still be set up, a signed-out visitor is
+// sent to the sign-in page, which offers it, not straight to Authentik. An
+// admin exists here, so the status is answered for the test; the stack test
+// checks it for real from the root URL.
+test('R44 signed-out visitors on a new install see first-admin set-up', async ({ browser }) => {
+	const page = await (await browser.newContext()).newPage();
+	await page.route('/auth/status', (r) => r.fulfill({ json: { first_admin_setup: true } }));
+	await page.goto('/');
+	await expect(page).toHaveURL(/\/signin$/);
+	await expect(page.getByRole('button', { name: 'Set up the first admin' })).toBeVisible();
+	await page.context().close();
 });
 
 // R44 screens: the account page shows who you are and who invited you; the

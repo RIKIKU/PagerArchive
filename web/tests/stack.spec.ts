@@ -41,15 +41,24 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	test.setTimeout(180_000);
 	const app = new URL(baseURL!).origin;
 
-	// The first admin (INITIAL_ADMIN_EMAIL) sets up their account.
+	// The first admin (INITIAL_ADMIN_EMAIL) sets up their account, starting
+	// from the app's address as a person would: on a new install, a signed-out
+	// visitor is sent to the sign-in page, which offers the set-up.
 	const admin = await (await browser.newContext()).newPage();
-	await admin.goto('/signin');
+	await admin.goto('/');
+	await admin.waitForURL((u) => u.origin === app && u.pathname === '/signin');
 	await admin.getByRole('button', { name: 'Set up the first admin' }).click();
 	await expect(admin.locator('input[name="password"]')).toBeVisible();
 	await enrol(admin, request, OWNER, 'Owner Person');
 	await admin.waitForURL((u) => u.origin === app && u.pathname === '/');
 	await expect(admin.getByRole('link', { name: 'Users' })).toBeVisible();
 	await admin.screenshot({ path: test.info().outputPath('1-admin-signed-in.png') });
+
+	// Once an admin exists, a signed-out visitor goes straight to Authentik.
+	const visitor = await (await browser.newContext()).newPage();
+	await visitor.goto('/');
+	await visitor.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+	await visitor.context().close();
 
 	// The admin invites the test user.
 	const tester = `tester@${DOMAIN}`;
