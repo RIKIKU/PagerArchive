@@ -24,7 +24,7 @@
 		display: inline-block;
 		padding: 0.05rem 0.4rem;
 		border-radius: 0.25rem;
-		font-size: 0.75rem;
+		font-size: var(--text-xxs);
 		font-weight: 600;
 		line-height: 1.4;
 		white-space: nowrap;

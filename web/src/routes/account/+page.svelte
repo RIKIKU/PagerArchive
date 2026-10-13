@@ -163,7 +163,7 @@
 		max-width: 40rem;
 	}
 	h2 {
-		font-size: 1.05rem;
+		font-size: var(--text-lg);
 		margin: 0 0 0.5rem;
 	}
 	.actions {
@@ -185,7 +185,7 @@
 	}
 	.help {
 		color: var(--muted);
-		font-size: 0.9rem;
+		font-size: var(--text-md);
 		margin: 0.4rem 0;
 	}
 	section .error,
@@ -215,11 +215,11 @@
 	}
 	.when {
 		color: var(--muted);
-		font-size: 0.9rem;
+		font-size: var(--text-md);
 		flex-basis: 100%;
 	}
 	.state {
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 		border: 1px solid var(--border);
 		border-radius: 1rem;
 		padding: 0 0.5rem;

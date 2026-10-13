@@ -54,7 +54,7 @@
 		max-width: 36rem;
 	}
 	h2 {
-		font-size: 1.05rem;
+		font-size: var(--text-lg);
 		margin: 1.5rem 0 0.25rem;
 	}
 </style>

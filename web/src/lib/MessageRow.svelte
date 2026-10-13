@@ -61,7 +61,7 @@
 		flex-wrap: wrap;
 		align-items: baseline;
 		gap: 0.25rem 0.5rem;
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 	}
 	time {
 		color: var(--muted);
@@ -92,7 +92,7 @@
 	.text {
 		margin: 0.25rem 0 0;
 		font-family: var(--mono);
-		font-size: 0.9rem;
+		font-size: var(--text-md);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
@@ -117,7 +117,7 @@
 		flex-wrap: wrap;
 		gap: 0.75rem;
 		margin-top: 0.25rem;
-		font-size: 0.8rem;
+		font-size: var(--text-xs);
 	}
 	.flag {
 		color: var(--warn-fg);

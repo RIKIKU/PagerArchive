@@ -116,13 +116,13 @@
 		margin: 0.75rem 0 0.25rem;
 	}
 	h2 {
-		font-size: 1rem;
+		font-size: var(--text-base);
 		margin: 1.25rem 0 0.5rem;
 	}
 	.note {
 		font-weight: 400;
 		color: var(--muted);
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 	}
 	.meta {
 		display: flex;
@@ -138,7 +138,7 @@
 		overflow-wrap: anywhere;
 	}
 	.text {
-		font-size: 1rem;
+		font-size: var(--text-base);
 		background: var(--surface);
 		padding: 0.75rem;
 		border-radius: 0.3rem;

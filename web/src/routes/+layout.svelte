@@ -106,7 +106,7 @@
 		margin-left: auto;
 	}
 	.theme select {
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 	}
 	/* Phones: brand and theme on one row, the links in a row below, so the
 	   header stays short and the first message stays on screen (R31). */
@@ -128,7 +128,7 @@
 		max-width: 64rem;
 		margin: 1rem auto;
 		padding: 0 0.75rem;
-		font-size: 0.75rem;
+		font-size: var(--text-xxs);
 		color: var(--muted);
 	}
 	.skip {

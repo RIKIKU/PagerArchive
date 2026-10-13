@@ -154,15 +154,15 @@
 		padding-right: 0.75rem;
 	}
 	.bar h2 {
-		font-size: 1.1rem;
+		font-size: var(--text-xl);
 	}
 	.live {
-		font-size: 0.8rem;
+		font-size: var(--text-xs);
 		color: var(--muted);
 	}
 	.live.live::before {
 		content: '●';
-		color: #2e7d32;
+		color: var(--ok-fg);
 		margin-right: 0.3rem;
 	}
 	.more {

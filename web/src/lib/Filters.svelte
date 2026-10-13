@@ -96,7 +96,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 0.15rem;
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 		min-width: 0;
 	}
 	label.check {
@@ -113,7 +113,7 @@
 		gap: 0.25rem 1rem;
 	}
 	legend {
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 		font-weight: 600;
 		padding: 0;
 		margin-bottom: 0.25rem;

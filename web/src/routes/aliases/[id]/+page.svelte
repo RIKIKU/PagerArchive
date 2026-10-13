@@ -83,7 +83,7 @@
 	}
 	.note {
 		color: var(--muted);
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 		margin: 0.5rem 0 0;
 	}
 </style>
