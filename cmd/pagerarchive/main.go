@@ -28,8 +28,10 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
+	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
+	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/server"
@@ -41,7 +43,7 @@ import (
 // profileHash identifies the profiles and address dataset in use, so a
 // change triggers a re-parse (section 14, R23a).
 func profileHash(set *profile.Set, net *profile.Network) (string, error) {
-	data, err := os.ReadFile(net.DatasetPath)
+	dataset, err := geocode.DatasetHash(net.DatasetPath, net.StreetTypes)
 	if err != nil {
 		return "", fmt.Errorf("address dataset: %w", err)
 	}
@@ -55,7 +57,7 @@ func profileHash(set *profile.Set, net *profile.Network) (string, error) {
 	for _, n := range names {
 		fmt.Fprintf(h, "agency %s %s\n", n, set.Agencies[n].Hash)
 	}
-	fmt.Fprintf(h, "dataset %x\n", sha256.Sum256(data))
+	fmt.Fprintf(h, "dataset %s\n", dataset)
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
@@ -99,6 +101,9 @@ serve reads its settings from the environment:
   OIDC_CLIENT_SECRET      (required)
   ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
+  NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
+  MAP_TILES               path to a PMTiles map extract (default: no background map)
+  MAP_ATTRIBUTION         the extract's credit line (default: © OpenStreetMap contributors)
 `
 
 func main() {
@@ -193,8 +198,23 @@ func serve(stderr io.Writer) error {
 	}
 
 	ix := streets.NewIndex(ds.Streets, net.StreetTypes)
+	// The dataset is loaded before anything is placed or re-parsed. A large
+	// one takes a while, but only when it changes (ADR 0005).
+	dsHash, err := geocode.DatasetHash(net.DatasetPath, net.StreetTypes)
+	if err != nil {
+		return fmt.Errorf("address dataset: %w", err)
+	}
+	started := time.Now()
+	stats, err := geocode.Load(ctx, st, net.DatasetPath, ix, dsHash)
+	if err != nil {
+		return err
+	}
+	if !stats.Skipped {
+		log.Info("address dataset loaded", "addresses", stats.Addresses, "streets", stats.Streets, "localities", stats.Localities, "seconds", int(time.Since(started).Seconds()))
+	}
+	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
 	worker := &reparse.Worker{
-		Store: st, Network: net, Agencies: set.Agencies, Streets: ix,
+		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
 		ProfileHash: hash, Log: log, Poll: time.Minute,
 	}
 	if err := worker.CheckProfiles(ctx); err != nil {
@@ -210,6 +230,20 @@ func serve(stderr io.Writer) error {
 	}
 	go expireSessions(ctx, st, log)
 
+	at, err := nightly.ParseAt(getenv("NIGHTLY_AT", "03:00"))
+	if err != nil {
+		return err
+	}
+	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log}
+	go job.Run(ctx)
+
+	mapTiles := os.Getenv("MAP_TILES")
+	if mapTiles != "" {
+		if _, err := os.Stat(mapTiles); err != nil {
+			return fmt.Errorf("MAP_TILES: %w", err)
+		}
+	}
+
 	srv := &server.Server{
 		Store: st,
 		Ingest: &ingest.Service{
@@ -217,6 +251,7 @@ func serve(stderr io.Writer) error {
 			Network:  net,
 			Agencies: set.Agencies,
 			Streets:  ix,
+			Geo:      geocoder,
 		},
 		Log:      log,
 		Now:      time.Now,
@@ -230,9 +265,12 @@ func serve(stderr io.Writer) error {
 			RedirectURL:  auth.appURL.JoinPath("/auth/callback").String(),
 			HTTP:         auth.http,
 		},
-		AppURL:     auth.appURL,
-		AccountURL: auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
-		UI:         web.Handler(),
+		AppURL:         auth.appURL,
+		AccountURL:     auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
+		UI:             web.Handler(),
+		Nightly:        job,
+		MapTiles:       mapTiles,
+		MapAttribution: getenv("MAP_ATTRIBUTION", "© OpenStreetMap contributors"),
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}

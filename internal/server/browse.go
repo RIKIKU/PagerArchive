@@ -11,6 +11,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -66,8 +67,20 @@ type Message struct {
 	Extra       map[string]any    `json:"extra"`
 	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
 
+	Location *Location `json:"location"` // null when not placed (R24-R25)
+
 	Flags      *Flags      `json:"flags,omitempty"`      // admins only (R35c)
 	Receptions []Reception `json:"receptions,omitempty"` // detail view only
+}
+
+// Location is where a message is placed and from what: "address",
+// "street" (no house number, or the number isn't in the dataset; shown as
+// approximate, section 14) or "grid" (R25).
+type Location struct {
+	Lon         float64 `json:"lon"`
+	Lat         float64 `json:"lat"`
+	Source      string  `json:"source"`
+	Approximate bool    `json:"approximate"`
 }
 
 // Flags are shown to admins only (R35c).
@@ -118,6 +131,9 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 			}
 		}
 	}
+	if m.Lon != nil && m.Lat != nil && m.LocationSource != nil {
+		out.Location = &Location{Lon: *m.Lon, Lat: *m.Lat, Source: *m.LocationSource, Approximate: *m.LocationSource == geocode.FromStreet}
+	}
 	if admin {
 		out.Flags = &Flags{ParseFailed: m.ParseFailed, AddressUnsplit: m.AddressUnsplit, LocationMismatch: m.LocationMismatch}
 	}
@@ -126,16 +142,19 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 
 // Meta tells the browser how to present data.
 type Meta struct {
-	Role        string   `json:"role"`
-	AccountURL  string   `json:"account_url"`           // Authentik's page for name and password
-	Domains     []string `json:"allowed_email_domains"` // where invitations may go (R41)
-	TimeZone    string   `json:"time_zone"`
-	Categories  []string `json:"categories"`
-	Attribution string   `json:"attribution"`
+	Role           string   `json:"role"`
+	AccountURL     string   `json:"account_url"`           // Authentik's page for name and password
+	Domains        []string `json:"allowed_email_domains"` // where invitations may go (R41)
+	TimeZone       string   `json:"time_zone"`
+	Categories     []string `json:"categories"`
+	Attribution    string   `json:"attribution"`     // the address dataset's (R24)
+	MapTiles       bool     `json:"map_tiles"`       // a tile extract is configured (R35)
+	MapAttribution string   `json:"map_attribution"` // the tiles' credit line
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
-	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution}
+	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
+		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}
@@ -283,9 +302,9 @@ func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 type ClientStatus struct {
 	ID         string     `json:"id"`
 	Name       string     `json:"name"`
-	Revoked    bool       `json:"revoked"`
 	ClockAhead bool       `json:"clock_ahead"`
 	LastSeen   *time.Time `json:"last_seen"`
+	Receiving  bool       `json:"receiving"` // R39: a message of any kind in the last 30 minutes
 }
 
 func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
@@ -296,8 +315,12 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := []ClientStatus{}
+	now := s.Now()
 	for _, c := range rows {
-		out = append(out, ClientStatus{ID: c.ID, Name: c.Name, Revoked: c.RevokedAt != nil, ClockAhead: c.ClockAheadSince != nil, LastSeen: c.LastSeenAt})
+		if c.RevokedAt != nil {
+			continue // a revoked client can't send, so it isn't monitored
+		}
+		out = append(out, ClientStatus{ID: c.ID, Name: c.Name, ClockAhead: c.ClockAheadSince != nil, LastSeen: c.LastSeenAt, Receiving: receiving(c, now)})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

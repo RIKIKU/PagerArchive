@@ -3,41 +3,14 @@
 package streets
 
 import (
-	"encoding/json"
-	"fmt"
-	"os"
 	"regexp"
 	"strings"
-
-	"github.com/RIKIKU/PagerArchive/schemas"
 )
 
 // Entry is one street in one locality, written as the dataset writes it.
 type Entry struct {
 	Street   string `json:"street"`
 	Locality string `json:"locality"`
-}
-
-// Dataset is an address dataset or a street fixture.
-type Dataset struct {
-	Attribution string  `json:"attribution"`
-	Streets     []Entry `json:"streets"`
-}
-
-// LoadFile reads and validates a dataset or street fixture.
-func LoadFile(path string) (*Dataset, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-	if probs := schemas.Validate(schemas.AddressDataset, data); len(probs) > 0 {
-		return nil, fmt.Errorf("%s: %s", path, probs[0])
-	}
-	var d Dataset
-	if err := json.Unmarshal(data, &d); err != nil {
-		return nil, fmt.Errorf("%s: %w", path, err)
-	}
-	return &d, nil
 }
 
 // Index answers "is this street in this locality?" with street types
@@ -55,7 +28,7 @@ func NewIndex(entries []Entry, streetTypes map[string]string) *Index {
 		ix.types[strings.ToUpper(k)] = strings.ToUpper(v)
 	}
 	for _, e := range entries {
-		loc := strings.Join(strings.Fields(strings.ToUpper(e.Locality)), " ")
+		loc := NormaliseLocality(e.Locality)
 		if ix.streets[loc] == nil {
 			ix.streets[loc] = map[string]bool{}
 			ix.localities = append(ix.localities, strings.Fields(loc))
@@ -121,26 +94,123 @@ func (ix *Index) Split(span string) (description, address string, ok bool) {
 
 func (ix *Index) isAddress(toks []token) bool {
 	for _, loc := range ix.localities {
-		n := len(toks) - len(loc)
-		if n < 1 || !wordsEqual(toks[n:], loc) {
-			continue
-		}
-		street := toks[:n]
-		if houseNumber.MatchString(strings.ToUpper(street[0].text)) {
-			street = street[1:]
-		}
-		if len(street) == 0 {
-			continue
-		}
-		words := make([]string, len(street))
-		for i, t := range street {
-			words[i] = t.text
-		}
-		if ix.streets[strings.Join(loc, " ")][ix.normalise(words)] {
+		if _, ok := ix.matchAt(toks, loc); ok {
 			return true
 		}
 	}
 	return false
+}
+
+// matchAt checks whether toks read [house number] <street> <loc>, with the
+// street listed in that locality.
+func (ix *Index) matchAt(toks []token, loc []string) (Place, bool) {
+	n := len(toks) - len(loc)
+	if n < 1 || !wordsEqual(toks[n:], loc) {
+		return Place{}, false
+	}
+	return ix.matchStreet(toks[:n], strings.Join(loc, " "))
+}
+
+// matchStreet checks whether toks read [house number] <street>, with the
+// street listed in locality (normalised).
+func (ix *Index) matchStreet(toks []token, locality string) (Place, bool) {
+	p := Place{Locality: locality}
+	if len(toks) > 0 && houseNumber.MatchString(strings.ToUpper(toks[0].text)) {
+		p.Number = strings.ToUpper(toks[0].text)
+		toks = toks[1:]
+	}
+	if len(toks) == 0 {
+		return Place{}, false
+	}
+	words := make([]string, len(toks))
+	for i, t := range toks {
+		words[i] = t.text
+	}
+	p.Street = ix.normalise(words)
+	if !ix.streets[locality][p.Street] {
+		return Place{}, false
+	}
+	return p, true
+}
+
+// Place is an address as the geocoder looks it up: street and locality
+// normalised as the index stores them, and the house number (upper case)
+// or "" (R24).
+type Place struct {
+	Number, Street, Locality string
+}
+
+// ParseAddress reads an address field as [house number] <street>
+// [<locality>]. When locality (a separate field) is given, the street must
+// be listed there; otherwise the address must end with a known locality
+// (R24).
+func (ix *Index) ParseAddress(address, locality string) (Place, bool) {
+	toks := tokenise(address)
+	if loc := NormaliseLocality(locality); loc != "" {
+		if p, ok := ix.matchAt(toks, strings.Fields(loc)); ok {
+			return p, true
+		}
+		return ix.matchStreet(toks, loc)
+	}
+	for _, loc := range ix.localities {
+		if p, ok := ix.matchAt(toks, loc); ok {
+			return p, true
+		}
+	}
+	return Place{}, false
+}
+
+// LocalityAtEnd finds the longest known locality that ends text, for
+// placing a grid reference when the address couldn't be split (R25).
+func (ix *Index) LocalityAtEnd(text string) (string, bool) {
+	toks := tokenise(text)
+	best := ""
+	for _, loc := range ix.localities {
+		if n := len(toks) - len(loc); n >= 0 && wordsEqual(toks[n:], loc) && len(loc) > len(strings.Fields(best)) {
+			best = strings.Join(loc, " ")
+		}
+	}
+	return best, best != ""
+}
+
+// NormaliseStreet is a street as the index stores it: upper case, single
+// spaces, street type abbreviated.
+func (ix *Index) NormaliseStreet(street string) string { return ix.normalise(strings.Fields(street)) }
+
+// NormaliseLocality is a locality as the index stores it.
+func NormaliseLocality(locality string) string {
+	return strings.Join(strings.Fields(strings.ToUpper(locality)), " ")
+}
+
+// NumberCandidates are the house numbers to try for an address, most
+// specific first: as written, then the street number of a unit (2/12 →
+// 12), the first of a range (12-14 → 12), and without a letter suffix
+// (12A → 12). The geocoder falls back to the street when none is found
+// (ADR 0005).
+func NumberCandidates(number string) []string {
+	out := []string{}
+	add := func(s string) {
+		for _, o := range out {
+			if o == s {
+				return
+			}
+		}
+		if s != "" {
+			out = append(out, s)
+		}
+	}
+	n := strings.ToUpper(number)
+	add(n)
+	if i := strings.LastIndex(n, "/"); i >= 0 {
+		n = n[i+1:]
+		add(n)
+	}
+	if i := strings.Index(n, "-"); i >= 0 {
+		n = n[:i]
+		add(n)
+	}
+	add(strings.TrimRight(n, "ABCDEFGHIJKLMNOPQRSTUVWXYZ"))
+	return out
 }
 
 func wordsEqual(toks []token, words []string) bool {

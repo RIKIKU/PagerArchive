@@ -2,25 +2,49 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/RIKIKU/PagerArchive/schemas/address-dataset.schema.json",
   "title": "PagerArchive address dataset or street fixture",
-  "description": "Streets by locality, written as the dataset writes them. Used by address_split (ADR 0001 section 2.1). Geocoding coordinates are added in milestone M4.",
+  "description": "Streets by locality, written as the dataset writes them, used by address_split (ADR 0001 section 2.1), and located addresses used for geocoding (R24, ADR 0005). A street fixture lists streets only. Large datasets use the CSV form instead (docs/profiles.md).",
   "type": "object",
   "required": ["streets"],
   "properties": {
     "$schema": { "type": "string" },
     "attribution": { "type": "string" },
     "streets": {
+      "description": "Streets by locality. lon and lat, if given, place the street itself (overriding the centre of its addresses).",
       "type": "array",
       "items": {
         "type": "object",
         "required": ["street", "locality"],
         "properties": {
           "street": { "type": "string", "minLength": 1 },
-          "locality": { "type": "string", "minLength": 1 }
+          "locality": { "type": "string", "minLength": 1 },
+          "lon": { "$ref": "#/$defs/lon" },
+          "lat": { "$ref": "#/$defs/lat" }
+        },
+        "dependentRequired": { "lon": ["lat"], "lat": ["lon"] },
+        "additionalProperties": false
+      }
+    },
+    "addresses": {
+      "description": "Located addresses. Their streets join the street list.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["number", "street", "locality", "lon", "lat"],
+        "properties": {
+          "number": { "type": "string", "minLength": 1 },
+          "street": { "type": "string", "minLength": 1 },
+          "locality": { "type": "string", "minLength": 1 },
+          "lon": { "$ref": "#/$defs/lon" },
+          "lat": { "$ref": "#/$defs/lat" }
         },
         "additionalProperties": false
       }
     }
   },
   "patternProperties": { "^_": {} },
-  "additionalProperties": false
+  "additionalProperties": false,
+  "$defs": {
+    "lon": { "type": "number", "minimum": -180, "maximum": 180 },
+    "lat": { "type": "number", "minimum": -90, "maximum": 90 }
+  }
 }

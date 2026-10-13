@@ -30,6 +30,7 @@ type Filter struct {
 	From, To  *time.Time // sent time, From inclusive, To exclusive
 	Unaliased bool       // "capcodes with no alias"
 	Ignored   bool       // include pages to ignored aliases (R27)
+	Located   bool       // only messages placed on the map (R35)
 
 	// Admin only (R33): filter by flag.
 	ParseFailed, AddressUnsplit, LocationMismatch bool
@@ -177,6 +178,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		ParseFailed:      f.ParseFailed,
 		AddressUnsplit:   f.AddressUnsplit,
 		LocationMismatch: f.LocationMismatch,
+		Located:          f.Located,
 		CatCodes:         []string{},
 		CatPrefixes:      []string{},
 		MaxRows:          int32(limit),

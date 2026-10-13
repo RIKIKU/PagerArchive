@@ -126,6 +126,40 @@ UPDATE messages SET
     extra = $12, parse_failed = $13, address_unsplit = $14
 WHERE id = $1;
 
+-- name: SetLocation :exec
+-- R24-R26: where a message is placed, set after parsing (ingest and re-parse).
+UPDATE messages SET
+    location = CASE WHEN sqlc.narg(lon)::float8 IS NULL THEN NULL
+                    ELSE ST_SetSRID(ST_MakePoint(sqlc.narg(lon)::float8, sqlc.narg(lat)::float8), 4326)::geography END,
+    location_source = sqlc.narg(source)::text,
+    location_mismatch = sqlc.arg(mismatch)::bool
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: AddressPoint :one
+SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
+FROM address_points
+WHERE locality = sqlc.arg(locality)::text AND street = sqlc.arg(street)::text AND number = sqlc.arg(number)::text
+LIMIT 1;
+
+-- name: StreetPoint :one
+SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
+FROM street_points
+WHERE locality = sqlc.arg(locality)::text AND street = sqlc.arg(street)::text;
+
+-- name: LocalityExtent :one
+SELECT min_lon, min_lat, max_lon, max_lat FROM localities WHERE name = $1;
+
+-- name: DistanceToStreet :one
+-- R26 for a street-only address: metres from a point to the nearest address
+-- point on the street (or to the street's own point if it has no addresses).
+SELECT COALESCE(
+    (SELECT min(ST_Distance(a.geom, p.g)) FROM address_points a
+     WHERE a.locality = sqlc.arg(locality)::text AND a.street = sqlc.arg(street)::text),
+    (SELECT ST_Distance(s.geom, p.g) FROM street_points s
+     WHERE s.locality = sqlc.arg(locality)::text AND s.street = sqlc.arg(street)::text),
+    -1)::float8 AS metres
+FROM (SELECT ST_SetSRID(ST_MakePoint(sqlc.arg(lon)::float8, sqlc.arg(lat)::float8), 4326)::geography AS g) p;
+
 -- name: GetSetting :one
 SELECT value FROM settings WHERE key = $1;
 
@@ -141,7 +175,8 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
-       t.agency, t.icon, t.colour, t.agency_profile
+       t.agency, t.icon, t.colour, t.agency_profile,
+       m.lon, m.lat, m.location_source
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
@@ -167,6 +202,7 @@ WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
   AND (NOT sqlc.arg(parse_failed)::bool OR m.parse_failed)
   AND (NOT sqlc.arg(address_unsplit)::bool OR m.address_unsplit)
   AND (NOT sqlc.arg(location_mismatch)::bool OR m.location_mismatch)
+  AND (NOT sqlc.arg(located)::bool OR m.location IS NOT NULL)
   AND (sqlc.narg(before_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
@@ -361,3 +397,39 @@ WHERE (sqlc.narg(inviter)::bigint IS NULL OR i.invited_by = sqlc.narg(inviter)::
   AND i.email IS NOT NULL
 ORDER BY i.created_at DESC, i.id DESC
 LIMIT 200;
+
+-- name: DeleteMessagesBefore :execrows
+-- R45: one batch of messages older than the cut-off. Receptions go with them
+-- (cascade); jobs and locations are columns of the message (section 14).
+DELETE FROM messages
+WHERE id IN (SELECT id FROM messages WHERE sent_at < sqlc.arg(cutoff)::timestamptz LIMIT sqlc.arg(batch)::int);
+
+-- name: MessagesForRedaction :many
+SELECT id, capcode, text FROM messages
+WHERE id > sqlc.arg(after_id)::bigint
+ORDER BY id
+LIMIT sqlc.arg(batch)::int;
+
+-- name: UpdateRedactedText :exec
+-- P1: retroactive redaction replaces the text and its dedup hash; the
+-- caller then re-parses the message so parsed fields follow.
+UPDATE messages SET text = $2, dedup_key = $3 WHERE id = $1;
+
+-- name: MessagesByIDs :many
+SELECT id, capcode, text, priority, heartbeat
+FROM messages
+WHERE id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY id;
+
+-- name: CapcodeReport :many
+-- R38: Emergency messages to one capcode in a date range, by event type.
+-- Heartbeats are excluded (R35b).
+SELECT event_type, count(*) AS messages
+FROM messages
+WHERE capcode = sqlc.arg(capcode)::text
+  AND priority = 'Emergency'
+  AND NOT heartbeat
+  AND sent_at >= sqlc.arg(sent_from)::timestamptz
+  AND sent_at < sqlc.arg(sent_to)::timestamptz
+GROUP BY event_type
+ORDER BY event_type NULLS LAST;
