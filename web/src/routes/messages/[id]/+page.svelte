@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
-	import { dateTime, isoAttr } from '#lib/format.ts';
+	import { dateTime, isoAttr, isoDate } from '#lib/format.ts';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
 
 	let meta: Meta | undefined = $state();
@@ -39,6 +39,12 @@
 		const l = m?.labels?.[field];
 		return l ? `${show(v)} (${l})` : show(v);
 	}
+
+	const placed = {
+		address: 'From the address',
+		street: 'Approximate: the street, not the house number',
+		grid: 'From the grid reference'
+	};
 
 	const humanise = (k: string) => k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
 </script>
@@ -78,6 +84,13 @@
 					</dd>
 				{/if}
 			{/each}
+			<dt>Location</dt>
+			<dd data-testid="location">
+				{#if m.location}
+					{placed[m.location.source]}
+					<a href="/map?focus={m.id}&from={isoDate(m.sent_at, tz)}&to={isoDate(m.sent_at, tz)}">Show on map</a>
+				{:else}Not placed on the map{/if}
+			</dd>
 			{#each Object.entries(m.extra) as [k, v] (k)}
 				<dt>{humanise(k)}</dt>
 				<dd>{label(k, v)}</dd>

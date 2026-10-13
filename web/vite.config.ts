@@ -9,6 +9,9 @@ export default defineConfig({
 			adapter: adapter({ fallback: 'index.html', strict: true })
 		})
 	],
+	// MapLibre's worker is bundled as a same-origin module, so the page's
+	// Content-Security-Policy needs no blob: workers.
+	worker: { format: 'es' },
 	server: {
 		// `npm run dev` talks to a local API.
 		proxy: { '/api': 'http://127.0.0.1:8080', '/auth': 'http://127.0.0.1:8080' }

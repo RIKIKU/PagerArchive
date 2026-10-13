@@ -32,13 +32,30 @@
 		}
 	});
 
+	// R39: admins see at a glance when a receiver has gone quiet.
+	let quiet = $state(0);
+	$effect(() => {
+		if (meta?.role !== 'admin') return;
+		const check = () =>
+			api
+				.clients()
+				.then((cs) => (quiet = cs.filter((c) => !c.receiving).length))
+				.catch(() => {});
+		check();
+		const t = setInterval(check, 60_000);
+		return () => clearInterval(t);
+	});
+
 	const nav = $derived(page.url.pathname.startsWith('/signin') ? [] : [
 		{ href: '/', label: 'Messages' },
+		{ href: '/map', label: 'Map' },
+		{ href: '/reports', label: 'Reports' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
 		...(meta?.role === 'admin'
 			? [
 					{ href: '/admin/users', label: 'Users' },
-					{ href: '/admin/clients', label: 'Clients' }
+					{ href: '/admin/clients', label: 'Clients' },
+					{ href: '/admin/retention', label: 'Retention' }
 				]
 			: []),
 		...(meta ? [{ href: '/account', label: 'Account' }] : [])
@@ -53,6 +70,11 @@
 			<a href={item.href} aria-current={page.url.pathname === item.href ? 'page' : undefined}>{item.label}</a>
 		{/each}
 	</nav>
+	{#if quiet > 0}
+		<a class="quiet" href="/admin/clients" data-testid="not-receiving"
+			>{quiet} receiver{quiet === 1 ? '' : 's'} not receiving</a
+		>
+	{/if}
 	<label class="theme">
 		<span class="visually-hidden">Colour theme</span>
 		<select bind:value={theme}>
@@ -81,6 +103,14 @@
 		position: sticky;
 		top: 0;
 		z-index: 1;
+	}
+	.quiet {
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+		padding: 0.15rem 0.5rem;
+		border-radius: 0.25rem;
+		font-size: var(--text-sm);
+		font-weight: 600;
 	}
 	.brand {
 		font-weight: 700;

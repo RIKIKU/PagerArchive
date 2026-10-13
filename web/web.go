@@ -41,6 +41,13 @@ func Handler() http.Handler {
 				fileServer.ServeHTTP(w, r)
 				return
 			}
+			// Only Latin glyph ranges are bundled for the map (English only, R35a).
+			// Any other range is an empty glyph set, not the app page.
+			if strings.HasPrefix(p, "map/fonts/") && strings.HasSuffix(p, ".pbf") {
+				w.Header().Set("Content-Type", "application/x-protobuf")
+				w.Header().Set("Cache-Control", "public, max-age=86400")
+				return
+			}
 		}
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

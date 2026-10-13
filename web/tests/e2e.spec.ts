@@ -224,11 +224,11 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/admin/clients', '/admin/users', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin/clients', '/admin/users', '/admin/retention', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(90_000); // 12 views
+			test.setTimeout(120_000); // 15 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
@@ -249,13 +249,126 @@ for (const scheme of ['light', 'dark'] as const) {
 					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
-					if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
+					if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+					else if (path.startsWith('/reports')) await expect(page.getByTestId('report')).toBeVisible();
+					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
 					else await page.waitForTimeout(300);
 				}
 				const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
 				const summary = results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`);
 				expect(summary, `${view} (${scheme}, ${width}px)`).toEqual([]);
 			}
+			// Each context holds a live stream and, since M4, a map with a WebGL
+			// context; left open they slow the following tests down.
+			await Promise.all([ctx.close(), userCtx.close()]);
 		});
 	}
 }
+
+// M4. R35: the map shows located messages over the self-hosted test map,
+// follows live updates, and loads nothing that breaks the page (CSP, worker,
+// glyphs, tiles).
+test('map shows located messages, live, with no console errors', async ({ page, request }, info) => {
+	const errors: string[] = [];
+	page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
+	page.on('pageerror', (e) => errors.push(e.message));
+	const tiles: number[] = [];
+	page.on('response', (r) => r.url().includes('/api/v1/map/tiles.pmtiles') && tiles.push(r.status()));
+
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1`);
+	await page.goto('/map');
+	const map = page.getByTestId('map');
+	await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	// Without WebGL (headless Firefox) the page says so and still lists them.
+	const drawn = (await map.getAttribute('data-ready')) === 'true';
+	if (!drawn) await expect(map).toContainText('needs WebGL');
+	// Chromium and WebKit have WebGL headless: there the map must draw.
+	if (info.project.name !== 'firefox') expect(drawn).toBe(true);
+	const list = page.getByTestId('located-list');
+	await expect(list).toContainText(job);
+	await expect(list.locator('li', { hasText: job })).toContainText('Address');
+
+	// A street-only address arrives live and is marked approximate.
+	const job2 = uniqueJob();
+	const start = Date.now();
+	await post(request, '0100002', `@@${job2} GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+	await expect(list.locator('li', { hasText: job2 })).toContainText('Street (approximate)', { timeout: 2000 });
+	console.log(`map: live point listed ${Date.now() - start} ms after the post`);
+
+	// The tile extract is read with range requests (ADR 0001).
+	if (drawn) {
+		expect(tiles.length).toBeGreaterThan(0);
+		expect(tiles.every((s) => s === 206)).toBe(true);
+		expect(errors).toEqual([]);
+	}
+
+	// The detail view links to the message on the map.
+	await list.locator('li', { hasText: job }).getByRole('link').click();
+	await expect(page.getByTestId('location')).toContainText('From the address');
+	await page.getByRole('link', { name: 'Show on map' }).click();
+	await expect(page).toHaveURL(/\/map\?focus=\d+/);
+	if (drawn) await expect(page.getByRole('heading', { name: 'Selected on the map (1)' })).toBeVisible({ timeout: 15_000 });
+	await expect(page.getByTestId('located-list')).toContainText(job);
+});
+
+// M4. R38 in the browser (A11 itself runs against the API in Go).
+test('capcode report counts Emergency messages by category', async ({ page, request }, info) => {
+	// Each browser project gets its own capcode: they share one database.
+	const capcode = { chromium: '0300101', firefox: '0300102', webkit: '0300103' }[info.project.name] ?? '0300109';
+	for (const t of ['HSF1 SMOKE', 'HSF2 SMOKE', 'GRS3 GRASS FIRE']) {
+		await post(request, capcode, `@@${uniqueJob()} ${t} @ 12 FICTION ST, MADEUPTON #STN1`);
+	}
+	await post(request, capcode, 'QDTraining Tuesday 7pm at the station');
+	await page.goto(`/reports?capcode=${capcode}`);
+	await page.getByRole('button', { name: 'Run report' }).click();
+	const table = page.getByTestId('report');
+	await expect(table.getByRole('row', { name: 'Structure fire 2' })).toBeVisible();
+	await expect(table.getByRole('row', { name: 'Grass fire 1' })).toBeVisible();
+	await expect(table.getByRole('row', { name: 'Total 3' })).toBeVisible();
+});
+
+// M4. R46: shortening retention asks to confirm the cut-off date.
+test('shortening retention asks to confirm the cut-off date', async ({ browser }) => {
+	const ctx = await signedIn(browser, 'admin');
+	const page = await ctx.newPage();
+	await page.goto('/admin/retention');
+	const days = page.getByLabel('Keep messages for (days)');
+	await expect(days).toHaveValue('3650');
+	await days.fill('730');
+	await page.getByRole('button', { name: 'Save' }).click();
+	const dialog = page.getByRole('alertdialog');
+	await expect(dialog.locator('p')).toHaveText(/^All messages older than \d{1,2} \w+ \d{4} will be deleted at the next nightly run\. Confirm\?$/);
+	await dialog.getByRole('button', { name: 'Cancel' }).click();
+	await page.reload();
+	await expect(days).toHaveValue('3650');
+
+	await days.fill('730');
+	await page.getByRole('button', { name: 'Save' }).click();
+	await page.getByRole('alertdialog').getByRole('button', { name: 'Confirm' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toContainText('730 days');
+	// Lengthening needs no confirmation; put the default back for other tests.
+	await days.fill('3650');
+	await page.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Saved' })).toContainText('3,650 days');
+	await ctx.close();
+});
+
+// M4. R39 on screen: scripts/e2e.sh adds client "quiet", last heard 31
+// minutes ago (A13 itself runs against the API in Go).
+test('admins see receivers that are not receiving', async ({ browser }) => {
+	const ctx = await signedIn(browser, 'admin');
+	const page = await ctx.newPage();
+	await page.goto('/admin/clients');
+	await expect(page.getByTestId('status-quiet')).toHaveText('Not receiving');
+	await expect(page.getByTestId('status-e2e')).toHaveText('Receiving');
+	await expect(page.getByTestId('not-receiving')).toHaveText('1 receiver not receiving');
+	await ctx.close();
+	// Users don't see receiver status at all.
+	const userCtx = await signedIn(browser, 'user');
+	const userPage = await userCtx.newPage();
+	await userPage.goto('/');
+	await waitLive(userPage);
+	await expect(userPage.getByTestId('not-receiving')).toHaveCount(0);
+	await userCtx.close();
+});

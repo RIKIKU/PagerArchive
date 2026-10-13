@@ -34,3 +34,11 @@ export function dateTime(iso: string, timeZone: string): string {
 export function isoAttr(iso: string): string {
 	return new Date(iso).toISOString();
 }
+
+/** 2026-10-09: the date in timeZone, as date inputs and the API take it. */
+export function isoDate(iso: string, timeZone: string): string {
+	const parts: Record<string, string> = {};
+	for (const p of fmt(timeZone, { year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso)))
+		parts[p.type] = p.value;
+	return `${parts.year}-${parts.month}-${parts.day}`;
+}

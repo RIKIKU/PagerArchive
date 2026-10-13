@@ -103,7 +103,7 @@ serve reads its settings from the environment:
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
   MAP_TILES               path to a PMTiles map extract (default: no background map)
-  MAP_ATTRIBUTION         the extract's credit line (default: © OpenStreetMap contributors)
+  MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
 `
 
 func main() {
@@ -270,7 +270,7 @@ func serve(stderr io.Writer) error {
 		UI:             web.Handler(),
 		Nightly:        job,
 		MapTiles:       mapTiles,
-		MapAttribution: getenv("MAP_ATTRIBUTION", "© OpenStreetMap contributors"),
+		MapAttribution: os.Getenv("MAP_ATTRIBUTION"),
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
