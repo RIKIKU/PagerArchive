@@ -39,8 +39,14 @@ go build -o "$BIN" ./cmd/pagerarchive
 for n in 1 2 3 4; do
 	"$BIN" alias add "010000$n" "Station $n" --template "Example Fire" >/dev/null
 done
+# The capcode report test (R38) uses one capcode per browser project.
+for n in 1 2 3; do
+	"$BIN" alias add "030010$n" "Report test $n" --template "Example Fire" >/dev/null
+done
 PA_CLIENT_KEY=$("$BIN" client add e2e "E2E client" | tail -n 1)
 export PA_CLIENT_KEY
+# R39: a receiver last heard 31 minutes ago (set below).
+"$BIN" client add quiet "Quiet receiver" >/dev/null
 
 # A user and an admin, each with a session (the cookie holds the token; the
 # database holds its SHA-256).
@@ -56,10 +62,11 @@ INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_USER_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';
 INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_ADMIN_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-admin';
+UPDATE clients SET last_seen_at = now() - interval '31 minutes' WHERE id = 'quiet';
 SQL
 
 # Authentik isn't running: sign-in reports it unavailable, which one test checks.
-PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080 \
+PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080 MAP_TILES=deploy/example-map/example-map.pmtiles \
 	APP_URL=http://127.0.0.1:18080 AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
 	ALLOWED_EMAIL_DOMAINS=example.test "$BIN" serve 2>>"$BIN.log" &
 PIDS="$PIDS $!"

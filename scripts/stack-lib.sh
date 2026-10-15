@@ -17,7 +17,7 @@ stack_wait_api() {
 	i=0
 	until curl -sf http://127.0.0.1:8080/healthz >/dev/null; do
 		i=$((i + 1))
-		[ $i -gt 120 ] && { echo "API didn't start" >&2; stack_compose logs api | tail -20 >&2; return 1; }
+		[ $i -gt "${STACK_API_WAIT:-120}" ] && { echo "API didn't start" >&2; stack_compose logs api | tail -20 >&2; return 1; }
 		sleep 1
 	done
 }

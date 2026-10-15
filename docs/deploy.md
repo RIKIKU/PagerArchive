@@ -14,7 +14,8 @@ PagerArchive never sees passwords: people sign in on Authentik's pages, and Auth
 
 - **Two hostnames** behind your reverse proxy, which handles TLS: one for the app (e.g. `pager.example.org`) and one for Authentik (e.g. `auth.example.org`).
 - **An SMTP account** Authentik can send mail through.
-- **A profile directory** for your network (see [profiles](profiles.md)). Without one, the made-up example profile is used.
+- **A profile directory** for your network (see [profiles](profiles.md)), with its **address dataset**. Without one, the made-up example profile is used.
+- **A map extract** of your area (see [Map](#map)). Without one, the made-up example map is used.
 
 ## Configure and start
 
@@ -111,14 +112,55 @@ The `api` container reaches Authentik directly on the compose network (`AUTHENTI
 - No page text is ever written to the logs (SPEC.md P1).
 - Authentik is set up not to contact third parties: avatars show initials only, and analytics, error reporting and update checks are off.
 
+## Map
+
+The map (R35) is drawn from a **PMTiles** vector extract that the API serves itself, using HTTP range requests. There's no tile server, and nobody else sees what users look at. Fonts and icons are built into the image. Make an extract of your area once, with the [`pmtiles` command](https://github.com/protomaps/go-pmtiles/releases) and a daily OpenStreetMap build from Protomaps:
+
+```sh
+# --bbox is min lon, min lat, max lon, max lat (here, around London). A region
+# the size of a state at zoom 15 is a few hundred MB to a few GB.
+pmtiles extract https://build.protomaps.com/20261001.pmtiles map.pmtiles --bbox=-0.6,51.2,0.4,51.8 --maxzoom=15
+```
+
+Then set `MAP_TILES_FILE=/path/to/map.pmtiles` in `.env`. The credit line comes from the extract (`© OpenStreetMap`), and `MAP_ATTRIBUTION` overrides it. Refresh the extract whenever you like and restart `api`. The extract's maximum zoom sets how closely users can zoom in with detail; 15 is plenty for street level.
+
+Browsers without WebGL can't draw the map. The map page tells them so, and still lists the located messages.
+
+## Retention and the nightly run
+
+Admins set how long messages are kept, in days, on the Retention page (default 3,650, minimum 30). A nightly run at `NIGHTLY_AT` (default `03:00`, in `TZ`):
+
+1. deletes messages sent before the cut-off date (the run's date minus the retention period), with everything linked to them;
+2. applies changed redaction rules to stored messages and re-parses the ones that changed (P1);
+3. vacuums the message tables.
+
+Shortening the period asks for the cut-off date to be confirmed. A run missed while the server was down is made up when it starts. The Retention page shows the last run's result.
+
 ## Backups
 
 Back up the `db` volume, which holds both databases. Messages that PagerArchive deletes (retention) can survive in your own backups.
 
+## Images
+
+Images are published to GitHub's container registry by CI, but only from a build whose checks all passed:
+
+| Image | Architectures |
+|---|---|
+| `ghcr.io/rikiku/pagerarchive` | amd64 (the server) |
+| `ghcr.io/rikiku/pagerarchive-client` | amd64, arm64 (receivers, e.g. a Raspberry Pi) |
+
+| Tag | Is |
+|---|---|
+| `latest`, `main` | the newest build of `main` |
+| `X.Y.Z`, `X.Y` | a release |
+| `sha-<commit>` | one exact build |
+
+`compose.yaml` uses `latest` unless you set `PAGERARCHIVE_VERSION` (e.g. `PAGERARCHIVE_VERSION=sha-1a2b3c4` to pin one build).
+
 ## Upgrading
 
 ```sh
-git pull && docker compose pull && docker compose up -d --build
+git pull && docker compose pull && docker compose up -d
 ```
 
 Database migrations run when the API starts. Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version.

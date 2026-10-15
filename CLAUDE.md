@@ -10,3 +10,4 @@ Self-hosted archive and live browser for any POCSAG paging network. **`SPEC.md` 
 - This repo is generic and public: never add the name of a real agency, network or other paging project, real captures, or real addresses. Network-specific knowledge belongs in a private profile repo, mounted at runtime.
 - Never commit anything named `*PRIVATE*`, `.env`, or secrets.
 - Show evidence when claiming something works: the command run and its output.
+- Styles use the tokens in web/src/app.css; no hard-coded colours or font sizes in components.

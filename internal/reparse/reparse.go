@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -30,6 +31,7 @@ type Worker struct {
 	Network     *profile.Network
 	Agencies    map[string]*profile.Agency
 	Streets     *streets.Index
+	Geo         *geocode.Geocoder
 	ProfileHash string // hash of the profiles and address dataset in use
 	Log         *slog.Logger
 	Poll        time.Duration
@@ -102,14 +104,10 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	if patterns[everything] {
 		patterns = map[string]bool{everything: true}
 	}
-	aliases, err := w.Store.AllAliases(ctx)
+	cands, err := w.candidates(ctx)
 	if err != nil {
 		w.requeue(ctx, patterns)
 		return 0, err
-	}
-	cands := make([]ingest.Candidate, len(aliases))
-	for i, a := range aliases {
-		cands[i] = ingest.Candidate{ID: a.ID, Pattern: a.Pattern, AgencyProfile: a.AgencyProfile}
 	}
 	n := 0
 	for pattern := range patterns {
@@ -137,6 +135,41 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// candidates are every alias, for picking each message's best one.
+func (w *Worker) candidates(ctx context.Context) ([]ingest.Candidate, error) {
+	aliases, err := w.Store.AllAliases(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cands := make([]ingest.Candidate, len(aliases))
+	for i, a := range aliases {
+		cands[i] = ingest.Candidate{ID: a.ID, Pattern: a.Pattern, AgencyProfile: a.AgencyProfile}
+	}
+	return cands, nil
+}
+
+// ReparseIDs re-parses (and re-places) the given messages now, e.g. after
+// retroactive redaction changed their text (P1).
+func (w *Worker) ReparseIDs(ctx context.Context, ids []int64) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	cands, err := w.candidates(ctx)
+	if err != nil {
+		return err
+	}
+	rows, err := w.Store.MessagesByIDs(ctx, ids)
+	if err != nil {
+		return err
+	}
+	for _, m := range rows {
+		if err := w.reparse(ctx, cands, db.MessagesToReparseRow(m)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.MessagesToReparseRow) error {
 	var matching []ingest.Candidate
 	for _, c := range cands {
@@ -160,11 +193,14 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 	if err != nil {
 		return err
 	}
-	return w.Store.UpdateParsed(ctx, db.UpdateParsedParams{
+	if err := w.Store.UpdateParsed(ctx, db.UpdateParsedParams{
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		PagingGroup: f.Group, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
-	})
+	}); err != nil {
+		return err
+	}
+	return ingest.Locate(ctx, w.Geo, w.Store.Queries, m.ID, f)
 }
 
 // requeue puts claimed requests back after a failure, so none are lost.

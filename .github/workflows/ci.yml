@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  # Publishes the current branch's images tagged sha-<commit> only (owner, 2026-10-13).
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -83,7 +85,7 @@ jobs:
           retention-days: 14
 
   stack:
-    name: Accounts against Authentik (A23-A28, A33, section 11 step 2)
+    name: Accounts against Authentik (A23-A28, A33, section 11 steps 2 and 3)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -103,7 +105,7 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: A23-A28 and A33 against the compose stack (API, PostgreSQL, Authentik, Mailpit)
         run: sh scripts/stack-checks.sh
-      - name: Section 11 step 2 in a browser, on a fresh stack
+      - name: Section 11 steps 2 and 3 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium
       - name: Upload Playwright report, screenshots and traces
         if: always()
@@ -150,3 +152,160 @@ jobs:
           docker run --privileged --rm tonistiigi/binfmt --install amd64
           docker build --platform linux/amd64 -t pagerarchive:ci .
           sh scripts/ci/client-replay.sh pagerarchive:ci pagerarchive-client:ci
+
+  budget:
+    name: Resource budget, short run (A15)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # Full stack with Authentik, a made-up dataset of real size, 20 viewers,
+      # 5 minutes of pages at 20x the 1,500/day rate, then 2 idle minutes.
+      # The full 1-hour run is done by hand (docs/adr/0005).
+      - name: A15 short run
+        run: sh scripts/a15.sh -m 5 -w 1 -i 2 -r 30000 -o a15-results
+      - name: Upload memory samples and summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: a15-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a15-results/
+          retention-days: 30
+
+  # Images on GHCR (SPEC.md section 8), only from a green build (owner,
+  # 2026-10-13): main -> latest, main, sha-<commit>; a vX.Y.Z tag -> X.Y.Z,
+  # X.Y, sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
+  # pushes build the images without publishing them.
+  publish-server:
+    name: Publish server image (amd64)
+    needs: [test, web, stack, images, budget]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/rikiku/pagerarchive
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=main,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          build-args: VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          push: ${{ env.PUBLISH == 'true' }}
+      - name: Summary
+        run: |
+          echo "published: $PUBLISH"
+          echo "${{ steps.meta.outputs.tags }}"
+
+  publish-client:
+    name: Build client image for publishing (${{ matrix.arch }})
+    needs: [test, web, stack, images, budget]
+    strategy:
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        if: env.PUBLISH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/rikiku/pagerarchive-client
+      # Each architecture is built natively and pushed by digest; the next
+      # job joins them into one multi-arch tag.
+      - id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: Dockerfile.client
+          platforms: linux/${{ matrix.arch }}
+          build-args: VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
+          labels: ${{ steps.meta.outputs.labels }}
+          outputs: type=image,name=ghcr.io/rikiku/pagerarchive-client,push-by-digest=true,name-canonical=true,push=${{ env.PUBLISH }}
+      - name: Keep the digest
+        if: env.PUBLISH == 'true'
+        run: |
+          mkdir -p digests
+          touch "digests/${DIGEST#sha256:}"
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+      - uses: actions/upload-artifact@v4
+        if: env.PUBLISH == 'true'
+        with:
+          name: client-digest-${{ matrix.arch }}
+          path: digests/*
+          retention-days: 1
+
+  publish-client-manifest:
+    name: Publish client image (amd64 + arm64)
+    needs: [publish-client]
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: digests
+          pattern: client-digest-*
+          merge-multiple: true
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/rikiku/pagerarchive-client
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=raw,value=main,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,prefix=sha-,format=short
+      - name: Join the architectures under the tags
+        working-directory: digests
+        run: |
+          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+            $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
+          docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}

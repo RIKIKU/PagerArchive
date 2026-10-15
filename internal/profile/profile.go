@@ -51,6 +51,7 @@ type Network struct {
 	DatasetPath string // absolute or relative to the working directory
 	Attribution string
 	StreetTypes map[string]string
+	GridSystem  string // how grid references are read (R25); "" if not given
 }
 
 // CapcodeRange is an inclusive range of capcodes.
@@ -214,6 +215,9 @@ type networkJSON struct {
 		Path        string `json:"path"`
 		Attribution string `json:"attribution"`
 	} `json:"address_dataset"`
+	GridReference struct {
+		System string `json:"system"`
+	} `json:"grid_reference"`
 	StreetTypes map[string]string `json:"street_types"`
 }
 
@@ -246,6 +250,7 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 		Markers:     map[string]Priority{},
 		Attribution: j.AddressDataset.Attribution,
 		StreetTypes: j.StreetTypes,
+		GridSystem:  j.GridReference.System,
 	}
 	for k, v := range j.Markers {
 		if utf8.RuneCountInString(k) != 2 {

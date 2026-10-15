@@ -23,8 +23,10 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
+	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/server"
@@ -47,6 +49,7 @@ type env struct {
 	srv    *server.Server
 	cat    *catalog.Catalog
 	worker *reparse.Worker
+	job    *nightly.Job
 
 	// Accounts (M3): a fake Authentik, the first admin and a user. Requests
 	// are made as e.as (the user unless a test changes it).
@@ -132,13 +135,21 @@ func setup(t *testing.T) *env {
 		e.keys[id] = key
 	}
 	ix := streets.NewIndex(ds.Streets, n.StreetTypes)
+	dsHash, err := geocode.DatasetHash(n.DatasetPath, n.StreetTypes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := geocode.Load(ctx, st, n.DatasetPath, ix, dsHash); err != nil {
+		t.Fatal(err)
+	}
+	geocoder := &geocode.Geocoder{Index: ix, GridSystem: n.GridSystem}
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	hub := live.NewHub()
 	e.dir = newFakeDir()
 	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, SignedOut: hub.CloseUsers}
 	srv := &server.Server{
 		Store:    st,
-		Ingest:   &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix},
+		Ingest:   &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder},
 		Log:      log,
 		Now:      time.Now,
 		Hub:      hub,
@@ -147,7 +158,13 @@ func setup(t *testing.T) *env {
 	}
 	e.srv = srv
 	e.cat = &catalog.Catalog{Store: st}
-	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Log: log, Poll: time.Minute}
+	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute}
+	melbourne, err := time.LoadLocation("Australia/Melbourne")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log}
+	srv.Nightly = e.job
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
 	e.url = hs.URL

@@ -82,7 +82,7 @@
       "additionalProperties": false
     },
     "grid_reference": {
-      "description": "How grid references are interpreted (used from milestone M4).",
+      "description": "How grid references are read (R25). mgrs-6-digit-in-locality-square: 3 digits of easting then 3 of northing (100 m), completed from the UTM zone and 100 km square containing the page's locality.",
       "type": "object",
       "required": ["system"],
       "properties": {

@@ -1,0 +1,110 @@
+{
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "minor_road",
+        "min_zoom": 10,
+        "name": "FICTION ST"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            -140.86778,
+            -34.831362
+          ],
+          [
+            -140.862749,
+            -34.831357
+          ]
+        ],
+        "type": "LineString"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "minor_road",
+        "min_zoom": 10,
+        "name": "EXAMPLE ST"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            -140.861869,
+            -34.834512
+          ],
+          [
+            -140.861878,
+            -34.829101
+          ]
+        ],
+        "type": "LineString"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "major_road",
+        "min_zoom": 10,
+        "name": "SAMPLE RD"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            -140.890647,
+            -34.82372
+          ],
+          [
+            -140.844719,
+            -34.82367
+          ]
+        ],
+        "type": "LineString"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "minor_road",
+        "min_zoom": 10,
+        "name": "DEMO PL"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            -140.870952,
+            -34.831366
+          ],
+          [
+            -140.870954,
+            -34.829472
+          ]
+        ],
+        "type": "LineString"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "minor_road",
+        "min_zoom": 10,
+        "name": "FICTION ST"
+      },
+      "geometry": {
+        "coordinates": [
+          [
+            -140.869595,
+            -34.651008
+          ],
+          [
+            -140.865775,
+            -34.651004
+          ]
+        ],
+        "type": "LineString"
+      }
+    }
+  ],
+  "type": "FeatureCollection"
+}

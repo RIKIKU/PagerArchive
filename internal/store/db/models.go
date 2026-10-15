@@ -8,6 +8,13 @@ import (
 	"time"
 )
 
+type AddressPoint struct {
+	Locality string
+	Street   string
+	Number   string
+	Geom     interface{}
+}
+
 type Alias struct {
 	ID         int64
 	Pattern    string
@@ -43,6 +50,14 @@ type Invitation struct {
 	CancelledAt *time.Time
 }
 
+type Locality struct {
+	Name   string
+	MinLon float64
+	MinLat float64
+	MaxLon float64
+	MaxLat float64
+}
+
 type Message struct {
 	ID               int64
 	Capcode          string
@@ -68,6 +83,10 @@ type Message struct {
 	CreatedAt        time.Time
 	AliasID          *int64
 	LocationMismatch bool
+	Location         interface{}
+	LocationSource   *string
+	Lon              *float64
+	Lat              *float64
 }
 
 type Reception struct {
@@ -94,6 +113,12 @@ type Session struct {
 type Setting struct {
 	Key   string
 	Value string
+}
+
+type StreetPoint struct {
+	Locality string
+	Street   string
+	Geom     interface{}
 }
 
 type Template struct {

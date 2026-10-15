@@ -1,0 +1,37 @@
+{
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "locality",
+        "min_zoom": 8,
+        "name": "MADEUPTON",
+        "population_rank": 5
+      },
+      "geometry": {
+        "coordinates": [
+          -140.865487,
+          -34.829105
+        ],
+        "type": "Point"
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "kind": "locality",
+        "min_zoom": 8,
+        "name": "TESTVILLE",
+        "population_rank": 5
+      },
+      "geometry": {
+        "coordinates": [
+          -140.867961,
+          -34.648752
+        ],
+        "type": "Point"
+      }
+    }
+  ],
+  "type": "FeatureCollection"
+}

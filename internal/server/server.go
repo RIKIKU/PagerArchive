@@ -19,6 +19,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/live"
+	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 )
 
@@ -44,6 +45,11 @@ type Server struct {
 	AccountURL string
 	// UI serves the browser app; nil serves none.
 	UI http.Handler
+	// Nightly is the retention and redaction job (R45).
+	Nightly *nightly.Job
+	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
+	// its credit line (R35).
+	MapTiles, MapAttribution string
 }
 
 // Handler returns the API's routes.
@@ -59,6 +65,11 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/capcodes/unaliased":           s.unaliased,
 		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,
 		"GET /api/v1/aliases/{id}":                 s.getAlias,
+		"GET /api/v1/map":                          s.mapMessages,
+		"GET /api/v1/map/tiles.pmtiles":            s.mapTiles,
+		"GET /api/v1/reports/capcode":              s.capcodeReport,
+		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
+		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
 		"GET /api/v1/stream":                       s.stream,
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,

@@ -41,6 +41,9 @@
 			<dt>Ignored</dt>
 			<dd>{alias.ignored ? 'Yes: its pages are hidden from the main list' : 'No'}</dd>
 		</dl>
+		{#if !/[%_]/.test(alias.pattern)}
+			<p><a href="/reports?capcode={alias.pattern}">Report for this capcode</a></p>
+		{/if}
 		<p class="note">Aliases are changed by import or the command line.</p>
 	</section>
 	<MessageList {query} base={{ alias_id: String(alias.id), ignored: 'true' }} level={2} />
@@ -83,7 +86,7 @@
 	}
 	.note {
 		color: var(--muted);
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 		margin: 0.5rem 0 0;
 	}
 </style>

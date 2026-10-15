@@ -39,8 +39,60 @@ export interface Message {
 	units: string[] | null;
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
+	location: Location | null;
 	flags?: Flags;
 	receptions?: Reception[];
+}
+
+/** Where a message is placed (R24-R25). "street": no house number, or one not
+ * in the dataset, so the street's centroid: approximate (section 14). */
+export interface Location {
+	lon: number;
+	lat: number;
+	source: 'address' | 'street' | 'grid';
+	approximate: boolean;
+}
+
+export interface MapPage {
+	messages: Message[];
+	truncated: boolean;
+	from: string | null;
+	to: string | null;
+}
+
+export interface Report {
+	capcode: string;
+	from: string;
+	to: string;
+	categories: { category: string; count: number; codes?: { code: string | null; count: number }[] }[];
+	total: number;
+}
+
+export interface NightlyResult {
+	at: string;
+	cutoff: string;
+	deleted: number;
+	redacted: number;
+	ok: boolean;
+	error?: string;
+}
+
+export interface Retention {
+	days: number;
+	default_days: number;
+	min_days: number;
+	max_days: number;
+	next_run: string;
+	cutoff: string;
+	last_run: NightlyResult | null;
+}
+
+/** 409 reply to shortening retention without confirming (R46). */
+export interface RetentionConfirm {
+	error: string;
+	code: 'confirm_cutoff';
+	cutoff: string;
+	message: string;
 }
 
 export interface Meta {
@@ -50,6 +102,8 @@ export interface Meta {
 	time_zone: string;
 	categories: string[];
 	attribution: string;
+	map_tiles: boolean;
+	map_attribution: string;
 }
 
 export interface MessagePage {
@@ -86,9 +140,9 @@ export interface CapcodeView {
 export interface ClientStatus {
 	id: string;
 	name: string;
-	revoked: boolean;
 	clock_ahead: boolean;
 	last_seen: string | null;
+	receiving: boolean;
 }
 
 export interface Me {
@@ -125,16 +179,33 @@ export interface UserRow {
 export class ApiError extends Error {
 	constructor(
 		public status: number,
-		message: string
+		message: string,
+		public body?: { error?: string; code?: string; [k: string]: unknown }
 	) {
 		super(message);
 	}
 }
 
-/** Sends the browser to sign in, and back here afterwards. */
+/**
+ * Sends the browser to sign in, and back here afterwards. While the first
+ * admin can still be set up, it goes to /signin instead, so a new install's
+ * "Set up the first admin" button is seen (R44). Only the first call acts:
+ * several requests can fail at once, and a later one's status check, cut
+ * off by the first one's navigation, mustn't send the browser elsewhere.
+ */
+let signingIn: Promise<void> | undefined;
 export function signIn() {
 	if (location.pathname.startsWith('/signin')) return;
-	location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
+	signingIn ??= goSignIn();
+}
+
+async function goSignIn() {
+	const firstAdmin = await fetch('/auth/status', { headers: { Accept: 'application/json' } })
+		.then((r) => (r.ok ? (r.json() as Promise<{ first_admin_setup: boolean }>) : undefined))
+		.then((s) => s?.first_admin_setup === true)
+		.catch(() => false);
+	if (firstAdmin) location.assign('/signin');
+	else location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -146,13 +217,14 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 	if (res.status === 401 && path.startsWith('/api/')) signIn();
 	if (!res.ok) {
 		let msg = `${res.status} ${res.statusText}`;
+		let b;
 		try {
-			const b = await res.json();
+			b = await res.json();
 			if (b?.error) msg = b.error;
 		} catch {
 			// not JSON
 		}
-		throw new ApiError(res.status, msg);
+		throw new ApiError(res.status, msg, b);
 	}
 	if (res.status === 204) return undefined as T;
 	return res.json() as Promise<T>;
@@ -177,6 +249,20 @@ export const api = {
 	capcode: (capcode: string) => get<CapcodeView>(`/api/v1/capcodes/${encodeURIComponent(capcode)}`),
 	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
 	clients: () => get<ClientStatus[]>('/api/v1/admin/clients'),
+	map: (query: URLSearchParams) => get<MapPage>(`/api/v1/map?${query}`),
+	report: (capcode: string, from: string, to: string) =>
+		get<Report>(`/api/v1/reports/capcode?${new URLSearchParams({ capcode, from, to })}`),
+	retention: () => get<Retention>('/api/v1/admin/retention'),
+	/** Saves a retention period; a shorter one needs the shown cut-off date
+	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
+	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {
+		try {
+			return await request<Retention>('PUT', '/api/v1/admin/retention', { days, confirm_cutoff });
+		} catch (e) {
+			if (e instanceof ApiError && e.body?.code === 'confirm_cutoff') return e.body as unknown as RetentionConfirm;
+			throw e;
+		}
+	},
 
 	// Accounts (R40-R44).
 	me: (fresh = false) => (fresh || !mePromise ? (mePromise = get<Me>('/api/v1/me')) : mePromise),

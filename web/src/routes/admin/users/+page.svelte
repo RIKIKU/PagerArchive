@@ -149,7 +149,7 @@
 
 <style>
 	h2 {
-		font-size: 1.05rem;
+		font-size: var(--text-lg);
 		margin: 1.5rem 0.75rem 0.25rem;
 	}
 	.ok {
@@ -178,7 +178,7 @@
 		color: var(--muted);
 	}
 	.tag {
-		font-size: 0.8rem;
+		font-size: var(--text-xs);
 		border: 1px solid var(--border);
 		border-radius: 1rem;
 		padding: 0 0.5rem;
@@ -190,7 +190,7 @@
 	}
 	.meta {
 		color: var(--muted);
-		font-size: 0.9rem;
+		font-size: var(--text-md);
 		overflow-wrap: anywhere;
 	}
 	.actions {

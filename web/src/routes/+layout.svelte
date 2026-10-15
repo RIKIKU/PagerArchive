@@ -32,13 +32,30 @@
 		}
 	});
 
+	// R39: admins see at a glance when a receiver has gone quiet.
+	let quiet = $state(0);
+	$effect(() => {
+		if (meta?.role !== 'admin') return;
+		const check = () =>
+			api
+				.clients()
+				.then((cs) => (quiet = cs.filter((c) => !c.receiving).length))
+				.catch(() => {});
+		check();
+		const t = setInterval(check, 60_000);
+		return () => clearInterval(t);
+	});
+
 	const nav = $derived(page.url.pathname.startsWith('/signin') ? [] : [
 		{ href: '/', label: 'Messages' },
+		{ href: '/map', label: 'Map' },
+		{ href: '/reports', label: 'Reports' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
 		...(meta?.role === 'admin'
 			? [
 					{ href: '/admin/users', label: 'Users' },
-					{ href: '/admin/clients', label: 'Clients' }
+					{ href: '/admin/clients', label: 'Clients' },
+					{ href: '/admin/retention', label: 'Retention' }
 				]
 			: []),
 		...(meta ? [{ href: '/account', label: 'Account' }] : [])
@@ -53,6 +70,11 @@
 			<a href={item.href} aria-current={page.url.pathname === item.href ? 'page' : undefined}>{item.label}</a>
 		{/each}
 	</nav>
+	{#if quiet > 0}
+		<a class="quiet" href="/admin/clients" data-testid="not-receiving"
+			>{quiet} receiver{quiet === 1 ? '' : 's'} not receiving</a
+		>
+	{/if}
 	<label class="theme">
 		<span class="visually-hidden">Colour theme</span>
 		<select bind:value={theme}>
@@ -82,6 +104,14 @@
 		top: 0;
 		z-index: 1;
 	}
+	.quiet {
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+		padding: 0.15rem 0.5rem;
+		border-radius: 0.25rem;
+		font-size: var(--text-sm);
+		font-weight: 600;
+	}
 	.brand {
 		font-weight: 700;
 		color: var(--fg);
@@ -106,7 +136,7 @@
 		margin-left: auto;
 	}
 	.theme select {
-		font-size: 0.85rem;
+		font-size: var(--text-sm);
 	}
 	/* Phones: brand and theme on one row, the links in a row below, so the
 	   header stays short and the first message stays on screen (R31). */
@@ -115,9 +145,18 @@
 			row-gap: 0.15rem;
 			padding-bottom: 0.25rem;
 		}
+		/* One row of links that scrolls sideways within itself (the page
+		   never does), however many links there are. */
 		nav {
 			order: 3;
 			flex-basis: 100%;
+			flex-wrap: nowrap;
+			overflow-x: auto;
+			white-space: nowrap;
+			scrollbar-width: none;
+		}
+		.quiet {
+			order: 4;
 		}
 	}
 	main {
@@ -128,7 +167,7 @@
 		max-width: 64rem;
 		margin: 1rem auto;
 		padding: 0 0.75rem;
-		font-size: 0.75rem;
+		font-size: var(--text-xxs);
 		color: var(--muted);
 	}
 	.skip {

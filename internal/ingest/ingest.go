@@ -14,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -49,6 +50,7 @@ type Service struct {
 	Network  *profile.Network
 	Agencies map[string]*profile.Agency
 	Streets  *streets.Index
+	Geo      *geocode.Geocoder // nil: messages aren't placed
 }
 
 // Ingest processes one page from a client. It returns the message ID, or 0
@@ -79,10 +81,11 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 		agency = s.agencyFor(alias.AgencyProfile)
 	}
 	parsed := pipeline.Parse(s.Network, agency, s.Streets, prep)
-	params, err := messageParams(prep, parsed, pg)
+	fields, err := FieldsOf(parsed)
 	if err != nil {
 		return "", 0, err
 	}
+	params := messageParams(prep, fields, pg)
 	params.AliasID = aliasID
 
 	outcome, id := Stored, int64(0)
@@ -100,6 +103,9 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 			}
 		case errors.Is(err, pgx.ErrNoRows):
 			if id, err = q.InsertMessage(ctx, params); err != nil {
+				return err
+			}
+			if err := Locate(ctx, s.Geo, q, id, fields); err != nil {
 				return err
 			}
 		default:
@@ -218,11 +224,7 @@ func BestAlias(rows []Candidate) *Candidate {
 	return &rows[0]
 }
 
-func messageParams(prep pipeline.Prepared, parsed pipeline.Parsed, pg Page) (db.InsertMessageParams, error) {
-	f, err := FieldsOf(parsed)
-	if err != nil {
-		return db.InsertMessageParams{}, err
-	}
+func messageParams(prep pipeline.Prepared, f Fields, pg Page) db.InsertMessageParams {
 	fn, baud := int16(pg.Function), int32(pg.Baud)
 	return db.InsertMessageParams{
 		Capcode:        prep.Capcode,
@@ -245,7 +247,26 @@ func messageParams(prep pipeline.Prepared, parsed pipeline.Parsed, pg Page) (db.
 		AddressUnsplit: f.AddressUnsplit,
 		Function:       &fn,
 		Baud:           &baud,
-	}, nil
+	}
+}
+
+// Locate places message id from its parsed fields (R24-R26). geo nil
+// leaves it unplaced.
+func Locate(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, id int64, f Fields) error {
+	if geo == nil {
+		return nil
+	}
+	val := func(p *string) string {
+		if p == nil {
+			return ""
+		}
+		return *p
+	}
+	res, err := geo.Locate(ctx, q, geocode.Input{Address: val(f.Address), Locality: val(f.Locality), Description: val(f.Description), GridRef: val(f.GridRef)})
+	if err != nil {
+		return err
+	}
+	return q.SetLocation(ctx, geocode.SetLocationParams(id, res))
 }
 
 func nilIfEmpty(s string) *string {

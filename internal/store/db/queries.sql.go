@@ -21,6 +21,31 @@ func (q *Queries) ActiveClientByKeyHash(ctx context.Context, keyHash []byte) (st
 	return id, err
 }
 
+const addressPoint = `-- name: AddressPoint :one
+SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
+FROM address_points
+WHERE locality = $1::text AND street = $2::text AND number = $3::text
+LIMIT 1
+`
+
+type AddressPointParams struct {
+	Locality string
+	Street   string
+	Number   string
+}
+
+type AddressPointRow struct {
+	Lon float64
+	Lat float64
+}
+
+func (q *Queries) AddressPoint(ctx context.Context, arg AddressPointParams) (AddressPointRow, error) {
+	row := q.db.QueryRow(ctx, addressPoint, arg.Locality, arg.Street, arg.Number)
+	var i AddressPointRow
+	err := row.Scan(&i.Lon, &i.Lat)
+	return i, err
+}
+
 const aliasByKey = `-- name: AliasByKey :one
 SELECT id, pattern, name FROM aliases WHERE pattern_key = $1::text
 `
@@ -322,6 +347,51 @@ func (q *Queries) CancelPendingInvitationsTo(ctx context.Context, emailKey *stri
 	return items, nil
 }
 
+const capcodeReport = `-- name: CapcodeReport :many
+SELECT event_type, count(*) AS messages
+FROM messages
+WHERE capcode = $1::text
+  AND priority = 'Emergency'
+  AND NOT heartbeat
+  AND sent_at >= $2::timestamptz
+  AND sent_at < $3::timestamptz
+GROUP BY event_type
+ORDER BY event_type NULLS LAST
+`
+
+type CapcodeReportParams struct {
+	Capcode  string
+	SentFrom time.Time
+	SentTo   time.Time
+}
+
+type CapcodeReportRow struct {
+	EventType *string
+	Messages  int64
+}
+
+// R38: Emergency messages to one capcode in a date range, by event type.
+// Heartbeats are excluded (R35b).
+func (q *Queries) CapcodeReport(ctx context.Context, arg CapcodeReportParams) ([]CapcodeReportRow, error) {
+	rows, err := q.db.Query(ctx, capcodeReport, arg.Capcode, arg.SentFrom, arg.SentTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CapcodeReportRow
+	for rows.Next() {
+		var i CapcodeReportRow
+		if err := rows.Scan(&i.EventType, &i.Messages); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimReparseRequests = `-- name: ClaimReparseRequests :many
 DELETE FROM reparse_requests RETURNING capcode_pattern, reason
 `
@@ -587,6 +657,26 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+const deleteMessagesBefore = `-- name: DeleteMessagesBefore :execrows
+DELETE FROM messages
+WHERE id IN (SELECT id FROM messages WHERE sent_at < $1::timestamptz LIMIT $2::int)
+`
+
+type DeleteMessagesBeforeParams struct {
+	Cutoff time.Time
+	Batch  int32
+}
+
+// R45: one batch of messages older than the cut-off. Receptions go with them
+// (cascade); jobs and locations are columns of the message (section 14).
+func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBeforeParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteMessagesBefore, arg.Cutoff, arg.Batch)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE token_hash = $1
 `
@@ -628,6 +718,37 @@ DELETE FROM sessions WHERE user_id = ANY($1::bigint[])
 func (q *Queries) DeleteUserSessions(ctx context.Context, ids []int64) error {
 	_, err := q.db.Exec(ctx, deleteUserSessions, ids)
 	return err
+}
+
+const distanceToStreet = `-- name: DistanceToStreet :one
+SELECT COALESCE(
+    (SELECT min(ST_Distance(a.geom, p.g)) FROM address_points a
+     WHERE a.locality = $1::text AND a.street = $2::text),
+    (SELECT ST_Distance(s.geom, p.g) FROM street_points s
+     WHERE s.locality = $1::text AND s.street = $2::text),
+    -1)::float8 AS metres
+FROM (SELECT ST_SetSRID(ST_MakePoint($3::float8, $4::float8), 4326)::geography AS g) p
+`
+
+type DistanceToStreetParams struct {
+	Locality string
+	Street   string
+	Lon      float64
+	Lat      float64
+}
+
+// R26 for a street-only address: metres from a point to the nearest address
+// point on the street (or to the street's own point if it has no addresses).
+func (q *Queries) DistanceToStreet(ctx context.Context, arg DistanceToStreetParams) (float64, error) {
+	row := q.db.QueryRow(ctx, distanceToStreet,
+		arg.Locality,
+		arg.Street,
+		arg.Lon,
+		arg.Lat,
+	)
+	var metres float64
+	err := row.Scan(&metres)
+	return metres, err
 }
 
 const findDuplicate = `-- name: FindDuplicate :one
@@ -1074,6 +1195,29 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 	return items, nil
 }
 
+const localityExtent = `-- name: LocalityExtent :one
+SELECT min_lon, min_lat, max_lon, max_lat FROM localities WHERE name = $1
+`
+
+type LocalityExtentRow struct {
+	MinLon float64
+	MinLat float64
+	MaxLon float64
+	MaxLat float64
+}
+
+func (q *Queries) LocalityExtent(ctx context.Context, name string) (LocalityExtentRow, error) {
+	row := q.db.QueryRow(ctx, localityExtent, name)
+	var i LocalityExtentRow
+	err := row.Scan(
+		&i.MinLon,
+		&i.MinLat,
+		&i.MaxLon,
+		&i.MaxLat,
+	)
+	return i, err
+}
+
 const lockActiveAdmins = `-- name: LockActiveAdmins :many
 SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR UPDATE
 `
@@ -1141,6 +1285,85 @@ func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]Mes
 	for rows.Next() {
 		var i MessageReceptionsRow
 		if err := rows.Scan(&i.ClientID, &i.ClientName, &i.ReceivedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const messagesByIDs = `-- name: MessagesByIDs :many
+SELECT id, capcode, text, priority, heartbeat
+FROM messages
+WHERE id = ANY($1::bigint[])
+ORDER BY id
+`
+
+type MessagesByIDsRow struct {
+	ID        int64
+	Capcode   string
+	Text      string
+	Priority  *string
+	Heartbeat bool
+}
+
+func (q *Queries) MessagesByIDs(ctx context.Context, ids []int64) ([]MessagesByIDsRow, error) {
+	rows, err := q.db.Query(ctx, messagesByIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessagesByIDsRow
+	for rows.Next() {
+		var i MessagesByIDsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Capcode,
+			&i.Text,
+			&i.Priority,
+			&i.Heartbeat,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const messagesForRedaction = `-- name: MessagesForRedaction :many
+SELECT id, capcode, text FROM messages
+WHERE id > $1::bigint
+ORDER BY id
+LIMIT $2::int
+`
+
+type MessagesForRedactionParams struct {
+	AfterID int64
+	Batch   int32
+}
+
+type MessagesForRedactionRow struct {
+	ID      int64
+	Capcode string
+	Text    string
+}
+
+func (q *Queries) MessagesForRedaction(ctx context.Context, arg MessagesForRedactionParams) ([]MessagesForRedactionRow, error) {
+	rows, err := q.db.Query(ctx, messagesForRedaction, arg.AfterID, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessagesForRedactionRow
+	for rows.Next() {
+		var i MessagesForRedactionRow
+		if err := rows.Scan(&i.ID, &i.Capcode, &i.Text); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1328,7 +1551,8 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
-       t.agency, t.icon, t.colour, t.agency_profile
+       t.agency, t.icon, t.colour, t.agency_profile,
+       m.lon, m.lat, m.location_source
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
@@ -1354,10 +1578,11 @@ WHERE ($1::bigint IS NULL OR m.id = $1)
   AND (NOT $17::bool OR m.parse_failed)
   AND (NOT $18::bool OR m.address_unsplit)
   AND (NOT $19::bool OR m.location_mismatch)
-  AND ($20::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($20, $21::bigint))
+  AND (NOT $20::bool OR m.location IS NOT NULL)
+  AND ($21::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($21, $22::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $22::int
+LIMIT $23::int
 `
 
 type SearchMessagesParams struct {
@@ -1380,6 +1605,7 @@ type SearchMessagesParams struct {
 	ParseFailed      bool
 	AddressUnsplit   bool
 	LocationMismatch bool
+	Located          bool
 	BeforeSent       *time.Time
 	BeforeID         *int64
 	MaxRows          int32
@@ -1412,6 +1638,9 @@ type SearchMessagesRow struct {
 	Icon             *string
 	Colour           *string
 	AgencyProfile    *string
+	Lon              *float64
+	Lat              *float64
+	LocationSource   *string
 }
 
 // R33. Every filter is optional (NULL = any). Keyset pagination on
@@ -1438,6 +1667,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.ParseFailed,
 		arg.AddressUnsplit,
 		arg.LocationMismatch,
+		arg.Located,
 		arg.BeforeSent,
 		arg.BeforeID,
 		arg.MaxRows,
@@ -1476,6 +1706,9 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			&i.Icon,
 			&i.Colour,
 			&i.AgencyProfile,
+			&i.Lon,
+			&i.Lat,
+			&i.LocationSource,
 		); err != nil {
 			return nil, err
 		}
@@ -1542,6 +1775,35 @@ func (q *Queries) SetInvitationAuthentikID(ctx context.Context, arg SetInvitatio
 	return err
 }
 
+const setLocation = `-- name: SetLocation :exec
+UPDATE messages SET
+    location = CASE WHEN $1::float8 IS NULL THEN NULL
+                    ELSE ST_SetSRID(ST_MakePoint($1::float8, $2::float8), 4326)::geography END,
+    location_source = $3::text,
+    location_mismatch = $4::bool
+WHERE id = $5::bigint
+`
+
+type SetLocationParams struct {
+	Lon      *float64
+	Lat      *float64
+	Source   *string
+	Mismatch bool
+	ID       int64
+}
+
+// R24-R26: where a message is placed, set after parsing (ingest and re-parse).
+func (q *Queries) SetLocation(ctx context.Context, arg SetLocationParams) error {
+	_, err := q.db.Exec(ctx, setLocation,
+		arg.Lon,
+		arg.Lat,
+		arg.Source,
+		arg.Mismatch,
+		arg.ID,
+	)
+	return err
+}
+
 const setSetting = `-- name: SetSetting :exec
 INSERT INTO settings (key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
@@ -1586,6 +1848,29 @@ func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const streetPoint = `-- name: StreetPoint :one
+SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
+FROM street_points
+WHERE locality = $1::text AND street = $2::text
+`
+
+type StreetPointParams struct {
+	Locality string
+	Street   string
+}
+
+type StreetPointRow struct {
+	Lon float64
+	Lat float64
+}
+
+func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (StreetPointRow, error) {
+	row := q.db.QueryRow(ctx, streetPoint, arg.Locality, arg.Street)
+	var i StreetPointRow
+	err := row.Scan(&i.Lon, &i.Lat)
+	return i, err
 }
 
 const templateByName = `-- name: TemplateByName :one
@@ -1777,6 +2062,23 @@ func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) erro
 		arg.ParseFailed,
 		arg.AddressUnsplit,
 	)
+	return err
+}
+
+const updateRedactedText = `-- name: UpdateRedactedText :exec
+UPDATE messages SET text = $2, dedup_key = $3 WHERE id = $1
+`
+
+type UpdateRedactedTextParams struct {
+	ID       int64
+	Text     string
+	DedupKey []byte
+}
+
+// P1: retroactive redaction replaces the text and its dedup hash; the
+// caller then re-parses the message so parsed fields follow.
+func (q *Queries) UpdateRedactedText(ctx context.Context, arg UpdateRedactedTextParams) error {
+	_, err := q.db.Exec(ctx, updateRedactedText, arg.ID, arg.Text, arg.DedupKey)
 	return err
 }
 

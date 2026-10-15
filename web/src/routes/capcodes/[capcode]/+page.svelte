@@ -44,6 +44,7 @@
 			{#if c.last_seen}<dt>Last seen</dt>
 				<dd><time datetime={isoAttr(c.last_seen)}>{dateTime(c.last_seen, tz)}</time></dd>{/if}
 		</dl>
+		<p><a href="/reports?capcode={c.capcode}">Report for this capcode</a></p>
 	</section>
 	<MessageList {query} base={{ capcode: c.capcode, unaliased: 'true' }} level={2} />
 {/if}
