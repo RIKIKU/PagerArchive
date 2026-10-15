@@ -148,7 +148,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R35.** A **map** shows located messages, using **self-hosted map tiles** (e.g. an OpenStreetMap extract), so no third party sees what users view.
 - **R35a.** **Times** are stored in UTC and shown in the deployment's time zone (setting `TZ`, e.g. `Australia/Melbourne`), with en-AU style dates. English only. Report days and the retention cut-off use the same time zone. (Showing times in each browser's own time zone may come later.)
 - **R35b.** Heartbeat pages are shown with a **heartbeat badge** and are excluded from reports. They appear in the default message list.
-- **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed`, `location_mismatch` and `address_unsplit` flags are shown **to admins only**. (`address_unsplit`: a format matched, but no street from the address dataset ended the address text, so `address` is `null`; see ADR 0001.)
+- **R35c.** A **message detail view** shows all parsed and extra fields and every client's receive time. The `parse_failed`, `location_mismatch` and `address_unsplit` flags are shown **to admins only**. (`address_unsplit`: a format matched, but no street from the address dataset ended the address text, so `address` is `null`; see ADR 0001.) If the message has a location, the detail view also shows a small map centred on it, using the same self-hosted tiles (R35). An approximate location (street only, no house number) is drawn as a ring, as on the main map. On phones the map comes below the message text, so the full text stays first (P2). A message with no location says so instead, with no empty map. The "Show on map" link stays. (owner, 2026-10-15)
 - **R35d. Navigation from a message** (owner, 2026-10-12). Tapping a **message** (anywhere on
   its row except the links below) opens its **detail view** (R35c). Tapping the **alias**
   opens the **alias view** (R35e); if the capcode has no alias, tapping the capcode opens it.
@@ -250,6 +250,7 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A31. Integration safety.** **Given** an admin has not allowed private addresses, **when** a user saves a webhook pointing at `http://127.0.0.1:8080/` or `http://192.168.1.10/`, **then** it is rejected with a clear message. **And given** a working integration whose endpoint starts failing, **when** delivery has failed repeatedly, **then** the integration is paused and its owner sees "paused" with the last error and no page text.
 - **A32. Metrics.** **Given** two clients, one last heard 31 minutes ago, **when** the metrics endpoint is scraped with valid credentials, **then** it reports that client as not receiving and the other as receiving, contains no page text, and refuses scrapes without credentials.
 - **A33. Guessing is limited.** **Given** user B, **when** 5 wrong password-reset codes are entered for B's email, **then** the correct code is refused for 15 minutes, even if a new code is requested; **when** 5 wrong passwords are entered for B, **then** B's correct password is refused for 15 minutes, even if the sign-in flow is restarted.
+- **A34. Map in the detail view.** **Given** one message placed at a house address, one placed by street only and one not placed, **when** each detail view is opened at 375 px and at 1280 px, **then** the first shows a marker at its point, the second a ring, and the third "Not placed on the map" with no map; at 375 px the message text is above the map.
 
 ## 10. Example profile (made-up network)
 
@@ -292,7 +293,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M1** | Client, ingest, redaction, dedup, profiles and schemas, `validate-profile`, golden tests, CI | Golden tables, A2, A5, A6 (storage), A7, A8, A9, A14 |
 | **M2** | Browser UI, live updates, search, job and detail views; alias import | A1, A3, A4, A6 (search), A10, A16–A22 |
 | **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2, A23–A29, A33 |
-| **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, §11 |
+| **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, A34, §11 |
 | **M5** | Per-user integrations (webhook, MQTT), metrics endpoint | A30, A31, A32 |
 
 ## 13. Open questions

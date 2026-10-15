@@ -11,12 +11,22 @@
 	import { onMount } from 'svelte';
 	import type { Message, Meta } from './api.ts';
 
+	// variant 'single': the small map in a message's detail view (R35c), one
+	// point and no clusters, below the text on phones (P2).
 	let {
 		messages,
 		meta,
 		focus = null,
-		onselect
-	}: { messages: Message[]; meta: Meta; focus?: number | null; onselect: (ids: number[]) => void } = $props();
+		variant = 'full',
+		onselect = () => {}
+	}: {
+		messages: Message[];
+		meta: Meta;
+		focus?: number | null;
+		variant?: 'full' | 'single';
+		onselect?: (ids: number[]) => void;
+	} = $props();
+	const single = $derived(variant === 'single');
 
 	let container: HTMLDivElement;
 	let map: maplibregl.Map | undefined;
@@ -86,7 +96,7 @@
 		map.addSource('messages', {
 			type: 'geojson',
 			data: geojson(),
-			cluster: true,
+			cluster: !single,
 			clusterRadius: 36,
 			clusterMaxZoom: 15
 		});
@@ -175,6 +185,10 @@
 			ready = true;
 			fit();
 		});
+		// WebKit sometimes keeps showing a frame from before the points were
+		// drawn (seen in about 1 in 20 detail views in the A34 check); one
+		// more frame once everything has loaded shows them.
+		map.once('idle', () => map?.triggerRepaint());
 		map.on('click', 'clusters', async (e) => {
 			const f = e.features?.[0];
 			if (!f || !map) return;
@@ -230,14 +244,20 @@
 <div
 	class="map"
 	class:unavailable
+	class:single
 	bind:this={container}
 	role="region"
-	aria-label="Map of located messages. The same messages are listed below the map."
+	aria-label={single
+		? 'Map showing where this message was placed. The location is also described in the details.'
+		: 'Map of located messages. The same messages are listed below the map.'}
 	data-testid="map"
 	data-ready={unavailable ? 'unavailable' : ready}
 >
 	{#if unavailable}
-		<p>This browser can't show the map (it needs WebGL, which may be turned off). The located messages are listed below.</p>
+		<p>
+			This browser can't show the map (it needs WebGL, which may be turned off).
+			{single ? 'The location is described in the details.' : 'The located messages are listed below.'}
+		</p>
 	{/if}
 </div>
 
@@ -247,6 +267,12 @@
 		min-height: 18rem;
 		border-bottom: 1px solid var(--border);
 		background: var(--surface);
+	}
+	.single {
+		height: 16rem;
+		min-height: 0;
+		border: 1px solid var(--border);
+		border-radius: 0.3rem;
 	}
 	.unavailable {
 		height: auto;

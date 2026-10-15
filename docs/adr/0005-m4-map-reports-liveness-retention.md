@@ -55,6 +55,8 @@ The owner set R26's distance before the build. The implementer then raised the r
 - Messages at the same point (copies to several groups) cluster. Clicking a cluster that can't be split further lists its messages. Street-only points are drawn as rings. New messages appear live through the same filtered stream as the list.
 - One request returns at most **2,000 points**, the newest, and says when there were more.
 - **Without WebGL** (turned off, or headless Firefox), the page says the map can't be shown and still lists the located messages. Every map page lists its located messages below the map, which is also the accessible alternative to the canvas.
+- **Detail view** (R35c, owner 2026-10-15, A34): the same component in a single-message mode, with no clustering, centred on the message at zoom 16 and 16rem tall. On phones it comes after the text; from 48rem wide it sits beside the text and details. Without WebGL it says so, and the location stays described in the details. A message with no location gets no map.
+- WebKit sometimes kept showing a frame from before the points were drawn (1 in 20 to 40 detail views in testing). MapLibre had drawn them, and one more frame showed them, so the map draws one extra frame when it first goes idle.
 
 ### 4. Reports (R38)
 
@@ -112,6 +114,7 @@ The owner set R26's distance before the build. The implementer then raised the r
 | A11, A12, A13 | Go acceptance tests through the API, with a controllable clock and a direct call to the nightly run |
 | Retroactive redaction | A stored phone number is gone from every table after the run and the parsed fields follow; an unchanged rule set doesn't rescan |
 | Map without a tile server | Range request answered `206`; browser test of the drawn map with no console or CSP errors (Chromium, WebKit) and the fallback (Firefox) |
+| A34 | `web/tests/e2e.spec.ts`: marker, ring and no map at 375 px and 1280 px, read from the drawn pixels against the colour tokens (mutation-checked: a ring drawn as a marker, and the map above the text) |
 | Section 11 | `scripts/stack-e2e.sh`: steps 2 and 3 on the compose stack |
 | A15 | `scripts/a15.sh`: short run in CI, full hour by hand |
 | GHCR | The publish jobs on `main` and on a manual run |

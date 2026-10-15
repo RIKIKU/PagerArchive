@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr, isoDate } from '#lib/format.ts';
+	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
 
 	let meta: Meta | undefined = $state();
@@ -53,77 +54,109 @@
 
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if m}
-	<article class="detail">
-		<h1>{m.alias ?? m.capcode}</h1>
-		<p class="meta">
-			<time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time>
-			<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
-		</p>
+	<article class="detail" class:located={!!m.location}>
+		<header>
+			<h1>{m.alias ?? m.capcode}</h1>
+			<p class="meta">
+				<time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time>
+				<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+			</p>
+		</header>
 		<!-- P2: the full message, always. -->
 		<p class="text">{m.display_text}</p>
-
-		<h2>Details</h2>
-		<dl>
-			<dt>Alias</dt>
-			<dd>
-				{#if m.alias_id != null}<a href="/aliases/{m.alias_id}">{m.alias}</a>
-				{:else}<a href="/capcodes/{m.capcode}">None (capcode {m.capcode})</a>{/if}
-			</dd>
-			<dt>Capcode</dt>
-			<dd>{m.capcode}</dd>
-			{#if m.agency}<dt>Agency</dt>
-				<dd>{m.agency}</dd>{/if}
-			{#if m.category}<dt>Event category</dt>
-				<dd>{m.category}</dd>{/if}
-			{#each standard as [k, l] (k)}
-				{#if m[k] != null}
-					<dt>{l}</dt>
-					<dd>
-						{#if k === 'job_number'}<a href="/jobs/{encodeURIComponent(String(m[k]))}">{m[k]}</a>
-						{:else}{label(k, m[k])}{/if}
-					</dd>
-				{/if}
-			{/each}
-			<dt>Location</dt>
-			<dd data-testid="location">
-				{#if m.location}
-					{placed[m.location.source]}
-					<a href="/map?focus={m.id}&from={isoDate(m.sent_at, tz)}&to={isoDate(m.sent_at, tz)}">Show on map</a>
-				{:else}Not placed on the map{/if}
-			</dd>
-			{#each Object.entries(m.extra) as [k, v] (k)}
-				<dt>{humanise(k)}</dt>
-				<dd>{label(k, v)}</dd>
-			{/each}
-			<dt>Stored text</dt>
-			<dd class="mono">{m.text}</dd>
-		</dl>
-
-		{#if m.flags}
-			<h2>Flags <span class="note">(admins only)</span></h2>
-			<ul class="flags">
-				<li>Format: {m.format ?? 'none (text only or no match)'}</li>
-				<li>Parse failed: {m.flags.parse_failed ? 'yes' : 'no'}</li>
-				<li>Address unsplit: {m.flags.address_unsplit ? 'yes' : 'no'}</li>
-				<li>Location mismatch: {m.flags.location_mismatch ? 'yes' : 'no'}</li>
-			</ul>
+		<!-- R35c: where it was placed, after the text so the text stays first on phones (P2). -->
+		{#if m.location && meta}
+			<div class="where"><MapView messages={[m]} {meta} focus={m.id} variant="single" /></div>
 		{/if}
 
-		<h2>Received by</h2>
-		<table>
-			<thead><tr><th scope="col">Receiver</th><th scope="col">Received</th></tr></thead>
-			<tbody>
-				{#each m.receptions ?? [] as r, i (i)}
-					<tr><td>{r.client}</td><td><time datetime={isoAttr(r.received_at)}>{dateTime(r.received_at, tz)}</time></td></tr>
+		<div class="rest">
+			<h2>Details</h2>
+			<dl>
+				<dt>Alias</dt>
+				<dd>
+					{#if m.alias_id != null}<a href="/aliases/{m.alias_id}">{m.alias}</a>
+					{:else}<a href="/capcodes/{m.capcode}">None (capcode {m.capcode})</a>{/if}
+				</dd>
+				<dt>Capcode</dt>
+				<dd>{m.capcode}</dd>
+				{#if m.agency}<dt>Agency</dt>
+					<dd>{m.agency}</dd>{/if}
+				{#if m.category}<dt>Event category</dt>
+					<dd>{m.category}</dd>{/if}
+				{#each standard as [k, l] (k)}
+					{#if m[k] != null}
+						<dt>{l}</dt>
+						<dd>
+							{#if k === 'job_number'}<a href="/jobs/{encodeURIComponent(String(m[k]))}">{m[k]}</a>
+							{:else}{label(k, m[k])}{/if}
+						</dd>
+					{/if}
 				{/each}
-			</tbody>
-		</table>
+				<dt>Location</dt>
+				<dd data-testid="location">
+					{#if m.location}
+						{placed[m.location.source]}
+						<a href="/map?focus={m.id}&from={isoDate(m.sent_at, tz)}&to={isoDate(m.sent_at, tz)}">Show on map</a>
+					{:else}Not placed on the map{/if}
+				</dd>
+				{#each Object.entries(m.extra) as [k, v] (k)}
+					<dt>{humanise(k)}</dt>
+					<dd>{label(k, v)}</dd>
+				{/each}
+				<dt>Stored text</dt>
+				<dd class="mono">{m.text}</dd>
+			</dl>
+
+			{#if m.flags}
+				<h2>Flags <span class="note">(admins only)</span></h2>
+				<ul class="flags">
+					<li>Format: {m.format ?? 'none (text only or no match)'}</li>
+					<li>Parse failed: {m.flags.parse_failed ? 'yes' : 'no'}</li>
+					<li>Address unsplit: {m.flags.address_unsplit ? 'yes' : 'no'}</li>
+					<li>Location mismatch: {m.flags.location_mismatch ? 'yes' : 'no'}</li>
+				</ul>
+			{/if}
+
+			<h2>Received by</h2>
+			<table>
+				<thead><tr><th scope="col">Receiver</th><th scope="col">Received</th></tr></thead>
+				<tbody>
+					{#each m.receptions ?? [] as r, i (i)}
+						<tr><td>{r.client}</td><td><time datetime={isoAttr(r.received_at)}>{dateTime(r.received_at, tz)}</time></td></tr>
+					{/each}
+				</tbody>
+			</table>
+		</div>
 	</article>
 {/if}
 
 <style>
 	.detail {
 		padding: 0 0.75rem 1rem;
+	}
+	.where {
+		margin: 0.75rem 0 0;
+	}
+	/* Wider screens: the map beside the text and details. */
+	@media (min-width: 48rem) {
+		.located {
+			display: grid;
+			grid-template-columns: minmax(0, 1fr) 22rem;
+			column-gap: 1.5rem;
+			align-items: start;
+		}
+		.located header {
+			grid-column: 1 / -1;
+		}
+		.located .text,
+		.located .rest {
+			grid-column: 1;
+		}
+		.located .where {
+			grid-column: 2;
+			grid-row: 2 / span 2;
+			margin-top: 1rem;
+		}
 	}
 	.detail h1 {
 		margin: 0.75rem 0 0.25rem;

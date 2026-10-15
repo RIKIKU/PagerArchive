@@ -255,9 +255,11 @@ for (const scheme of ['light', 'dark'] as const) {
 			for (const view of views) {
 				const page = view === 'detail' || view.startsWith('/admin/') ? adminPage : userPage;
 				if (view === 'detail') {
-					await page.goto('/');
+					// A located message, so its small map is checked too (R35c).
+					await page.goto('/?q=SMOKE+FROM+ROOF');
 					await page.getByTestId('message-list').locator('article a.open').first().click();
 					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+					await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
 				} else {
 					const path = view === 'alias' ? `/aliases/${aliasID}` : view;
 					await page.goto(path);
@@ -325,6 +327,92 @@ test('map shows located messages, live, with no console errors', async ({ page, 
 	if (drawn) await expect(page.getByRole('heading', { name: 'Selected on the map (1)' })).toBeVisible({ timeout: 15_000 });
 	await expect(page.getByTestId('located-list')).toContainText(job);
 });
+
+/**
+ * What is drawn at the centre of a map that is centred on one message: a
+ * marker (filled with fill, a colour token), a ring (the background token in
+ * the middle, fill around it) or neither. Read from a screenshot, so it
+ * checks what was actually drawn. Points are drawn above the basemap, so the
+ * centre pixel is the point's own.
+ */
+async function drawnAtCentre(map: ReturnType<Page['getByTestId']>, fill: string): Promise<'marker' | 'ring' | 'none'> {
+	const png = (await map.screenshot()).toString('base64');
+	const cssWidth = (await map.boundingBox())!.width;
+	return map.page().evaluate(
+		async ({ src, cssWidth, fill }) => {
+			const img = new Image();
+			img.src = `data:image/png;base64,${src}`;
+			await img.decode();
+			const c = document.createElement('canvas');
+			c.width = img.width;
+			c.height = img.height;
+			const g = c.getContext('2d')!;
+			g.drawImage(img, 0, 0);
+			const scale = img.width / cssWidth;
+			const x = Math.floor(img.width / 2), y = Math.floor(img.height / 2);
+			// up: CSS pixels above the centre.
+			const at = (up: number) => Array.from(g.getImageData(x, Math.round(y - up * scale), 1, 1).data.slice(0, 3));
+			const rgb = (token: string) => {
+				const el = document.createElement('div');
+				el.style.color = `var(${token})`;
+				document.body.append(el);
+				const v = getComputedStyle(el).color.match(/\d+/g)!.slice(0, 3).map(Number);
+				el.remove();
+				return v;
+			};
+			const near = (a: number[], b: number[]) => Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]) < 40;
+			// Points have a radius of 8 px; a ring's stroke runs from 8 to 12 px.
+			if (near(at(0), rgb(fill))) return 'marker';
+			if (near(at(0), rgb('--bg')) && near(at(10), rgb(fill))) return 'ring';
+			return 'none';
+		},
+		{ src: png, cssWidth, fill }
+	);
+}
+
+// A34. A message's detail view shows a small map centred on it: a marker for a
+// house address, a ring for a street only, and no map for a message that
+// isn't placed. On phones the message text comes first (P2).
+for (const width of [375, 1280]) {
+	test(`A34 map in the detail view, ${width}px`, async ({ browser, request }, info) => {
+		const job = uniqueJob();
+		const texts = {
+			marker: `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`,
+			ring: `@@${job} GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`,
+			none: `QDTraining ${job} at the station`
+		};
+		for (const t of Object.values(texts)) await post(request, '0100001', t);
+		const res = await request.get(`${URL}/api/v1/messages?q=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+		const found = (await res.json()).messages as { id: number; text: string }[];
+		const words = { marker: 'SMOKE FROM ROOF', ring: 'GRASS FIRE', none: 'Training' };
+		const idOf = (k: keyof typeof words) => found.find((m) => m.text.includes(words[k]))!.id;
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 900 } })).newPage();
+
+		for (const kind of ['marker', 'ring'] as const) {
+			await page.goto(`/messages/${idOf(kind)}`);
+			const map = page.getByTestId('map');
+			await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+			const drawn = (await map.getAttribute('data-ready')) === 'true';
+			// Headless Firefox has no WebGL: the small map says so; elsewhere it draws.
+			if (info.project.name !== 'firefox') expect(drawn).toBe(true);
+			// Both are Emergency pages (HSF1, GRS3), drawn in --emergency-bg.
+			if (drawn) await expect.poll(() => drawnAtCentre(map, '--emergency-bg'), { timeout: 10_000 }).toBe(kind);
+			else await expect(map).toContainText('needs WebGL');
+			await expect(page.getByRole('link', { name: 'Show on map' })).toBeVisible();
+			if (width === 375) {
+				const text = (await page.locator('.text').boundingBox())!;
+				const box = (await map.boundingBox())!;
+				expect(text.y + text.height, 'message text above the map').toBeLessThanOrEqual(box.y);
+			}
+			await page.screenshot({ path: info.outputPath(`a34-${kind}-${width}.png`), fullPage: true });
+		}
+
+		await page.goto(`/messages/${idOf('none')}`);
+		await expect(page.getByTestId('location')).toContainText('Not placed on the map');
+		await expect(page.getByTestId('map')).toHaveCount(0);
+		await page.context().close();
+	});
+}
 
 // M4. R38 in the browser (A11 itself runs against the API in Go).
 test('capcode report counts Emergency messages by category', async ({ page, request }, info) => {
