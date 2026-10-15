@@ -4,7 +4,7 @@ Date: 2026-10-16
 
 ## Status
 
-Proposed. Waiting on the owner's answers to the questions below and the owner's approval.
+Accepted (owner, 2026-10-16). The owner took the recommendation on each of Q1–Q3.
 
 ## Context
 
@@ -15,9 +15,15 @@ The owner asked for this ADR to record: the MQTT library, how secrets are encryp
 - Presets are tested against stand-in servers that check each service's documented format. CI never calls Discord, Telegram, Pushover or ntfy.
 - Page text never appears in logs, metrics or integration error messages.
 
-## Questions for the owner
+## Owner decisions (2026-10-16)
 
-Each question has a recommendation. The rest of this ADR assumes the recommendation, and marks where an answer would change it.
+1. **Q1: option A.** The locked-accounts metric reads Authentik's tables with a read-only role.
+2. **Q2: no retry once a request was sent and got no answer.** The page is recorded as "failed: no answer".
+3. **Q3: only an admin can resume an integration an admin paused.**
+
+The questions as they were put to the owner follow.
+
+## Questions for the owner
 
 ### Q1. Where the "accounts locked" metric comes from (R52, R44a)
 
