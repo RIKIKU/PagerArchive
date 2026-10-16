@@ -4,7 +4,7 @@
 	import { api, type AliasBrief, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import IntegrationForm from '#lib/IntegrationForm.svelte';
-	import { deliveryLabels, kindLabels, statusLabel } from '#lib/integrations.ts';
+	import { deliveryLabels, kindLabels, notice as convenience, statusLabel } from '#lib/integrations.ts';
 
 	let meta: Meta | undefined = $state();
 	let aliases: AliasBrief[] = $state([]);
@@ -99,6 +99,7 @@
 <svelte:head><title>Integrations · PagerArchive</title></svelte:head>
 
 <h1>Integrations</h1>
+<p class="convenience" data-testid="integrations-notice">{convenience}</p>
 <p class="intro">
 	Send new pages to your own systems as they arrive: a webhook, MQTT (with Home Assistant discovery), Discord, Telegram,
 	Pushover or ntfy. Only you can see your integrations. A page is sent within seconds, or not at all once it's 5 minutes
@@ -215,6 +216,15 @@
 </ul>
 
 <style>
+	.convenience {
+		margin: 0 0.75rem 0.5rem;
+		max-width: 44rem;
+		padding: 0.5rem 0.75rem;
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+		border-radius: 0.3rem;
+		font-weight: 600;
+	}
 	.intro {
 		margin: 0 0.75rem;
 		max-width: 44rem;

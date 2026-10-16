@@ -483,7 +483,7 @@ test('admins see receivers that are not receiving', async ({ browser }) => {
 // webhook to a local receiver, sends a test and sees the answer, a real page
 // arrives, and they pause and resume it. The admin sees that it exists, not
 // where it sends.
-test('integrations: create, Send test, delivery, pause and resume', async ({ page, browser, request }) => {
+test('A30 integrations in the browser: notice, create, Send test, delivery, pause and resume', async ({ page, browser, request }) => {
 	const http = await import('node:http');
 	const received: { path: string; body: Record<string, unknown> }[] = [];
 	const receiver = http.createServer((req, res) => {
@@ -507,10 +507,14 @@ test('integrations: create, Send test, delivery, pause and resume', async ({ pag
 		const name = `Station 1 webhook ${Date.now()}`;
 		await page.goto('/');
 		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Integrations' }).click();
+		// R47: the one-line notice that integrations don't replace a pager.
+		await expect(page.getByTestId('integrations-notice')).toHaveText(
+			'Integrations are a convenience, not a replacement for your pager: delivery is best-effort, and a page may arrive late or not at all.'
+		);
 		await page.getByRole('button', { name: 'New integration' }).click();
-		await page.getByLabel('Name').fill(name);
+		await page.getByLabel('Name', { exact: true }).fill(name);
 		await page.getByLabel('Capcodes').fill('0100001');
-		await page.getByLabel('URL').fill(`http://127.0.0.1:${port}/hook/T0PS3CRET`);
+		await page.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook/T0PS3CRET`);
 		await page.getByRole('button', { name: 'Save integration' }).click();
 		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
 		const card = page.getByTestId('integration').filter({ hasText: name });

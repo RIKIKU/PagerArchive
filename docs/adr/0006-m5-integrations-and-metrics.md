@@ -17,9 +17,15 @@ The owner asked for this ADR to record: the MQTT library, how secrets are encryp
 
 ## Owner decisions (2026-10-16)
 
-1. **Q1: option A.** The locked-accounts metric reads Authentik's tables with a read-only role.
+1. **Q1: option A.** The locked-accounts metric is counted in Authentik's database, by a function the app's role can only call (made precise in decision 5).
 2. **Q2: no retry once a request was sent and got no answer.** The page is recorded as "failed: no answer".
 3. **Q3: only an admin can resume an integration an admin paused.**
+
+### Second round (owner, 2026-10-16), after SPEC.md put operational alerting out of scope (bd0d2d1)
+
+4. **No repeat-until-acknowledged priority** (§8). Pushover priority 2 and its `retry` and `expire` parameters are removed: they conflict with the new out-of-scope item. Pushover and ntfy priorities stop at high (Pushover 1, ntfy 4), and the API refuses anything above.
+5. **The metrics role reads no tables** (Q1, §11). The role the app connects as, `pagerarchive_metrics`, has no `SELECT` on any of Authentik's tables. A `SECURITY DEFINER` function, `pagerarchive_locked_accounts()`, owned by Authentik's own role (which can read them), applies the lock rule and returns only the count. The app's role may only `EXECUTE` it. A stack check confirms the role is refused a direct `SELECT` on Authentik's events table.
+6. **R47 notice.** The integrations screen and `docs/integrations.md` say in one line that integrations are a convenience, not a replacement for a pager. The A30 browser check looks for it.
 
 The questions as they were put to the owner follow.
 
@@ -31,9 +37,9 @@ The lock is decided inside Authentik by the `pagerarchive-not-locked` policy (AD
 
 | | A. Read Authentik's tables, read only (recommended) | B. Authentik's API |
 |---|---|---|
-| What the app reads | Three tables in Authentik's own database (events, email devices, users), in the shared PostgreSQL container, with a new read-only role that can read only those three tables | Authentik's event log, through its API |
+| What the app reads | The count of locked accounts, from a function in Authentik's own database (in the shared PostgreSQL container) that reads three tables (events, email devices, users). The app's new role can only call that function (owner decision 5) | Authentik's event log, through its API |
 | Counts enrolment-code locks | Yes, the same rule as the policy | **No.** The API doesn't expose the email device's failure count (checked against 2026.5.5's OpenAPI schema: `EmailDevice` has only `pk`, `name`, `email` and `user`) |
-| New access | `SELECT` on three tables | The app's service account gains read access to the **whole** event log, including every sign-in's IP address |
+| New access | `EXECUTE` on one function that returns a number | The app's service account gains read access to the **whole** event log, including every sign-in's IP address |
 | Upgrade risk | The query depends on Authentik's table layout. The policy already depends on the same models, and ADR 0004 already says an Authentik upgrade re-runs `scripts/stack-checks.sh`. That script will check the metric too | Lower |
 
 With A, the role is created by the database init script on a new install. An existing install creates it with one documented command.
@@ -210,10 +216,10 @@ Each preset turns the same message into the service's documented request. Format
 |---|---|---|
 | **Discord** | `POST` to the **webhook URL**, JSON `{"content": …, "embeds": [{title, description, url, timestamp, fields}], "allowed_mentions": {"parse": []}}`. Content ≤ 2,000 characters, embeds ≤ 10. Success: `204`. Mentions are turned off, so page text can't ping `@everyone` | **webhook URL** |
 | **Telegram** | `POST https://api.telegram.org/bot<token>/sendMessage`, JSON `{"chat_id", "text", "link_preview_options": {"is_disabled": true}}`. Plain text (no `parse_mode`, so page text isn't parsed as markup), ≤ 4,096 characters. Success: `{"ok": true, …}` | **bot token**, chat ID |
-| **Pushover** | `POST https://api.pushover.net/1/messages.json`, form-encoded (the format Pushover documents): `token`, `user`, `message` (≤ 1,024), `title` (≤ 250), `url` (≤ 512), `url_title`, `timestamp`, `priority` (with `retry=60` and `expire=3600` for priority 2). Success: `{"status": 1, …}` | **application token**, **user key**, priority |
+| **Pushover** | `POST https://api.pushover.net/1/messages.json`, form-encoded (the format Pushover documents): `token`, `user`, `message` (≤ 1,024), `title` (≤ 250), `url` (≤ 512), `url_title`, `timestamp`, `priority` (-2 to 1). Success: `{"status": 1, …}` | **application token**, **user key**, priority |
 | **ntfy** | `POST <server>/` JSON `{"topic", "message", "title", "priority" (1–5), "tags": ["rotating_light"] for Emergency, "click": <link>}`, optional `Authorization: Bearer <token>`. Message ≤ 4,096 bytes | server, **topic**, **access token**, priority |
 
-- **Priority** (Pushover and ntfy): by default it follows the page (Emergency → high, others normal). It can be set to a fixed level, including Pushover's emergency (2), which repeats until it's acknowledged.
+- **Priority** (Pushover and ntfy): by default it follows the page (Emergency → high, others normal). It can be set to a fixed level, up to high: Pushover 1, ntfy 4. There's no repeat-until-acknowledged level (owner decision 4; SPEC.md, Out of scope: Operational alerting).
 - **Stand-in servers** (`internal/integrations/standin`, test code only): one per service, built from its docs. Each checks method, path, content type, required fields, field types and lengths, and that mentions are off (Discord), and answers as the service does, including its error and rate-limit replies. The acceptance tests aim the presets at them (A37).
 - **CI never calls the real services:** every integration test runs with a dialer that refuses any address outside `127.0.0.0/8`, so a mistake fails the test instead of reaching Discord. The stand-ins are the only endpoints used.
 

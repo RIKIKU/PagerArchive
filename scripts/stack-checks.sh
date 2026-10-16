@@ -1,5 +1,6 @@
 #!/bin/sh
-# Runs the account checks A23-A28 and A33 (internal/stacktest) against the full
+# Runs the account checks A23-A28 and A33, and the locked-accounts metric
+# (R52), (internal/stacktest) against the full
 # compose stack: API, PostgreSQL, Authentik and a Mailpit mail catcher, from
 # a fresh install with A23's settings. Never uses a real mail server.
 #

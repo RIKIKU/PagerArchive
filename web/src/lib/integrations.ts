@@ -32,3 +32,7 @@ export const deliveryLabels: Record<Delivery['status'], string> = {
 	too_old: 'Skipped: too old',
 	cancelled: 'Cancelled'
 };
+
+/** R47: shown on the integrations screen (and in docs/integrations.md). */
+export const notice =
+	'Integrations are a convenience, not a replacement for your pager: delivery is best-effort, and a page may arrive late or not at all.';

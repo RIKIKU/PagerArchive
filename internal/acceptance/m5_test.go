@@ -705,3 +705,42 @@ func TestDeactivationStopsIntegrations(t *testing.T) {
 		t.Errorf("%d integrations left after deleting the account", left)
 	}
 }
+
+// Presets stop at high priority: repeat-until-acknowledged alarms are
+// operational alerting, which is out of scope (owner, 2026-10-16; ADR 0006 §8).
+func TestPresetPrioritiesStopAtHigh(t *testing.T) {
+	e := setup(t)
+	e.allowLoopback()
+	pushover, ntfy := standin.Pushover(), standin.Ntfy()
+	defer pushover.Close()
+	defer ntfy.Close()
+	e.integ.Presets.PushoverURL = pushover.URL + "/1/messages.json"
+	prio := func(n int) *int { return &n }
+	po := func(p *int) integrations.Request {
+		return integrations.Request{Name: "Pushover", Kind: integrations.Pushover, Capcodes: []string{"0100001"}, Config: integrations.Config{Priority: p},
+			Secrets: integrations.Secrets{AppToken: "azGDORePK8gMaC0QOYAMyEEuzJnyUi", UserKey: "uQiRzpo4DXghDmr9QzzfQu27cmVRsG"}}
+	}
+	nt := func(p *int) integrations.Request {
+		return integrations.Request{Name: "ntfy", Kind: integrations.Ntfy, Capcodes: []string{"0100001"}, Config: integrations.Config{Server: ntfy.URL, Priority: p},
+			Secrets: integrations.Secrets{Topic: "pager-test"}}
+	}
+	for name, c := range map[string]struct {
+		req  integrations.Request
+		want string
+	}{
+		"Pushover 2": {po(prio(2)), "Pushover's priority goes from -2 (lowest) to 1 (high)."},
+		"ntfy 5":     {nt(prio(5)), "ntfy's priority goes from 1 (min) to 4 (high)."},
+	} {
+		code, p := e.user.call(http.MethodPost, "/api/v1/integrations", c.req, nil)
+		if code != http.StatusUnprocessableEntity || p.Error != c.want {
+			t.Errorf("%s: %d %q, want 422 %q", name, code, p.Error, c.want)
+		}
+	}
+	// High is the most there is, and it's accepted.
+	v := e.createIntegration(e.user, po(prio(1)))
+	e.createIntegration(e.user, nt(prio(4)))
+	// An existing integration can't be changed to 2 either.
+	if code, _ := e.user.call(http.MethodPut, fmt.Sprintf("/api/v1/integrations/%d", v.ID), po(prio(2)), nil); code != http.StatusUnprocessableEntity {
+		t.Errorf("changing to priority 2: %d, want 422", code)
+	}
+}

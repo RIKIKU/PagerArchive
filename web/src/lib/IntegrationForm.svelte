@@ -327,7 +327,6 @@
 				<label for="{id}-pprio">Priority</label>
 				<select id="{id}-pprio" bind:value={priority}>
 					<option value="page">Follow the page: high for Emergency, normal otherwise</option>
-					<option value="2">Emergency: repeats until acknowledged</option>
 					<option value="1">High</option>
 					<option value="0">Normal</option>
 					<option value="-1">Low</option>
@@ -352,7 +351,6 @@
 					<label for="{id}-nprio">Priority</label>
 					<select id="{id}-nprio" bind:value={priority}>
 						<option value="page">Follow the page: high for Emergency, default otherwise</option>
-						<option value="5">Urgent</option>
 						<option value="4">High</option>
 						<option value="3">Default</option>
 						<option value="2">Low</option>

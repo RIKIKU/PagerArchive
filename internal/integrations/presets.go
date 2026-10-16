@@ -225,12 +225,7 @@ func (s *Service) pushoverForm(l loaded, sec Secrets, p page) url.Values {
 		v.Set("url", *r.Link)
 		v.Set("url_title", "Open in PagerArchive")
 	}
-	prio := pagePriority(l.config, p, 1, 0)
-	v.Set("priority", strconv.Itoa(prio))
-	if prio == 2 { // emergency: repeats until acknowledged
-		v.Set("retry", "60")
-		v.Set("expire", "3600")
-	}
+	v.Set("priority", strconv.Itoa(pagePriority(l.config, p, 1, 0)))
 	return v
 }
 

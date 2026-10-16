@@ -382,8 +382,10 @@ func (s *Service) validDestination(ctx context.Context, kind Kind, in Config, se
 		if !pushoverKeyRe.MatchString(out.AppToken) || !pushoverKeyRe.MatchString(out.UserKey) {
 			return cfg, out, invalid("Enter Pushover's application token and your user key: 30 letters and digits each.")
 		}
-		if in.Priority != nil && (*in.Priority < -2 || *in.Priority > 2) {
-			return cfg, out, invalid("Pushover's priority goes from -2 to 2.")
+		// Up to high: repeat-until-acknowledged (2) is operational alerting,
+		// which is out of scope (owner, 2026-10-16).
+		if in.Priority != nil && (*in.Priority < -2 || *in.Priority > 1) {
+			return cfg, out, invalid("Pushover's priority goes from -2 (lowest) to 1 (high).")
 		}
 		cfg.Priority = in.Priority
 		return cfg, out, s.checkPresetHost(ctx, s.Presets.PushoverURL)
@@ -406,8 +408,8 @@ func (s *Service) validDestination(ctx context.Context, kind Kind, in Config, se
 		if out.AccessToken = strings.TrimSpace(sec.AccessToken); len(out.AccessToken) > 200 {
 			return cfg, out, invalid("The access token is too long.")
 		}
-		if in.Priority != nil && (*in.Priority < 1 || *in.Priority > 5) {
-			return cfg, out, invalid("ntfy's priority goes from 1 to 5.")
+		if in.Priority != nil && (*in.Priority < 1 || *in.Priority > 4) {
+			return cfg, out, invalid("ntfy's priority goes from 1 (min) to 4 (high).")
 		}
 		cfg.Priority = in.Priority
 		return cfg, out, s.checkHost(ctx, u.Hostname())

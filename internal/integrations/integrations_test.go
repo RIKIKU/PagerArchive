@@ -326,8 +326,8 @@ func presetIntegration(kind Kind, content string, m map[Kind]*standin.Server) (l
 	case Telegram:
 		return integration(kind, content, Config{ChatID: "-100123456"}), Secrets{BotToken: "123456:ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij"}
 	case Pushover:
-		two := 2
-		return integration(kind, content, Config{Priority: &two}), Secrets{AppToken: "azGDORePK8gMaC0QOYAMyEEuzJnyUi", UserKey: "uQiRzpo4DXghDmr9QzzfQu27cmVRsG"}
+		high := 1
+		return integration(kind, content, Config{Priority: &high}), Secrets{AppToken: "azGDORePK8gMaC0QOYAMyEEuzJnyUi", UserKey: "uQiRzpo4DXghDmr9QzzfQu27cmVRsG"}
 	case Ntfy:
 		return integration(kind, content, Config{Server: m[Ntfy].URL}), Secrets{Topic: "pager-test_1", AccessToken: "tk_test"}
 	}
@@ -378,8 +378,9 @@ func TestPresetsPassTheirStandIns(t *testing.T) {
 	if h := m[Ntfy].Requests()[0].Header.Get("Authorization"); h != "Bearer tk_test" {
 		t.Errorf("ntfy auth %q", h)
 	}
-	if f := m[Pushover].Requests()[0].Form; f.Get("retry") != "60" || f.Get("priority") != "2" {
-		t.Errorf("pushover emergency priority: %v", f)
+	// Priorities stop at high: no repeat-until-acknowledged (out of scope).
+	if f := m[Pushover].Requests()[0].Form; f.Get("priority") != "1" || f.Has("retry") || f.Has("expire") {
+		t.Errorf("pushover priority: %v", f)
 	}
 }
 
