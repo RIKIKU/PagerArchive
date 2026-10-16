@@ -115,7 +115,7 @@
 		background: var(--surface);
 		position: sticky;
 		top: 0;
-		z-index: 1;
+		z-index: var(--layer-header);
 	}
 	.quiet {
 		background: var(--warn-bg);
@@ -187,6 +187,8 @@
 	main {
 		max-width: 64rem;
 		margin: 0 auto;
+		/* Its own stacking context: content stays below the header (app.css). */
+		isolation: isolate;
 	}
 	.bottom {
 		max-width: 64rem;
@@ -202,7 +204,7 @@
 	.skip:focus {
 		left: 0.5rem;
 		top: 0.5rem;
-		z-index: 2;
+		z-index: var(--layer-overlay);
 		background: var(--surface);
 		padding: 0.5rem;
 	}

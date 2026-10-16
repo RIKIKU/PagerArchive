@@ -71,7 +71,7 @@
 	.who,
 	.job {
 		position: relative;
-		z-index: 1;
+		z-index: var(--layer-content);
 	}
 	.who {
 		font-weight: 600;

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Message, type Meta } from './api.ts';
 	import Filters from './Filters.svelte';
+	import { rangeProblem } from './filters.ts';
 	import MessageRow from './MessageRow.svelte';
 
 	// base: criteria fixed by the view (the alias view's alias, say), added to
@@ -83,6 +84,14 @@
 	$effect(() => {
 		const q = new URLSearchParams(queryKey);
 		void restarts;
+		// A reversed range in the URL: say so, without asking the API.
+		const problem = rangeProblem(q.get('from'), q.get('to'));
+		if (problem) {
+			error = problem;
+			messages = [];
+			next = undefined;
+			return;
+		}
 		loadFirst(q);
 		const es = new EventSource(`/api/v1/stream?${q}`);
 		let opened = false;
