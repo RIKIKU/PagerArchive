@@ -381,8 +381,11 @@ func TestA47UsersCantEditDirectly(t *testing.T) {
 	var closed []catalog.RequestView
 	e.admin.call(http.MethodGet, "/api/v1/admin/alias-requests?status=closed", nil, &closed)
 	r := findRequest(closed, id)
+	if r == nil {
+		t.Fatalf("B's request is still waiting after B was deactivated")
+	}
 	t.Logf("A47: after deactivating B, the request is %q", r.Status)
-	if r == nil || r.Status != catalog.StatusWithdrawn {
+	if r.Status != catalog.StatusWithdrawn {
 		t.Errorf("B's request after deactivation: %+v", r)
 	}
 	if n := e.waitingCount(e.admin); *n != 0 {
