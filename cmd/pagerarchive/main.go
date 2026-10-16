@@ -27,10 +27,13 @@ import (
 	"time"
 	_ "time/tzdata" // the server image has no zoneinfo (R35a)
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -105,6 +108,12 @@ serve reads its settings from the environment:
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
   MAP_TILES               path to a PMTiles map extract (default: no background map)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
+  INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
+                               (openssl rand -base64 32); without it integrations are off
+  INTEGRATION_SECRETS_KEY_OLD  the previous key, only while rotating
+  METRICS_TOKEN                bearer token for GET /metrics (default: metrics off)
+  AUTHENTIK_METRICS_DB_PASSWORD  the pagerarchive_metrics role's password, for the
+                               locked-accounts metric (or AUTHENTIK_METRICS_DATABASE_URL)
 `
 
 func main() {
@@ -245,6 +254,47 @@ func serve(stderr io.Writer) error {
 	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log}
 	go job.Run(ctx)
 
+	// Integrations (R47-R51c, ADR 0006). Without a key they're off, and the
+	// API still starts, so an upgrade doesn't stop it.
+	var box *integrations.Box
+	if key := os.Getenv("INTEGRATION_SECRETS_KEY"); key != "" {
+		if box, err = integrations.NewBox(key, os.Getenv("INTEGRATION_SECRETS_KEY_OLD")); err != nil {
+			return err
+		}
+	} else {
+		log.Warn("integrations are off: INTEGRATION_SECRETS_KEY is not set (docs/deploy.md)")
+	}
+	integ := &integrations.Service{
+		Store: st, Network: net, Agencies: set.Agencies, Box: box, Presets: integrations.DefaultPresets(),
+		AppURL: auth.appURL, Location: loc, Version: version, Log: log, Now: time.Now,
+	}
+	integ.Guard = &integrations.Guard{Allow: integ.AllowList}
+	if n, err := integ.RotateKeys(ctx); err != nil {
+		return fmt.Errorf("integration secrets: %w", err)
+	} else if n > 0 {
+		log.Info("integration secrets sealed again with the new key", "integrations", n)
+	}
+	go integ.Run(ctx)
+
+	// R52: the locked-accounts count comes from Authentik's database, through
+	// a role that can only call one function (ADR 0006, owner decision Q1).
+	var locks server.LockCounter
+	if lockURL, err := authentikMetricsURL(dbURL); err != nil {
+		return err
+	} else if lockURL != "" {
+		cfg, err := pgxpool.ParseConfig(lockURL)
+		if err != nil {
+			return errors.New("AUTHENTIK_METRICS_DATABASE_URL isn't a valid connection string")
+		}
+		cfg.MaxConns = 1
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
+		if err != nil {
+			return errors.New("AUTHENTIK_METRICS_DATABASE_URL isn't a valid connection string")
+		}
+		defer pool.Close()
+		locks = &authentik.Locks{Pool: pool}
+	}
+
 	mapTiles := os.Getenv("MAP_TILES")
 	if mapTiles != "" {
 		if _, err := os.Stat(mapTiles); err != nil {
@@ -260,6 +310,7 @@ func serve(stderr io.Writer) error {
 			Agencies: set.Agencies,
 			Streets:  ix,
 			Geo:      geocoder,
+			OnStored: integ.Enqueue,
 		},
 		Log:      log,
 		Now:      time.Now,
@@ -279,6 +330,10 @@ func serve(stderr io.Writer) error {
 		Nightly:        job,
 		MapTiles:       mapTiles,
 		MapAttribution: os.Getenv("MAP_ATTRIBUTION"),
+		Integrations:   integ,
+		MetricsToken:   os.Getenv("METRICS_TOKEN"),
+		Locks:          locks,
+		Version:        version,
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
@@ -415,6 +470,27 @@ func authConfig() (authSettings, error) {
 		}
 	}
 	return a, nil
+}
+
+// authentikMetricsURL is the connection for the locked-accounts metric:
+// AUTHENTIK_METRICS_DATABASE_URL, or else DATABASE_URL's server with the
+// pagerarchive_metrics role, AUTHENTIK_METRICS_DB_PASSWORD and the
+// authentik database. "" leaves the metric out.
+func authentikMetricsURL(dbURL string) (string, error) {
+	if v := os.Getenv("AUTHENTIK_METRICS_DATABASE_URL"); v != "" {
+		return v, nil
+	}
+	pw := os.Getenv("AUTHENTIK_METRICS_DB_PASSWORD")
+	if pw == "" {
+		return "", nil
+	}
+	u, err := url.Parse(dbURL)
+	if err != nil || u.Host == "" {
+		return "", errors.New("AUTHENTIK_METRICS_DB_PASSWORD needs DATABASE_URL in URL form (postgres://…)")
+	}
+	u.User = url.UserPassword("pagerarchive_metrics", pw)
+	u.Path = "/authentik"
+	return u.String(), nil
 }
 
 // expireSessions deletes expired sessions hourly.

@@ -51,6 +51,10 @@ type Service struct {
 	Agencies map[string]*profile.Agency
 	Streets  *streets.Index
 	Geo      *geocode.Geocoder // nil: messages aren't placed
+	// OnStored runs in the transaction that stores a new page (not a
+	// duplicate copy), so work it queues commits with the page: the
+	// integrations' deliveries (ADR 0006 §3).
+	OnStored func(ctx context.Context, q *db.Queries, messageID int64) error
 }
 
 // Ingest processes one page from a client. It returns the message ID, or 0
@@ -108,6 +112,13 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 			if err := Locate(ctx, s.Geo, q, id, fields); err != nil {
 				return err
 			}
+			if err := q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt}); err != nil {
+				return err
+			}
+			if s.OnStored != nil {
+				return s.OnStored(ctx, q, id)
+			}
+			return nil
 		default:
 			return err
 		}

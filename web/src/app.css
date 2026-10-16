@@ -26,6 +26,8 @@
 	--text-lg: 1.05rem;
 	--text-xl: 1.1rem;
 	--text-2xl: 1.25rem;
+	/* Checkboxes and radios: exempt from the full-width, tall text-input box. */
+	--control-check: 1.1rem;
 	color-scheme: light;
 }
 
@@ -128,9 +130,13 @@ button {
 	cursor: pointer;
 }
 
-input[type='checkbox'] {
-	width: 1.1rem;
-	min-height: 1.1rem;
+input[type='checkbox'],
+input[type='radio'] {
+	width: var(--control-check);
+	height: var(--control-check);
+	min-height: var(--control-check);
+	padding: 0;
+	flex: none;
 }
 
 h1 {

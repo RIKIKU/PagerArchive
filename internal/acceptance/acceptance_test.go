@@ -8,11 +8,14 @@ package acceptance
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	neturl "net/url"
 	"os"
 	"strings"
 	"sync"
@@ -25,6 +28,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -50,6 +54,12 @@ type env struct {
 	cat    *catalog.Catalog
 	worker *reparse.Worker
 	job    *nightly.Job
+
+	// Integrations (M5). Their clock is e.clock(), which tests can move
+	// (e.advance); every other part keeps the real clock.
+	integ   *integrations.Service
+	clockMu sync.Mutex
+	offset  time.Duration
 
 	// Accounts (M3): a fake Authentik, the first admin and a user. Requests
 	// are made as e.as (the user unless a test changes it).
@@ -147,14 +157,27 @@ func setup(t *testing.T) *env {
 	hub := live.NewHub()
 	e.dir = newFakeDir()
 	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, SignedOut: hub.CloseUsers}
+	// Integrations: a random key, and a guard that refuses anything outside
+	// 127.0.0.0/8, so no test can reach a real service (ADR 0006 §8).
+	box, err := integrations.NewBox(base64.StdEncoding.EncodeToString([]byte(randomKey())), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	appURL, _ := neturl.Parse("http://pager.example.test")
+	e.integ = &integrations.Service{Store: st, Network: n, Agencies: set.Agencies, Box: box, Presets: integrations.DefaultPresets(),
+		AppURL: appURL, Location: time.UTC, Version: "test", Log: log, Now: e.clock}
+	e.integ.Guard = &integrations.Guard{Allow: e.integ.AllowList, Restrict: integrations.OnlyLoopback}
 	srv := &server.Server{
-		Store:    st,
-		Ingest:   &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder},
-		Log:      log,
-		Now:      time.Now,
-		Hub:      hub,
-		Location: time.UTC,
-		Accounts: e.acc,
+		Store:        st,
+		Ingest:       &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue},
+		Integrations: e.integ,
+		MetricsToken: metricsToken,
+		Version:      "test",
+		Log:          log,
+		Now:          time.Now,
+		Hub:          hub,
+		Location:     time.UTC,
+		Accounts:     e.acc,
 	}
 	e.srv = srv
 	e.cat = &catalog.Catalog{Store: st}
@@ -533,4 +556,26 @@ func TestStoredFields(t *testing.T) {
 	if got != want {
 		t.Errorf("got %s, want %s", got, want)
 	}
+}
+
+const metricsToken = "test-metrics-token"
+
+func randomKey() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return string(b)
+}
+
+// clock is the integrations' time: real time plus whatever a test moved it.
+func (e *env) clock() time.Time {
+	e.clockMu.Lock()
+	defer e.clockMu.Unlock()
+	return time.Now().Add(e.offset)
+}
+
+// advance moves the integrations' clock forward.
+func (e *env) advance(d time.Duration) {
+	e.clockMu.Lock()
+	e.offset += d
+	e.clockMu.Unlock()
 }

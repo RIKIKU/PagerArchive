@@ -35,6 +35,7 @@ const (
 	lastRunKey   = "nightly_last_run"
 	redactionKey = "redaction_hash"
 	batch        = 1000
+	deliveryDays = 30
 	advisoryLock = 4242_0045 // one nightly run at a time
 )
 
@@ -226,6 +227,10 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		if n < batch {
 			break
 		}
+	}
+	// Integrations' delivery records are kept for 30 days (ADR 0006 §1).
+	if _, err := j.Store.PruneDeliveries(ctx, now.Add(-deliveryDays*24*time.Hour)); err != nil {
+		return fmt.Errorf("delivery records: %s", store.SafeError(err))
 	}
 	// 2. Retroactive redaction (P1), when the rules changed since the last
 	// time they were applied to every stored message.

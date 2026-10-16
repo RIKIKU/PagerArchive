@@ -41,16 +41,16 @@ jobs:
         run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
-      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level)
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A41, address guard, preset stand-ins)
         run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
         shell: bash
       - name: Acceptance check summary
         if: always()
         run: |
-          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS)|postgis:|^(ok|FAIL)' test.log || true
+          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
-    name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, R31, WCAG)
+    name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, R31, WCAG)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -85,7 +85,7 @@ jobs:
           retention-days: 14
 
   stack:
-    name: Accounts against Authentik (A23-A28, A33, section 11 steps 2 and 3)
+    name: Accounts against Authentik (A23-A28, A33, locked-accounts metric, section 11 steps 2 and 3)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -103,7 +103,7 @@ jobs:
       - name: Install browser
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: A23-A28 and A33 against the compose stack (API, PostgreSQL, Authentik, Mailpit)
+      - name: A23-A28, A33 and the locked-accounts metric against the compose stack (API, PostgreSQL, Authentik, Mailpit)
         run: sh scripts/stack-checks.sh
       - name: Section 11 steps 2 and 3 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium

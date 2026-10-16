@@ -6,10 +6,12 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Live updates, multi-criteria search, job grouping and a map
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
+- Per-user integrations forward new pages to your own systems (a convenience, not a replacement for your pager)
 
-**Status:** milestone M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR) on top of M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
+**Status:** milestone M5 (per-user integrations: webhook, MQTT with Home Assistant discovery, Discord, Telegram, Pushover and ntfy; Prometheus metrics; an Administration area) on top of M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR), M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
 
 - [Deploying the server](docs/deploy.md)
+- [Integrations](docs/integrations.md)
 - [Profiles and `validate-profile`](docs/profiles.md)
 - [Receiving client](docs/client.md)
 - [Architecture decisions](docs/adr/)

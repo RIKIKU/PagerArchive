@@ -280,7 +280,10 @@ UPDATE users SET subject = NULL WHERE id = $1;
 
 -- name: ListUsers :many
 SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
-       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name
+       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
+       -- R44b: how many integrations, and how many paused for failing.
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 WHERE u.status <> 'deleted'
@@ -433,3 +436,184 @@ WHERE capcode = sqlc.arg(capcode)::text
   AND sent_at < sqlc.arg(sent_to)::timestamptz
 GROUP BY event_type
 ORDER BY event_type NULLS LAST;
+
+-- Integrations (R47-R51c, ADR 0006).
+
+-- name: CreateIntegration :one
+INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING *;
+
+-- name: UpdateIntegration :exec
+UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, updated_at = now()
+WHERE id = $1;
+
+-- name: IntegrationByID :one
+SELECT i.*, u.role AS owner_role, u.status AS owner_status
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.id = $1;
+
+-- name: IntegrationsByOwner :many
+SELECT * FROM integrations WHERE owner_id = $1 ORDER BY created_at, id;
+
+-- name: CountIntegrationsByOwner :one
+SELECT count(*) FROM integrations WHERE owner_id = $1;
+
+-- name: AdminIntegrationsOfUser :many
+-- R44b: one user's integrations as admins see them: that they exist,
+-- never what they send or where (R47).
+SELECT id, name, kind, status, paused_by, last_delivered_at, created_at
+FROM integrations WHERE owner_id = $1 ORDER BY created_at, id;
+
+-- name: DeleteIntegrationsByOwner :exec
+-- R43c: a deleted account's integrations go with it.
+DELETE FROM integrations WHERE owner_id = $1;
+
+-- name: DeleteIntegration :exec
+DELETE FROM integrations WHERE id = $1;
+
+-- name: IntegrationIDsByOwner :many
+SELECT id FROM integrations WHERE owner_id = $1;
+
+-- name: AllIntegrationSecrets :many
+-- Key rotation: every encrypted blob.
+SELECT id, uid, secrets FROM integrations WHERE secrets IS NOT NULL;
+
+-- name: SetIntegrationSecrets :exec
+UPDATE integrations SET secrets = $2 WHERE id = $1;
+
+-- name: ClearIntegrationCapcodes :exec
+DELETE FROM integration_capcodes WHERE integration_id = $1;
+
+-- name: AddIntegrationCapcodes :exec
+INSERT INTO integration_capcodes (integration_id, capcode)
+SELECT sqlc.arg(id)::bigint, unnest(sqlc.arg(capcodes)::text[]);
+
+-- name: ClearIntegrationAliases :exec
+DELETE FROM integration_aliases WHERE integration_id = $1;
+
+-- name: AddIntegrationAliases :exec
+INSERT INTO integration_aliases (integration_id, alias_id)
+SELECT sqlc.arg(id)::bigint, unnest(sqlc.arg(alias_ids)::bigint[]);
+
+-- name: IntegrationCapcodes :many
+SELECT capcode FROM integration_capcodes WHERE integration_id = $1 ORDER BY capcode;
+
+-- name: IntegrationAliases :many
+SELECT a.id, a.pattern, a.name
+FROM integration_aliases ia JOIN aliases a ON a.id = ia.alias_id
+WHERE ia.integration_id = $1
+ORDER BY a.name, a.pattern;
+
+-- name: ExistingAliasIDs :many
+SELECT id FROM aliases WHERE id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: SearchAliases :many
+-- R48: aliases whose name or capcode/pattern contains what was typed.
+SELECT id, pattern, name FROM aliases
+WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0 OR strpos(pattern, sqlc.arg(q)::text) > 0
+ORDER BY lower(name), pattern
+LIMIT 20;
+
+-- name: ExactAliases :many
+-- R48: the aliases of exact capcodes (zero-padded), which select them.
+SELECT id, pattern_key FROM aliases WHERE pattern_key = ANY(sqlc.arg(capcodes)::text[]);
+
+-- name: CapcodeAliasCandidates :many
+-- R48: every alias covering each capcode, to name the one its pages show.
+SELECT c.capcode::text AS capcode, a.id, a.pattern, a.name
+FROM unnest(sqlc.arg(capcodes)::text[]) AS c(capcode)
+JOIN aliases a ON c.capcode LIKE a.pattern;
+
+-- name: MatchingIntegrations :many
+-- Active integrations of active owners whose selection covers a stored page.
+SELECT i.id, i.uid, i.kind, i.filter, u.role AS owner_role
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.status = 'active' AND u.status = 'active'
+  AND (EXISTS (SELECT 1 FROM integration_capcodes c WHERE c.integration_id = i.id AND c.capcode = sqlc.arg(capcode)::text)
+       OR (sqlc.narg(alias_id)::bigint IS NOT NULL
+           AND EXISTS (SELECT 1 FROM integration_aliases a WHERE a.integration_id = i.id AND a.alias_id = sqlc.narg(alias_id)::bigint)));
+
+-- name: InsertDelivery :exec
+-- R51b: at most one row per page per integration, whatever the code path.
+INSERT INTO deliveries (integration_id, message_id, status, next_attempt_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING;
+
+-- name: DueDeliveries :many
+SELECT integration_id, message_id, attempts
+FROM deliveries
+WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
+ORDER BY next_attempt_at, message_id
+LIMIT 500;
+
+-- name: NextDeliveryDue :one
+SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending';
+
+-- name: DeliveryByKey :one
+SELECT * FROM deliveries WHERE integration_id = $1 AND message_id = $2;
+
+-- name: FinishDelivery :exec
+-- A delivery leaves the queue: delivered, failed, too_old or cancelled.
+UPDATE deliveries SET status = sqlc.arg(status)::text, attempts = sqlc.arg(attempts)::int,
+    next_attempt_at = NULL, last_result = sqlc.narg(last_result), last_error = sqlc.narg(last_error),
+    delivered_at = CASE WHEN sqlc.arg(status)::text = 'delivered' THEN sqlc.arg(at)::timestamptz END,
+    updated_at = sqlc.arg(at)::timestamptz
+WHERE integration_id = sqlc.arg(integration_id) AND message_id = sqlc.arg(message_id) AND status = 'pending';
+
+-- name: RetryDelivery :exec
+UPDATE deliveries SET attempts = sqlc.arg(attempts)::int, next_attempt_at = sqlc.arg(next_attempt_at)::timestamptz,
+    last_result = sqlc.narg(last_result), last_error = sqlc.narg(last_error), updated_at = sqlc.arg(at)::timestamptz
+WHERE integration_id = sqlc.arg(integration_id) AND message_id = sqlc.arg(message_id) AND status = 'pending';
+
+-- name: CancelPendingDeliveries :execrows
+UPDATE deliveries SET status = 'cancelled', next_attempt_at = NULL, updated_at = now()
+WHERE integration_id = ANY(sqlc.arg(ids)::bigint[]) AND status = 'pending';
+
+-- name: CancelPendingDeliveriesOfOwners :execrows
+-- R51: deactivating a user stops their integrations.
+UPDATE deliveries d SET status = 'cancelled', next_attempt_at = NULL, updated_at = now()
+FROM integrations i
+WHERE i.id = d.integration_id AND i.owner_id = ANY(sqlc.arg(owner_ids)::bigint[]) AND d.status = 'pending';
+
+-- name: IntegrationDelivered :exec
+UPDATE integrations SET failed_pages = 0, last_delivered_at = sqlc.arg(at)::timestamptz WHERE id = sqlc.arg(id);
+
+-- name: IntegrationPageFailed :one
+-- One more page in a row that wasn't delivered (ADR 0006 §3).
+UPDATE integrations SET failed_pages = failed_pages + 1, last_error = sqlc.arg(error)::text, last_error_at = sqlc.arg(at)::timestamptz
+WHERE id = sqlc.arg(id)
+RETURNING failed_pages, status;
+
+-- name: IntegrationAttemptFailed :exec
+UPDATE integrations SET last_error = sqlc.arg(error)::text, last_error_at = sqlc.arg(at)::timestamptz WHERE id = sqlc.arg(id);
+
+-- name: PauseIntegration :execrows
+UPDATE integrations SET status = 'paused', paused_by = sqlc.arg(paused_by)::text, paused_at = sqlc.arg(at)::timestamptz
+WHERE id = sqlc.arg(id) AND status = 'active';
+
+-- name: ResumeIntegration :execrows
+UPDATE integrations SET status = 'active', paused_by = NULL, paused_at = NULL, failed_pages = 0
+WHERE id = $1 AND status = 'paused';
+
+-- name: RecentDeliveries :many
+SELECT d.message_id, d.status, d.attempts, d.last_result, d.last_error, d.delivered_at, d.created_at, d.updated_at,
+       m.sent_at, m.capcode
+FROM deliveries d JOIN messages m ON m.id = d.message_id
+WHERE d.integration_id = $1
+ORDER BY d.created_at DESC, d.message_id DESC
+LIMIT 100;
+
+-- name: PruneDeliveries :execrows
+-- Delivery records are kept for 30 days (ADR 0006 §1).
+DELETE FROM deliveries WHERE status <> 'pending' AND created_at < sqlc.arg(before)::timestamptz;
+
+-- Metrics (R52).
+
+-- name: CountFlagged :one
+SELECT (SELECT count(*) FROM messages WHERE parse_failed)::bigint AS parse_failed,
+       (SELECT count(*) FROM messages WHERE address_unsplit)::bigint AS address_unsplit,
+       (SELECT count(*) FROM messages WHERE location_mismatch)::bigint AS location_mismatch;
+
+-- name: CountIntegrationsByStatus :many
+SELECT status, count(*) AS n FROM integrations GROUP BY status;

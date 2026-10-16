@@ -530,6 +530,10 @@ func (s *Service) Deactivate(ctx context.Context, actor db.User, targetID int64,
 		if cancelled, err = q.CancelInvitationsBy(ctx, ids); err != nil {
 			return dbErr("cancel invitations", err)
 		}
+		// R51: deactivating a user stops their integrations.
+		if _, err := q.CancelPendingDeliveriesOfOwners(ctx, ids); err != nil {
+			return dbErr("stop integrations", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -639,6 +643,10 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 		}
 		if err := q.ScrubInvitationsTo(ctx, &u.ID); err != nil {
 			return dbErr("forget invitation", err)
+		}
+		// Integrations hold secrets and destinations: they go with the account.
+		if err := q.DeleteIntegrationsByOwner(ctx, u.ID); err != nil {
+			return dbErr("delete integrations", err)
 		}
 		if err := q.DeleteUserAccount(ctx, u.ID); err != nil {
 			return dbErr("delete account", err)

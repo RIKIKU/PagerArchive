@@ -125,13 +125,12 @@ test('R35c flags are shown to admins only', async ({ page, browser, request }) =
 	await expect(page.getByTestId('message-list').locator('article').first()).toBeVisible();
 	await expect(page.getByText('parse failed')).toHaveCount(0);
 	await expect(page.getByText('Flags (admins only)')).toHaveCount(0);
-	await expect(page.getByRole('link', { name: 'Users' })).toHaveCount(0);
+	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toHaveCount(0);
 
 	const admin = await (await signedIn(browser, 'admin')).newPage();
 	await admin.goto(`/?q=GARBLED+E2E`);
 	await expect(admin.getByText('parse failed').first()).toBeVisible();
-	await expect(admin.getByRole('link', { name: 'Clients' })).toBeVisible();
-	await expect(admin.getByRole('link', { name: 'Users' })).toBeVisible();
+	await expect(admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 });
 
 // A29 in the browser: without a session the app sends you to sign in. An
@@ -238,30 +237,42 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin/clients', '/admin/users', '/admin/retention', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(120_000); // 15 views
+			test.setTimeout(180_000); // 21 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			const aliasID = (await res.json()).messages[0].alias_id;
+			const users = await request.get(`${URL}/api/v1/admin/users`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
+			const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
 			// Admin views need the admin; the rest are seen as the user.
 			const ctx = await signedIn(browser, 'admin', { colorScheme: scheme, viewport: { width, height: 900 } });
 			const userCtx = await signedIn(browser, 'user', { colorScheme: scheme, viewport: { width, height: 900 } });
 			const adminPage = await ctx.newPage();
 			const userPage = await userCtx.newPage();
 			for (const view of views) {
-				const page = view === 'detail' || view.startsWith('/admin/') ? adminPage : userPage;
+				const page = view === 'detail' || view === 'admin-user' || view.startsWith('/admin') ? adminPage : userPage;
 				if (view === 'detail') {
 					// A located message, so its small map is checked too (R35c).
 					await page.goto('/?q=SMOKE+FROM+ROOF');
 					await page.getByTestId('message-list').locator('article a.open').first().click();
 					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
 					await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+				} else if (view === 'selection') {
+					// R48: the selection field with its suggestions open.
+					await page.goto('/integrations');
+					await page.getByRole('button', { name: 'New integration' }).click();
+					await page.getByRole('combobox', { name: 'Capcodes and aliases' }).fill('Station');
+					await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option').first()).toBeVisible();
+				} else if (view === 'integration-form') {
+					await page.goto('/integrations');
+					await page.getByRole('button', { name: 'New integration' }).click();
+					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
 				} else {
-					const path = view === 'alias' ? `/aliases/${aliasID}` : view;
+					const path = view === 'alias' ? `/aliases/${aliasID}` : view === 'admin-user' ? `/admin/users/${userID}` : view;
 					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
@@ -473,4 +484,266 @@ test('admins see receivers that are not receiving', async ({ browser }) => {
 	await waitLive(userPage);
 	await expect(userPage.getByTestId('not-receiving')).toHaveCount(0);
 	await userCtx.close();
+});
+
+// M5. R47-R51c in the browser: from the main navigation, a user creates a
+// webhook to a local receiver, sends a test and sees the answer, a real page
+// arrives, and they pause and resume it. The admin sees that it exists, not
+// where it sends.
+test('A30 integrations in the browser: notice, create, Send test, delivery, pause and resume', async ({ page, browser, request }) => {
+	const http = await import('node:http');
+	const received: { path: string; body: Record<string, unknown> }[] = [];
+	const receiver = http.createServer((req, res) => {
+		let data = '';
+		req.on('data', (c) => (data += c));
+		req.on('end', () => {
+			received.push({ path: req.url ?? '', body: JSON.parse(data || '{}') });
+			res.writeHead(200, { 'Content-Type': 'text/plain' }).end('received');
+		});
+	});
+	await new Promise<void>((r) => receiver.listen(0, '127.0.0.1', r));
+	const port = (receiver.address() as { port: number }).port;
+	try {
+		// The receiver is on 127.0.0.1: the admin allows it (R51).
+		const allow = await request.put(`${URL}/api/v1/admin/integration-hosts`, {
+			headers: { Cookie: `pa_session=${SESSIONS.admin}` },
+			data: { entries: ['127.0.0.0/8'] }
+		});
+		expect(allow.status()).toBe(200);
+
+		const name = `Station 1 webhook ${Date.now()}`;
+		await page.goto('/');
+		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Integrations' }).click();
+		// R47: the one-line notice that integrations don't replace a pager.
+		await expect(page.getByTestId('integrations-notice')).toHaveText(
+			'Integrations are a convenience, not a replacement for your pager: delivery is best-effort, and a page may arrive late or not at all.'
+		);
+		await page.getByRole('button', { name: 'New integration' }).click();
+		await page.getByLabel('Name', { exact: true }).fill(name);
+		await chooseInSelection(page, '0100001', 'Station 1 (0100001)');
+		await page.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook/T0PS3CRET`);
+		await page.getByRole('button', { name: 'Save integration' }).click();
+		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
+		const card = page.getByTestId('integration').filter({ hasText: name });
+		await expect(card.getByTestId('integration-status')).toHaveText('Active');
+		await expect(card).toContainText(`http://127.0.0.1:${port}/…`);
+		await expect(page.locator('body')).not.toContainText('T0PS3CRET'); // the URL is a secret once saved
+
+		// Send test (R51c): the owner sees what the endpoint answered.
+		await card.getByRole('button', { name: 'Send test' }).click();
+		const answer = card.getByTestId('test-answer');
+		await expect(answer).toContainText('Delivered.');
+		await expect(answer).toContainText('HTTP 200 OK');
+		await expect(answer).toContainText('received');
+		expect(received.at(-1)?.body.test).toBe(true);
+
+		// A real page arrives within 5 seconds, without its marker.
+		const job = uniqueJob();
+		const start = Date.now();
+		await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+		await expect.poll(() => received.filter((r) => r.body.job_number === job).length, { timeout: 5000 }).toBe(1);
+		console.log(`M5: webhook received the page ${Date.now() - start} ms after the post`);
+		expect(received.find((r) => r.body.job_number === job)?.body.text).toBe(`${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+		await card.getByRole('button', { name: 'Deliveries' }).click();
+		await expect(card.locator('.deliveries')).toContainText('Delivered');
+
+		// Pause and resume.
+		await card.getByRole('button', { name: 'Pause' }).click();
+		await expect(card.getByTestId('integration-status')).toHaveText('Paused');
+		await card.getByRole('button', { name: 'Resume' }).click();
+		await expect(card.getByTestId('integration-status')).toHaveText('Active');
+
+		// The admin sees it exists, never where it sends.
+		const admin = await (await signedIn(browser, 'admin')).newPage();
+		await admin.goto('/admin/users');
+		await admin.getByRole('link', { name: 'Test User (user@example.test)' }).click();
+		const row = admin.getByTestId('admin-integration').filter({ hasText: name });
+		await expect(row).toContainText('Webhook');
+		await expect(row).toContainText('Active');
+		await expect(admin.locator('main')).not.toContainText(`127.0.0.1:${port}`);
+		await admin.context().close();
+
+		await card.getByRole('button', { name: 'Delete…' }).click();
+		await card.getByRole('button', { name: 'Yes, delete it' }).click();
+		await expect(page.getByTestId('integration').filter({ hasText: name })).toHaveCount(0);
+	} finally {
+		receiver.close();
+	}
+});
+
+/** Types into the selection field (R48) and chooses the suggestion named option. */
+async function chooseInSelection(page: Page, typed: string, option: string) {
+	const field = page.getByRole('combobox', { name: 'Capcodes and aliases' });
+	await field.fill(typed);
+	await page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option', { name: option }).click();
+	await expect(page.getByRole('list', { name: 'Chosen capcodes and aliases' })).toContainText(option);
+	await expect(field).toHaveValue('');
+}
+
+// A40. One selection field: typing 0100001 offers and selects the alias
+// "Station 1 (0100001)"; typing 0100009 selects only the capcode, with the
+// range alias "Stations block" (0100%) named beside it.
+test('A40 one selection field', async ({ page, request }) => {
+	const allow = await request.put(`${URL}/api/v1/admin/integration-hosts`, {
+		headers: { Cookie: `pa_session=${SESSIONS.admin}` },
+		data: { entries: ['127.0.0.0/8'] }
+	});
+	expect(allow.status()).toBe(200);
+	await page.goto('/integrations');
+	await page.getByRole('button', { name: 'New integration' }).click();
+	const field = page.getByRole('combobox', { name: 'Capcodes and aliases' });
+
+	await field.fill('0100001');
+	const options = page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option');
+	await expect(options).toHaveCount(1);
+	await expect(options.first()).toHaveText('Station 1 (0100001)');
+	await field.press('Enter'); // the keyboard chooses the first suggestion
+	const chosen = page.getByRole('list', { name: 'Chosen capcodes and aliases' }).getByTestId('chosen');
+	await expect(chosen).toHaveText([/^Station 1 \(0100001\)\s*×$/]);
+
+	await field.fill('0100009');
+	await expect(options).toHaveCount(1);
+	await expect(options.first()).toContainText('0100009');
+	await expect(options.first()).toContainText('in Stations block');
+	await expect(options.first()).not.toContainText('0100%');
+	await options.first().click();
+	await expect(chosen).toHaveText([/^Station 1 \(0100001\)\s*×$/, /^0100009\s*in Stations block\s*×$/]);
+
+	const name = `A40 selection ${Date.now()}`;
+	await page.getByLabel('Name', { exact: true }).fill(name);
+	await page.getByLabel('URL', { exact: true }).fill('http://127.0.0.1:9/hook');
+	await page.getByRole('button', { name: 'Save integration' }).click();
+	const card = page.getByTestId('integration').filter({ hasText: name });
+	await expect(card).toContainText('Station 1, 0100009 (in Stations block)');
+
+	// Saved as the alias and the capcode, never the range.
+	const res = await request.get(`${URL}/api/v1/integrations`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	const saved = (await res.json()).integrations.find((i: { name: string }) => i.name === name);
+	expect(saved.aliases.map((a: { name: string }) => a.name)).toEqual(['Station 1']);
+	expect(saved.capcodes).toEqual(['0100009']);
+	expect(saved.covered_by).toEqual({ '0100009': 'Stations block' });
+
+	await card.getByRole('button', { name: 'Delete…' }).click();
+	await card.getByRole('button', { name: 'Yes, delete it' }).click();
+	await expect(card).toHaveCount(0);
+});
+
+// A41. Administration: user B has no Admin link and admin pages refuse
+// them; admin A has one Admin link, whose start page reaches every admin
+// screen; B's page shows B's integration without where it sends; nothing
+// lists every user's integrations.
+test('A41 Administration area', async ({ page, browser, request }) => {
+	const as = (role: Role) => ({ Cookie: `pa_session=${SESSIONS[role]}` });
+	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: as('admin'), data: { entries: ['127.0.0.0/8'] } });
+	const stamp = Date.now();
+	const make = async (role: Role, name: string) => {
+		const r = await request.post(`${URL}/api/v1/integrations`, {
+			headers: as(role),
+			data: { name, kind: 'webhook', capcodes: ['0500009'], secrets: { url: `http://127.0.0.1:9/hook/SECRET${stamp}` } }
+		});
+		expect(r.status()).toBe(201);
+		return (await r.json()).id as number;
+	};
+	const bName = `B integration ${stamp}`;
+	const aName = `A integration ${stamp}`;
+	const ids: [Role, number][] = [
+		['user', await make('user', bName)],
+		['admin', await make('admin', aName)]
+	];
+	try {
+		// B: no Admin link, and every admin page is refused.
+		await page.goto('/');
+		const main = page.getByRole('navigation', { name: 'Main' });
+		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
+		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
+			await page.goto(path);
+			await expect(page.getByRole('alert'), path).toContainText('admins only');
+			await expect(page.locator('main'), path).not.toContainText(aName);
+		}
+
+		// A: one Admin link, and its start page reaches every admin screen.
+		const admin = await (await signedIn(browser, 'admin')).newPage();
+		await admin.goto('/');
+		const nav = admin.getByRole('navigation', { name: 'Main' });
+		await expect(nav.getByRole('link', { name: 'Admin' })).toHaveCount(1);
+		for (const old of ['Users', 'Clients', 'Retention', 'All integrations']) await expect(nav.getByRole('link', { name: old })).toHaveCount(0);
+		await nav.getByRole('link', { name: 'Admin' }).click();
+		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
+		const screens = admin.getByTestId('admin-screens');
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Receiving clients', 'Retention', 'Integration addresses']);
+		for (const [link, heading] of [
+			['Users', 'Users'],
+			['Receiving clients', 'Receiving clients'],
+			['Retention', 'Retention'],
+			['Integration addresses', 'Integration addresses']
+		]) {
+			await screens.getByRole('link', { name: link }).click();
+			await expect(admin.getByRole('heading', { level: 1 })).toHaveText(heading);
+			await expect(admin.getByRole('alert')).toHaveCount(0);
+			await admin.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Administration' }).click();
+		}
+
+		// B's page in Administration: B's integration, not where it sends, and not A's.
+		await screens.getByRole('link', { name: 'Users' }).click();
+		const bRow = admin.locator('li').filter({ hasText: 'user@example.test' });
+		await expect(bRow).toContainText(/\d+ integrations?/);
+		await bRow.getByRole('link', { name: 'Test User (user@example.test)' }).click();
+		await expect(admin.getByRole('heading', { level: 1 })).toHaveText('Test User (user@example.test)');
+		const row = admin.getByTestId('admin-integration').filter({ hasText: bName });
+		await expect(row).toContainText('Webhook');
+		await expect(row).toContainText('Active');
+		await expect(row.getByRole('button', { name: `Pause: ${bName}` })).toBeVisible();
+		const text = await admin.locator('main').innerText();
+		for (const leak of [`SECRET${stamp}`, '127.0.0.1', 'http://', aName]) expect(text, leak).not.toContain(leak);
+
+		// No page lists every user's integrations.
+		const all = await request.get(`${URL}/api/v1/admin/integrations`, { headers: as('admin') });
+		expect(all.status()).toBe(404);
+		await admin.goto('/admin/integrations');
+		await expect(admin.locator('main')).not.toContainText(bName);
+		await admin.context().close();
+	} finally {
+		for (const [role, id] of ids) await request.delete(`${URL}/api/v1/integrations/${id}`, { headers: as(role) });
+	}
+});
+
+// Radios and checkboxes keep their own small size, not the full-width, tall
+// box text inputs get (app.css), on the integration form for every
+// destination, the admin-only flags included. The Content radios are
+// stacked, each directly under the one above.
+test('integration form: radios and checkboxes are no bigger than 1.5rem', async ({ browser }) => {
+	const page = await (await signedIn(browser, 'admin')).newPage();
+	await page.goto('/integrations');
+	await page.getByRole('button', { name: 'New integration' }).click();
+	const form = page.locator('form.integration-form');
+	await expect(form.getByText('Flags (admins only)')).toBeVisible();
+	const rem = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+	const max = 1.5 * rem;
+	const kinds = await form.getByLabel('Send to').locator('option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+	expect(kinds).toEqual(['webhook', 'mqtt', 'discord', 'telegram', 'pushover', 'ntfy']);
+	let checked = 0;
+	for (const kind of kinds) {
+		await form.getByLabel('Send to').selectOption(kind);
+		if (kind === 'mqtt') await form.getByLabel(/Home Assistant discovery/).check();
+		const controls = form.locator('input[type="radio"], input[type="checkbox"]');
+		const n = await controls.count();
+		expect(n, kind).toBeGreaterThan(0);
+		for (let i = 0; i < n; i++) {
+			const c = controls.nth(i);
+			const box = await c.boundingBox();
+			const what = `${kind}: ${await c.getAttribute('type')} ${i} (${box?.width}x${box?.height}px, max ${max}px)`;
+			expect(box, what).not.toBeNull();
+			expect(box!.width, what).toBeLessThanOrEqual(max);
+			expect(box!.height, what).toBeLessThanOrEqual(max);
+			checked++;
+		}
+		const radios = form.getByRole('group', { name: 'Content' }).getByRole('radio');
+		await expect(radios).toHaveCount(2);
+		const [full, summary] = [await radios.nth(0).boundingBox(), await radios.nth(1).boundingBox()];
+		expect(Math.abs(full!.x - summary!.x), `${kind}: Content radios line up`).toBeLessThanOrEqual(1);
+		expect(summary!.y, `${kind}: Summary is below Full`).toBeGreaterThanOrEqual(full!.y + full!.height);
+	}
+	console.log(`radios and checkboxes measured: ${checked}, none over ${max}px`);
+	await page.context().close();
 });
