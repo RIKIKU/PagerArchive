@@ -4,7 +4,7 @@ Date: 2026-10-16
 
 ## Status
 
-Proposed. Waiting for the owner on Q1–Q4.
+Proposed. The owner answered Q1 and Q2 (decisions 1 and 2 below); waiting for Q3 and Q4.
 
 ## Context
 
@@ -15,6 +15,11 @@ The owner asked this ADR to record: the data model for requests and history, how
 - Admin screens go in Administration (R44b). Styles use the tokens in `web/src/app.css`.
 - Page text never appears in logs. Request notes and feedback are kept out of logs too (§8).
 - Every person and request is followed through deactivation, deletion and alias deletion (§5).
+
+## Owner decisions (2026-10-16)
+
+1. **Q1: keep history.** When an alias is deleted, its history is kept, attached to the capcode or pattern, with no time limit, as recommended.
+2. **Q2: history is for admins only.** Email addresses are personal information and aren't shown to other users. Alias history (R57) is shown **only to admins**, on the alias view and on the alias's page in Administration. Users see no history: not on the alias view, not on the capcode view, and the API doesn't send it to them (`history` is left out, not just hidden). Admins see each person as "name (email)", as on the Users screen, or "deleted user", "command line" or "import". A user still sees their own requests and their outcome in My requests (R56). This narrows R57 and R35e ("the alias view lists the alias's changes") to admins.
 
 ## Questions for the owner
 
@@ -29,8 +34,7 @@ Deleting an alias closes its waiting requests as "alias deleted" (R55). Their ow
 
 R57 shows who requested and who approved or made each change, on the alias view, which every signed-in user can open. Today the app names a user to others as "name (email)" (the inviter on the Account page).
 
-- **Recommended:** history shows the person's **name** (asked at enrolment) to everyone; admins also see the email address, as on the Users screen. A deleted account shows "deleted user" (R43c). Changes made with the command line or the import show "command line" or "import".
-- Alternative: name and email to everyone, as the Account page does for inviters.
+**Answered:** history is shown to admins only (decision 2).
 
 ### Q3. `alias import --update` (R27a, A21) against R58
 
@@ -145,8 +149,8 @@ All need a signed-in user; `admin/` ones need an admin (`403` otherwise).
 | Method and path | Does |
 |---|---|
 | `GET /api/v1/templates` | Templates to choose from: id, name, agency, icon, colour |
-| `GET /api/v1/aliases/{id}` | As before, plus `history` (§1, Q2) and the signed-in user's waiting request for it, if any |
-| `GET /api/v1/capcodes/{capcode}` | As before, plus history kept from deleted aliases (Q1) |
+| `GET /api/v1/aliases/{id}` | As before, plus `history` for admins only (decision 2) and the signed-in user's waiting request for it, if any |
+| `GET /api/v1/capcodes/{capcode}` | As before, plus, for admins only, history kept from deleted aliases (decisions 1 and 2) |
 | `GET /api/v1/alias-requests` | The signed-in user's requests, newest first, with current values and marks (§3) |
 | `POST /api/v1/alias-requests` | Submit (`kind`, `alias_id` or `pattern`, the proposal, `note`) |
 | `PUT /api/v1/alias-requests/{id}` | Edit one's own waiting request |
@@ -168,7 +172,7 @@ All need a signed-in user; `admin/` ones need an admin (`403` otherwise).
 - **Administration** start page gains **Aliases** and **Alias requests** (with the waiting count).
 - **Aliases** (`/admin/aliases`): a search box, a table of aliases (name, capcode or pattern, template, ignored), **Add alias** and **Export CSV**. Each alias has an edit page (`/admin/aliases/{id}`) with the form, **Delete** (with a confirmation that names the alias, its waiting requests and the integrations that select it) and its history.
 - **Alias requests** (`/admin/requests`): waiting requests, oldest first. Each shows what's asked, by whom and when, the note, and a **Current | Proposed** table with changed rows highlighted, plus the marks from §3. **Approve**, and **Reject** with a required feedback box. A second tab lists recently closed requests.
-- **Alias view** (R35e): admins get **Edit**. Users get **Request a change** (name, template, ignored, note) and **Request deletion** (note). If they already have a waiting request for it, they see it instead, with a link to edit it. Below the details, **History**: newest first, "Name changed from "Station 1" to "Station One" · requested by B · approved by A · 16 Oct 2026, 14:05".
+- **Alias view** (R35e): admins get **Edit**. Users get **Request a change** (name, template, ignored, note) and **Request deletion** (note). If they already have a waiting request for it, they see it instead, with a link to edit it. For admins only (decision 2), below the details, **History**: newest first, "Name changed from "Station 1" to "Station One" · requested by B · approved by A · 16 Oct 2026, 14:05".
 - **Capcode view** (a capcode with no alias): **Request an alias for this capcode**.
 - **My requests** (`/requests`): each request's status (waiting, approved, rejected, withdrawn, alias deleted), the feedback, the marks, and Edit and Withdraw while waiting. **Request a new alias** for any capcode or pattern.
 - All forms use the shared tokens and the existing input styles; checkboxes and radios keep their small size (b7e5d65). Pages are covered by the axe checks at 375 px and 1280 px in both themes.
