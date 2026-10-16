@@ -4,7 +4,7 @@ Date: 2026-10-16
 
 ## Status
 
-Proposed. The owner answered Q1 and Q2 (decisions 1 and 2 below); waiting for Q3 and Q4.
+Proposed. The owner answered Q1–Q4 on 2026-10-16 (decisions 1–4 below), and M6 is built to those answers. The owner marks it Accepted.
 
 ## Context
 
@@ -20,6 +20,8 @@ The owner asked this ADR to record: the data model for requests and history, how
 
 1. **Q1: keep history.** When an alias is deleted, its history is kept, attached to the capcode or pattern, with no time limit, as recommended.
 2. **Q2: history is for admins only.** Email addresses are personal information and aren't shown to other users. Alias history (R57) is shown **only to admins**, on the alias view and on the alias's page in Administration. Users see no history: not on the alias view, not on the capcode view, and the API doesn't send it to them (`history` is left out, not just hidden). Admins see each person as "name (email)", as on the Users screen, or "deleted user", "command line" or "import". A user still sees their own requests and their outcome in My requests (R56). This narrows R57 and R35e ("the alias view lists the alias's changes") to admins.
+3. **Q3: keep `--update` on the command line.** Without it, the import only adds and lists differences, changing nothing (R58, A46). With it, an operator at the command line can still apply the differences (R27a, A21 unchanged). Each alias it changes gets a history entry, `source = import`. There's no import in the browser, so admins and users can't overwrite aliases from a CSV there.
+4. **Q4: keep the capcode.** When an alias for one capcode is deleted, integrations that selected it select that capcode instead, so they keep forwarding it. A deleted range alias is removed from selections. The delete confirmation says how many integrations select the alias.
 
 ## Questions for the owner
 
@@ -41,13 +43,13 @@ R57 shows who requested and who approved or made each change, on the alias view,
 R58 says that from M6 the import only adds, and for existing aliases "lists the differences and changes nothing". R27a and A21 still describe `--update`, which applies them.
 
 - **Recommended:** remove `--update`. Given it, the import stops before changing anything and says why: "--update was removed in M6: the database is the source of truth for aliases. Change them in Administration." A21's first half stays as it is. Its second half is replaced by that refusal. The owner updates the wording of R27a and A21 in `SPEC.md` (the implementer doesn't edit acceptance checks).
-- Alternative: keep `--update` for the command line only, as an operator's escape hatch. That contradicts R58.
+- Alternative: keep `--update` for the command line only, as an operator's escape hatch. That contradicts R58. **Chosen by the owner (decision 3).**
 
 ### Q4. Integrations that select a deleted alias (R48)
 
 An integration's selection can hold aliases (M5). Today, deleting an alias removes it from every selection (cascade), so an integration that selected only "Station 9 (0100009)" quietly stops forwarding anything. With admins deleting aliases in the browser, that will happen more often.
 
-- **Recommended:** when an alias for **one capcode** is deleted, integrations that selected it keep that capcode instead (R48 in reverse: a capcode with no alias is selected as a capcode). A deleted **range** alias is just removed from selections, because its capcodes now resolve to other aliases (ADR 0006 §2) and forwarding the whole range would be new. The admin's delete confirmation says how many integrations select the alias. Owners aren't told separately.
+- **Recommended:** when an alias for **one capcode** is deleted, integrations that selected it keep that capcode instead (R48 in reverse: a capcode with no alias is selected as a capcode). A deleted **range** alias is just removed from selections, because its capcodes now resolve to other aliases (ADR 0006 §2) and forwarding the whole range would be new. The admin's delete confirmation says how many integrations select the alias. Owners aren't told separately. **Chosen by the owner (decision 4).**
 - Alternative: keep today's behaviour (removed from selections), with the same count in the confirmation.
 
 When an admin changes an alias's capcode (R53), integrations keep following the alias, as today: they selected "Station 9", wherever it is.
@@ -133,7 +135,7 @@ Admins can't edit a request (R55): there's no endpoint for it. The command line 
 
 ### 7. Import (R58, R30)
 
-- The import **only adds** aliases for capcodes and patterns with none. For each existing alias it compares name, template and ignored flag, lists the differences as before (`name: "Station 1" → "Station One"`) and changes nothing. `--update` goes (Q3). Duplicates, overrides, squashing, repeated names and the mapping file are unchanged (R27a, R30).
+- The import **only adds** aliases for capcodes and patterns with none. For each existing alias it compares name, template and ignored flag, lists the differences as before (`name: "Station 1" → "Station One"`) and changes nothing. Only `--update`, on the command line, applies them (decision 3). Duplicates, overrides, squashing, repeated names and the mapping file are unchanged (R27a, R30).
 - Each alias added writes a history entry, `source = import`.
 - A waiting `add` request for a capcode the import fills is left waiting; it's marked and approving it is refused (§3).
 - The report also counts aliases added and differences, as now. It never prints request notes.
