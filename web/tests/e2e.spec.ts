@@ -237,30 +237,45 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', '/admin/aliases', 'admin-alias', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(180_000); // 21 views
+			test.setTimeout(240_000); // 26 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			const aliasID = (await res.json()).messages[0].alias_id;
 			const users = await request.get(`${URL}/api/v1/admin/users`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
 			const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
+			// M6: a waiting alias request, so the review screen and My requests
+			// are checked with one; rejected at the end so it doesn't linger.
+			const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}`;
+			const made = await request.post(`${URL}/api/v1/alias-requests`, {
+				headers: { Cookie: `pa_session=${SESSIONS.user}` },
+				data: { kind: 'add', pattern: reqPattern, name: `Axe ${reqPattern}`, note: 'NOTE-MARKER axe' }
+			});
+			expect(made.status()).toBe(201);
+			const reqID = (await made.json()).id;
 			// Admin views need the admin; the rest are seen as the user.
 			const ctx = await signedIn(browser, 'admin', { colorScheme: scheme, viewport: { width, height: 900 } });
 			const userCtx = await signedIn(browser, 'user', { colorScheme: scheme, viewport: { width, height: 900 } });
 			const adminPage = await ctx.newPage();
 			const userPage = await userCtx.newPage();
 			for (const view of views) {
-				const page = view === 'detail' || view === 'admin-user' || view.startsWith('/admin') ? adminPage : userPage;
+				const page = view === 'detail' || view.startsWith('admin-') || view.startsWith('/admin') ? adminPage : userPage;
 				if (view === 'detail') {
 					// A located message, so its small map is checked too (R35c).
 					await page.goto('/?q=SMOKE+FROM+ROOF');
 					await page.getByTestId('message-list').locator('article a.open').first().click();
 					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
 					await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+				} else if (view === 'alias-request') {
+					// R54: the request form, open on the alias view.
+					await page.goto(`/aliases/${aliasID}`);
+					await waitLive(page);
+					await page.getByRole('button', { name: 'Request a change' }).click();
+					await expect(page.getByRole('heading', { name: 'Request a change' })).toBeVisible();
 				} else if (view === 'selection') {
 					// R48: the selection field with its suggestions open.
 					await page.goto('/integrations');
@@ -272,7 +287,7 @@ for (const scheme of ['light', 'dark'] as const) {
 					await page.getByRole('button', { name: 'New integration' }).click();
 					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
 				} else {
-					const path = view === 'alias' ? `/aliases/${aliasID}` : view === 'admin-user' ? `/admin/users/${userID}` : view;
+					const path = view === 'alias' ? `/aliases/${aliasID}` : view === 'admin-user' ? `/admin/users/${userID}` : view === 'admin-alias' ? `/admin/aliases/${aliasID}` : view;
 					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
@@ -287,6 +302,10 @@ for (const scheme of ['light', 'dark'] as const) {
 			}
 			// Each context holds a live stream and, since M4, a map with a WebGL
 			// context; left open they slow the following tests down.
+			await request.post(`${URL}/api/v1/admin/alias-requests/${reqID}/reject`, {
+				headers: { Cookie: `pa_session=${SESSIONS.admin}` },
+				data: { feedback: 'Wrong station: axe test' }
+			});
 			await Promise.all([ctx.close(), userCtx.close()]);
 		});
 	}
@@ -656,7 +675,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -671,9 +690,11 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Receiving clients', 'Retention', 'Integration addresses']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
+			['Aliases', 'Aliases'],
+			['Alias requests', 'Alias requests'],
 			['Receiving clients', 'Receiving clients'],
 			['Retention', 'Retention'],
 			['Integration addresses', 'Integration addresses']
@@ -746,4 +767,238 @@ test('integration form: radios and checkboxes are no bigger than 1.5rem', async 
 	}
 	console.log(`radios and checkboxes measured: ${checked}, none over ${max}px`);
 	await page.context().close();
+});
+
+// M6: aliases in the browser (R53-R58). The three browser projects share one
+// database, so each edits its own aliases, seeded by scripts/e2e.sh:
+// 04001<n>1-04001<n>3 ("Edit test <n>1"...), n = 1, 2, 3 by project.
+const projectN = (info: { project: { name: string } }) => ['chromium', 'firefox', 'webkit'].indexOf(info.project.name) + 1 || 9;
+const asRole = (role: Role) => ({ Cookie: `pa_session=${SESSIONS[role]}` });
+
+async function aliasIdByName(request: APIRequestContext, name: string): Promise<number> {
+	const r = await request.get(`${URL}/api/v1/admin/aliases?q=${encodeURIComponent(name)}`, { headers: asRole('admin') });
+	const found = (await r.json()).aliases.find((a: { name: string }) => a.name === name);
+	expect(found, name).toBeTruthy();
+	return found.id;
+}
+
+async function waitingNow(request: APIRequestContext): Promise<number> {
+	const r = await request.get(`${URL}/api/v1/meta`, { headers: asRole('admin') });
+	return (await r.json()).waiting_requests;
+}
+
+// A42. The admin renames an alias in Administration and the message list
+// shows the new name at once; a second alias for the capcode is refused
+// with the reason.
+test('A42 admin edits aliases', async ({ page, browser, request }, info) => {
+	const n = projectN(info);
+	const capcode = `04001${n}1`;
+	await post(request, capcode, `QDA42 page for ${capcode}`);
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin/aliases');
+	await admin.getByLabel('Find an alias').fill(`Edit test ${n}1`);
+	await admin.getByTestId('alias-table').getByRole('link', { name: `Edit test ${n}1` }).click();
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(`Alias “Edit test ${n}1”`);
+	const renamed = `Renamed by admin ${n}`;
+	const form = admin.getByTestId('alias-form');
+	await form.getByLabel('Name').fill(renamed);
+	await form.getByRole('button', { name: 'Save' }).click();
+	await expect(admin.getByRole('status')).toContainText('Saved');
+	// History, admins only (R57).
+	await expect(admin.getByTestId('alias-history')).toContainText(`Name: “Edit test ${n}1” → “${renamed}”`);
+	await expect(admin.getByTestId('alias-history')).toContainText('by Test Admin (admin@example.test)');
+
+	// The user's message list shows the new name straight away.
+	await page.goto(`/?capcode=${capcode}`);
+	await waitLive(page);
+	await expect(page.getByTestId('message-list').locator('article').first()).toContainText(renamed);
+
+	// A second alias for the same capcode is refused, naming the one it has.
+	await admin.goto('/admin/aliases');
+	await admin.getByRole('button', { name: 'Add alias' }).click();
+	const add = admin.getByTestId('alias-form');
+	await add.getByLabel('Capcode or pattern').fill(capcode.replace(/^0+/, ''));
+	await add.getByLabel('Name').fill('Second alias');
+	await add.getByRole('button', { name: 'Add alias' }).click();
+	await expect(add.getByRole('alert')).toContainText(`already has the alias "${renamed}"`);
+	await expect(add.getByRole('alert')).toContainText(`edit "${renamed}" instead`);
+	await admin.context().close();
+});
+
+// A43. B requests an alias for a capcode with none; the admin sees the
+// count on the Admin link, approves it; history names both; B's request
+// shows "approved".
+test('A43 request approved', async ({ page, browser, request }, info) => {
+	const n = projectN(info);
+	const capcode = `040020${n}`;
+	const name = `Station 9 ${n}`;
+	await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
+	const before = await waitingNow(request);
+
+	await page.goto('/capcodes/0999999');
+	await page.getByRole('link', { name: 'Request an alias for this capcode' }).click();
+	await expect(page).toHaveURL(/\/requests\?pattern=0999999/);
+	const form = page.getByTestId('request-form');
+	await expect(form.getByLabel('Capcode or pattern')).toHaveValue('0999999');
+	await form.getByLabel('Capcode or pattern').fill(capcode);
+	await form.getByLabel('Name').fill(name);
+	await form.getByLabel('Template').selectOption({ label: 'Example Fire (Example Fire Service)' });
+	await form.getByLabel('Note for the admins (optional)').fill('NOTE-MARKER new pager');
+	await form.getByRole('button', { name: 'Send request' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Your request was sent' })).toBeVisible();
+	const mine = page.getByTestId('alias-request').filter({ hasText: capcode });
+	await expect(mine.getByTestId('request-status')).toHaveText('Waiting');
+
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/');
+	const link = admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' });
+	const waitingName = (k: number) => (k === 0 ? 'Admin' : `Admin, ${k} alias request${k === 1 ? '' : 's'} waiting`);
+	await expect(link).toHaveAccessibleName(waitingName(before + 1));
+	await expect(link).toContainText(String(before + 1));
+	await link.click();
+	await admin.getByTestId('admin-screens').getByRole('link', { name: 'Alias requests' }).click();
+	const card = admin.getByTestId('alias-request').filter({ hasText: `New alias for ${capcode}` });
+	await expect(card).toContainText('Requested by Test User (user@example.test)');
+	await expect(card).toContainText('NOTE-MARKER new pager');
+	await card.getByRole('button', { name: `Approve: the new alias for ${capcode}` }).click();
+	await expect(admin.getByRole('status')).toContainText(`Approved the new alias for ${capcode}`);
+	await expect(link).toHaveAccessibleName(waitingName(before));
+
+	// The alias exists; its history says B asked and the admin approved.
+	const id = await aliasIdByName(request, name);
+	await admin.goto(`/aliases/${id}`);
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(name);
+	await expect(admin.getByTestId('alias-history')).toContainText(
+		'requested by Test User (user@example.test), approved by Test Admin (admin@example.test)'
+	);
+	// B: "approved", and no history on the alias view (admins only).
+	await page.goto('/requests');
+	await expect(
+		page.getByTestId('closed-requests').getByTestId('alias-request').filter({ hasText: capcode }).getByTestId('request-status')
+	).toHaveText('Approved');
+	await page.goto(`/aliases/${id}`);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(name);
+	await expect(page.getByRole('button', { name: 'Request a change' })).toBeVisible();
+	await expect(page.getByTestId('alias-history')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Edit alias' })).toHaveCount(0);
+	await admin.context().close();
+});
+
+// A44. B asks to rename an alias; the admin can't reject without feedback,
+// then rejects with "Wrong station"; the alias is unchanged and B sees the
+// rejection and the feedback.
+test('A44 request rejected', async ({ page, browser, request }, info) => {
+	const n = projectN(info);
+	const current = `Edit test ${n}2`;
+	const id = await aliasIdByName(request, current);
+	await page.goto(`/aliases/${id}`);
+	await waitLive(page);
+	await page.getByRole('button', { name: 'Request a change' }).click();
+	const form = page.getByTestId('request-form');
+	await form.getByLabel('Name').fill(`Station 7 ${n}`);
+	await form.getByRole('button', { name: 'Send request' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Your request was sent' })).toBeVisible();
+	// The alias view now shows B's waiting request instead of the buttons.
+	await expect(page.getByTestId('alias-request').getByTestId('request-status')).toHaveText('Waiting');
+
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin/requests');
+	const card = admin.getByTestId('alias-request').filter({ hasText: `Change “${current}”` });
+	await expect(card.getByRole('row', { name: `Name ${current} Station 7 ${n}` })).toBeVisible();
+	await card.getByRole('button', { name: /^Reject:/ }).click();
+	await card.getByRole('button', { name: 'Reject', exact: true }).click();
+	await expect(card.getByRole('alert')).toContainText('needs feedback');
+	await card.getByLabel('Feedback for the person who asked (required)').fill('Wrong station');
+	await card.getByRole('button', { name: 'Reject', exact: true }).click();
+	await expect(admin.getByRole('status')).toContainText('Rejected');
+	await admin.context().close();
+
+	await page.goto('/requests');
+	const mine = page.getByTestId('closed-requests').getByTestId('alias-request').filter({ hasText: `Change “${current}”` });
+	await expect(mine.getByTestId('request-status')).toHaveText('Rejected');
+	await expect(mine).toContainText('Feedback: Wrong station');
+	await page.goto(`/aliases/${id}`);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(current);
+});
+
+// A45. Out of date: B asks to rename an alias, the admin renames it first;
+// B's request shows "changed since requested" with the current and proposed
+// names. B asks for an alias for a capcode the admin then aliases; the
+// review screen says it can't be approved.
+test('A45 out-of-date requests', async ({ page, browser, request }, info) => {
+	const n = projectN(info);
+	const name = `Edit test ${n}3`;
+	const id = await aliasIdByName(request, name);
+	await page.goto(`/aliases/${id}`);
+	await waitLive(page);
+	await page.getByRole('button', { name: 'Request a change' }).click();
+	await page.getByTestId('request-form').getByLabel('Name').fill(`Proposed ${n}`);
+	await page.getByTestId('request-form').getByRole('button', { name: 'Send request' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Your request was sent' })).toBeVisible();
+
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto(`/admin/aliases/${id}`);
+	await admin.getByTestId('alias-form').getByLabel('Name').fill(`Renamed by admin ${n}3`);
+	await admin.getByTestId('alias-form').getByRole('button', { name: 'Save' }).click();
+	await expect(admin.getByRole('status')).toContainText('Saved');
+
+	await page.goto('/requests');
+	const mine = page.getByTestId('alias-request').filter({ hasText: `Proposed ${n}` });
+	await expect(mine).toContainText('Changed since requested');
+	await expect(mine.getByRole('row', { name: `Name Renamed by admin ${n}3 Proposed ${n}` })).toBeVisible();
+
+	// A new alias for a capcode that got one meanwhile can't be approved.
+	const capcode = `040030${n}`;
+	await page.getByRole('button', { name: 'Request a new alias' }).click();
+	const form = page.getByTestId('request-form');
+	await form.getByLabel('Capcode or pattern').fill(capcode);
+	await form.getByLabel('Name').fill(`Wanted ${n}`);
+	await form.getByRole('button', { name: 'Send request' }).click();
+	await expect(page.getByRole('status').filter({ hasText: 'Your request was sent' })).toBeVisible();
+	await admin.goto(`/admin/aliases?add=${capcode}`);
+	const add = admin.getByTestId('alias-form');
+	await expect(add.getByLabel('Capcode or pattern')).toHaveValue(capcode);
+	await add.getByLabel('Name').fill(`Taken ${n}`);
+	await add.getByRole('button', { name: 'Add alias' }).click();
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(`Alias “Taken ${n}”`);
+
+	await admin.goto('/admin/requests');
+	const stale = admin.getByTestId('alias-request').filter({ hasText: `New alias for ${capcode}` });
+	await expect(stale).toContainText(`${capcode} now has the alias “Taken ${n}”: this request can't be approved.`);
+	await expect(stale.getByRole('button', { name: /^Approve:/ })).toBeDisabled();
+	const changed = admin.getByTestId('alias-request').filter({ hasText: `Proposed ${n}` });
+	await expect(changed).toContainText('Changed since requested');
+	// Clean up: both rejected, so no request lingers for other tests.
+	for (const card of [stale, changed]) {
+		await card.getByRole('button', { name: /^Reject:/ }).click();
+		await card.getByLabel('Feedback for the person who asked (required)').fill('Wrong station: already done');
+		await card.getByRole('button', { name: 'Reject', exact: true }).click();
+		await expect(card).toHaveCount(0);
+	}
+	await admin.context().close();
+});
+
+// A46 (browser part): the admin exports every alias as a CSV in the import
+// format. The import side runs in Go (TestA46ImportDoesntOverwrite).
+test('A46 export downloads every alias in the import format', async ({ browser }) => {
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin/aliases');
+	const [download] = await Promise.all([admin.waitForEvent('download'), admin.getByTestId('export').click()]);
+	expect(download.suggestedFilename()).toMatch(/^pagerarchive-aliases-\d{4}-\d{2}-\d{2}\.csv$/);
+	const fs = await import('node:fs/promises');
+	const csv = await fs.readFile(await download.path(), 'utf8');
+	expect(csv.split('\r\n')[0]).toBe('id,address,alias,agency,icon,color,ignore');
+	expect(csv).toContain(',0100001,Station 1,Example Fire,,#b3261e,false\r\n');
+	await admin.context().close();
+});
+
+// A47 (browser part): users get no way to edit an alias, only to ask. The
+// API refusals run in Go (TestA47UsersCantEditDirectly).
+test('A47 users can only request changes', async ({ page }) => {
+	await page.goto('/admin/aliases');
+	await expect(page.getByRole('alert')).toContainText('admins only');
+	await page.goto('/');
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Requests' }).click();
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('My requests');
+	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Requests' })).toHaveAttribute('aria-current', 'page');
 });

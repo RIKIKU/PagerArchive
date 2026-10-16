@@ -160,7 +160,8 @@ All need a signed-in user; `admin/` ones need an admin (`403` otherwise).
 | `GET /api/v1/admin/alias-requests?status=waiting\|closed` | Requests to review (waiting, oldest first), or the last 100 closed |
 | `POST /api/v1/admin/alias-requests/{id}/approve` | §4 |
 | `POST /api/v1/admin/alias-requests/{id}/reject` | `{"feedback": "…"}`, required |
-| `GET /api/v1/admin/aliases?q=` | Aliases, filtered by name, capcode or pattern, with their template and number of messages |
+| `GET /api/v1/admin/aliases?q=` | Aliases, filtered by name, capcode or pattern, with their template and number of waiting requests (500 at most; search to narrow) |
+| `GET /api/v1/admin/aliases/{id}` | One alias with its history, its waiting requests and the number of integrations that select it |
 | `POST /api/v1/admin/aliases` | Add (R53) |
 | `PUT /api/v1/admin/aliases/{id}` | Edit name, capcode or pattern, template, ignored |
 | `DELETE /api/v1/admin/aliases/{id}` | Delete; the response says how many integrations it was selected by |

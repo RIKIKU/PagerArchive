@@ -4,6 +4,7 @@
 	import { api, type CapcodeView, type Meta } from '#lib/api.ts';
 	import { criteria } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import AliasHistory from '#lib/AliasHistory.svelte';
 	import MessageList from '#lib/MessageList.svelte';
 
 	// R35e for a capcode with no alias: its count, first and last seen (as in
@@ -45,7 +46,15 @@
 				<dd><time datetime={isoAttr(c.last_seen)}>{dateTime(c.last_seen, tz)}</time></dd>{/if}
 		</dl>
 		<p><a href="/reports?capcode={c.capcode}">Report for this capcode</a></p>
+		{#if meta?.role === 'admin'}
+			<p><a class="button secondary" href="/admin/aliases?add={c.capcode}">Add an alias for this capcode</a></p>
+		{:else if meta}
+			<p><a class="button secondary" href="/requests?pattern={c.capcode}">Request an alias for this capcode</a></p>
+		{/if}
 	</section>
+	{#if meta?.role === 'admin' && c.history?.length}
+		<AliasHistory history={c.history} {tz} />
+	{/if}
 	<MessageList {query} base={{ capcode: c.capcode, unaliased: 'true' }} level={2} />
 {/if}
 

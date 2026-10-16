@@ -104,6 +104,8 @@ export interface Meta {
 	attribution: string;
 	map_tiles: boolean;
 	map_attribution: string;
+	/** Admins only: alias requests waiting for review (R55). */
+	waiting_requests?: number;
 }
 
 export interface MessagePage {
@@ -122,11 +124,16 @@ export interface AliasView {
 	id: number;
 	pattern: string;
 	name: string;
+	template_id: number | null;
 	template: string | null;
 	agency: string | null;
 	icon: string | null;
 	colour: string | null;
 	ignored: boolean;
+	/** Admins only (owner, 2026-10-16). */
+	history?: HistoryEntry[];
+	/** The signed-in user's waiting request for this alias (R56). */
+	my_request?: AliasRequest;
 }
 
 export interface CapcodeView {
@@ -135,6 +142,110 @@ export interface CapcodeView {
 	messages: number;
 	first_seen: string | null;
 	last_seen: string | null;
+	/** Admins only: entries of deleted aliases for this capcode. */
+	history?: HistoryEntry[];
+}
+
+/** One change to an alias (R57). Changes map a field to [before, after]. */
+export interface HistoryEntry {
+	id: number;
+	alias_id: number;
+	alias_name: string;
+	pattern: string;
+	action: 'added' | 'changed' | 'deleted';
+	changes: Record<string, [unknown, unknown]>;
+	source: 'admin' | 'request' | 'cli' | 'import';
+	made_by: string;
+	requested_by: string | null;
+	request_id: number | null;
+	at: string;
+	/** An entry of a deleted alias that had this capcode or pattern. */
+	earlier: boolean;
+}
+
+export interface TemplateChoice {
+	id: number;
+	name: string;
+	agency: string;
+	icon: string | null;
+	colour: string | null;
+}
+
+export type RequestKind = 'add' | 'change' | 'delete';
+export type RequestStatus = 'waiting' | 'approved' | 'rejected' | 'withdrawn' | 'alias_deleted';
+
+export interface AliasSettings {
+	pattern: string;
+	name: string;
+	template_id: number | null;
+	template: string | null;
+	ignored: boolean;
+}
+
+/** A request for a new alias, a change or a deletion (R54-R56). */
+export interface AliasRequest {
+	id: number;
+	kind: RequestKind;
+	status: RequestStatus;
+	alias_id: number | null;
+	pattern: string;
+	alias_name: string | null;
+	current: AliasSettings | null;
+	proposed: {
+		name: string | null;
+		set_template: boolean;
+		template_id: number | null;
+		template: string | null;
+		ignored: boolean | null;
+	};
+	note: string | null;
+	feedback: string | null;
+	changed_since_requested: boolean;
+	now_aliased_as: string | null;
+	/** Admins only. */
+	requested_by?: string;
+	reviewed_by?: string;
+	created_at: string;
+	updated_at: string;
+	closed_at: string | null;
+}
+
+export interface RequestInput {
+	kind?: RequestKind;
+	alias_id?: number;
+	pattern?: string;
+	name?: string | null;
+	set_template?: boolean;
+	template_id?: number | null;
+	ignored?: boolean | null;
+	note?: string;
+}
+
+export interface AliasInput {
+	pattern: string;
+	name: string;
+	template_id: number | null;
+	ignored: boolean;
+}
+
+export interface AdminAliasRow {
+	id: number;
+	pattern: string;
+	name: string;
+	template_id: number | null;
+	template: string | null;
+	ignored: boolean;
+	waiting_requests: number;
+}
+
+export interface AdminAlias extends AliasView {
+	requests: AliasRequest[];
+	integrations: number;
+}
+
+export interface AliasDeleted {
+	integrations: number;
+	requests: number;
 }
 
 export interface ClientStatus {
@@ -424,6 +535,24 @@ export const api = {
 	adminResumeIntegration: (id: number) => request<void>('POST', `/api/v1/admin/integrations/${id}/resume`),
 	allowList: () => get<{ entries: string[] }>('/api/v1/admin/integration-hosts'),
 	setAllowList: (entries: string[]) => request<{ entries: string[] }>('PUT', '/api/v1/admin/integration-hosts', { entries }),
+	// Aliases in the browser (R53-R58).
+	/** Fresh, not cached: the count on the Admin link (R55). */
+	waitingRequests: () => get<Meta>('/api/v1/meta').then((m) => m.waiting_requests ?? 0),
+	templates: () => get<TemplateChoice[]>('/api/v1/templates'),
+	myRequests: () => get<AliasRequest[]>('/api/v1/alias-requests'),
+	submitRequest: (r: RequestInput) => request<{ id: number }>('POST', '/api/v1/alias-requests', r),
+	editRequest: (id: number, r: RequestInput) => request<void>('PUT', `/api/v1/alias-requests/${id}`, r),
+	withdrawRequest: (id: number) => request<void>('POST', `/api/v1/alias-requests/${id}/withdraw`),
+	adminRequests: (status: 'waiting' | 'closed') => get<AliasRequest[]>(`/api/v1/admin/alias-requests?status=${status}`),
+	approveRequest: (id: number) => request<void>('POST', `/api/v1/admin/alias-requests/${id}/approve`),
+	rejectRequest: (id: number, feedback: string) =>
+		request<void>('POST', `/api/v1/admin/alias-requests/${id}/reject`, { feedback }),
+	adminAliases: (q: string) =>
+		get<{ aliases: AdminAliasRow[]; more: boolean }>(`/api/v1/admin/aliases?q=${encodeURIComponent(q)}`),
+	adminAlias: (id: number | string) => get<AdminAlias>(`/api/v1/admin/aliases/${encodeURIComponent(id)}`),
+	createAlias: (a: AliasInput) => request<{ id: number }>('POST', '/api/v1/admin/aliases', a),
+	editAlias: (id: number, a: AliasInput) => request<void>('PUT', `/api/v1/admin/aliases/${id}`, a),
+	deleteAlias: (id: number) => request<AliasDeleted>('DELETE', `/api/v1/admin/aliases/${id}`),
 	authStatus: () => get<{ first_admin_setup: boolean }>('/auth/status'),
 	firstAdmin: async () => {
 		const r = await request<{ redirect: string }>('POST', '/auth/first-admin');

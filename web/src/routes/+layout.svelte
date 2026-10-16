@@ -3,6 +3,7 @@
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
 	import { api, type Meta } from '#lib/api.ts';
+	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
 
 	let { children } = $props();
 	let meta: Meta | undefined = $state();
@@ -32,7 +33,8 @@
 		}
 	});
 
-	// R39: admins see at a glance when a receiver has gone quiet.
+	// R39: admins see at a glance when a receiver has gone quiet; R55: and how
+	// many alias requests wait for review (the count on the Admin link).
 	let quiet = $state(0);
 	$effect(() => {
 		if (meta?.role !== 'admin') return;
@@ -41,8 +43,9 @@
 				.clients()
 				.then((cs) => (quiet = cs.filter((c) => !c.receiving).length))
 				.catch(() => {});
-		check();
-		const t = setInterval(check, 60_000);
+		const checkAll = () => (check(), refreshWaiting());
+		checkAll();
+		const t = setInterval(checkAll, 60_000);
 		return () => clearInterval(t);
 	});
 
@@ -55,6 +58,7 @@
 		{ href: '/reports', label: 'Reports' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
 		...(meta ? [{ href: '/integrations', label: 'Integrations' }] : []),
+		...(meta ? [{ href: '/requests', label: 'Requests' }] : []),
 		// R44b: one Admin link, for admins only.
 		...(meta?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
 		...(meta ? [{ href: '/account', label: 'Account' }] : [])
@@ -66,7 +70,17 @@
 	<a class="brand" href="/">PagerArchive</a>
 	<nav aria-label="Main">
 		{#each nav as item (item.href)}
-			<a href={item.href} aria-current={current(item.href) ? 'page' : undefined}>{item.label}</a>
+			{#if item.href === '/admin' && waiting.count > 0}
+				<a
+					href={item.href}
+					aria-current={current(item.href) ? 'page' : undefined}
+					data-testid="admin-link"
+					aria-label="{item.label}, {waiting.count} alias request{waiting.count === 1 ? '' : 's'} waiting"
+					>{item.label}<span class="count">{waiting.count}</span></a
+				>
+			{:else}
+				<a href={item.href} aria-current={current(item.href) ? 'page' : undefined} data-testid={item.href === '/admin' ? 'admin-link' : undefined}>{item.label}</a>
+			{/if}
 		{/each}
 	</nav>
 	{#if quiet > 0}
@@ -126,6 +140,18 @@
 		color: var(--fg);
 		text-decoration: none;
 		padding: 0.2rem 0;
+	}
+	.count {
+		display: inline-block;
+		margin-left: 0.3rem;
+		min-width: 1.25rem;
+		padding: 0 0.35rem;
+		border-radius: 1rem;
+		background: var(--accent);
+		color: var(--bg);
+		font-size: var(--text-xs);
+		font-weight: 600;
+		text-align: center;
 	}
 	nav a[aria-current='page'] {
 		font-weight: 600;
