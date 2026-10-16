@@ -4,7 +4,7 @@ Date: 2026-10-16
 
 ## Status
 
-Proposed. The owner answered Q1–Q4 on 2026-10-16 (decisions 1–4 below), and M6 is built to those answers. The owner marks it Accepted.
+Accepted (owner, 2026-10-16). The owner answered Q1–Q4 on 2026-10-16 (decisions 1–4 below), and M6 is built to those answers.
 
 ## Context
 
