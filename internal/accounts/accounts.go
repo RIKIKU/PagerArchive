@@ -534,6 +534,10 @@ func (s *Service) Deactivate(ctx context.Context, actor db.User, targetID int64,
 		if _, err := q.CancelPendingDeliveriesOfOwners(ctx, ids); err != nil {
 			return dbErr("stop integrations", err)
 		}
+		// R56: and withdraws their waiting alias requests.
+		if _, err := q.WithdrawRequestsOf(ctx, ids); err != nil {
+			return dbErr("withdraw alias requests", err)
+		}
 		return nil
 	})
 	if err != nil {
@@ -647,6 +651,14 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 		// Integrations hold secrets and destinations: they go with the account.
 		if err := q.DeleteIntegrationsByOwner(ctx, u.ID); err != nil {
 			return dbErr("delete integrations", err)
+		}
+		// R56: waiting alias requests are withdrawn. The requests stay,
+		// credited to "deleted user" (R57), but not their notes (ADR 0007 §5).
+		if _, err := q.WithdrawRequestsOf(ctx, ids); err != nil {
+			return dbErr("withdraw alias requests", err)
+		}
+		if err := q.ClearRequestNotesOf(ctx, u.ID); err != nil {
+			return dbErr("clear request notes", err)
 		}
 		if err := q.DeleteUserAccount(ctx, u.ID); err != nil {
 			return dbErr("delete account", err)

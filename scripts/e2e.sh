@@ -45,6 +45,13 @@ done
 for n in 1 2 3; do
 	"$BIN" alias add "030010$n" "Report test $n" --template "Example Fire" >/dev/null
 done
+# M6 (A42-A45): each browser project edits and requests changes to its own
+# aliases (n = 1, 2, 3 for chromium, firefox, webkit): 04001n1-04001n3.
+for n in 1 2 3; do
+	for k in 1 2 3; do
+		"$BIN" alias add "04001$n$k" "Edit test $n$k" --template "Example Fire" >/dev/null
+	done
+done
 PA_CLIENT_KEY=$("$BIN" client add e2e "E2E client" | tail -n 1)
 export PA_CLIENT_KEY
 # R39: a receiver last heard 31 minutes ago (set below).
@@ -79,9 +86,10 @@ export PA_URL=http://127.0.0.1:18080
 status=0
 (cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?
 
-# P1: no page text in the API log.
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER' "$BIN.log"; then
-	echo "page text found in the API log" >&2
+# P1: no page text in the API log, and no alias request notes, feedback or
+# names (ADR 0007 §8).
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin' "$BIN.log"; then
+	echo "page text, a note, feedback or a name found in the API log" >&2
 	status=1
 else
 	echo "API log lines checked: $(wc -l <"$BIN.log"), page texts found: 0"

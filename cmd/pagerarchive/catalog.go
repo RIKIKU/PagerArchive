@@ -120,7 +120,7 @@ func importCmd(ctx context.Context, cat *catalog.Catalog, args []string, stdout,
 		fmt.Fprintln(stdout, "  "+p)
 	}
 	if len(res.Differences) > 0 {
-		verb := "not changed; run with --update to apply"
+		verb := "not changed: the database is the source of truth (R58); change them in Administration, or run with --update to apply the CSV"
 		if *update {
 			verb = "updated"
 		}
@@ -203,7 +203,7 @@ func templateCmd(args []string, stdout, stderr io.Writer) error {
 
 func aliasCmd(args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: alias add|set|delete|list")
+		return errors.New("usage: alias add|set|delete|import|export|list")
 	}
 	ctx := context.Background()
 	cat, done, err := openCatalog(ctx)
@@ -261,6 +261,27 @@ func aliasCmd(args []string, stdout, stderr io.Writer) error {
 		fmt.Fprintf(stdout, "alias %s deleted; affected messages will be re-parsed\n", args[1])
 	case "import":
 		return importCmd(ctx, cat, args[1:], stdout, stderr)
+	case "export":
+		// R58: every alias in the import format, to stdout or a file.
+		if len(args) > 2 {
+			return errors.New("usage: alias export [file.csv]")
+		}
+		out := stdout
+		if len(args) == 2 {
+			f, err := os.OpenFile(args[1], os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+			if err != nil {
+				return err
+			}
+			defer f.Close()
+			out = f
+		}
+		n, err := cat.ExportCSV(ctx, out)
+		if err != nil {
+			return err
+		}
+		if len(args) == 2 {
+			fmt.Fprintf(stdout, "%d aliases exported to %s\n", n, args[1])
+		}
 	case "list":
 		rows, err := cat.Store.ListAliases(ctx)
 		if err != nil {
@@ -273,7 +294,7 @@ func aliasCmd(args []string, stdout, stderr io.Writer) error {
 		}
 		return tw.Flush()
 	default:
-		return errors.New("usage: alias add|set|delete|list")
+		return errors.New("usage: alias add|set|delete|import|export|list")
 	}
 	return nil
 }

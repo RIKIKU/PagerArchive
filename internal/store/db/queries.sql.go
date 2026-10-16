@@ -76,6 +76,60 @@ func (q *Queries) AddressPoint(ctx context.Context, arg AddressPointParams) (Add
 	return i, err
 }
 
+const adminAliases = `-- name: AdminAliases :many
+SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name,
+       (SELECT count(*) FROM alias_requests r WHERE r.alias_id = a.id AND r.status = 'waiting')::bigint AS waiting
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE $1::text = '' OR strpos(lower(a.name), lower($1::text)) > 0 OR strpos(a.pattern, $1::text) > 0
+ORDER BY a.pattern
+LIMIT $2::int
+`
+
+type AdminAliasesParams struct {
+	Q       string
+	MaxRows int32
+}
+
+type AdminAliasesRow struct {
+	ID           int64
+	Pattern      string
+	Name         string
+	Ignored      bool
+	TemplateID   *int64
+	TemplateName *string
+	Waiting      int64
+}
+
+// R53: aliases for Administration, filtered by name, capcode or pattern.
+func (q *Queries) AdminAliases(ctx context.Context, arg AdminAliasesParams) ([]AdminAliasesRow, error) {
+	rows, err := q.db.Query(ctx, adminAliases, arg.Q, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminAliasesRow
+	for rows.Next() {
+		var i AdminAliasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.Ignored,
+			&i.TemplateID,
+			&i.TemplateName,
+			&i.Waiting,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const adminIntegrationsOfUser = `-- name: AdminIntegrationsOfUser :many
 SELECT id, name, kind, status, paused_by, last_delivered_at, created_at
 FROM integrations WHERE owner_id = $1 ORDER BY created_at, id
@@ -191,6 +245,129 @@ func (q *Queries) AliasDetailByKey(ctx context.Context, patternKey string) (Alia
 	return i, err
 }
 
+const aliasForUpdate = `-- name: AliasForUpdate :one
+
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.template_id, a.ignored, t.name AS template_name
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE a.id = $1
+FOR UPDATE OF a
+`
+
+type AliasForUpdateRow struct {
+	ID           int64
+	Pattern      string
+	PatternKey   *string
+	Name         string
+	TemplateID   *int64
+	Ignored      bool
+	TemplateName *string
+}
+
+// Aliases in the browser: history and requests (R53-R58, ADR 0007).
+// Locks an alias for a change, with its template's name for history.
+func (q *Queries) AliasForUpdate(ctx context.Context, id int64) (AliasForUpdateRow, error) {
+	row := q.db.QueryRow(ctx, aliasForUpdate, id)
+	var i AliasForUpdateRow
+	err := row.Scan(
+		&i.ID,
+		&i.Pattern,
+		&i.PatternKey,
+		&i.Name,
+		&i.TemplateID,
+		&i.Ignored,
+		&i.TemplateName,
+	)
+	return i, err
+}
+
+const aliasHistory = `-- name: AliasHistory :many
+SELECT c.id, c.alias_id, c.pattern_key, c.alias_name, c.action, c.changes, c.source, c.at, c.request_id,
+       m.name AS made_by_name, m.email AS made_by_email, m.status AS made_by_status,
+       r.name AS requested_by_name, r.email AS requested_by_email, r.status AS requested_by_status
+FROM alias_changes c
+LEFT JOIN users m ON m.id = c.made_by
+LEFT JOIN users r ON r.id = c.requested_by
+WHERE c.alias_id = $1::bigint
+   OR c.alias_id IN (SELECT d.alias_id FROM alias_changes d
+                     WHERE d.action = 'deleted' AND d.pattern_key = $2::text)
+ORDER BY c.id DESC
+LIMIT 200
+`
+
+type AliasHistoryParams struct {
+	AliasID    *int64
+	PatternKey string
+}
+
+type AliasHistoryRow struct {
+	ID                int64
+	AliasID           int64
+	PatternKey        string
+	AliasName         string
+	Action            string
+	Changes           []byte
+	Source            string
+	At                time.Time
+	RequestID         *int64
+	MadeByName        *string
+	MadeByEmail       *string
+	MadeByStatus      *string
+	RequestedByName   *string
+	RequestedByEmail  *string
+	RequestedByStatus *string
+}
+
+// R57: an alias's changes, and those of deleted aliases that had its
+// capcode or pattern (owner, 2026-10-16), newest first. For a capcode with
+// no alias, alias_id is NULL. Admins only (owner, 2026-10-16).
+func (q *Queries) AliasHistory(ctx context.Context, arg AliasHistoryParams) ([]AliasHistoryRow, error) {
+	rows, err := q.db.Query(ctx, aliasHistory, arg.AliasID, arg.PatternKey)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AliasHistoryRow
+	for rows.Next() {
+		var i AliasHistoryRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AliasID,
+			&i.PatternKey,
+			&i.AliasName,
+			&i.Action,
+			&i.Changes,
+			&i.Source,
+			&i.At,
+			&i.RequestID,
+			&i.MadeByName,
+			&i.MadeByEmail,
+			&i.MadeByStatus,
+			&i.RequestedByName,
+			&i.RequestedByEmail,
+			&i.RequestedByStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const aliasIDByKey = `-- name: AliasIDByKey :one
+SELECT id FROM aliases WHERE pattern_key = $1::text
+`
+
+func (q *Queries) AliasIDByKey(ctx context.Context, patternKey string) (int64, error) {
+	row := q.db.QueryRow(ctx, aliasIDByKey, patternKey)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
 SELECT pattern FROM aliases WHERE template_id = $1
 `
@@ -215,8 +392,39 @@ func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID *int6
 	return items, nil
 }
 
+const aliasRequestForUpdate = `-- name: AliasRequestForUpdate :one
+SELECT id, kind, requested_by, alias_id, pattern, alias_name, name, set_template, template_id, template_name, ignored, note, base_change, status, feedback, reviewed_by, created_at, updated_at, closed_at FROM alias_requests WHERE id = $1 FOR UPDATE
+`
+
+func (q *Queries) AliasRequestForUpdate(ctx context.Context, id int64) (AliasRequest, error) {
+	row := q.db.QueryRow(ctx, aliasRequestForUpdate, id)
+	var i AliasRequest
+	err := row.Scan(
+		&i.ID,
+		&i.Kind,
+		&i.RequestedBy,
+		&i.AliasID,
+		&i.Pattern,
+		&i.AliasName,
+		&i.Name,
+		&i.SetTemplate,
+		&i.TemplateID,
+		&i.TemplateName,
+		&i.Ignored,
+		&i.Note,
+		&i.BaseChange,
+		&i.Status,
+		&i.Feedback,
+		&i.ReviewedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ClosedAt,
+	)
+	return i, err
+}
+
 const aliasView = `-- name: AliasView :one
-SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.agency, t.icon, t.colour
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE a.id = $1
@@ -225,8 +433,10 @@ WHERE a.id = $1
 type AliasViewRow struct {
 	ID           int64
 	Pattern      string
+	PatternKey   *string
 	Name         string
 	Ignored      bool
+	TemplateID   *int64
 	TemplateName *string
 	Agency       *string
 	Icon         *string
@@ -240,8 +450,10 @@ func (q *Queries) AliasView(ctx context.Context, id int64) (AliasViewRow, error)
 	err := row.Scan(
 		&i.ID,
 		&i.Pattern,
+		&i.PatternKey,
 		&i.Name,
 		&i.Ignored,
+		&i.TemplateID,
 		&i.TemplateName,
 		&i.Agency,
 		&i.Icon,
@@ -612,6 +824,16 @@ func (q *Queries) ClearIntegrationCapcodes(ctx context.Context, integrationID in
 	return err
 }
 
+const clearRequestNotesOf = `-- name: ClearRequestNotesOf :exec
+UPDATE alias_requests SET note = NULL WHERE requested_by = $1
+`
+
+// R43c: a deleted account's notes go; its requests stay, as "deleted user".
+func (q *Queries) ClearRequestNotesOf(ctx context.Context, requestedBy int64) error {
+	_, err := q.db.Exec(ctx, clearRequestNotesOf, requestedBy)
+	return err
+}
+
 const clearUserSubject = `-- name: ClearUserSubject :exec
 UPDATE users SET subject = NULL WHERE id = $1
 `
@@ -619,6 +841,46 @@ UPDATE users SET subject = NULL WHERE id = $1
 func (q *Queries) ClearUserSubject(ctx context.Context, id int64) error {
 	_, err := q.db.Exec(ctx, clearUserSubject, id)
 	return err
+}
+
+const closeAliasRequest = `-- name: CloseAliasRequest :exec
+UPDATE alias_requests
+SET status = $1::text, reviewed_by = $2::bigint, feedback = $3::text,
+    alias_id = coalesce($4::bigint, alias_id), closed_at = now(), updated_at = now()
+WHERE id = $5 AND status = 'waiting'
+`
+
+type CloseAliasRequestParams struct {
+	Status     string
+	ReviewedBy *int64
+	Feedback   *string
+	AliasID    *int64
+	ID         int64
+}
+
+func (q *Queries) CloseAliasRequest(ctx context.Context, arg CloseAliasRequestParams) error {
+	_, err := q.db.Exec(ctx, closeAliasRequest,
+		arg.Status,
+		arg.ReviewedBy,
+		arg.Feedback,
+		arg.AliasID,
+		arg.ID,
+	)
+	return err
+}
+
+const closeRequestsOfAlias = `-- name: CloseRequestsOfAlias :execrows
+UPDATE alias_requests SET status = 'alias_deleted', closed_at = now(), updated_at = now()
+WHERE alias_id = $1 AND status = 'waiting'
+`
+
+// R55: deleting an alias closes its waiting requests.
+func (q *Queries) CloseRequestsOfAlias(ctx context.Context, aliasID *int64) (int64, error) {
+	result, err := q.db.Exec(ctx, closeRequestsOfAlias, aliasID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const countActiveAdmins = `-- name: CountActiveAdmins :one
@@ -693,6 +955,50 @@ func (q *Queries) CountIntegrationsByStatus(ctx context.Context) ([]CountIntegra
 	return items, nil
 }
 
+const countIntegrationsSelectingAlias = `-- name: CountIntegrationsSelectingAlias :one
+SELECT count(*) FROM integration_aliases WHERE alias_id = $1
+`
+
+func (q *Queries) CountIntegrationsSelectingAlias(ctx context.Context, aliasID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countIntegrationsSelectingAlias, aliasID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWaitingRequests = `-- name: CountWaitingRequests :one
+SELECT count(*) FROM alias_requests WHERE status = 'waiting'
+`
+
+func (q *Queries) CountWaitingRequests(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countWaitingRequests)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWaitingRequestsForTemplate = `-- name: CountWaitingRequestsForTemplate :one
+SELECT count(*) FROM alias_requests WHERE status = 'waiting' AND set_template AND template_id = $1
+`
+
+func (q *Queries) CountWaitingRequestsForTemplate(ctx context.Context, templateID *int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countWaitingRequestsForTemplate, templateID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countWaitingRequestsOf = `-- name: CountWaitingRequestsOf :one
+SELECT count(*) FROM alias_requests WHERE requested_by = $1 AND status = 'waiting'
+`
+
+func (q *Queries) CountWaitingRequestsOf(ctx context.Context, requestedBy int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countWaitingRequestsOf, requestedBy)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createAlias = `-- name: CreateAlias :one
 INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4) RETURNING id
 `
@@ -710,6 +1016,47 @@ func (q *Queries) CreateAlias(ctx context.Context, arg CreateAliasParams) (int64
 		arg.Name,
 		arg.TemplateID,
 		arg.Ignored,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const createAliasRequest = `-- name: CreateAliasRequest :one
+INSERT INTO alias_requests (kind, requested_by, alias_id, pattern, alias_name, name, set_template, template_id, template_name, ignored, note, base_change)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id
+`
+
+type CreateAliasRequestParams struct {
+	Kind         string
+	RequestedBy  int64
+	AliasID      *int64
+	Pattern      string
+	AliasName    *string
+	Name         *string
+	SetTemplate  bool
+	TemplateID   *int64
+	TemplateName *string
+	Ignored      *bool
+	Note         *string
+	BaseChange   int64
+}
+
+func (q *Queries) CreateAliasRequest(ctx context.Context, arg CreateAliasRequestParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createAliasRequest,
+		arg.Kind,
+		arg.RequestedBy,
+		arg.AliasID,
+		arg.Pattern,
+		arg.AliasName,
+		arg.Name,
+		arg.SetTemplate,
+		arg.TemplateID,
+		arg.TemplateName,
+		arg.Ignored,
+		arg.Note,
+		arg.BaseChange,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -1137,6 +1484,40 @@ func (q *Queries) DueDeliveries(ctx context.Context, now time.Time) ([]DueDelive
 	return items, nil
 }
 
+const editAliasRequest = `-- name: EditAliasRequest :execrows
+UPDATE alias_requests
+SET name = $2, set_template = $3, template_id = $4, template_name = $5, ignored = $6, note = $7, base_change = $8, updated_at = now()
+WHERE id = $1 AND status = 'waiting'
+`
+
+type EditAliasRequestParams struct {
+	ID           int64
+	Name         *string
+	SetTemplate  bool
+	TemplateID   *int64
+	TemplateName *string
+	Ignored      *bool
+	Note         *string
+	BaseChange   int64
+}
+
+func (q *Queries) EditAliasRequest(ctx context.Context, arg EditAliasRequestParams) (int64, error) {
+	result, err := q.db.Exec(ctx, editAliasRequest,
+		arg.ID,
+		arg.Name,
+		arg.SetTemplate,
+		arg.TemplateID,
+		arg.TemplateName,
+		arg.Ignored,
+		arg.Note,
+		arg.BaseChange,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const exactAliases = `-- name: ExactAliases :many
 SELECT id, pattern_key FROM aliases WHERE pattern_key = ANY($1::text[])
 `
@@ -1184,6 +1565,52 @@ func (q *Queries) ExistingAliasIDs(ctx context.Context, ids []int64) ([]int64, e
 			return nil, err
 		}
 		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const exportAliases = `-- name: ExportAliases :many
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.icon, t.colour
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+ORDER BY a.pattern
+`
+
+type ExportAliasesRow struct {
+	ID           int64
+	Pattern      string
+	Name         string
+	Ignored      bool
+	TemplateName *string
+	Icon         *string
+	Colour       *string
+}
+
+// R58: every alias in the import format.
+func (q *Queries) ExportAliases(ctx context.Context) ([]ExportAliasesRow, error) {
+	rows, err := q.db.Query(ctx, exportAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExportAliasesRow
+	for rows.Next() {
+		var i ExportAliasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.Ignored,
+			&i.TemplateName,
+			&i.Icon,
+			&i.Colour,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1260,6 +1687,41 @@ func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
 	var value string
 	err := row.Scan(&value)
 	return value, err
+}
+
+const insertAliasChange = `-- name: InsertAliasChange :one
+INSERT INTO alias_changes (alias_id, pattern_key, alias_name, action, changes, source, made_by, requested_by, request_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id
+`
+
+type InsertAliasChangeParams struct {
+	AliasID     int64
+	PatternKey  string
+	AliasName   string
+	Action      string
+	Changes     []byte
+	Source      string
+	MadeBy      *int64
+	RequestedBy *int64
+	RequestID   *int64
+}
+
+func (q *Queries) InsertAliasChange(ctx context.Context, arg InsertAliasChangeParams) (int64, error) {
+	row := q.db.QueryRow(ctx, insertAliasChange,
+		arg.AliasID,
+		arg.PatternKey,
+		arg.AliasName,
+		arg.Action,
+		arg.Changes,
+		arg.Source,
+		arg.MadeBy,
+		arg.RequestedBy,
+		arg.RequestID,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const insertDelivery = `-- name: InsertDelivery :exec
@@ -1682,6 +2144,144 @@ type KeepEarliestSentAtParams struct {
 func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAtParams) error {
 	_, err := q.db.Exec(ctx, keepEarliestSentAt, arg.ReceivedAt, arg.ID)
 	return err
+}
+
+const latestAliasChange = `-- name: LatestAliasChange :one
+SELECT coalesce(max(id), 0)::bigint FROM alias_changes WHERE alias_id = $1
+`
+
+func (q *Queries) LatestAliasChange(ctx context.Context, aliasID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, latestAliasChange, aliasID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const listAliasRequests = `-- name: ListAliasRequests :many
+SELECT r.id, r.kind, r.requested_by, r.alias_id, r.pattern, r.alias_name, r.name, r.set_template, r.template_id,
+       r.template_name, r.ignored, r.note, r.base_change, r.status, r.feedback, r.created_at, r.updated_at, r.closed_at,
+       u.name AS requester_name, u.email AS requester_email, u.status AS requester_status,
+       v.name AS reviewer_name, v.email AS reviewer_email, v.status AS reviewer_status,
+       a.pattern AS cur_pattern, a.name AS cur_name, a.ignored AS cur_ignored, a.template_id AS cur_template_id,
+       ct.name AS cur_template_name,
+       (SELECT coalesce(max(c.id), 0) FROM alias_changes c WHERE c.alias_id = r.alias_id)::bigint AS latest_change,
+       occ.id AS occupant_id, occ.name AS occupant_name
+FROM alias_requests r
+JOIN users u ON u.id = r.requested_by
+LEFT JOIN users v ON v.id = r.reviewed_by
+LEFT JOIN aliases a ON a.id = r.alias_id
+LEFT JOIN templates ct ON ct.id = a.template_id
+LEFT JOIN aliases occ ON r.kind = 'add' AND r.status = 'waiting' AND occ.pattern_key = r.pattern
+WHERE ($1::bigint IS NULL OR r.requested_by = $1::bigint)
+  AND ($2::bigint IS NULL OR r.id = $2::bigint)
+  AND ($3::bigint IS NULL OR r.alias_id = $3::bigint)
+  AND ($4::text = 'all' OR ($4::text = 'waiting') = (r.status = 'waiting'))
+ORDER BY r.id DESC
+LIMIT $5::int
+`
+
+type ListAliasRequestsParams struct {
+	RequestedBy *int64
+	ID          *int64
+	AliasID     *int64
+	Which       string
+	MaxRows     int32
+}
+
+type ListAliasRequestsRow struct {
+	ID              int64
+	Kind            string
+	RequestedBy     int64
+	AliasID         *int64
+	Pattern         string
+	AliasName       *string
+	Name            *string
+	SetTemplate     bool
+	TemplateID      *int64
+	TemplateName    *string
+	Ignored         *bool
+	Note            *string
+	BaseChange      int64
+	Status          string
+	Feedback        *string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	ClosedAt        *time.Time
+	RequesterName   *string
+	RequesterEmail  *string
+	RequesterStatus string
+	ReviewerName    *string
+	ReviewerEmail   *string
+	ReviewerStatus  *string
+	CurPattern      *string
+	CurName         *string
+	CurIgnored      *bool
+	CurTemplateID   *int64
+	CurTemplateName *string
+	LatestChange    int64
+	OccupantID      *int64
+	OccupantName    *string
+}
+
+// Requests with the people involved, the alias as it is now, and what's
+// needed for the marks in ADR 0007 §3. Newest first.
+func (q *Queries) ListAliasRequests(ctx context.Context, arg ListAliasRequestsParams) ([]ListAliasRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listAliasRequests,
+		arg.RequestedBy,
+		arg.ID,
+		arg.AliasID,
+		arg.Which,
+		arg.MaxRows,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAliasRequestsRow
+	for rows.Next() {
+		var i ListAliasRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Kind,
+			&i.RequestedBy,
+			&i.AliasID,
+			&i.Pattern,
+			&i.AliasName,
+			&i.Name,
+			&i.SetTemplate,
+			&i.TemplateID,
+			&i.TemplateName,
+			&i.Ignored,
+			&i.Note,
+			&i.BaseChange,
+			&i.Status,
+			&i.Feedback,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ClosedAt,
+			&i.RequesterName,
+			&i.RequesterEmail,
+			&i.RequesterStatus,
+			&i.ReviewerName,
+			&i.ReviewerEmail,
+			&i.ReviewerStatus,
+			&i.CurPattern,
+			&i.CurName,
+			&i.CurIgnored,
+			&i.CurTemplateID,
+			&i.CurTemplateName,
+			&i.LatestChange,
+			&i.OccupantID,
+			&i.OccupantName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listAliases = `-- name: ListAliases :many
@@ -2679,6 +3279,24 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 	return items, nil
 }
 
+const selectCapcodeInsteadOfAlias = `-- name: SelectCapcodeInsteadOfAlias :exec
+INSERT INTO integration_capcodes (integration_id, capcode)
+SELECT integration_id, $1::text FROM integration_aliases WHERE alias_id = $2
+ON CONFLICT DO NOTHING
+`
+
+type SelectCapcodeInsteadOfAliasParams struct {
+	Capcode string
+	AliasID int64
+}
+
+// Q4 (owner, 2026-10-16): integrations that selected a deleted one-capcode
+// alias select its capcode instead. The alias's rows then go by cascade.
+func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCapcodeInsteadOfAliasParams) error {
+	_, err := q.db.Exec(ctx, selectCapcodeInsteadOfAlias, arg.Capcode, arg.AliasID)
+	return err
+}
+
 const sessionUser = `-- name: SessionUser :one
 SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
@@ -2718,6 +3336,29 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.SessionUsedAt,
 	)
 	return i, err
+}
+
+const setAlias = `-- name: SetAlias :exec
+UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5 WHERE id = $1
+`
+
+type SetAliasParams struct {
+	ID         int64
+	Pattern    string
+	Name       string
+	TemplateID *int64
+	Ignored    bool
+}
+
+func (q *Queries) SetAlias(ctx context.Context, arg SetAliasParams) error {
+	_, err := q.db.Exec(ctx, setAlias,
+		arg.ID,
+		arg.Pattern,
+		arg.Name,
+		arg.TemplateID,
+		arg.Ignored,
+	)
+	return err
 }
 
 const setIntegrationSecrets = `-- name: SetIntegrationSecrets :exec
@@ -2843,6 +3484,24 @@ func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (Stree
 	row := q.db.QueryRow(ctx, streetPoint, arg.Locality, arg.Street)
 	var i StreetPointRow
 	err := row.Scan(&i.Lon, &i.Lat)
+	return i, err
+}
+
+const templateByID = `-- name: TemplateByID :one
+SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE id = $1
+`
+
+func (q *Queries) TemplateByID(ctx context.Context, id int64) (Template, error) {
+	row := q.db.QueryRow(ctx, templateByID, id)
+	var i Template
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Agency,
+		&i.Icon,
+		&i.Colour,
+		&i.AgencyProfile,
+	)
 	return i, err
 }
 
@@ -3191,4 +3850,47 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const waitingRequestOf = `-- name: WaitingRequestOf :one
+SELECT id FROM alias_requests
+WHERE requested_by = $1 AND status = 'waiting' AND id <> $2::bigint
+  AND (($3::bigint IS NOT NULL AND alias_id = $3::bigint)
+       OR (kind = 'add' AND $3::bigint IS NULL AND pattern = $4::text))
+LIMIT 1
+`
+
+type WaitingRequestOfParams struct {
+	RequestedBy int64
+	NotID       int64
+	AliasID     *int64
+	Pattern     string
+}
+
+// A user's other waiting request for the same alias, or for the same
+// capcode or pattern if it asks for a new one (ADR 0007 §2).
+func (q *Queries) WaitingRequestOf(ctx context.Context, arg WaitingRequestOfParams) (int64, error) {
+	row := q.db.QueryRow(ctx, waitingRequestOf,
+		arg.RequestedBy,
+		arg.NotID,
+		arg.AliasID,
+		arg.Pattern,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
+const withdrawRequestsOf = `-- name: WithdrawRequestsOf :execrows
+UPDATE alias_requests SET status = 'withdrawn', closed_at = now(), updated_at = now()
+WHERE requested_by = ANY($1::bigint[]) AND status = 'waiting'
+`
+
+// R56: deactivating or deleting a user withdraws their waiting requests.
+func (q *Queries) WithdrawRequestsOf(ctx context.Context, userIds []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, withdrawRequestsOf, userIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }

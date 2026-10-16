@@ -24,6 +24,42 @@ type Alias struct {
 	PatternKey *string
 }
 
+type AliasChange struct {
+	ID          int64
+	AliasID     int64
+	PatternKey  string
+	AliasName   string
+	Action      string
+	Changes     []byte
+	Source      string
+	MadeBy      *int64
+	RequestedBy *int64
+	RequestID   *int64
+	At          time.Time
+}
+
+type AliasRequest struct {
+	ID           int64
+	Kind         string
+	RequestedBy  int64
+	AliasID      *int64
+	Pattern      string
+	AliasName    *string
+	Name         *string
+	SetTemplate  bool
+	TemplateID   *int64
+	TemplateName *string
+	Ignored      *bool
+	Note         *string
+	BaseChange   int64
+	Status       string
+	Feedback     *string
+	ReviewedBy   *int64
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	ClosedAt     *time.Time
+}
+
 type Client struct {
 	ID              string
 	Name            string
