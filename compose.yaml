@@ -48,6 +48,8 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       AUTHENTIK_DB_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
+      # The locked-accounts metric's role (deploy/postgres/20-pagerarchive-metrics.sh).
+      AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
     # P1: statement text (which can contain page text) is never logged.
     command: >-
       postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse
@@ -55,6 +57,7 @@ services:
     volumes:
       - db:/var/lib/postgresql
       - ./deploy/postgres/10-authentik.sh:/docker-entrypoint-initdb.d/10-authentik.sh:ro
+      - ./deploy/postgres/20-pagerarchive-metrics.sh:/docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
       interval: 5s
@@ -88,6 +91,11 @@ services:
       NIGHTLY_AT: ${NIGHTLY_AT:-03:00}
       MAP_TILES: /map/tiles.pmtiles
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
+      # Integrations (docs/integrations.md) and metrics (docs/deploy.md).
+      INTEGRATION_SECRETS_KEY: ${INTEGRATION_SECRETS_KEY:-}
+      INTEGRATION_SECRETS_KEY_OLD: ${INTEGRATION_SECRETS_KEY_OLD:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:-}
+      AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
     volumes:
       - ${PROFILES_DIR:-./profiles/example}:/profiles:ro
       # Your PMTiles map extract (docs/deploy.md). The default is the tiny

@@ -51,10 +51,12 @@
 		{ href: '/map', label: 'Map' },
 		{ href: '/reports', label: 'Reports' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
+		...(meta ? [{ href: '/integrations', label: 'Integrations' }] : []),
 		...(meta?.role === 'admin'
 			? [
 					{ href: '/admin/users', label: 'Users' },
 					{ href: '/admin/clients', label: 'Clients' },
+					{ href: '/admin/integrations', label: 'All integrations' },
 					{ href: '/admin/retention', label: 'Retention' }
 				]
 			: []),

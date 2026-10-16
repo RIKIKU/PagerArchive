@@ -110,6 +110,7 @@ The `api` container reaches Authentik directly on the compose network (`AUTHENTI
 ## Privacy
 
 - No page text is ever written to the logs (SPEC.md P1).
+- Integrations send pages where their owners choose (below). With **Full** content that includes the page text, so Discord, Telegram, Pushover and ntfy default to **Summary**, which has no text or address.
 - Authentik is set up not to contact third parties: avatars show initials only, and analytics, error reporting and update checks are off.
 
 ## Map
@@ -134,7 +135,38 @@ Admins set how long messages are kept, in days, on the Retention page (default 3
 2. applies changed redaction rules to stored messages and re-parses the ones that changed (P1);
 3. vacuums the message tables.
 
+It also deletes integrations' delivery records older than 30 days.
+
 Shortening the period asks for the cut-off date to be confirmed. A run missed while the server was down is made up when it starts. The Retention page shows the last run's result.
+
+## Integrations
+
+Users forward new pages to their own systems from **Integrations**: a webhook, MQTT (with Home Assistant discovery), Discord, Telegram, Pushover or ntfy. See [integrations](integrations.md) for what each needs and what is sent.
+
+- **Set `INTEGRATION_SECRETS_KEY`** in `.env`: 32 random bytes in base64 (`openssl rand -base64 32`). It encrypts integrations' secrets (URLs, tokens, passwords) in the database, so a database dump or backup alone doesn't reveal them. Keep it with your other secrets, outside the database's backups. Without it, integrations are off and the API logs a warning. If it's lost, every owner enters their secrets again.
+- **Changing the key:** set the new one as `INTEGRATION_SECRETS_KEY` and the old one as `INTEGRATION_SECRETS_KEY_OLD`, restart `api` (it seals every secret again with the new key and logs how many), then remove `INTEGRATION_SECRETS_KEY_OLD`.
+- **Private addresses:** integrations can't reach private, loopback or link-local addresses (protection against server-side request forgery). An admin allows specific hosts or ranges, such as your Home Assistant, on **All integrations**.
+- Admins see that each integration exists and can pause it, but never its secrets or where it sends. Deactivating a user stops their integrations; deleting an account deletes them.
+
+## Metrics
+
+`GET /metrics` on the `api` port gives Prometheus-format metrics (SPEC.md R52), for your own monitoring to alert on: each receiver's last-seen time and whether it's receiving (R39) or its clock is ahead, pages received by outcome, messages with each admin flag, integration deliveries by result (`delivered`, `failed`, `too_old`, `cancelled`), integrations by status, accounts locked by guessing protection, and the last nightly run. There is no page text in it, and receivers appear by client ID only.
+
+- **Set `METRICS_TOKEN`** in `.env` (`openssl rand -base64 36 | tr -d '/+='`). Without it, `/metrics` is off. Scrapes need it as a bearer token.
+- **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env` before the first start. Without it, that one metric is left out.
+- Scrape it on your LAN, and keep `/metrics` out of your reverse proxy's public locations.
+
+```yaml
+# prometheus.yml
+scrape_configs:
+  - job_name: pagerarchive
+    authorization:
+      credentials: <METRICS_TOKEN>
+    static_configs:
+      - targets: ["pager-host.lan:8080"]   # API_BIND
+```
+
+An alert for a quiet receiver, for example: `pagerarchive_client_receiving == 0`.
 
 ## Backups
 
@@ -163,4 +195,12 @@ Images are published to GitHub's container registry by CI, but only from a build
 git pull && docker compose pull && docker compose up -d
 ```
 
-Database migrations run when the API starts. Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version.
+Database migrations run when the API starts. Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version. That includes the locked-accounts metric, which reads Authentik's tables.
+
+**From a version before integrations (M5)**, add to `.env`: `INTEGRATION_SECRETS_KEY`, `METRICS_TOKEN` and `AUTHENTIK_METRICS_DB_PASSWORD` (see [Integrations](#integrations) and [Metrics](#metrics)). Then create the metrics role once, after `docker compose up -d`:
+
+```sh
+docker compose exec db sh /docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh
+```
+
+It's safe to run again, for example after changing the role's password.

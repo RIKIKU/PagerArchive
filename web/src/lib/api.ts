@@ -176,6 +176,124 @@ export interface UserRow {
 	invited_by: string | null;
 }
 
+// Integrations (R47-R51c, ADR 0006).
+
+export type IntegrationKind = 'webhook' | 'mqtt' | 'discord' | 'telegram' | 'pushover' | 'ntfy';
+export type Content = 'full' | 'summary';
+
+export interface IntegrationFilter {
+	categories?: string[];
+	codes?: string[];
+	priorities?: string[];
+	text?: string;
+	group?: string;
+	agency?: string;
+	job?: string;
+	parse_failed?: boolean;
+	address_unsplit?: boolean;
+	location_mismatch?: boolean;
+}
+
+export interface IntegrationConfig {
+	target?: string;
+	auth_header?: string;
+	broker?: string;
+	username?: string;
+	topic?: string;
+	ca_cert?: string;
+	ha_discovery?: boolean;
+	ha_prefix?: string;
+	chat_id?: string;
+	server?: string;
+	priority?: number | null;
+}
+
+/** Secrets are sent, never returned: an empty one keeps the saved value. */
+export interface IntegrationSecrets {
+	url?: string;
+	auth_value?: string;
+	password?: string;
+	bot_token?: string;
+	app_token?: string;
+	user_key?: string;
+	topic?: string;
+	access_token?: string;
+}
+
+export interface IntegrationRequest {
+	name: string;
+	kind: IntegrationKind;
+	content: Content | '';
+	capcodes: string[];
+	alias_ids: number[];
+	filter: IntegrationFilter;
+	config: IntegrationConfig;
+	secrets: IntegrationSecrets;
+}
+
+export interface Integration {
+	id: number;
+	uid: string;
+	name: string;
+	kind: IntegrationKind;
+	content: Content;
+	capcodes: string[];
+	aliases: { id: number; pattern: string; name: string }[];
+	filter: IntegrationFilter;
+	config: IntegrationConfig;
+	secrets_set: Record<string, boolean>;
+	secrets_error?: string;
+	status: 'active' | 'paused';
+	paused_by: 'failing' | 'owner' | 'admin' | null;
+	paused_at: string | null;
+	failed_pages: number;
+	last_error: string | null;
+	last_error_at: string | null;
+	last_delivered_at: string | null;
+	created_at: string;
+	updated_at: string;
+	discovery?: { ok: boolean; message: string };
+}
+
+export interface Delivery {
+	message_id: number;
+	capcode: string;
+	sent_at: string;
+	status: 'pending' | 'delivered' | 'failed' | 'too_old' | 'cancelled';
+	attempts: number;
+	last_result: string | null;
+	last_error: string | null;
+	delivered_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface TestResult {
+	ok: boolean;
+	result: string;
+	error?: string;
+	body?: string;
+	took_ms: number;
+}
+
+export interface AdminIntegration {
+	id: number;
+	owner: string;
+	owner_status: string;
+	name: string;
+	kind: IntegrationKind;
+	status: 'active' | 'paused';
+	paused_by: 'failing' | 'owner' | 'admin' | null;
+	last_delivered_at: string | null;
+	created_at: string;
+}
+
+export interface AliasBrief {
+	id: number;
+	pattern: string;
+	name: string;
+}
+
 export class ApiError extends Error {
 	constructor(
 		public status: number,
@@ -276,6 +394,21 @@ export const api = {
 		request<{ deactivated: number }>('POST', `/api/v1/admin/users/${id}/deactivate`, { tree }),
 	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
+	// Integrations (R47-R51c).
+	aliases: () => get<AliasBrief[]>('/api/v1/aliases'),
+	integrations: () => get<{ enabled: boolean; integrations: Integration[] }>('/api/v1/integrations'),
+	createIntegration: (r: IntegrationRequest) => request<Integration>('POST', '/api/v1/integrations', r),
+	updateIntegration: (id: number, r: IntegrationRequest) => request<Integration>('PUT', `/api/v1/integrations/${id}`, r),
+	deleteIntegration: (id: number) => request<void>('DELETE', `/api/v1/integrations/${id}`),
+	testIntegration: (id: number) => request<TestResult>('POST', `/api/v1/integrations/${id}/test`),
+	pauseIntegration: (id: number) => request<void>('POST', `/api/v1/integrations/${id}/pause`),
+	resumeIntegration: (id: number) => request<void>('POST', `/api/v1/integrations/${id}/resume`),
+	deliveries: (id: number) => get<Delivery[]>(`/api/v1/integrations/${id}/deliveries`),
+	adminIntegrations: () => get<AdminIntegration[]>('/api/v1/admin/integrations'),
+	adminPauseIntegration: (id: number) => request<void>('POST', `/api/v1/admin/integrations/${id}/pause`),
+	adminResumeIntegration: (id: number) => request<void>('POST', `/api/v1/admin/integrations/${id}/resume`),
+	allowList: () => get<{ entries: string[] }>('/api/v1/admin/integration-hosts'),
+	setAllowList: (entries: string[]) => request<{ entries: string[] }>('PUT', '/api/v1/admin/integration-hosts', { entries }),
 	authStatus: () => get<{ first_admin_setup: boolean }>('/auth/status'),
 	firstAdmin: async () => {
 		const r = await request<{ redirect: string }>('POST', '/auth/first-admin');
