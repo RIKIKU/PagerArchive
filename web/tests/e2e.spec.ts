@@ -707,3 +707,43 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		for (const [role, id] of ids) await request.delete(`${URL}/api/v1/integrations/${id}`, { headers: as(role) });
 	}
 });
+
+// Radios and checkboxes keep their own small size, not the full-width, tall
+// box text inputs get (app.css), on the integration form for every
+// destination, the admin-only flags included. The Content radios are
+// stacked, each directly under the one above.
+test('integration form: radios and checkboxes are no bigger than 1.5rem', async ({ browser }) => {
+	const page = await (await signedIn(browser, 'admin')).newPage();
+	await page.goto('/integrations');
+	await page.getByRole('button', { name: 'New integration' }).click();
+	const form = page.locator('form.integration-form');
+	await expect(form.getByText('Flags (admins only)')).toBeVisible();
+	const rem = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).fontSize));
+	const max = 1.5 * rem;
+	const kinds = await form.getByLabel('Send to').locator('option').evaluateAll((os) => os.map((o) => (o as HTMLOptionElement).value));
+	expect(kinds).toEqual(['webhook', 'mqtt', 'discord', 'telegram', 'pushover', 'ntfy']);
+	let checked = 0;
+	for (const kind of kinds) {
+		await form.getByLabel('Send to').selectOption(kind);
+		if (kind === 'mqtt') await form.getByLabel(/Home Assistant discovery/).check();
+		const controls = form.locator('input[type="radio"], input[type="checkbox"]');
+		const n = await controls.count();
+		expect(n, kind).toBeGreaterThan(0);
+		for (let i = 0; i < n; i++) {
+			const c = controls.nth(i);
+			const box = await c.boundingBox();
+			const what = `${kind}: ${await c.getAttribute('type')} ${i} (${box?.width}x${box?.height}px, max ${max}px)`;
+			expect(box, what).not.toBeNull();
+			expect(box!.width, what).toBeLessThanOrEqual(max);
+			expect(box!.height, what).toBeLessThanOrEqual(max);
+			checked++;
+		}
+		const radios = form.getByRole('group', { name: 'Content' }).getByRole('radio');
+		await expect(radios).toHaveCount(2);
+		const [full, summary] = [await radios.nth(0).boundingBox(), await radios.nth(1).boundingBox()];
+		expect(Math.abs(full!.x - summary!.x), `${kind}: Content radios line up`).toBeLessThanOrEqual(1);
+		expect(summary!.y, `${kind}: Summary is below Full`).toBeGreaterThanOrEqual(full!.y + full!.height);
+	}
+	console.log(`radios and checkboxes measured: ${checked}, none over ${max}px`);
+	await page.context().close();
+});

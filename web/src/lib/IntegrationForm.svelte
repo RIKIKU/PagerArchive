@@ -197,7 +197,7 @@
 
 	<fieldset>
 		<legend>Content</legend>
-		<div class="checks">
+		<div class="stacked">
 			<label class="check"><input type="radio" bind:group={content} value="full" /> Full: the text and every field</label>
 			<label class="check"
 				><input type="radio" bind:group={content} value="summary" /> Summary: alias, event type, priority, time and job number. No text
@@ -378,6 +378,13 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: 0.25rem 1rem;
+	}
+	/* One option per line, each radio directly under the one above. */
+	.stacked {
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 0.35rem;
 	}
 	.check {
 		display: inline-flex;
