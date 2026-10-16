@@ -95,10 +95,73 @@ func TestBlockedAddresses(t *testing.T) {
 		"::ffff:127.0.0.1": "a loopback address",
 		"93.184.215.14":    "",
 		"2606:4700::1111":  "",
+		// IETF protocol assignments, benchmarking and reserved.
+		"192.0.0.1":       "an IETF protocol address",
+		"192.0.0.255":     "an IETF protocol address",
+		"192.0.1.1":       "",
+		"198.18.0.1":      "a benchmarking address",
+		"198.19.255.255":  "a benchmarking address",
+		"198.17.255.255":  "",
+		"198.20.0.1":      "",
+		"240.0.0.1":       "a reserved address",
+		"254.255.255.255": "a reserved address",
+		"239.255.255.255": "a multicast address",
 	} {
 		if got := blockedReason(netip.MustParseAddr(addr)); got != want {
 			t.Errorf("%s: %q, want %q", addr, got, want)
 		}
+	}
+}
+
+// IPv6 addresses that carry an IPv4 address are judged by it (R51).
+func TestBlockedEmbeddedIPv4(t *testing.T) {
+	for addr, want := range map[string]string{
+		// NAT64 64:ff9b::/96: the last 32 bits.
+		"64:ff9b::7f00:1":    "a loopback address (127.0.0.1 inside an IPv6 address)",
+		"64:ff9b::a00:1":     "a private address (10.0.0.1 inside an IPv6 address)",
+		"64:ff9b::a9fe:a9fe": "a link-local address (169.254.169.254 inside an IPv6 address)",
+		"64:ff9b::c000:1":    "an IETF protocol address (192.0.0.1 inside an IPv6 address)",
+		"64:ff9b::5db8:d70e": "",
+		"64:ff9b:1::a00:1":   "", // not the well-known /96
+		// 6to4 2002::/16: bits 16-47.
+		"2002:c0a8:10a::1":  "a private address (192.168.1.10 inside an IPv6 address)",
+		"2002:7f00:1::1":    "a loopback address (127.0.0.1 inside an IPv6 address)",
+		"2002:c612:1:5::1":  "a benchmarking address (198.18.0.1 inside an IPv6 address)",
+		"2002:6440:101::1":  "a shared (carrier-grade NAT) address (100.64.1.1 inside an IPv6 address)",
+		"2002:5db8:d70e::1": "",
+		// IPv4-compatible ::/96: the last 32 bits.
+		"::7f00:1":    "a loopback address (127.0.0.1 inside an IPv6 address)",
+		"::c0a8:10a":  "a private address (192.168.1.10 inside an IPv6 address)",
+		"::f000:1":    "a reserved address (240.0.0.1 inside an IPv6 address)",
+		"::5db8:d70e": "",
+		"::1":         "a loopback address",
+		"::":          "an unspecified address",
+	} {
+		if got := blockedReason(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("%s: %q, want %q", addr, got, want)
+		}
+	}
+
+	// Saving and connecting refuse them, naming the address; an admin who
+	// allows the IPv4 address allows the IPv6 forms of it too.
+	g := &Guard{}
+	_, err := g.Resolve(context.Background(), "64:ff9b::c0a8:10a")
+	var ae *AddressError
+	if !errors.As(err, &ae) || ae.Error() != "64:ff9b::c0a8:10a is a private address (192.168.1.10 inside an IPv6 address). Ask an admin to allow it." {
+		t.Errorf("NAT64 to a private address: %v", err)
+	}
+	allow, err := ParseAllowList([]string{"192.168.1.10"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Allow = func(context.Context) (AllowList, error) { return allow, nil }
+	for _, a := range []string{"64:ff9b::c0a8:10a", "2002:c0a8:10a::1", "::c0a8:10a"} {
+		if _, err := g.Resolve(context.Background(), a); err != nil {
+			t.Errorf("%s with 192.168.1.10 allowed: %v", a, err)
+		}
+	}
+	if _, err := g.Resolve(context.Background(), "64:ff9b::c0a8:10b"); err == nil {
+		t.Error("64:ff9b::c0a8:10b (192.168.1.11) was allowed by 192.168.1.10")
 	}
 }
 

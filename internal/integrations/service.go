@@ -19,6 +19,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
+	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -183,6 +184,19 @@ func (s *Service) validate(ctx context.Context, req Request, prev *loaded, prevS
 	for _, id := range req.AliasIDs {
 		if !slices.Contains(p.aliasIDs, id) {
 			p.aliasIDs = append(p.aliasIDs, id)
+		}
+	}
+	// R48: a capcode that has its own alias is selected as that alias.
+	if len(p.capcodes) > 0 {
+		exact, err := s.Store.ExactAliases(ctx, p.capcodes)
+		if err != nil {
+			return p, dbErr("aliases", err)
+		}
+		for _, a := range exact {
+			p.capcodes = slices.DeleteFunc(p.capcodes, func(c string) bool { return a.PatternKey != nil && c == *a.PatternKey })
+			if !slices.Contains(p.aliasIDs, a.ID) {
+				p.aliasIDs = append(p.aliasIDs, a.ID)
+			}
 		}
 	}
 	if len(p.capcodes)+len(p.aliasIDs) == 0 {
@@ -464,6 +478,9 @@ func (s *Service) view(ctx context.Context, l loaded) (View, error) {
 		return v, dbErr("capcodes", err)
 	}
 	v.Capcodes = append(v.Capcodes, codes...)
+	if v.CoveredBy, err = s.coveredBy(ctx, codes); err != nil {
+		return v, err
+	}
 	aliases, err := s.Store.IntegrationAliases(ctx, l.row.ID)
 	if err != nil {
 		return v, dbErr("aliases", err)
@@ -472,6 +489,77 @@ func (s *Service) view(ctx context.Context, l loaded) (View, error) {
 		v.Aliases = append(v.Aliases, AliasRef{ID: a.ID, Pattern: a.Pattern, Name: a.Name})
 	}
 	return v, nil
+}
+
+// coveredBy names the alias each capcode's pages show (R27 precedence), for
+// capcodes that a range alias covers (R48).
+func (s *Service) coveredBy(ctx context.Context, capcodes []string) (map[string]string, error) {
+	out := map[string]string{}
+	if len(capcodes) == 0 {
+		return out, nil
+	}
+	rows, err := s.Store.CapcodeAliasCandidates(ctx, capcodes)
+	if err != nil {
+		return nil, dbErr("aliases", err)
+	}
+	cands, names := map[string][]ingest.Candidate{}, map[int64]string{}
+	for _, r := range rows {
+		cands[r.Capcode] = append(cands[r.Capcode], ingest.Candidate{ID: r.ID, Pattern: r.Pattern})
+		names[r.ID] = r.Name
+	}
+	for c, cs := range cands {
+		out[c] = names[ingest.BestAlias(cs).ID]
+	}
+	return out, nil
+}
+
+// Suggest is what the selection field offers for what was typed (R48): the
+// aliases whose name or capcode contains it and, for digits, the capcode.
+// A capcode with its own alias is offered as that alias; one that only a
+// range alias covers is offered as the capcode, with the range's name, so
+// typing a capcode never selects a range.
+func (s *Service) Suggest(ctx context.Context, q string) ([]Suggestion, error) {
+	q = strings.TrimSpace(q)
+	out := []Suggestion{}
+	if q == "" || len(q) > 80 {
+		return out, nil
+	}
+	var first *Suggestion
+	if capcodeRe.MatchString(q) {
+		c := decoder.PadCapcode(q)
+		if a, err := s.Store.AliasByKey(ctx, c); err == nil {
+			first = &Suggestion{Kind: "alias", AliasID: a.ID, Name: a.Name, Pattern: a.Pattern}
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return nil, dbErr("aliases", err)
+		} else {
+			covered, err := s.coveredBy(ctx, []string{c})
+			if err != nil {
+				return nil, err
+			}
+			first = &Suggestion{Kind: "capcode", Capcode: c, CoveredBy: covered[c]}
+		}
+	}
+	rows, err := s.Store.SearchAliases(ctx, q)
+	if err != nil {
+		return nil, dbErr("aliases", err)
+	}
+	for _, a := range rows {
+		if first != nil && first.Kind == "alias" && first.AliasID == a.ID {
+			continue
+		}
+		out = append(out, Suggestion{Kind: "alias", AliasID: a.ID, Name: a.Name, Pattern: a.Pattern,
+			Range: strings.ContainsAny(a.Pattern, "%_")})
+	}
+	if first != nil {
+		// A whole capcode comes first; a few digits are more likely the
+		// start of an alias's capcode.
+		if len(q) == 7 || first.Kind == "alias" {
+			out = append([]Suggestion{*first}, out...)
+		} else {
+			out = append(out, *first)
+		}
+	}
+	return out, nil
 }
 
 // List is the owner's integrations.
@@ -774,22 +862,16 @@ func (s *Service) Test(ctx context.Context, owner db.User, id int64) (TestResult
 	return out, nil
 }
 
-// AdminList is every integration, as admins may see it (R47).
-func (s *Service) AdminList(ctx context.Context) ([]AdminView, error) {
-	rows, err := s.Store.AllIntegrations(ctx)
+// AdminList is one user's integrations, as admins may see them on that
+// user's page (R44b, R47). There is no list of everyone's.
+func (s *Service) AdminList(ctx context.Context, ownerID int64) ([]AdminView, error) {
+	rows, err := s.Store.AdminIntegrationsOfUser(ctx, ownerID)
 	if err != nil {
 		return nil, dbErr("integrations", err)
 	}
 	out := []AdminView{}
 	for _, r := range rows {
-		owner := "deleted user"
-		if r.OwnerEmail != nil {
-			owner = *r.OwnerEmail
-			if r.OwnerName != nil && *r.OwnerName != "" {
-				owner = *r.OwnerName + " (" + *r.OwnerEmail + ")"
-			}
-		}
-		out = append(out, AdminView{ID: r.ID, Owner: owner, OwnerStatus: r.OwnerStatus, Name: r.Name, Kind: Kind(r.Kind), Status: r.Status,
+		out = append(out, AdminView{ID: r.ID, Name: r.Name, Kind: Kind(r.Kind), Status: r.Status,
 			PausedBy: r.PausedBy, LastDeliveredAt: r.LastDeliveredAt, CreatedAt: r.CreatedAt})
 	}
 	return out, nil

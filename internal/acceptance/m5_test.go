@@ -593,12 +593,17 @@ func TestIntegrationsBelongToTheirOwner(t *testing.T) {
 	if !list.Enabled || len(list.Integrations) != 0 {
 		t.Errorf("admin's own list: %+v", list)
 	}
-	code, body = e.admin.raw(http.MethodGet, "/api/v1/admin/integrations", nil)
-	if code != http.StatusOK || !strings.Contains(body, `"name":"Private"`) || strings.Contains(body, "T0PS3CRET") || strings.Contains(body, "127.0.0.1") {
-		t.Errorf("admin list %d: %s", code, body)
+	// Admins see it on its owner's page in Administration (R44b, A41).
+	var ownerID int64
+	if err := e.st.Pool.QueryRow(e.ctx, "SELECT owner_id FROM integrations WHERE id = $1", v.ID).Scan(&ownerID); err != nil {
+		t.Fatal(err)
 	}
-	if code, _ := e.user.raw(http.MethodGet, "/api/v1/admin/integrations", nil); code != http.StatusForbidden {
-		t.Errorf("user reading the admin list: %d", code)
+	code, body = e.admin.raw(http.MethodGet, fmt.Sprintf("/api/v1/admin/users/%d", ownerID), nil)
+	if code != http.StatusOK || !strings.Contains(body, `"name":"Private"`) || strings.Contains(body, "T0PS3CRET") || strings.Contains(body, "127.0.0.1") {
+		t.Errorf("owner's admin page %d: %s", code, body)
+	}
+	if code, _ := e.user.raw(http.MethodGet, fmt.Sprintf("/api/v1/admin/users/%d", ownerID), nil); code != http.StatusForbidden {
+		t.Errorf("user reading an admin page: %d", code)
 	}
 
 	// Admin pause: the owner can't resume it; an admin can.
@@ -647,9 +652,9 @@ func TestIntegrationRules(t *testing.T) {
 		t.Errorf("Discord preset aimed elsewhere: %d", code)
 	}
 	// R49: no backfill. A page stored before the integration isn't sent.
-	e.mustPost("a", "0100001", row1Text, e.now)
-	v := e.createIntegration(e.user, webhookTo("Later", hook, "100001")) // capcodes are zero-padded
-	if len(v.Capcodes) != 1 || v.Capcodes[0] != "0100001" {
+	e.mustPost("a", "0100009", row1Text, e.now)
+	v := e.createIntegration(e.user, webhookTo("Later", hook, "100009")) // capcodes are zero-padded
+	if len(v.Capcodes) != 1 || v.Capcodes[0] != "0100009" {
 		t.Errorf("capcodes %v", v.Capcodes)
 	}
 	e.integ.Drain(e.ctx)
@@ -742,5 +747,164 @@ func TestPresetPrioritiesStopAtHigh(t *testing.T) {
 	// An existing integration can't be changed to 2 either.
 	if code, _ := e.user.call(http.MethodPut, fmt.Sprintf("/api/v1/integrations/%d", v.ID), po(prio(2)), nil); code != http.StatusUnprocessableEntity {
 		t.Errorf("changing to priority 2: %d, want 422", code)
+	}
+}
+
+// A40. One selection field (R48): typing a capcode offers its own alias
+// when it has one, and otherwise the capcode itself, with the range alias
+// covering it named beside it, never the range.
+func TestA40OneSelectionField(t *testing.T) {
+	e := setup(t)
+	e.allowLoopback()
+	hook := standin.Webhook()
+	defer hook.Close()
+	block := e.addAlias("0100%", "Stations block")
+	station1 := e.aliasID("Station 1")
+
+	suggest := func(q string) []integrations.Suggestion {
+		t.Helper()
+		var out []integrations.Suggestion
+		if code, p := e.user.call(http.MethodGet, "/api/v1/integrations/selection?q="+q, nil, &out); code != http.StatusOK {
+			t.Fatalf("selection %q: %d %s", q, code, p.Error)
+		}
+		return out
+	}
+	got := suggest("0100001")
+	t.Logf("typing 0100001 offers %+v", got)
+	if len(got) != 1 || got[0].Kind != "alias" || got[0].AliasID != station1 || got[0].Name != "Station 1" || got[0].Pattern != "0100001" {
+		t.Errorf("typing 0100001: %+v, want only the alias Station 1 (0100001)", got)
+	}
+	got = suggest("0100009")
+	t.Logf("typing 0100009 offers %+v", got)
+	if len(got) != 1 || got[0].Kind != "capcode" || got[0].Capcode != "0100009" || got[0].CoveredBy != "Stations block" {
+		t.Errorf("typing 0100009: %+v, want only the capcode 0100009, covered by Stations block", got)
+	}
+	// Typing a name offers aliases, ranges included: that's choosing one.
+	got = suggest("station")
+	names := []string{}
+	for _, s := range got {
+		names = append(names, s.Name)
+	}
+	if strings.Join(names, ",") != "Station 1,Station 2,Station 3,Station 4,Stations block" || !got[4].Range || got[0].Range {
+		t.Errorf("typing station: %+v", got)
+	}
+
+	// Saving what was chosen: the alias, and the capcode with its range
+	// alias named beside it. A capcode with its own alias sent through the
+	// API is saved as that alias too.
+	v := e.createIntegration(e.user, integrations.Request{Name: "Picked", Kind: integrations.Webhook, AliasIDs: []int64{station1},
+		Capcodes: []string{"0100009"}, Secrets: integrations.Secrets{URL: hook.URL + "/hook"}})
+	t.Logf("saved: aliases %+v, capcodes %v, covered by %v", v.Aliases, v.Capcodes, v.CoveredBy)
+	if len(v.Aliases) != 1 || v.Aliases[0].ID != station1 || len(v.Capcodes) != 1 || v.Capcodes[0] != "0100009" ||
+		v.CoveredBy["0100009"] != "Stations block" {
+		t.Errorf("saved %+v %v %v", v.Aliases, v.Capcodes, v.CoveredBy)
+	}
+	w := e.createIntegration(e.user, webhookTo("By capcode", hook, "100001", "0100009"))
+	if len(w.Aliases) != 1 || w.Aliases[0].ID != station1 || len(w.Capcodes) != 1 || w.Capcodes[0] != "0100009" {
+		t.Errorf("capcode 100001 through the API: aliases %+v, capcodes %v", w.Aliases, w.Capcodes)
+	}
+	for _, a := range w.Aliases {
+		if a.ID == block {
+			t.Error("a capcode selected the range")
+		}
+	}
+
+	// Only 0100009 is selected, not the range: a page to 0100002, which the
+	// range covers but which wasn't chosen, isn't sent.
+	e.mustPost("a", "0100002", "@@EX0000003 HSF1 SMOKE FROM SHED @ 12 FICTION ST, MADEUPTON #STN2", e.now)
+	e.mustPost("a", "0100009", "@@EX0000004 HSF1 SMOKE FROM BARN @ 12 FICTION ST, MADEUPTON #STN9", e.now)
+	e.integ.Drain(e.ctx)
+	reqs := hook.Requests()
+	t.Logf("requests: %d", len(reqs))
+	if len(reqs) != 2 { // one per integration, both for 0100009
+		t.Fatalf("%d requests, want 2", len(reqs))
+	}
+	for _, r := range reqs {
+		if !strings.Contains(string(r.Body), `"capcode":"0100009"`) {
+			t.Errorf("a request for another capcode: %s", r.Body)
+		}
+	}
+}
+
+// addAlias adds an alias with the fixture's template.
+func (e *env) addAlias(pattern, name string) int64 {
+	e.t.Helper()
+	var id int64
+	if err := e.st.Pool.QueryRow(e.ctx, `INSERT INTO aliases (pattern, name, template_id)
+		SELECT $1, $2, id FROM templates WHERE name = 'Example Fire' RETURNING id`, pattern, name).Scan(&id); err != nil {
+		e.t.Fatal(err)
+	}
+	return id
+}
+
+// A41. Administration (R44b): one Admin area, refused to users; each user's
+// page lists their integrations without destinations, and nothing lists
+// everyone's. (The header's Admin link is checked in the browser.)
+func TestA41AdministrationArea(t *testing.T) {
+	e := setup(t)
+	e.allowLoopback()
+	hook := standin.Webhook()
+	defer hook.Close()
+	b := e.user
+	req := webhookTo("B's pager", hook, "0100009")
+	req.Secrets.URL = hook.URL + "/hook/T0PS3CRET"
+	bi := e.createIntegration(b, req)
+	ai := e.createIntegration(e.admin, webhookTo("A's pager", hook, "0100008"))
+
+	// B: every admin endpoint is refused.
+	var bID int64
+	if err := e.st.Pool.QueryRow(e.ctx, "SELECT id FROM users WHERE email = 'user@example.com'").Scan(&bID); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/api/v1/admin/users", fmt.Sprintf("/api/v1/admin/users/%d", bID), "/api/v1/admin/clients",
+		"/api/v1/admin/invitations", "/api/v1/admin/retention", "/api/v1/admin/integration-hosts"} {
+		code, _ := b.raw(http.MethodGet, path, nil)
+		t.Logf("user B GET %s: %d", path, code)
+		if code != http.StatusForbidden {
+			t.Errorf("user B GET %s: %d, want 403", path, code)
+		}
+	}
+	if code, _ := b.raw(http.MethodPost, fmt.Sprintf("/api/v1/admin/integrations/%d/pause", ai.ID), nil); code != http.StatusForbidden {
+		t.Errorf("user B pausing as admin: %d", code)
+	}
+
+	// A: B's page shows B's integration, never where it sends.
+	code, body := e.admin.raw(http.MethodGet, fmt.Sprintf("/api/v1/admin/users/%d", bID), nil)
+	t.Logf("admin GET B's page: %d %s", code, body)
+	var page server.AdminUser
+	if err := json.Unmarshal([]byte(body), &page); code != http.StatusOK || err != nil {
+		t.Fatalf("B's page: %d %v", code, err)
+	}
+	if page.User.Email != "user@example.com" || len(page.Integrations) != 1 || page.Integrations[0].ID != bi.ID ||
+		page.Integrations[0].Name != "B's pager" || page.Integrations[0].Kind != integrations.Webhook || page.Integrations[0].Status != "active" {
+		t.Errorf("B's page: %+v", page)
+	}
+	for _, leak := range []string{"T0PS3CRET", "127.0.0.1", hook.URL, `"config"`, `"secrets`, `"capcodes"`, "A's pager"} {
+		if strings.Contains(body, leak) {
+			t.Errorf("B's page shows %q", leak)
+		}
+	}
+	// No page lists every user's integrations.
+	if code, _ := e.admin.raw(http.MethodGet, "/api/v1/admin/integrations", nil); code != http.StatusNotFound {
+		t.Errorf("GET /api/v1/admin/integrations: %d, want 404", code)
+	}
+
+	// The users list counts integrations and marks those paused for failing.
+	e.st.Pool.Exec(e.ctx, "UPDATE integrations SET status = 'paused', paused_by = 'failing', paused_at = now() WHERE id = $1", bi.ID)
+	var users []server.UserRow
+	e.admin.call(http.MethodGet, "/api/v1/admin/users", nil, &users)
+	for _, u := range users {
+		t.Logf("users list: %s integrations=%d paused for failing=%d", u.Email, u.Integrations, u.IntegrationsFailing)
+		want := map[string][2]int64{"user@example.com": {1, 1}, "admin@example.com": {1, 0}}[u.Email]
+		if u.Integrations != want[0] || u.IntegrationsFailing != want[1] {
+			t.Errorf("%s: %d integrations, %d failing, want %v", u.Email, u.Integrations, u.IntegrationsFailing, want)
+		}
+	}
+	// Resume from B's page works as before; an unknown user is 404.
+	if code, _ := e.admin.raw(http.MethodPost, fmt.Sprintf("/api/v1/admin/integrations/%d/resume", bi.ID), nil); code != http.StatusNoContent {
+		t.Errorf("admin resume: %d", code)
+	}
+	if code, _ := e.admin.raw(http.MethodGet, "/api/v1/admin/users/999999", nil); code != http.StatusNotFound {
+		t.Errorf("unknown user: %d", code)
 	}
 }

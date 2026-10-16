@@ -1,13 +1,12 @@
 <script lang="ts">
 	// R47-R51c: the signed-in user's own integrations. Nobody else sees them;
 	// admins only see that they exist.
-	import { api, type AliasBrief, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
+	import { api, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import IntegrationForm from '#lib/IntegrationForm.svelte';
 	import { deliveryLabels, kindLabels, notice as convenience, statusLabel } from '#lib/integrations.ts';
 
 	let meta: Meta | undefined = $state();
-	let aliases: AliasBrief[] = $state([]);
 	let list: Integration[] = $state([]);
 	let enabled = $state(true);
 	let loaded = $state(false);
@@ -22,7 +21,6 @@
 	const tz = $derived(meta?.time_zone ?? 'UTC');
 
 	api.meta().then((m) => (meta = m));
-	api.aliases().then((a) => (aliases = a)).catch(() => {});
 	function load() {
 		api
 			.integrations()
@@ -76,7 +74,7 @@
 	}
 
 	function selection(i: Integration): string {
-		const parts = [...i.aliases.map((a) => a.name), ...i.capcodes];
+		const parts = [...i.aliases.map((a) => a.name), ...i.capcodes.map((c) => (i.covered_by[c] ? `${c} (in ${i.covered_by[c]})` : c))];
 		return parts.length > 4 ? `${parts.slice(0, 4).join(', ')} and ${parts.length - 4} more` : parts.join(', ');
 	}
 
@@ -117,7 +115,7 @@
 	</div>
 {/if}
 {#if meta && editing === 'new'}
-	<IntegrationForm {meta} {aliases} onsaved={saved} oncancel={() => (editing = undefined)} />
+	<IntegrationForm {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
 {/if}
 
 {#if loaded && list.length === 0 && editing !== 'new'}
@@ -128,7 +126,7 @@
 	{#each list as i (i.id)}
 		<li data-testid="integration">
 			{#if meta && editing === i.id}
-				<IntegrationForm existing={i} {meta} {aliases} onsaved={saved} oncancel={() => (editing = undefined)} />
+				<IntegrationForm existing={i} {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
 			{:else}
 				<div class="head">
 					<h2>{i.name}</h2>

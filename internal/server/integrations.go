@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -166,35 +167,48 @@ func (s *Server) integrationDeliveries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// AliasBrief is an alias for the integration form's picker.
-type AliasBrief struct {
-	ID      int64  `json:"id"`
-	Pattern string `json:"pattern"`
-	Name    string `json:"name"`
-}
-
-func (s *Server) listAliases(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.ListAliasesBrief(r.Context())
-	if err != nil {
-		s.Log.Error("aliases", "error", store.SafeError(err))
-		problem(w, http.StatusInternalServerError, "lookup failed")
+// suggestSelection is what the selection field offers for ?q= (R48).
+func (s *Server) suggestSelection(w http.ResponseWriter, r *http.Request) {
+	if s.integrationsOff(w) {
 		return
 	}
-	out := []AliasBrief{}
-	for _, a := range rows {
-		out = append(out, AliasBrief{ID: a.ID, Pattern: a.Pattern, Name: a.Name})
+	out, err := s.Integrations.Suggest(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		s.integrationsError(w, "selection", err)
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
-func (s *Server) adminIntegrations(w http.ResponseWriter, r *http.Request) {
-	if s.integrationsOff(w) {
+// AdminUser is one user's page in Administration (R44b): the user, and
+// their integrations without destinations or secrets.
+type AdminUser struct {
+	User         UserRow                  `json:"user"`
+	Integrations []integrations.AdminView `json:"integrations"`
+}
+
+func (s *Server) adminUser(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
 		return
 	}
-	out, err := s.Integrations.AdminList(r.Context())
+	users, err := s.userRows(r.Context())
 	if err != nil {
-		s.integrationsError(w, "admin integrations", err)
+		s.Log.Error("users", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
+	}
+	i := slices.IndexFunc(users, func(u UserRow) bool { return u.ID == id })
+	if i < 0 {
+		problem(w, http.StatusNotFound, "no such user")
+		return
+	}
+	out := AdminUser{User: users[i], Integrations: []integrations.AdminView{}}
+	if s.Integrations != nil {
+		if out.Integrations, err = s.Integrations.AdminList(r.Context(), id); err != nil {
+			s.integrationsError(w, "admin integrations", err)
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

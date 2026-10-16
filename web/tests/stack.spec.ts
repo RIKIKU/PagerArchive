@@ -51,7 +51,7 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	await expect(admin.locator('input[name="password"]')).toBeVisible();
 	await enrol(admin, request, OWNER, 'Owner Person');
 	await admin.waitForURL((u) => u.origin === app && u.pathname === '/');
-	await expect(admin.getByRole('link', { name: 'Users' })).toBeVisible();
+	await expect(admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 	await admin.screenshot({ path: test.info().outputPath('1-admin-signed-in.png') });
 
 	// Once an admin exists, a signed-out visitor goes straight to Authentik.
@@ -80,7 +80,7 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	await expect(user.locator('dl')).toContainText(tester);
 	await expect(user.locator('dl')).toContainText('User');
 	await expect(user.locator('dl')).toContainText(`Owner Person (${OWNER})`);
-	await expect(user.getByRole('link', { name: 'Users' })).toHaveCount(0);
+	await expect(user.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toHaveCount(0);
 	await user.screenshot({ path: test.info().outputPath('2-test-user-signed-in.png') });
 
 	// The admin sees them, invited by the admin.

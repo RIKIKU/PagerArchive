@@ -148,26 +148,28 @@ type AliasRef struct {
 
 // View is an integration as its owner sees it: never its secrets.
 type View struct {
-	ID              int64           `json:"id"`
-	UID             string          `json:"uid"`
-	Name            string          `json:"name"`
-	Kind            Kind            `json:"kind"`
-	Content         string          `json:"content"`
-	Capcodes        []string        `json:"capcodes"`
-	Aliases         []AliasRef      `json:"aliases"`
-	Filter          Filter          `json:"filter"`
-	Config          Config          `json:"config"`
-	SecretsSet      map[string]bool `json:"secrets_set"`
-	SecretsError    string          `json:"secrets_error,omitempty"` // e.g. saved with another key
-	Status          string          `json:"status"`                  // active or paused
-	PausedBy        *string         `json:"paused_by"`               // failing, owner or admin
-	PausedAt        *time.Time      `json:"paused_at"`
-	FailedPages     int32           `json:"failed_pages"`
-	LastError       *string         `json:"last_error"`
-	LastErrorAt     *time.Time      `json:"last_error_at"`
-	LastDeliveredAt *time.Time      `json:"last_delivered_at"`
-	CreatedAt       time.Time       `json:"created_at"`
-	UpdatedAt       time.Time       `json:"updated_at"`
+	ID       int64    `json:"id"`
+	UID      string   `json:"uid"`
+	Name     string   `json:"name"`
+	Kind     Kind     `json:"kind"`
+	Content  string   `json:"content"`
+	Capcodes []string `json:"capcodes"`
+	// CoveredBy names the range alias of each capcode that one covers (R48).
+	CoveredBy       map[string]string `json:"covered_by"`
+	Aliases         []AliasRef        `json:"aliases"`
+	Filter          Filter            `json:"filter"`
+	Config          Config            `json:"config"`
+	SecretsSet      map[string]bool   `json:"secrets_set"`
+	SecretsError    string            `json:"secrets_error,omitempty"` // e.g. saved with another key
+	Status          string            `json:"status"`                  // active or paused
+	PausedBy        *string           `json:"paused_by"`               // failing, owner or admin
+	PausedAt        *time.Time        `json:"paused_at"`
+	FailedPages     int32             `json:"failed_pages"`
+	LastError       *string           `json:"last_error"`
+	LastErrorAt     *time.Time        `json:"last_error_at"`
+	LastDeliveredAt *time.Time        `json:"last_delivered_at"`
+	CreatedAt       time.Time         `json:"created_at"`
+	UpdatedAt       time.Time         `json:"updated_at"`
 	// Discovery is what happened to Home Assistant discovery on this save.
 	Discovery *Outcome `json:"discovery,omitempty"`
 }
@@ -196,14 +198,24 @@ type Delivery struct {
 // never what it sends or where (R47).
 type AdminView struct {
 	ID              int64      `json:"id"`
-	Owner           string     `json:"owner"`
-	OwnerStatus     string     `json:"owner_status"`
 	Name            string     `json:"name"`
 	Kind            Kind       `json:"kind"`
 	Status          string     `json:"status"`
 	PausedBy        *string    `json:"paused_by"`
 	LastDeliveredAt *time.Time `json:"last_delivered_at"`
 	CreatedAt       time.Time  `json:"created_at"`
+}
+
+// Suggestion is one thing the selection field offers (R48): an alias, or a
+// capcode with the name of the range alias covering it, if any.
+type Suggestion struct {
+	Kind      string `json:"kind"` // alias or capcode
+	AliasID   int64  `json:"alias_id,omitempty"`
+	Name      string `json:"name,omitempty"`
+	Pattern   string `json:"pattern,omitempty"`
+	Range     bool   `json:"range,omitempty"` // the alias is a pattern
+	Capcode   string `json:"capcode,omitempty"`
+	CoveredBy string `json:"covered_by,omitempty"`
 }
 
 // TestResult is what the endpoint answered a Send test (R51c).

@@ -41,7 +41,7 @@ jobs:
         run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
-      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A39, preset stand-ins)
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A41, address guard, preset stand-ins)
         run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
         shell: bash
       - name: Acceptance check summary

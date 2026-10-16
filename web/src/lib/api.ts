@@ -174,6 +174,9 @@ export interface UserRow {
 	deactivated_at: string | null;
 	invited_by_id: number | null;
 	invited_by: string | null;
+	// R44b: their integrations, and how many are paused for failing.
+	integrations: number;
+	integrations_failing: number;
 }
 
 // Integrations (R47-R51c, ADR 0006).
@@ -238,6 +241,8 @@ export interface Integration {
 	kind: IntegrationKind;
 	content: Content;
 	capcodes: string[];
+	// The range alias covering each capcode that one covers (R48).
+	covered_by: Record<string, string>;
 	aliases: { id: number; pattern: string; name: string }[];
 	filter: IntegrationFilter;
 	config: IntegrationConfig;
@@ -278,8 +283,6 @@ export interface TestResult {
 
 export interface AdminIntegration {
 	id: number;
-	owner: string;
-	owner_status: string;
 	name: string;
 	kind: IntegrationKind;
 	status: 'active' | 'paused';
@@ -288,10 +291,22 @@ export interface AdminIntegration {
 	created_at: string;
 }
 
-export interface AliasBrief {
-	id: number;
-	pattern: string;
-	name: string;
+// What the selection field offers (R48): an alias, or a capcode with the
+// range alias covering it.
+export interface Suggestion {
+	kind: 'alias' | 'capcode';
+	alias_id?: number;
+	name?: string;
+	pattern?: string;
+	range?: boolean;
+	capcode?: string;
+	covered_by?: string;
+}
+
+// One user's page in Administration (R44b).
+export interface AdminUser {
+	user: UserRow;
+	integrations: AdminIntegration[];
 }
 
 export class ApiError extends Error {
@@ -395,7 +410,7 @@ export const api = {
 	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
 	// Integrations (R47-R51c).
-	aliases: () => get<AliasBrief[]>('/api/v1/aliases'),
+	selection: (q: string) => get<Suggestion[]>(`/api/v1/integrations/selection?q=${encodeURIComponent(q)}`),
 	integrations: () => get<{ enabled: boolean; integrations: Integration[] }>('/api/v1/integrations'),
 	createIntegration: (r: IntegrationRequest) => request<Integration>('POST', '/api/v1/integrations', r),
 	updateIntegration: (id: number, r: IntegrationRequest) => request<Integration>('PUT', `/api/v1/integrations/${id}`, r),
@@ -404,7 +419,7 @@ export const api = {
 	pauseIntegration: (id: number) => request<void>('POST', `/api/v1/integrations/${id}/pause`),
 	resumeIntegration: (id: number) => request<void>('POST', `/api/v1/integrations/${id}/resume`),
 	deliveries: (id: number) => get<Delivery[]>(`/api/v1/integrations/${id}/deliveries`),
-	adminIntegrations: () => get<AdminIntegration[]>('/api/v1/admin/integrations'),
+	adminUser: (id: number | string) => get<AdminUser>(`/api/v1/admin/users/${encodeURIComponent(id)}`),
 	adminPauseIntegration: (id: number) => request<void>('POST', `/api/v1/admin/integrations/${id}/pause`),
 	adminResumeIntegration: (id: number) => request<void>('POST', `/api/v1/admin/integrations/${id}/resume`),
 	allowList: () => get<{ entries: string[] }>('/api/v1/admin/integration-hosts'),

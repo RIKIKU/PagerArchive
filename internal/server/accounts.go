@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -187,19 +188,32 @@ type UserRow struct {
 	DeactivatedAt *time.Time `json:"deactivated_at"`
 	InvitedByID   *int64     `json:"invited_by_id"`
 	InvitedBy     *string    `json:"invited_by"` // null for the first admin
+	// R44b: their integrations, and how many are paused for failing.
+	Integrations        int64 `json:"integrations"`
+	IntegrationsFailing int64 `json:"integrations_failing"`
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.Store.ListUsers(r.Context())
+	out, err := s.userRows(r.Context())
 	if err != nil {
 		s.Log.Error("users", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// userRows is every user who isn't deleted, as admins see them.
+func (s *Server) userRows(ctx context.Context) ([]UserRow, error) {
+	rows, err := s.Store.ListUsers(ctx)
+	if err != nil {
+		return nil, err
+	}
 	out := []UserRow{}
 	for _, u := range rows {
 		row := UserRow{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Status: u.Status,
-			CreatedAt: u.CreatedAt.UTC(), DeactivatedAt: u.DeactivatedAt, InvitedByID: u.InvitedBy}
+			CreatedAt: u.CreatedAt.UTC(), DeactivatedAt: u.DeactivatedAt, InvitedByID: u.InvitedBy,
+			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing}
 		if u.InvitedBy != nil {
 			status := "active"
 			if u.InviterStatus != nil {
@@ -210,7 +224,7 @@ func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, row)
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // DeactivateRequest is the body of POST /api/v1/admin/users/{id}/deactivate.

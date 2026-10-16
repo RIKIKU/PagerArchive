@@ -46,20 +46,17 @@
 		return () => clearInterval(t);
 	});
 
+	const current = (href: string) =>
+		href === '/admin' ? page.url.pathname === '/admin' || page.url.pathname.startsWith('/admin/') : page.url.pathname === href;
+
 	const nav = $derived(page.url.pathname.startsWith('/signin') ? [] : [
 		{ href: '/', label: 'Messages' },
 		{ href: '/map', label: 'Map' },
 		{ href: '/reports', label: 'Reports' },
 		{ href: '/capcodes', label: 'Unknown capcodes' },
 		...(meta ? [{ href: '/integrations', label: 'Integrations' }] : []),
-		...(meta?.role === 'admin'
-			? [
-					{ href: '/admin/users', label: 'Users' },
-					{ href: '/admin/clients', label: 'Clients' },
-					{ href: '/admin/integrations', label: 'All integrations' },
-					{ href: '/admin/retention', label: 'Retention' }
-				]
-			: []),
+		// R44b: one Admin link, for admins only.
+		...(meta?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
 		...(meta ? [{ href: '/account', label: 'Account' }] : [])
 	]);
 </script>
@@ -69,7 +66,7 @@
 	<a class="brand" href="/">PagerArchive</a>
 	<nav aria-label="Main">
 		{#each nav as item (item.href)}
-			<a href={item.href} aria-current={page.url.pathname === item.href ? 'page' : undefined}>{item.label}</a>
+			<a href={item.href} aria-current={current(item.href) ? 'page' : undefined}>{item.label}</a>
 		{/each}
 	</nav>
 	{#if quiet > 0}

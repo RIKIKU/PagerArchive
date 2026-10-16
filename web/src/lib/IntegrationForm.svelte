@@ -5,7 +5,6 @@
 	// unless a new value is typed (R51).
 	import {
 		api,
-		type AliasBrief,
 		type Content,
 		type Integration,
 		type IntegrationKind,
@@ -14,17 +13,16 @@
 		type Meta
 	} from './api.ts';
 	import { kindLabels, presets } from './integrations.ts';
+	import SelectionField from './SelectionField.svelte';
 
 	let {
 		existing,
 		meta,
-		aliases,
 		onsaved,
 		oncancel
 	}: {
 		existing?: Integration;
 		meta: Meta;
-		aliases: AliasBrief[];
 		onsaved: (i: Integration) => void;
 		oncancel: () => void;
 	} = $props();
@@ -35,9 +33,9 @@
 	let name = $state(init?.name ?? '');
 	let kind: IntegrationKind = $state(init?.kind ?? 'webhook');
 	let content: Content = $state(init?.content ?? 'full');
-	let capcodes = $state(init?.capcodes.join(', ') ?? '');
-	let aliasIds: number[] = $state(init?.aliases.map((a) => a.id) ?? []);
-	let aliasQuery = $state('');
+	let capcodes: string[] = $state([...(init?.capcodes ?? [])]);
+	let chosenAliases = $state([...(init?.aliases ?? [])]);
+	let coveredBy: Record<string, string> = $state({ ...(init?.covered_by ?? {}) });
 	let categories: string[] = $state([...(init?.filter.categories ?? [])]);
 	let codes = $state((init?.filter.codes ?? []).join(', '));
 	let priorities: string[] = $state([...(init?.filter.priorities ?? [])]);
@@ -55,14 +53,6 @@
 	let error = $state('');
 
 	const admin = $derived(meta.role === 'admin');
-	const shown = $derived(
-		aliases.filter(
-			(a) =>
-				aliasIds.includes(a.id) ||
-				!aliasQuery.trim() ||
-				`${a.name} ${a.pattern}`.toLowerCase().includes(aliasQuery.trim().toLowerCase())
-		)
-	);
 
 	function saved(field: string): string {
 		return existing?.secrets_set[field] ? 'Saved. Leave empty to keep it.' : '';
@@ -88,8 +78,8 @@
 			name,
 			kind,
 			content,
-			capcodes: words(capcodes),
-			alias_ids: aliasIds,
+			capcodes,
+			alias_ids: chosenAliases.map((a) => a.id),
 			filter: {
 				categories,
 				codes: words(codes),
@@ -135,32 +125,7 @@
 
 	<fieldset>
 		<legend>Which pages (at least one capcode or alias)</legend>
-		<div class="field">
-			<label for="{id}-capcodes">Capcodes</label>
-			<input id="{id}-capcodes" bind:value={capcodes} inputmode="numeric" placeholder="0100001, 0100002" aria-describedby="{id}-capcodes-help" />
-			<p id="{id}-capcodes-help" class="help">Separate them with commas or spaces.</p>
-		</div>
-		{#if aliases.length}
-			<div class="field">
-				<label for="{id}-alias-q">Aliases</label>
-				<input id="{id}-alias-q" type="search" bind:value={aliasQuery} placeholder="Find an alias" />
-				<ul class="aliases">
-					{#each shown as a (a.id)}
-						<li>
-							<label class="check">
-								<input
-									type="checkbox"
-									checked={aliasIds.includes(a.id)}
-									onchange={(e) =>
-										(aliasIds = e.currentTarget.checked ? [...aliasIds, a.id] : aliasIds.filter((x) => x !== a.id))}
-								/>
-								{a.name} <span class="muted">{a.pattern}</span>
-							</label>
-						</li>
-					{/each}
-				</ul>
-			</div>
-		{/if}
+		<SelectionField id="{id}-selection" bind:capcodes bind:aliases={chosenAliases} bind:coveredBy />
 	</fieldset>
 
 	<fieldset>
@@ -421,24 +386,6 @@
 	}
 	.check input {
 		flex: none;
-	}
-	.aliases {
-		list-style: none;
-		padding: 0;
-		margin: 0.25rem 0 0;
-		max-height: 12rem;
-		overflow-y: auto;
-		border: 1px solid var(--border);
-		border-radius: 0.3rem;
-		background: var(--bg);
-	}
-	.aliases li {
-		padding: 0.2rem 0.5rem;
-	}
-	.muted {
-		color: var(--muted);
-		font-family: var(--mono);
-		font-size: var(--text-sm);
 	}
 	.help {
 		color: var(--muted);

@@ -4,7 +4,7 @@
 
 Each user can forward new pages to their own systems from **Integrations** in the app (SPEC.md R47–R51c; design in [ADR 0006](adr/0006-m5-integrations-and-metrics.md)). An integration is:
 
-- a **selection**: one or more capcodes and/or aliases. It's required, so nobody forwards the whole network by accident. An alias selects the pages that resolved to it, as its alias view shows;
+- a **selection**: one or more capcodes and/or aliases, chosen in one field. Type an alias name or a capcode and choose from the suggestions. A capcode with its own alias is chosen as that alias ("Station 1 (0100001)"). A capcode that only a range alias covers stays a capcode, with the range named beside it ("0100009 in Stations block"), so typing one capcode never selects a whole range; type the range's name to choose it. The selection is required, so nobody forwards the whole network by accident. An alias selects the pages that resolved to it, as its alias view shows;
 - an optional **filter**: event categories or raw event-type codes, priorities, and text, group, agency or job number (admins also have the flags). Empty means every page from the selection;
 - a **destination**: a webhook, MQTT, Discord, Telegram, Pushover or ntfy;
 - its **content**: **Full** (the text and every field) or **Summary** (alias, capcode, event type and category, priority, sent time and job number; no text, address, location or extra fields). Webhooks and MQTT default to Full. Discord, Telegram, Pushover and ntfy are third parties, so they default to Summary.
@@ -27,7 +27,7 @@ Each integration lists its last 100 deliveries for 30 days: **Delivered**, **Ret
 
 ## Private addresses
 
-Integrations can't reach private, loopback or link-local addresses (`10.x`, `192.168.x`, `127.x`, `169.254.x` and the like), so they can't be used to probe your network. If yours is on your LAN (Home Assistant, Node-RED, a self-hosted ntfy or broker), ask an admin to allow its address or range on **All integrations**.
+Integrations can't reach private, loopback, link-local or other reserved addresses (`10.x`, `192.168.x`, `127.x`, `169.254.x`, `100.64.x`, `198.18.x`, `240.x` and the like), so they can't be used to probe your network. IPv6 addresses that carry an IPv4 address (NAT64 `64:ff9b::`, 6to4 `2002::` and IPv4-compatible `::a.b.c.d`) are judged by that IPv4 address. If yours is on your LAN (Home Assistant, Node-RED, a self-hosted ntfy or broker), ask an admin to allow its address or range in **Admin → Integration addresses**.
 
 ## Webhook
 

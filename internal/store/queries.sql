@@ -280,7 +280,10 @@ UPDATE users SET subject = NULL WHERE id = $1;
 
 -- name: ListUsers :many
 SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
-       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name
+       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
+       -- R44b: how many integrations, and how many paused for failing.
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 WHERE u.status <> 'deleted'
@@ -456,12 +459,11 @@ SELECT * FROM integrations WHERE owner_id = $1 ORDER BY created_at, id;
 -- name: CountIntegrationsByOwner :one
 SELECT count(*) FROM integrations WHERE owner_id = $1;
 
--- name: AllIntegrations :many
--- Admins: that they exist, never what they send or where (R47).
-SELECT i.id, i.name, i.kind, i.status, i.paused_by, i.last_delivered_at, i.created_at,
-       i.owner_id, u.email AS owner_email, u.name AS owner_name, u.status AS owner_status
-FROM integrations i JOIN users u ON u.id = i.owner_id
-ORDER BY u.email, i.created_at, i.id;
+-- name: AdminIntegrationsOfUser :many
+-- R44b: one user's integrations as admins see them: that they exist,
+-- never what they send or where (R47).
+SELECT id, name, kind, status, paused_by, last_delivered_at, created_at
+FROM integrations WHERE owner_id = $1 ORDER BY created_at, id;
 
 -- name: DeleteIntegrationsByOwner :exec
 -- R43c: a deleted account's integrations go with it.
@@ -506,8 +508,22 @@ ORDER BY a.name, a.pattern;
 -- name: ExistingAliasIDs :many
 SELECT id FROM aliases WHERE id = ANY(sqlc.arg(ids)::bigint[]);
 
--- name: ListAliasesBrief :many
-SELECT id, pattern, name FROM aliases ORDER BY name, pattern;
+-- name: SearchAliases :many
+-- R48: aliases whose name or capcode/pattern contains what was typed.
+SELECT id, pattern, name FROM aliases
+WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0 OR strpos(pattern, sqlc.arg(q)::text) > 0
+ORDER BY lower(name), pattern
+LIMIT 20;
+
+-- name: ExactAliases :many
+-- R48: the aliases of exact capcodes (zero-padded), which select them.
+SELECT id, pattern_key FROM aliases WHERE pattern_key = ANY(sqlc.arg(capcodes)::text[]);
+
+-- name: CapcodeAliasCandidates :many
+-- R48: every alias covering each capcode, to name the one its pages show.
+SELECT c.capcode::text AS capcode, a.id, a.pattern, a.name
+FROM unnest(sqlc.arg(capcodes)::text[]) AS c(capcode)
+JOIN aliases a ON c.capcode LIKE a.pattern;
 
 -- name: MatchingIntegrations :many
 -- Active integrations of active owners whose selection covers a stored page.

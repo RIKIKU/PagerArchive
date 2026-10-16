@@ -38,7 +38,7 @@ The first start takes a minute or two while Authentik sets up its database and a
    docker compose exec api pagerarchive client add shed "Shed receiver"
    ```
 
-Admins manage users on **Users**: they can deactivate someone or their whole invite tree, reactivate, and promote or demote admins. Deactivation signs people out at once. Aliases and templates are managed with `pagerarchive alias …` and `pagerarchive template …` (`docker compose exec api pagerarchive help`).
+Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone or their whole invite tree, reactivate, and promote or demote admins. Deactivation signs people out at once. Aliases and templates are managed with `pagerarchive alias …` and `pagerarchive template …` (`docker compose exec api pagerarchive help`).
 
 ### Authentik's administrator
 
@@ -145,8 +145,8 @@ Users forward new pages to their own systems from **Integrations**: a webhook, M
 
 - **Set `INTEGRATION_SECRETS_KEY`** in `.env`: 32 random bytes in base64 (`openssl rand -base64 32`). It encrypts integrations' secrets (URLs, tokens, passwords) in the database, so a database dump or backup alone doesn't reveal them. Keep it with your other secrets, outside the database's backups. Without it, integrations are off and the API logs a warning. If it's lost, every owner enters their secrets again.
 - **Changing the key:** set the new one as `INTEGRATION_SECRETS_KEY` and the old one as `INTEGRATION_SECRETS_KEY_OLD`, restart `api` (it seals every secret again with the new key and logs how many), then remove `INTEGRATION_SECRETS_KEY_OLD`.
-- **Private addresses:** integrations can't reach private, loopback or link-local addresses (protection against server-side request forgery). An admin allows specific hosts or ranges, such as your Home Assistant, on **All integrations**.
-- Admins see that each integration exists and can pause it, but never its secrets or where it sends. Deactivating a user stops their integrations; deleting an account deletes them.
+- **Private addresses:** integrations can't reach private, loopback or link-local addresses (protection against server-side request forgery). Reserved ranges and IPv6 forms of these addresses (NAT64, 6to4, IPv4-compatible) are refused too. An admin allows specific hosts or ranges, such as your Home Assistant, in **Admin → Integration addresses**.
+- Admins see each user's integrations on that user's page in **Admin → Users**, and can pause them, but never their secrets or where they send. The users list shows how many each user has and marks any paused for failing. Nothing lists every user's integrations. Deactivating a user stops their integrations; deleting an account deletes them.
 
 ## Metrics
 

@@ -87,15 +87,19 @@
 	{#each users as u (u.id)}
 		<li class:off={u.status === 'deactivated'}>
 			<div class="head">
-				<span class="who">{label(u)}</span>
+				<a class="who" href="/admin/users/{u.id}">{label(u)}</a>
 				{#if u.role === 'admin'}<span class="tag">Admin</span>{/if}
 				{#if u.status === 'deactivated'}<span class="tag warn">Deactivated</span>{/if}
 				{#if u.id === me?.id}<span class="tag">You</span>{/if}
+				{#if u.integrations_failing > 0}<span class="tag warn" data-testid="failing"
+						>{u.integrations_failing} integration{u.integrations_failing === 1 ? '' : 's'} paused for failing</span
+					>{/if}
 			</div>
 			<div class="meta">
 				Invited by {u.invited_by ?? 'nobody (first admin)'} · joined
 				<time datetime={isoAttr(u.created_at)}>{date(u.created_at, tz)}</time>
 				{#if u.deactivated_at}· deactivated <time datetime={isoAttr(u.deactivated_at)}>{date(u.deactivated_at, tz)}</time>{/if}
+				· {u.integrations} integration{u.integrations === 1 ? '' : 's'}
 			</div>
 			{#if u.id !== me?.id}
 				{#if confirming?.id === u.id}

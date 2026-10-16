@@ -59,9 +59,12 @@ func (a AllowList) Entries() []string {
 
 func (a AllowList) hostAllowed(host string) bool { return slices.Contains(a.Hosts, normHost(host)) }
 
+// addrAllowed also allows an IPv6 address that carries an allowed IPv4
+// one, since that's where it goes (see embeddedIPv4).
 func (a AllowList) addrAllowed(ip netip.Addr) bool {
+	v4, embedded := embeddedIPv4(ip)
 	for _, p := range a.Ranges {
-		if p.Contains(ip) {
+		if p.Contains(ip) || embedded && p.Contains(v4) {
 			return true
 		}
 	}
@@ -87,7 +90,31 @@ func validHostName(h string) bool {
 	return true
 }
 
-var sharedSpace = netip.MustParsePrefix("100.64.0.0/10") // carrier-grade NAT, and Tailscale
+var (
+	sharedSpace   = netip.MustParsePrefix("100.64.0.0/10") // carrier-grade NAT, and Tailscale
+	protocolSpace = netip.MustParsePrefix("192.0.0.0/24")  // IETF protocol assignments
+	benchmarking  = netip.MustParsePrefix("198.18.0.0/15") // network benchmarking
+	reservedSpace = netip.MustParsePrefix("240.0.0.0/4")   // reserved for future use
+	nat64         = netip.MustParsePrefix("64:ff9b::/96")  // NAT64: IPv4 in the last 32 bits
+	sixToFour     = netip.MustParsePrefix("2002::/16")     // 6to4: IPv4 in bits 16-47
+	v4Compatible  = netip.MustParsePrefix("::/96")         // IPv4-compatible: IPv4 in the last 32 bits
+)
+
+// embeddedIPv4 is the IPv4 address that a NAT64, 6to4 or IPv4-compatible
+// IPv6 address reaches, if ip is one.
+func embeddedIPv4(ip netip.Addr) (netip.Addr, bool) {
+	if !ip.Is6() || ip.Is4In6() {
+		return netip.Addr{}, false
+	}
+	b := ip.As16()
+	switch {
+	case nat64.Contains(ip), v4Compatible.Contains(ip):
+		return netip.AddrFrom4([4]byte(b[12:16])), true
+	case sixToFour.Contains(ip):
+		return netip.AddrFrom4([4]byte(b[2:6])), true
+	}
+	return netip.Addr{}, false
+}
 
 // blockedReason says why an address is refused by default, or "" if it's
 // public (R51, ADR 0006 §5).
@@ -108,6 +135,19 @@ func blockedReason(ip netip.Addr) string {
 		return "a broadcast address"
 	case sharedSpace.Contains(ip):
 		return "a shared (carrier-grade NAT) address"
+	case protocolSpace.Contains(ip):
+		return "an IETF protocol address"
+	case benchmarking.Contains(ip):
+		return "a benchmarking address"
+	case reservedSpace.Contains(ip):
+		return "a reserved address"
+	}
+	// An IPv6 address that carries an IPv4 one reaches that IPv4 address, so
+	// it's judged by it.
+	if v4, ok := embeddedIPv4(ip); ok {
+		if reason := blockedReason(v4); reason != "" {
+			return reason + " (" + v4.String() + " inside an IPv6 address)"
+		}
 	}
 	return ""
 }

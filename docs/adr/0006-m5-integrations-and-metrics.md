@@ -4,11 +4,11 @@ Date: 2026-10-16
 
 ## Status
 
-Accepted (owner, 2026-10-16). The owner took the recommendation on each of Q1–Q3.
+Accepted (owner, 2026-10-16). The owner took the recommendation on each of Q1–Q3. Later rounds from the owner are recorded below as decisions 4–9.
 
 ## Context
 
-Milestone M5 covers per-user integrations (R47–R51c): webhook and MQTT destinations, the Discord, Telegram, Pushover and ntfy presets, Full or Summary content, Home Assistant MQTT discovery, the 5-minute cut-off, no double firing and Send test. It also covers the metrics endpoint (R52). Its checks are A30–A32 and A35–A39. The owner fleshed out M5 in the spec on 2026-10-16 (commit 02da9e8). Section 13 leaves R51's retry and pause thresholds to the implementer.
+Milestone M5 covers per-user integrations (R47–R51c): webhook and MQTT destinations, the Discord, Telegram, Pushover and ntfy presets, Full or Summary content, Home Assistant MQTT discovery, the 5-minute cut-off, no double firing and Send test. It also covers the metrics endpoint (R52). Its checks are A30–A32 and A35–A41 (A40 and A41 were added on 2026-10-16, b96bce4). The owner fleshed out M5 in the spec on 2026-10-16 (commit 02da9e8). Section 13 leaves R51's retry and pause thresholds to the implementer.
 
 The owner asked for this ADR to record: the MQTT library, how secrets are encrypted and where the key lives, the retry and pause thresholds, the queue that survives a restart, and the payload JSON. Other rules from the owner for this milestone:
 
@@ -26,6 +26,27 @@ The owner asked for this ADR to record: the MQTT library, how secrets are encryp
 4. **No repeat-until-acknowledged priority** (§8). Pushover priority 2 and its `retry` and `expire` parameters are removed: they conflict with the new out-of-scope item. Pushover and ntfy priorities stop at high (Pushover 1, ntfy 4), and the API refuses anything above.
 5. **The metrics role reads no tables** (Q1, §11). The role the app connects as, `pagerarchive_metrics`, has no `SELECT` on any of Authentik's tables. A `SECURITY DEFINER` function, `pagerarchive_locked_accounts()`, owned by Authentik's own role (which can read them), applies the lock rule and returns only the count. The app's role may only `EXECUTE` it. A stack check confirms the role is refused a direct `SELECT` on Authentik's events table.
 6. **R47 notice.** The integrations screen and `docs/integrations.md` say in one line that integrations are a convenience, not a replacement for a pager. The A30 browser check looks for it.
+
+### Third round (owner, 2026-10-16): R48's single selection field, R44b and checks A40–A41 (b96bce4), and a harder address guard
+
+The owner set the requirements; the choices below are the implementer's. M6 (section 7.12, A42–A47) came in with the same merge and isn't built here.
+
+7. **One selection field** (R48, A40; §2 and §10 have the details).
+   - The suggestions come from the server: `GET /api/v1/integrations/selection?q=` (it replaces `GET /api/v1/aliases`). For what was typed it returns up to 20 aliases whose name (ignoring case) or capcode/pattern contains it. For 1–7 digits it also returns the zero-padded capcode, or, if that capcode has its own alias, that alias instead. A full 7-digit capcode comes first; a few digits come last, because they're more likely the start of an alias's capcode.
+   - A capcode that only range aliases cover is offered as the capcode, with "in <name>" beside it. The name is the alias its pages show (R27 precedence). Range aliases themselves are still offered when their name or pattern is typed (`Stations`, `0100%`): that's choosing a range on purpose. Typing a capcode never offers one.
+   - **Saving converts too:** a capcode sent in `capcodes` that has its own alias is stored as that alias, so the API and the form agree. Pages are matched the same way either way, because an exact alias always wins (R27).
+   - The integration's view carries `covered_by` (capcode → range alias name). It's worked out when the integration is shown, not stored, so it follows alias changes.
+   - The field follows the ARIA combobox pattern. Arrow keys move, Enter chooses (and never submits the form), Escape closes. Chosen items show as removable chips: "Station 1 (0100001)", or "0100009 in Stations block".
+8. **Administration** (R44b, A41; §10).
+   - The header has one **Admin** link, for admins only, to `/admin`. Its start page links to **Users**, **Receiving clients**, **Retention** and **Integration addresses**. Integration addresses is the allow list, which was on the old "All integrations" screen. Every admin screen shares one layout. It shows "This page is for admins only" to anyone else, and the API refuses them anyway (`403`). It also gives each admin screen a link back to Administration. The "receivers not receiving" badge (R39) stays in the header, and the start page repeats it beside Receiving clients.
+   - **Each user's page** (`/admin/users/{id}`, API `GET /api/v1/admin/users/{id}`): role, status, inviter, joined date, and their integrations with name, type, status, last delivery, and Pause or Resume. The API returns no destination, selection, filter, config or secrets. Users and Administration link to it.
+   - **Removed:** `GET /api/v1/admin/integrations` (now `404`) and the "All integrations" screen. Nothing lists every user's integrations.
+   - **Users list:** each user's number of integrations, and a "N integrations paused for failing" mark. Pauses by the owner or an admin aren't marked, because R44b asks only about failing ones.
+9. **Harder address guard** (R51, owner's request; §5).
+   - Also refused: `192.0.0.0/24` (IETF protocol assignments), `198.18.0.0/15` (benchmarking) and `240.0.0.0/4` (reserved; `255.255.255.255` is still reported as broadcast).
+   - **IPv6 addresses that carry an IPv4 address are judged by it:** NAT64 `64:ff9b::/96` (the last 32 bits), 6to4 `2002::/16` (bits 16–47) and IPv4-compatible `::/96` (the last 32 bits; `::` and `::1` keep their own reasons). One is refused if its IPv4 address would be, and allowed if that address is public. The message names both, for example: "64:ff9b::c0a8:10a is a private address (192.168.1.10 inside an IPv6 address). Ask an admin to allow it."
+   - An allowed IPv4 address or range also allows these IPv6 forms of it, since that's where they go.
+   - **Left out, for the owner to decide:** the local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215, where the IPv4 bits sit according to the operator's prefix length) and Teredo `2001::/32` (the client's IPv4 address is stored inverted). Neither was in the request. The simplest safe rule would refuse both ranges outright.
 
 The questions as they were put to the owner follow.
 
@@ -90,7 +111,7 @@ Either way, the request is retried when it **can't be sent** (connection refused
 
 ### 2. Selection and filter (R48, R49)
 
-- **Selection:** exact capcodes (zero-padded, as everywhere) and aliases. An alias selects the messages that **resolved to it** (`messages.alias_id`), as the alias view does (R35e). So with "Station 1" on `0100001` and a pattern alias `0100%`, selecting the pattern doesn't pick up `0100001`. Pages to ignored aliases and heartbeat capcodes are sent if selected, because the selection is explicit (R27).
+- **Selection:** exact capcodes (zero-padded, as everywhere) and aliases, chosen in one field (decision 7). An alias selects the messages that **resolved to it** (`messages.alias_id`), as the alias view does (R35e). So with "Station 1" on `0100001` and a pattern alias `0100%`, selecting the pattern doesn't pick up `0100001`. A capcode with its own alias is saved as that alias. Pages to ignored aliases and heartbeat capcodes are sent if selected, because the selection is explicit (R27).
 - **Filter**, all optional, all combined with AND:
   - event types: any of a list of **categories** (Other included) and/or **raw codes**. When either list is set, pages with no event type match only "Other" (as in reports, R38);
   - priorities: any of Emergency, Non-emergency, Admin, none;
@@ -124,11 +145,11 @@ Either way, the request is retried when it **can't be sent** (connection refused
 
 ### 5. Address safety (R51, A31)
 
-- **Refused by default:** loopback, private (RFC 1918, IPv6 unique local), link-local, unspecified, multicast and broadcast addresses, the shared address space `100.64.0.0/10` (which Tailscale uses), and IPv4-mapped forms of these. Checked twice:
+- **Refused by default:** loopback, private (RFC 1918, IPv6 unique local), link-local, unspecified, multicast and broadcast addresses, the shared address space `100.64.0.0/10` (which Tailscale uses), `192.0.0.0/24`, `198.18.0.0/15` and `240.0.0.0/4`, and IPv4-mapped forms of these. NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`) and IPv4-compatible (`::/96`) addresses are judged by the IPv4 address inside them (decision 9). Checked twice:
   - **when saving**: the host is resolved, and every address must be allowed. The message names the address and says an admin can allow it ("192.168.1.10 is a private address. Ask an admin to allow it.");
   - **when connecting**: a custom dialer resolves the host, checks each address again and connects to that checked address. So DNS can't be changed after saving to point at an internal host (DNS rebinding). TLS still verifies the original host name.
 - **Redirects aren't followed.** A `3xx` answer counts as a failure. Proxy settings from the environment are ignored, so the check can't be routed around.
-- **Admins' allow list** (Admin → Integrations): IP addresses, CIDR ranges (`192.168.1.0/24`) and host names (`homeassistant.lan`, matched exactly). An address is allowed if it's public, in an allowed range, or reached through an allowed host name. Kept in `settings`. Changing it doesn't re-check saved integrations; the connect-time check applies the current list.
+- **Admins' allow list** (Administration → Integration addresses): IP addresses, CIDR ranges (`192.168.1.0/24`) and host names (`homeassistant.lan`, matched exactly). An address is allowed if it's public, in an allowed range (directly or through the IPv4 address inside it), or reached through an allowed host name. Kept in `settings`. Changing it doesn't re-check saved integrations; the connect-time check applies the current list.
 - **Schemes:** webhooks `https` or `http` (the form says to use `http` only on your own network); MQTT `mqtt://` or `mqtts://` (TLS with the system's roots, or a CA certificate pasted in, for a home broker with its own CA).
 - **Presets** only post to their own hosts: Discord webhook URLs must be `https://discord.com/api/webhooks/…` (or `discordapp.com`). Telegram and Pushover are fixed (`api.telegram.org`, `api.pushover.net`). The ntfy server defaults to `https://ntfy.sh` and can be changed for a self-hosted one (which then needs the allow list if it's private). The service base URLs are fields in the code, which only tests change, to point at stand-ins. They aren't settings, and there's no test switch in the shipped binary.
 
@@ -233,9 +254,9 @@ Each preset turns the same message into the service's documented request. Format
 
 ### 10. API and screens
 
-- **API** (all signed in): `GET/POST /api/v1/integrations`, `GET/PUT/DELETE /api/v1/integrations/{id}`, `POST …/{id}/test`, `POST …/{id}/pause` and `…/resume`, and `GET …/{id}/deliveries` (the last 100: time, link to the page, status, attempts, last error). Another user's integration answers `404`, so it can't be told apart from one that doesn't exist (R47). `GET /api/v1/aliases` lists aliases for the selection picker.
-- **Admin API:** `GET /api/v1/admin/integrations` returns owner, name, kind, status and last delivery. It has no destination, selection, filter or secrets. Admins can also pause and resume, and `GET/PUT /api/v1/admin/integration-hosts` manages the allow list.
-- **Screens:** "Integrations" in the main navigation for everyone: a list with status, last delivery and last error, a form (selection, filter, destination, content, Home Assistant discovery for MQTT), Send test with the answer shown, and recent deliveries. "Admin → Integrations": everyone's integrations, with Pause, and the allow list. Styles use the tokens in `web/src/app.css`. The screens are covered by the axe checks at 375 px and desktop width, in both themes.
+- **API** (all signed in): `GET/POST /api/v1/integrations`, `GET/PUT/DELETE /api/v1/integrations/{id}`, `POST …/{id}/test`, `POST …/{id}/pause` and `…/resume`, and `GET …/{id}/deliveries` (the last 100: time, link to the page, status, attempts, last error). Another user's integration answers `404`, so it can't be told apart from one that doesn't exist (R47). `GET /api/v1/integrations/selection?q=` gives the selection field's suggestions (decision 7).
+- **Admin API:** `GET /api/v1/admin/users/{id}` returns the user and their integrations: name, kind, status, who paused it and last delivery. It has no destination, selection, filter or secrets. `GET /api/v1/admin/users` counts each user's integrations and those paused for failing. Admins can also pause and resume (`POST /api/v1/admin/integrations/{id}/pause` and `…/resume`), and `GET/PUT /api/v1/admin/integration-hosts` manages the allow list. There is no list of every user's integrations (R44b).
+- **Screens:** "Integrations" in the main navigation for everyone: a list with status, last delivery and last error, a form (selection, filter, destination, content, Home Assistant discovery for MQTT), Send test with the answer shown, and recent deliveries. In Administration (decision 8), each user's page has their integrations with Pause or Resume, and "Integration addresses" holds the allow list. Styles use the tokens in `web/src/app.css`. The screens are covered by the axe checks at 375 px and desktop width, in both themes.
 
 ### 11. Metrics (R52, A32)
 
@@ -276,6 +297,9 @@ Each preset turns the same message into the service's documented request. Format
 | A37 | A Discord preset on its default content (Summary) and a Full webhook, both on `0100001`, with the Discord stand-in and a receiver → the Discord request passes the stand-in's format checks and has neither the text nor the address. The webhook request has the text |
 | A38 | MQTT with discovery, in-process broker → after saving, the broker holds the retained config (device "PagerArchive", one event entity, `event_types` page and test). After a matching page, the state topic gets the event. Also checked: turning discovery off removes the entity |
 | A39 | Two clients post the same page → exactly 1 request, with the page's `id`. A unique-key test inserts a second delivery row directly and it fails. Send test → a request with `"test": true`, and the owner sees the answer's status and body |
+| A40 | Go acceptance test with a pattern alias `0100%` ("Stations block"): typing `0100001` offers only the alias "Station 1 (0100001)"; typing `0100009` offers only the capcode, covered by "Stations block". Saved: the alias and the capcode, never the range; a capcode with its own alias sent through the API is saved as the alias; a page to `0100002` (covered by the range, not chosen) isn't sent. Playwright does the same in the form, with the keyboard and the mouse |
+| A41 | Go acceptance test: user B gets `403` from every admin endpoint; the admin's page for B lists B's integration without its destination, secrets, config or A's integration; `GET /api/v1/admin/integrations` is `404`; the users list counts integrations and those paused for failing. Playwright: B has no Admin link and every admin page says it's for admins only; A has one Admin link, the start page reaches every admin screen, and B's page shows B's integration without its URL |
+| Address guard | Unit tests for each new range (inside and just outside it) and for each IPv6 form: refused with the IPv4 address named when that address is private, loopback, link-local, shared, protocol, benchmarking or reserved, and allowed when it's public. An allowed `192.168.1.10` allows its three IPv6 forms and not `192.168.1.11`'s |
 | Presets | Each stand-in rejects a wrong request (missing field, too long, wrong content type, mentions on). Each preset's request passes its stand-in, in Full and Summary |
 | Secrets | Round trip; wrong key; blob moved to another row; rotation; the API never returns a secret; the database row doesn't contain the URL or password in plain text |
 | P1 | Every integration test checks the server log, API responses (last error, deliveries) and the metrics for the posted page texts |
@@ -300,3 +324,4 @@ Each preset turns the same message into the service's documented request. Format
 - Losing `INTEGRATION_SECRETS_KEY` means every owner re-enters their secrets.
 - One MQTT connection per delivery adds a connection handshake (and a TLS one, with `mqtts`) to each page, typically well under a second.
 - The allow list is all-or-nothing per host or range. Admins can't allow a private host for one user only.
+- A capcode with its own alias is saved as that alias (decision 7). If the alias is later deleted (from M6, R53), it drops out of the selection like any alias, so the integration no longer matches that capcode. M6 should warn about integrations that select an alias before it's deleted.

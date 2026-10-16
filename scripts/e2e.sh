@@ -39,6 +39,8 @@ go build -o "$BIN" ./cmd/pagerarchive
 for n in 1 2 3 4; do
 	"$BIN" alias add "010000$n" "Station $n" --template "Example Fire" >/dev/null
 done
+# A40: a range alias over the stations, which typing one capcode never selects.
+"$BIN" alias add "0100%" "Stations block" --template "Example Fire" >/dev/null
 # The capcode report test (R38) uses one capcode per browser project.
 for n in 1 2 3; do
 	"$BIN" alias add "030010$n" "Report test $n" --template "Example Fire" >/dev/null

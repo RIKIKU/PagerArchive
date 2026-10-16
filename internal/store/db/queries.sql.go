@@ -76,6 +76,51 @@ func (q *Queries) AddressPoint(ctx context.Context, arg AddressPointParams) (Add
 	return i, err
 }
 
+const adminIntegrationsOfUser = `-- name: AdminIntegrationsOfUser :many
+SELECT id, name, kind, status, paused_by, last_delivered_at, created_at
+FROM integrations WHERE owner_id = $1 ORDER BY created_at, id
+`
+
+type AdminIntegrationsOfUserRow struct {
+	ID              int64
+	Name            string
+	Kind            string
+	Status          string
+	PausedBy        *string
+	LastDeliveredAt *time.Time
+	CreatedAt       time.Time
+}
+
+// R44b: one user's integrations as admins see them: that they exist,
+// never what they send or where (R47).
+func (q *Queries) AdminIntegrationsOfUser(ctx context.Context, ownerID int64) ([]AdminIntegrationsOfUserRow, error) {
+	rows, err := q.db.Query(ctx, adminIntegrationsOfUser, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AdminIntegrationsOfUserRow
+	for rows.Next() {
+		var i AdminIntegrationsOfUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Kind,
+			&i.Status,
+			&i.PausedBy,
+			&i.LastDeliveredAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aliasByKey = `-- name: AliasByKey :one
 SELECT id, pattern, name FROM aliases WHERE pattern_key = $1::text
 `
@@ -315,60 +360,6 @@ func (q *Queries) AllIntegrationSecrets(ctx context.Context) ([]AllIntegrationSe
 	return items, nil
 }
 
-const allIntegrations = `-- name: AllIntegrations :many
-SELECT i.id, i.name, i.kind, i.status, i.paused_by, i.last_delivered_at, i.created_at,
-       i.owner_id, u.email AS owner_email, u.name AS owner_name, u.status AS owner_status
-FROM integrations i JOIN users u ON u.id = i.owner_id
-ORDER BY u.email, i.created_at, i.id
-`
-
-type AllIntegrationsRow struct {
-	ID              int64
-	Name            string
-	Kind            string
-	Status          string
-	PausedBy        *string
-	LastDeliveredAt *time.Time
-	CreatedAt       time.Time
-	OwnerID         int64
-	OwnerEmail      *string
-	OwnerName       *string
-	OwnerStatus     string
-}
-
-// Admins: that they exist, never what they send or where (R47).
-func (q *Queries) AllIntegrations(ctx context.Context) ([]AllIntegrationsRow, error) {
-	rows, err := q.db.Query(ctx, allIntegrations)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []AllIntegrationsRow
-	for rows.Next() {
-		var i AllIntegrationsRow
-		if err := rows.Scan(
-			&i.ID,
-			&i.Name,
-			&i.Kind,
-			&i.Status,
-			&i.PausedBy,
-			&i.LastDeliveredAt,
-			&i.CreatedAt,
-			&i.OwnerID,
-			&i.OwnerEmail,
-			&i.OwnerName,
-			&i.OwnerStatus,
-		); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const cancelFirstAdminInvitations = `-- name: CancelFirstAdminInvitations :many
 UPDATE invitations SET status = 'cancelled', cancelled_at = now()
 WHERE first_admin AND status = 'pending'
@@ -483,6 +474,45 @@ func (q *Queries) CancelPendingInvitationsTo(ctx context.Context, emailKey *stri
 			return nil, err
 		}
 		items = append(items, authentik_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const capcodeAliasCandidates = `-- name: CapcodeAliasCandidates :many
+SELECT c.capcode::text AS capcode, a.id, a.pattern, a.name
+FROM unnest($1::text[]) AS c(capcode)
+JOIN aliases a ON c.capcode LIKE a.pattern
+`
+
+type CapcodeAliasCandidatesRow struct {
+	Capcode string
+	ID      int64
+	Pattern string
+	Name    string
+}
+
+// R48: every alias covering each capcode, to name the one its pages show.
+func (q *Queries) CapcodeAliasCandidates(ctx context.Context, capcodes []string) ([]CapcodeAliasCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, capcodeAliasCandidates, capcodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CapcodeAliasCandidatesRow
+	for rows.Next() {
+		var i CapcodeAliasCandidatesRow
+		if err := rows.Scan(
+			&i.Capcode,
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1107,6 +1137,36 @@ func (q *Queries) DueDeliveries(ctx context.Context, now time.Time) ([]DueDelive
 	return items, nil
 }
 
+const exactAliases = `-- name: ExactAliases :many
+SELECT id, pattern_key FROM aliases WHERE pattern_key = ANY($1::text[])
+`
+
+type ExactAliasesRow struct {
+	ID         int64
+	PatternKey *string
+}
+
+// R48: the aliases of exact capcodes (zero-padded), which select them.
+func (q *Queries) ExactAliases(ctx context.Context, capcodes []string) ([]ExactAliasesRow, error) {
+	rows, err := q.db.Query(ctx, exactAliases, capcodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ExactAliasesRow
+	for rows.Next() {
+		var i ExactAliasesRow
+		if err := rows.Scan(&i.ID, &i.PatternKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const existingAliasIDs = `-- name: ExistingAliasIDs :many
 SELECT id FROM aliases WHERE id = ANY($1::bigint[])
 `
@@ -1665,36 +1725,6 @@ func (q *Queries) ListAliases(ctx context.Context) ([]ListAliasesRow, error) {
 	return items, nil
 }
 
-const listAliasesBrief = `-- name: ListAliasesBrief :many
-SELECT id, pattern, name FROM aliases ORDER BY name, pattern
-`
-
-type ListAliasesBriefRow struct {
-	ID      int64
-	Pattern string
-	Name    string
-}
-
-func (q *Queries) ListAliasesBrief(ctx context.Context) ([]ListAliasesBriefRow, error) {
-	rows, err := q.db.Query(ctx, listAliasesBrief)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []ListAliasesBriefRow
-	for rows.Next() {
-		var i ListAliasesBriefRow
-		if err := rows.Scan(&i.ID, &i.Pattern, &i.Name); err != nil {
-			return nil, err
-		}
-		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
 const listClients = `-- name: ListClients :many
 SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since FROM clients ORDER BY id
 `
@@ -1843,7 +1873,10 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]ListTemplatesRow, error)
 
 const listUsers = `-- name: ListUsers :many
 SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
-       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name
+       u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
+       -- R44b: how many integrations, and how many paused for failing.
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 WHERE u.status <> 'deleted'
@@ -1851,17 +1884,19 @@ ORDER BY u.created_at, u.id
 `
 
 type ListUsersRow struct {
-	ID            int64
-	Email         *string
-	Name          *string
-	Role          string
-	Status        string
-	CreatedAt     time.Time
-	DeactivatedAt *time.Time
-	InvitedBy     *int64
-	InviterStatus *string
-	InviterEmail  *string
-	InviterName   *string
+	ID                  int64
+	Email               *string
+	Name                *string
+	Role                string
+	Status              string
+	CreatedAt           time.Time
+	DeactivatedAt       *time.Time
+	InvitedBy           *int64
+	InviterStatus       *string
+	InviterEmail        *string
+	InviterName         *string
+	Integrations        int64
+	IntegrationsFailing int64
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -1885,6 +1920,8 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.InviterStatus,
 			&i.InviterEmail,
 			&i.InviterName,
+			&i.Integrations,
+			&i.IntegrationsFailing,
 		); err != nil {
 			return nil, err
 		}
@@ -2432,6 +2469,40 @@ UPDATE invitations SET email = NULL, email_key = NULL WHERE used_by = $1
 func (q *Queries) ScrubInvitationsTo(ctx context.Context, usedBy *int64) error {
 	_, err := q.db.Exec(ctx, scrubInvitationsTo, usedBy)
 	return err
+}
+
+const searchAliases = `-- name: SearchAliases :many
+SELECT id, pattern, name FROM aliases
+WHERE strpos(lower(name), lower($1::text)) > 0 OR strpos(pattern, $1::text) > 0
+ORDER BY lower(name), pattern
+LIMIT 20
+`
+
+type SearchAliasesRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+}
+
+// R48: aliases whose name or capcode/pattern contains what was typed.
+func (q *Queries) SearchAliases(ctx context.Context, q_ string) ([]SearchAliasesRow, error) {
+	rows, err := q.db.Query(ctx, searchAliases, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SearchAliasesRow
+	for rows.Next() {
+		var i SearchAliasesRow
+		if err := rows.Scan(&i.ID, &i.Pattern, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const searchMessages = `-- name: SearchMessages :many
