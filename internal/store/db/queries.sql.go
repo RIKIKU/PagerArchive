@@ -21,6 +21,36 @@ func (q *Queries) ActiveClientByKeyHash(ctx context.Context, keyHash []byte) (st
 	return id, err
 }
 
+const addIntegrationAliases = `-- name: AddIntegrationAliases :exec
+INSERT INTO integration_aliases (integration_id, alias_id)
+SELECT $1::bigint, unnest($2::bigint[])
+`
+
+type AddIntegrationAliasesParams struct {
+	ID       int64
+	AliasIds []int64
+}
+
+func (q *Queries) AddIntegrationAliases(ctx context.Context, arg AddIntegrationAliasesParams) error {
+	_, err := q.db.Exec(ctx, addIntegrationAliases, arg.ID, arg.AliasIds)
+	return err
+}
+
+const addIntegrationCapcodes = `-- name: AddIntegrationCapcodes :exec
+INSERT INTO integration_capcodes (integration_id, capcode)
+SELECT $1::bigint, unnest($2::text[])
+`
+
+type AddIntegrationCapcodesParams struct {
+	ID       int64
+	Capcodes []string
+}
+
+func (q *Queries) AddIntegrationCapcodes(ctx context.Context, arg AddIntegrationCapcodesParams) error {
+	_, err := q.db.Exec(ctx, addIntegrationCapcodes, arg.ID, arg.Capcodes)
+	return err
+}
+
 const addressPoint = `-- name: AddressPoint :one
 SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
 FROM address_points
@@ -254,6 +284,91 @@ func (q *Queries) AllAliases(ctx context.Context) ([]AllAliasesRow, error) {
 	return items, nil
 }
 
+const allIntegrationSecrets = `-- name: AllIntegrationSecrets :many
+SELECT id, uid, secrets FROM integrations WHERE secrets IS NOT NULL
+`
+
+type AllIntegrationSecretsRow struct {
+	ID      int64
+	Uid     string
+	Secrets []byte
+}
+
+// Key rotation: every encrypted blob.
+func (q *Queries) AllIntegrationSecrets(ctx context.Context) ([]AllIntegrationSecretsRow, error) {
+	rows, err := q.db.Query(ctx, allIntegrationSecrets)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllIntegrationSecretsRow
+	for rows.Next() {
+		var i AllIntegrationSecretsRow
+		if err := rows.Scan(&i.ID, &i.Uid, &i.Secrets); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const allIntegrations = `-- name: AllIntegrations :many
+SELECT i.id, i.name, i.kind, i.status, i.paused_by, i.last_delivered_at, i.created_at,
+       i.owner_id, u.email AS owner_email, u.name AS owner_name, u.status AS owner_status
+FROM integrations i JOIN users u ON u.id = i.owner_id
+ORDER BY u.email, i.created_at, i.id
+`
+
+type AllIntegrationsRow struct {
+	ID              int64
+	Name            string
+	Kind            string
+	Status          string
+	PausedBy        *string
+	LastDeliveredAt *time.Time
+	CreatedAt       time.Time
+	OwnerID         int64
+	OwnerEmail      *string
+	OwnerName       *string
+	OwnerStatus     string
+}
+
+// Admins: that they exist, never what they send or where (R47).
+func (q *Queries) AllIntegrations(ctx context.Context) ([]AllIntegrationsRow, error) {
+	rows, err := q.db.Query(ctx, allIntegrations)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AllIntegrationsRow
+	for rows.Next() {
+		var i AllIntegrationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Kind,
+			&i.Status,
+			&i.PausedBy,
+			&i.LastDeliveredAt,
+			&i.CreatedAt,
+			&i.OwnerID,
+			&i.OwnerEmail,
+			&i.OwnerName,
+			&i.OwnerStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const cancelFirstAdminInvitations = `-- name: CancelFirstAdminInvitations :many
 UPDATE invitations SET status = 'cancelled', cancelled_at = now()
 WHERE first_admin AND status = 'pending'
@@ -318,6 +433,34 @@ func (q *Queries) CancelInvitationsBy(ctx context.Context, ids []int64) ([]*stri
 		return nil, err
 	}
 	return items, nil
+}
+
+const cancelPendingDeliveries = `-- name: CancelPendingDeliveries :execrows
+UPDATE deliveries SET status = 'cancelled', next_attempt_at = NULL, updated_at = now()
+WHERE integration_id = ANY($1::bigint[]) AND status = 'pending'
+`
+
+func (q *Queries) CancelPendingDeliveries(ctx context.Context, ids []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelPendingDeliveries, ids)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const cancelPendingDeliveriesOfOwners = `-- name: CancelPendingDeliveriesOfOwners :execrows
+UPDATE deliveries d SET status = 'cancelled', next_attempt_at = NULL, updated_at = now()
+FROM integrations i
+WHERE i.id = d.integration_id AND i.owner_id = ANY($1::bigint[]) AND d.status = 'pending'
+`
+
+// R51: deactivating a user stops their integrations.
+func (q *Queries) CancelPendingDeliveriesOfOwners(ctx context.Context, ownerIds []int64) (int64, error) {
+	result, err := q.db.Exec(ctx, cancelPendingDeliveriesOfOwners, ownerIds)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const cancelPendingInvitationsTo = `-- name: CancelPendingInvitationsTo :many
@@ -421,6 +564,24 @@ func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseReque
 	return items, nil
 }
 
+const clearIntegrationAliases = `-- name: ClearIntegrationAliases :exec
+DELETE FROM integration_aliases WHERE integration_id = $1
+`
+
+func (q *Queries) ClearIntegrationAliases(ctx context.Context, integrationID int64) error {
+	_, err := q.db.Exec(ctx, clearIntegrationAliases, integrationID)
+	return err
+}
+
+const clearIntegrationCapcodes = `-- name: ClearIntegrationCapcodes :exec
+DELETE FROM integration_capcodes WHERE integration_id = $1
+`
+
+func (q *Queries) ClearIntegrationCapcodes(ctx context.Context, integrationID int64) error {
+	_, err := q.db.Exec(ctx, clearIntegrationCapcodes, integrationID)
+	return err
+}
+
 const clearUserSubject = `-- name: ClearUserSubject :exec
 UPDATE users SET subject = NULL WHERE id = $1
 `
@@ -439,6 +600,67 @@ func (q *Queries) CountActiveAdmins(ctx context.Context) (int64, error) {
 	var count int64
 	err := row.Scan(&count)
 	return count, err
+}
+
+const countFlagged = `-- name: CountFlagged :one
+
+SELECT (SELECT count(*) FROM messages WHERE parse_failed)::bigint AS parse_failed,
+       (SELECT count(*) FROM messages WHERE address_unsplit)::bigint AS address_unsplit,
+       (SELECT count(*) FROM messages WHERE location_mismatch)::bigint AS location_mismatch
+`
+
+type CountFlaggedRow struct {
+	ParseFailed      int64
+	AddressUnsplit   int64
+	LocationMismatch int64
+}
+
+// Metrics (R52).
+func (q *Queries) CountFlagged(ctx context.Context) (CountFlaggedRow, error) {
+	row := q.db.QueryRow(ctx, countFlagged)
+	var i CountFlaggedRow
+	err := row.Scan(&i.ParseFailed, &i.AddressUnsplit, &i.LocationMismatch)
+	return i, err
+}
+
+const countIntegrationsByOwner = `-- name: CountIntegrationsByOwner :one
+SELECT count(*) FROM integrations WHERE owner_id = $1
+`
+
+func (q *Queries) CountIntegrationsByOwner(ctx context.Context, ownerID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, countIntegrationsByOwner, ownerID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countIntegrationsByStatus = `-- name: CountIntegrationsByStatus :many
+SELECT status, count(*) AS n FROM integrations GROUP BY status
+`
+
+type CountIntegrationsByStatusRow struct {
+	Status string
+	N      int64
+}
+
+func (q *Queries) CountIntegrationsByStatus(ctx context.Context) ([]CountIntegrationsByStatusRow, error) {
+	rows, err := q.db.Query(ctx, countIntegrationsByStatus)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CountIntegrationsByStatusRow
+	for rows.Next() {
+		var i CountIntegrationsByStatusRow
+		if err := rows.Scan(&i.Status, &i.N); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const createAlias = `-- name: CreateAlias :one
@@ -477,6 +699,60 @@ type CreateClientParams struct {
 func (q *Queries) CreateClient(ctx context.Context, arg CreateClientParams) error {
 	_, err := q.db.Exec(ctx, createClient, arg.ID, arg.Name, arg.KeyHash)
 	return err
+}
+
+const createIntegration = `-- name: CreateIntegration :one
+
+INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+RETURNING id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at
+`
+
+type CreateIntegrationParams struct {
+	Uid     string
+	OwnerID int64
+	Name    string
+	Kind    string
+	Content string
+	Config  []byte
+	Secrets []byte
+	Filter  []byte
+}
+
+// Integrations (R47-R51c, ADR 0006).
+func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationParams) (Integration, error) {
+	row := q.db.QueryRow(ctx, createIntegration,
+		arg.Uid,
+		arg.OwnerID,
+		arg.Name,
+		arg.Kind,
+		arg.Content,
+		arg.Config,
+		arg.Secrets,
+		arg.Filter,
+	)
+	var i Integration
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.OwnerID,
+		&i.Name,
+		&i.Kind,
+		&i.Content,
+		&i.Config,
+		&i.Secrets,
+		&i.Filter,
+		&i.Status,
+		&i.PausedBy,
+		&i.PausedAt,
+		&i.FailedPages,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.LastDeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const createInvitation = `-- name: CreateInvitation :one
@@ -657,6 +933,25 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+const deleteIntegration = `-- name: DeleteIntegration :exec
+DELETE FROM integrations WHERE id = $1
+`
+
+func (q *Queries) DeleteIntegration(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, deleteIntegration, id)
+	return err
+}
+
+const deleteIntegrationsByOwner = `-- name: DeleteIntegrationsByOwner :exec
+DELETE FROM integrations WHERE owner_id = $1
+`
+
+// R43c: a deleted account's integrations go with it.
+func (q *Queries) DeleteIntegrationsByOwner(ctx context.Context, ownerID int64) error {
+	_, err := q.db.Exec(ctx, deleteIntegrationsByOwner, ownerID)
+	return err
+}
+
 const deleteMessagesBefore = `-- name: DeleteMessagesBefore :execrows
 DELETE FROM messages
 WHERE id IN (SELECT id FROM messages WHERE sent_at < $1::timestamptz LIMIT $2::int)
@@ -720,6 +1015,33 @@ func (q *Queries) DeleteUserSessions(ctx context.Context, ids []int64) error {
 	return err
 }
 
+const deliveryByKey = `-- name: DeliveryByKey :one
+SELECT integration_id, message_id, status, attempts, next_attempt_at, last_result, last_error, delivered_at, created_at, updated_at FROM deliveries WHERE integration_id = $1 AND message_id = $2
+`
+
+type DeliveryByKeyParams struct {
+	IntegrationID int64
+	MessageID     int64
+}
+
+func (q *Queries) DeliveryByKey(ctx context.Context, arg DeliveryByKeyParams) (Delivery, error) {
+	row := q.db.QueryRow(ctx, deliveryByKey, arg.IntegrationID, arg.MessageID)
+	var i Delivery
+	err := row.Scan(
+		&i.IntegrationID,
+		&i.MessageID,
+		&i.Status,
+		&i.Attempts,
+		&i.NextAttemptAt,
+		&i.LastResult,
+		&i.LastError,
+		&i.DeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const distanceToStreet = `-- name: DistanceToStreet :one
 SELECT COALESCE(
     (SELECT min(ST_Distance(a.geom, p.g)) FROM address_points a
@@ -751,6 +1073,64 @@ func (q *Queries) DistanceToStreet(ctx context.Context, arg DistanceToStreetPara
 	return metres, err
 }
 
+const dueDeliveries = `-- name: DueDeliveries :many
+SELECT integration_id, message_id, attempts
+FROM deliveries
+WHERE status = 'pending' AND next_attempt_at <= $1::timestamptz
+ORDER BY next_attempt_at, message_id
+LIMIT 500
+`
+
+type DueDeliveriesRow struct {
+	IntegrationID int64
+	MessageID     int64
+	Attempts      int32
+}
+
+func (q *Queries) DueDeliveries(ctx context.Context, now time.Time) ([]DueDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, dueDeliveries, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DueDeliveriesRow
+	for rows.Next() {
+		var i DueDeliveriesRow
+		if err := rows.Scan(&i.IntegrationID, &i.MessageID, &i.Attempts); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const existingAliasIDs = `-- name: ExistingAliasIDs :many
+SELECT id FROM aliases WHERE id = ANY($1::bigint[])
+`
+
+func (q *Queries) ExistingAliasIDs(ctx context.Context, ids []int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, existingAliasIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const findDuplicate = `-- name: FindDuplicate :one
 SELECT id, sent_at
 FROM messages
@@ -779,6 +1159,38 @@ func (q *Queries) FindDuplicate(ctx context.Context, arg FindDuplicateParams) (F
 	return i, err
 }
 
+const finishDelivery = `-- name: FinishDelivery :exec
+UPDATE deliveries SET status = $1::text, attempts = $2::int,
+    next_attempt_at = NULL, last_result = $3, last_error = $4,
+    delivered_at = CASE WHEN $1::text = 'delivered' THEN $5::timestamptz END,
+    updated_at = $5::timestamptz
+WHERE integration_id = $6 AND message_id = $7 AND status = 'pending'
+`
+
+type FinishDeliveryParams struct {
+	Status        string
+	Attempts      int32
+	LastResult    *string
+	LastError     *string
+	At            time.Time
+	IntegrationID int64
+	MessageID     int64
+}
+
+// A delivery leaves the queue: delivered, failed, too_old or cancelled.
+func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) error {
+	_, err := q.db.Exec(ctx, finishDelivery,
+		arg.Status,
+		arg.Attempts,
+		arg.LastResult,
+		arg.LastError,
+		arg.At,
+		arg.IntegrationID,
+		arg.MessageID,
+	)
+	return err
+}
+
 const getSetting = `-- name: GetSetting :one
 SELECT value FROM settings WHERE key = $1
 `
@@ -788,6 +1200,30 @@ func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
 	var value string
 	err := row.Scan(&value)
 	return value, err
+}
+
+const insertDelivery = `-- name: InsertDelivery :exec
+INSERT INTO deliveries (integration_id, message_id, status, next_attempt_at)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT DO NOTHING
+`
+
+type InsertDeliveryParams struct {
+	IntegrationID int64
+	MessageID     int64
+	Status        string
+	NextAttemptAt *time.Time
+}
+
+// R51b: at most one row per page per integration, whatever the code path.
+func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) error {
+	_, err := q.db.Exec(ctx, insertDelivery,
+		arg.IntegrationID,
+		arg.MessageID,
+		arg.Status,
+		arg.NextAttemptAt,
+	)
+	return err
 }
 
 const insertMessage = `-- name: InsertMessage :one
@@ -869,6 +1305,241 @@ type InsertReceptionParams struct {
 func (q *Queries) InsertReception(ctx context.Context, arg InsertReceptionParams) error {
 	_, err := q.db.Exec(ctx, insertReception, arg.MessageID, arg.ClientID, arg.ReceivedAt)
 	return err
+}
+
+const integrationAliases = `-- name: IntegrationAliases :many
+SELECT a.id, a.pattern, a.name
+FROM integration_aliases ia JOIN aliases a ON a.id = ia.alias_id
+WHERE ia.integration_id = $1
+ORDER BY a.name, a.pattern
+`
+
+type IntegrationAliasesRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+}
+
+func (q *Queries) IntegrationAliases(ctx context.Context, integrationID int64) ([]IntegrationAliasesRow, error) {
+	rows, err := q.db.Query(ctx, integrationAliases, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []IntegrationAliasesRow
+	for rows.Next() {
+		var i IntegrationAliasesRow
+		if err := rows.Scan(&i.ID, &i.Pattern, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const integrationAttemptFailed = `-- name: IntegrationAttemptFailed :exec
+UPDATE integrations SET last_error = $1::text, last_error_at = $2::timestamptz WHERE id = $3
+`
+
+type IntegrationAttemptFailedParams struct {
+	Error string
+	At    time.Time
+	ID    int64
+}
+
+func (q *Queries) IntegrationAttemptFailed(ctx context.Context, arg IntegrationAttemptFailedParams) error {
+	_, err := q.db.Exec(ctx, integrationAttemptFailed, arg.Error, arg.At, arg.ID)
+	return err
+}
+
+const integrationByID = `-- name: IntegrationByID :one
+SELECT i.id, i.uid, i.owner_id, i.name, i.kind, i.content, i.config, i.secrets, i.filter, i.status, i.paused_by, i.paused_at, i.failed_pages, i.last_error, i.last_error_at, i.last_delivered_at, i.created_at, i.updated_at, u.role AS owner_role, u.status AS owner_status
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.id = $1
+`
+
+type IntegrationByIDRow struct {
+	ID              int64
+	Uid             string
+	OwnerID         int64
+	Name            string
+	Kind            string
+	Content         string
+	Config          []byte
+	Secrets         []byte
+	Filter          []byte
+	Status          string
+	PausedBy        *string
+	PausedAt        *time.Time
+	FailedPages     int32
+	LastError       *string
+	LastErrorAt     *time.Time
+	LastDeliveredAt *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+	OwnerRole       string
+	OwnerStatus     string
+}
+
+func (q *Queries) IntegrationByID(ctx context.Context, id int64) (IntegrationByIDRow, error) {
+	row := q.db.QueryRow(ctx, integrationByID, id)
+	var i IntegrationByIDRow
+	err := row.Scan(
+		&i.ID,
+		&i.Uid,
+		&i.OwnerID,
+		&i.Name,
+		&i.Kind,
+		&i.Content,
+		&i.Config,
+		&i.Secrets,
+		&i.Filter,
+		&i.Status,
+		&i.PausedBy,
+		&i.PausedAt,
+		&i.FailedPages,
+		&i.LastError,
+		&i.LastErrorAt,
+		&i.LastDeliveredAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.OwnerRole,
+		&i.OwnerStatus,
+	)
+	return i, err
+}
+
+const integrationCapcodes = `-- name: IntegrationCapcodes :many
+SELECT capcode FROM integration_capcodes WHERE integration_id = $1 ORDER BY capcode
+`
+
+func (q *Queries) IntegrationCapcodes(ctx context.Context, integrationID int64) ([]string, error) {
+	rows, err := q.db.Query(ctx, integrationCapcodes, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var capcode string
+		if err := rows.Scan(&capcode); err != nil {
+			return nil, err
+		}
+		items = append(items, capcode)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const integrationDelivered = `-- name: IntegrationDelivered :exec
+UPDATE integrations SET failed_pages = 0, last_delivered_at = $1::timestamptz WHERE id = $2
+`
+
+type IntegrationDeliveredParams struct {
+	At time.Time
+	ID int64
+}
+
+func (q *Queries) IntegrationDelivered(ctx context.Context, arg IntegrationDeliveredParams) error {
+	_, err := q.db.Exec(ctx, integrationDelivered, arg.At, arg.ID)
+	return err
+}
+
+const integrationIDsByOwner = `-- name: IntegrationIDsByOwner :many
+SELECT id FROM integrations WHERE owner_id = $1
+`
+
+func (q *Queries) IntegrationIDsByOwner(ctx context.Context, ownerID int64) ([]int64, error) {
+	rows, err := q.db.Query(ctx, integrationIDsByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const integrationPageFailed = `-- name: IntegrationPageFailed :one
+UPDATE integrations SET failed_pages = failed_pages + 1, last_error = $1::text, last_error_at = $2::timestamptz
+WHERE id = $3
+RETURNING failed_pages, status
+`
+
+type IntegrationPageFailedParams struct {
+	Error string
+	At    time.Time
+	ID    int64
+}
+
+type IntegrationPageFailedRow struct {
+	FailedPages int32
+	Status      string
+}
+
+// One more page in a row that wasn't delivered (ADR 0006 §3).
+func (q *Queries) IntegrationPageFailed(ctx context.Context, arg IntegrationPageFailedParams) (IntegrationPageFailedRow, error) {
+	row := q.db.QueryRow(ctx, integrationPageFailed, arg.Error, arg.At, arg.ID)
+	var i IntegrationPageFailedRow
+	err := row.Scan(&i.FailedPages, &i.Status)
+	return i, err
+}
+
+const integrationsByOwner = `-- name: IntegrationsByOwner :many
+SELECT id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at FROM integrations WHERE owner_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) IntegrationsByOwner(ctx context.Context, ownerID int64) ([]Integration, error) {
+	rows, err := q.db.Query(ctx, integrationsByOwner, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []Integration
+	for rows.Next() {
+		var i Integration
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.OwnerID,
+			&i.Name,
+			&i.Kind,
+			&i.Content,
+			&i.Config,
+			&i.Secrets,
+			&i.Filter,
+			&i.Status,
+			&i.PausedBy,
+			&i.PausedAt,
+			&i.FailedPages,
+			&i.LastError,
+			&i.LastErrorAt,
+			&i.LastDeliveredAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const invitationByID = `-- name: InvitationByID :one
@@ -984,6 +1655,36 @@ func (q *Queries) ListAliases(ctx context.Context) ([]ListAliasesRow, error) {
 			&i.Ignored,
 			&i.TemplateName,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAliasesBrief = `-- name: ListAliasesBrief :many
+SELECT id, pattern, name FROM aliases ORDER BY name, pattern
+`
+
+type ListAliasesBriefRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+}
+
+func (q *Queries) ListAliasesBrief(ctx context.Context) ([]ListAliasesBriefRow, error) {
+	rows, err := q.db.Query(ctx, listAliasesBrief)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAliasesBriefRow
+	for rows.Next() {
+		var i ListAliasesBriefRow
+		if err := rows.Scan(&i.ID, &i.Pattern, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -1261,6 +1962,55 @@ func (q *Queries) MarkClockAhead(ctx context.Context, id string) error {
 	return err
 }
 
+const matchingIntegrations = `-- name: MatchingIntegrations :many
+SELECT i.id, i.uid, i.kind, i.filter, u.role AS owner_role
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.status = 'active' AND u.status = 'active'
+  AND (EXISTS (SELECT 1 FROM integration_capcodes c WHERE c.integration_id = i.id AND c.capcode = $1::text)
+       OR ($2::bigint IS NOT NULL
+           AND EXISTS (SELECT 1 FROM integration_aliases a WHERE a.integration_id = i.id AND a.alias_id = $2::bigint)))
+`
+
+type MatchingIntegrationsParams struct {
+	Capcode string
+	AliasID *int64
+}
+
+type MatchingIntegrationsRow struct {
+	ID        int64
+	Uid       string
+	Kind      string
+	Filter    []byte
+	OwnerRole string
+}
+
+// Active integrations of active owners whose selection covers a stored page.
+func (q *Queries) MatchingIntegrations(ctx context.Context, arg MatchingIntegrationsParams) ([]MatchingIntegrationsRow, error) {
+	rows, err := q.db.Query(ctx, matchingIntegrations, arg.Capcode, arg.AliasID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MatchingIntegrationsRow
+	for rows.Next() {
+		var i MatchingIntegrationsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Uid,
+			&i.Kind,
+			&i.Filter,
+			&i.OwnerRole,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const messageReceptions = `-- name: MessageReceptions :many
 SELECT r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
@@ -1422,6 +2172,36 @@ func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparsePa
 	return items, nil
 }
 
+const nextDeliveryDue = `-- name: NextDeliveryDue :one
+SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending'
+`
+
+func (q *Queries) NextDeliveryDue(ctx context.Context) (time.Time, error) {
+	row := q.db.QueryRow(ctx, nextDeliveryDue)
+	var column_1 time.Time
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const pauseIntegration = `-- name: PauseIntegration :execrows
+UPDATE integrations SET status = 'paused', paused_by = $1::text, paused_at = $2::timestamptz
+WHERE id = $3 AND status = 'active'
+`
+
+type PauseIntegrationParams struct {
+	PausedBy string
+	At       time.Time
+	ID       int64
+}
+
+func (q *Queries) PauseIntegration(ctx context.Context, arg PauseIntegrationParams) (int64, error) {
+	result, err := q.db.Exec(ctx, pauseIntegration, arg.PausedBy, arg.At, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const pendingInvitationTo = `-- name: PendingInvitationTo :one
 SELECT i.id, i.email, i.email_key, i.invited_by, i.first_admin, i.reactivates, i.authentik_id, i.status, i.created_at, i.expires_at, i.used_by, i.used_at, i.cancelled_at, u.email AS inviter_email, u.name AS inviter_name
 FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
@@ -1470,6 +2250,19 @@ func (q *Queries) PendingInvitationTo(ctx context.Context, emailKey *string) (Pe
 	return i, err
 }
 
+const pruneDeliveries = `-- name: PruneDeliveries :execrows
+DELETE FROM deliveries WHERE status <> 'pending' AND created_at < $1::timestamptz
+`
+
+// Delivery records are kept for 30 days (ADR 0006 §1).
+func (q *Queries) PruneDeliveries(ctx context.Context, before time.Time) (int64, error) {
+	result, err := q.db.Exec(ctx, pruneDeliveries, before)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const reactivateUser = `-- name: ReactivateUser :execrows
 UPDATE users SET status = 'active', deactivated_at = NULL WHERE id = $1 AND status = 'deactivated'
 `
@@ -1480,6 +2273,59 @@ func (q *Queries) ReactivateUser(ctx context.Context, id int64) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const recentDeliveries = `-- name: RecentDeliveries :many
+SELECT d.message_id, d.status, d.attempts, d.last_result, d.last_error, d.delivered_at, d.created_at, d.updated_at,
+       m.sent_at, m.capcode
+FROM deliveries d JOIN messages m ON m.id = d.message_id
+WHERE d.integration_id = $1
+ORDER BY d.created_at DESC, d.message_id DESC
+LIMIT 100
+`
+
+type RecentDeliveriesRow struct {
+	MessageID   int64
+	Status      string
+	Attempts    int32
+	LastResult  *string
+	LastError   *string
+	DeliveredAt *time.Time
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	SentAt      time.Time
+	Capcode     string
+}
+
+func (q *Queries) RecentDeliveries(ctx context.Context, integrationID int64) ([]RecentDeliveriesRow, error) {
+	rows, err := q.db.Query(ctx, recentDeliveries, integrationID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RecentDeliveriesRow
+	for rows.Next() {
+		var i RecentDeliveriesRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.Status,
+			&i.Attempts,
+			&i.LastResult,
+			&i.LastError,
+			&i.DeliveredAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.SentAt,
+			&i.Capcode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const relinkUser = `-- name: RelinkUser :exec
@@ -1521,6 +2367,48 @@ type RequestReparseParams struct {
 // R23a: queue a re-parse and wake the API's worker.
 func (q *Queries) RequestReparse(ctx context.Context, arg RequestReparseParams) error {
 	_, err := q.db.Exec(ctx, requestReparse, arg.CapcodePattern, arg.Reason)
+	return err
+}
+
+const resumeIntegration = `-- name: ResumeIntegration :execrows
+UPDATE integrations SET status = 'active', paused_by = NULL, paused_at = NULL, failed_pages = 0
+WHERE id = $1 AND status = 'paused'
+`
+
+func (q *Queries) ResumeIntegration(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, resumeIntegration, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const retryDelivery = `-- name: RetryDelivery :exec
+UPDATE deliveries SET attempts = $1::int, next_attempt_at = $2::timestamptz,
+    last_result = $3, last_error = $4, updated_at = $5::timestamptz
+WHERE integration_id = $6 AND message_id = $7 AND status = 'pending'
+`
+
+type RetryDeliveryParams struct {
+	Attempts      int32
+	NextAttemptAt time.Time
+	LastResult    *string
+	LastError     *string
+	At            time.Time
+	IntegrationID int64
+	MessageID     int64
+}
+
+func (q *Queries) RetryDelivery(ctx context.Context, arg RetryDeliveryParams) error {
+	_, err := q.db.Exec(ctx, retryDelivery,
+		arg.Attempts,
+		arg.NextAttemptAt,
+		arg.LastResult,
+		arg.LastError,
+		arg.At,
+		arg.IntegrationID,
+		arg.MessageID,
+	)
 	return err
 }
 
@@ -1759,6 +2647,20 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.SessionUsedAt,
 	)
 	return i, err
+}
+
+const setIntegrationSecrets = `-- name: SetIntegrationSecrets :exec
+UPDATE integrations SET secrets = $2 WHERE id = $1
+`
+
+type SetIntegrationSecretsParams struct {
+	ID      int64
+	Secrets []byte
+}
+
+func (q *Queries) SetIntegrationSecrets(ctx context.Context, arg SetIntegrationSecretsParams) error {
+	_, err := q.db.Exec(ctx, setIntegrationSecrets, arg.ID, arg.Secrets)
+	return err
 }
 
 const setInvitationAuthentikID = `-- name: SetInvitationAuthentikID :exec
@@ -2016,6 +2918,32 @@ func (q *Queries) UpdateAlias(ctx context.Context, arg UpdateAliasParams) error 
 		arg.Name,
 		arg.TemplateID,
 		arg.Ignored,
+	)
+	return err
+}
+
+const updateIntegration = `-- name: UpdateIntegration :exec
+UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, updated_at = now()
+WHERE id = $1
+`
+
+type UpdateIntegrationParams struct {
+	ID      int64
+	Name    string
+	Content string
+	Config  []byte
+	Secrets []byte
+	Filter  []byte
+}
+
+func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationParams) error {
+	_, err := q.db.Exec(ctx, updateIntegration,
+		arg.ID,
+		arg.Name,
+		arg.Content,
+		arg.Config,
+		arg.Secrets,
+		arg.Filter,
 	)
 	return err
 }

@@ -34,6 +34,50 @@ type Client struct {
 	ClockAheadSince *time.Time
 }
 
+type Delivery struct {
+	IntegrationID int64
+	MessageID     int64
+	Status        string
+	Attempts      int32
+	NextAttemptAt *time.Time
+	LastResult    *string
+	LastError     *string
+	DeliveredAt   *time.Time
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
+}
+
+type Integration struct {
+	ID              int64
+	Uid             string
+	OwnerID         int64
+	Name            string
+	Kind            string
+	Content         string
+	Config          []byte
+	Secrets         []byte
+	Filter          []byte
+	Status          string
+	PausedBy        *string
+	PausedAt        *time.Time
+	FailedPages     int32
+	LastError       *string
+	LastErrorAt     *time.Time
+	LastDeliveredAt *time.Time
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
+type IntegrationAlias struct {
+	IntegrationID int64
+	AliasID       int64
+}
+
+type IntegrationCapcode struct {
+	IntegrationID int64
+	Capcode       string
+}
+
 type Invitation struct {
 	ID          int64
 	Email       *string

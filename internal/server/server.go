@@ -18,6 +18,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -50,6 +51,16 @@ type Server struct {
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
+	// Integrations forwards new pages to users' systems (R47-R51c); nil
+	// leaves them out.
+	Integrations *integrations.Service
+	// MetricsToken guards /metrics ("" turns it off); Locks counts locked
+	// accounts for it (nil leaves that metric out) (R52).
+	MetricsToken string
+	Locks        LockCounter
+	Version      string
+
+	pages pageCounts
 }
 
 // Handler returns the API's routes.
@@ -58,30 +69,45 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /api/v1/pages", s.postPage)
 	// Everything else under /api/v1 needs a signed-in user (A29).
 	for pattern, h := range map[string]http.HandlerFunc{
-		"GET /api/v1/meta":                         s.getMeta,
-		"GET /api/v1/messages":                     s.listMessages,
-		"GET /api/v1/messages/{id}":                s.getMessage,
-		"GET /api/v1/jobs/{job}":                   s.getJob,
-		"GET /api/v1/capcodes/unaliased":           s.unaliased,
-		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,
-		"GET /api/v1/aliases/{id}":                 s.getAlias,
-		"GET /api/v1/map":                          s.mapMessages,
-		"GET /api/v1/map/tiles.pmtiles":            s.mapTiles,
-		"GET /api/v1/reports/capcode":              s.capcodeReport,
-		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
-		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
-		"GET /api/v1/stream":                       s.stream,
-		"GET /api/v1/me":                           s.getMe,
-		"DELETE /api/v1/me":                        s.deleteMe,
-		"GET /api/v1/invitations":                  s.myInvitations,
-		"POST /api/v1/invitations":                 s.invite,
-		"DELETE /api/v1/invitations/{id}":          s.cancelInvitation,
-		"GET /api/v1/admin/clients":                s.adminOnly(s.listClients),
-		"GET /api/v1/admin/users":                  s.adminOnly(s.listUsers),
-		"GET /api/v1/admin/invitations":            s.adminOnly(s.allInvitations),
-		"POST /api/v1/admin/users/{id}/deactivate": s.adminOnly(s.deactivate),
-		"POST /api/v1/admin/users/{id}/reactivate": s.adminOnly(s.reactivate),
-		"PUT /api/v1/admin/users/{id}/role":        s.adminOnly(s.setRole),
+		"GET /api/v1/meta":                            s.getMeta,
+		"GET /api/v1/messages":                        s.listMessages,
+		"GET /api/v1/messages/{id}":                   s.getMessage,
+		"GET /api/v1/jobs/{job}":                      s.getJob,
+		"GET /api/v1/capcodes/unaliased":              s.unaliased,
+		"GET /api/v1/capcodes/{capcode}":              s.getCapcode,
+		"GET /api/v1/aliases/{id}":                    s.getAlias,
+		"GET /api/v1/map":                             s.mapMessages,
+		"GET /api/v1/map/tiles.pmtiles":               s.mapTiles,
+		"GET /api/v1/reports/capcode":                 s.capcodeReport,
+		"GET /api/v1/admin/retention":                 s.adminOnly(s.getRetention),
+		"PUT /api/v1/admin/retention":                 s.adminOnly(s.putRetention),
+		"GET /api/v1/stream":                          s.stream,
+		"GET /api/v1/me":                              s.getMe,
+		"DELETE /api/v1/me":                           s.deleteMe,
+		"GET /api/v1/invitations":                     s.myInvitations,
+		"POST /api/v1/invitations":                    s.invite,
+		"DELETE /api/v1/invitations/{id}":             s.cancelInvitation,
+		"GET /api/v1/admin/clients":                   s.adminOnly(s.listClients),
+		"GET /api/v1/admin/users":                     s.adminOnly(s.listUsers),
+		"GET /api/v1/admin/invitations":               s.adminOnly(s.allInvitations),
+		"POST /api/v1/admin/users/{id}/deactivate":    s.adminOnly(s.deactivate),
+		"POST /api/v1/admin/users/{id}/reactivate":    s.adminOnly(s.reactivate),
+		"PUT /api/v1/admin/users/{id}/role":           s.adminOnly(s.setRole),
+		"GET /api/v1/aliases":                         s.listAliases,
+		"GET /api/v1/integrations":                    s.listIntegrations,
+		"POST /api/v1/integrations":                   s.createIntegration,
+		"GET /api/v1/integrations/{id}":               s.getIntegration,
+		"PUT /api/v1/integrations/{id}":               s.updateIntegration,
+		"DELETE /api/v1/integrations/{id}":            s.deleteIntegration,
+		"POST /api/v1/integrations/{id}/test":         s.testIntegration,
+		"POST /api/v1/integrations/{id}/pause":        s.pauseIntegration(false),
+		"POST /api/v1/integrations/{id}/resume":       s.resumeIntegration(false),
+		"GET /api/v1/integrations/{id}/deliveries":    s.integrationDeliveries,
+		"GET /api/v1/admin/integrations":              s.adminOnly(s.adminIntegrations),
+		"POST /api/v1/admin/integrations/{id}/pause":  s.adminOnly(s.pauseIntegration(true)),
+		"POST /api/v1/admin/integrations/{id}/resume": s.adminOnly(s.resumeIntegration(true)),
+		"GET /api/v1/admin/integration-hosts":         s.adminOnly(s.getAllowList),
+		"PUT /api/v1/admin/integration-hosts":         s.adminOnly(s.putAllowList),
 	} {
 		mux.HandleFunc(pattern, s.signedIn(h))
 	}
@@ -92,6 +118,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /auth/logout", s.logout)
 	mux.HandleFunc("GET /auth/status", s.authStatus)
 	mux.HandleFunc("POST /auth/first-admin", s.firstAdmin)
+	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -159,6 +186,7 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusUnprocessableEntity, "received_at is required")
 		return
 	case req.ReceivedAt.After(s.Now().Add(MaxFuture)):
+		s.pages.add("clock_ahead")
 		s.Log.Warn("page rejected: client clock ahead", "client", clientID)
 		if err := s.Store.MarkClockAhead(ctx, clientID); err != nil {
 			s.Log.Error("mark clock ahead", "client", clientID, "error", store.SafeError(err))
@@ -182,8 +210,13 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.Log.Info("page", "client", clientID, "outcome", string(outcome), "message_id", id)
-	if outcome == ingest.Stored && s.Hub != nil {
-		s.Hub.Publish(id)
+	s.pages.add(string(outcome))
+	if outcome == ingest.Stored {
+		// Its deliveries were queued with it; send them now (R51a: within 5 s).
+		s.Integrations.Wake()
+		if s.Hub != nil {
+			s.Hub.Publish(id)
+		}
 	}
 	writeJSON(w, http.StatusOK, PageResponse{Outcome: outcome, MessageID: id})
 }

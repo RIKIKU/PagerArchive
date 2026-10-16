@@ -74,10 +74,14 @@ func deref(p *string) string {
 }
 
 func (s *Server) deleteMe(w http.ResponseWriter, r *http.Request) {
+	// Their integrations go with the account; their Home Assistant
+	// entities are removed afterwards, best effort.
+	cleanup := s.Integrations.DiscoveryCleanup(r.Context(), currentUser(r).ID)
 	if err := s.Accounts.DeleteAccount(r.Context(), currentUser(r)); err != nil {
 		s.accountsError(w, "delete account", err)
 		return
 	}
+	go cleanup()
 	s.setCookie(w, sessionCookie, "", "/", -1)
 	w.WriteHeader(http.StatusNoContent)
 }
