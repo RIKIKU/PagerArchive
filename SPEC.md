@@ -60,7 +60,7 @@ Receiving clients, ingest and redaction, profile-driven parsing, job grouping, m
 - **Operational alerting** (owner, 2026-10-16). PagerArchive is not critical infrastructure and must not replace issued pagers or an agency's official alerting. Integrations are a convenience: delivery is best-effort, and the app doesn't add features whose purpose is guaranteed alerting (e.g. repeat-until-acknowledged alarms, delivery receipts, escalation).
 - **A native mobile app.** The browser UI must work well on phones instead.
 - **Automatic client updates** (wanted later). v1 publishes multi-arch images and documents manual updates.
-- **Managing aliases, templates and clients in the browser** (wanted later, owner 2026-10-13). In v1 they are changed by import or CLI; the browser admin screens cover users, invitations, roles and retention.
+- **Managing templates and clients in the browser** (wanted later, owner 2026-10-13). Until then they are changed by import or CLI. Aliases are managed in the browser from M6 (section 7.12, owner 2026-10-16).
 - **Writing an identity provider.**
 - **Linking several email addresses to one person.** Accepted risk: one person may hold more than one account. Invite attribution and invite-tree deactivation (section 7.9) are the remedy.
 - **Public geocoding services** (section 8).
@@ -158,7 +158,8 @@ Many clients post to one server. Each client records its own receive time. The s
   agency, icon, colour and whether it's ignored, then the messages from the capcodes it
   covers, newest first, with live updates and the same filters as the main list. For a
   capcode with no alias: the capcode, its message count, and first and last seen (as in
-  R33). Read-only in v1; aliases are changed by import or CLI.
+  R33). From M6 it also shows the alias's history (R57) and, for a signed-in user, a way to
+  request a change (R54); admins edit it directly (R53).
 - **R36.** Supports current Chrome, Firefox, Brave and Safari on desktop and mobile; dark and light mode; layout adapts to screen orientation.
 - **R37.** **Per-user integrations** forward pages to a user's own systems: see section 7.11 (milestone M5).
 
@@ -196,6 +197,14 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R51b. No double firing.** Each delivery carries the page's ID. Once a page has been delivered to an integration, it is never sent to that integration again, even if several clients received it.
 - **R51c. Send test.** An integration's owner can send a test delivery, marked `"test": true`, and sees what the endpoint answered.
 - **R52.** **Metrics for external monitoring:** a Prometheus-format endpoint (access-controlled, no page text) exposing at least: each client's last-seen time and "not receiving" / "clock ahead" state, pages received and stored, `parse_failed` and `address_unsplit` counts, integration delivery successes, failures and "too old" skips, the number of accounts currently locked by guessing protection (R44a), and nightly-job results. System alerting (e.g. via Grafana) is the deployment's job, not the app's.
+
+### 7.12 Aliases in the browser (owner, 2026-10-16)
+- **R53. Admins manage aliases** in Administration: add, edit (name, capcode or pattern, template, ignored) and delete. The same rules apply as for import (R27, R27a). Admins' changes take effect at once, with no review.
+- **R54. Change requests.** Any signed-in user can request a new alias, a change to an existing alias's name, template or ignored flag, or the deletion of an alias. A request can't change an alias's capcode or pattern (that's a deletion plus a new alias). Users choose from existing templates; only admins manage templates. A request is checked when it's submitted (e.g. R27a) and can carry a note for the admins.
+- **R55. Review.** Admins see waiting requests in Administration (R44b), with a count on the Admin link. Each shows the current value beside the proposed one. **Approving** applies the request exactly as submitted, after checking R27a again; if it would now break that rule, approval is refused with the reason. **Rejecting** requires one feedback text. Admins can't edit a request. A request whose alias has changed since it was submitted is marked **"changed since requested"**. Deleting an alias closes its waiting requests as "alias deleted".
+- **R56. My requests.** Users see their requests' status (waiting, approved, rejected, withdrawn, alias deleted) and any feedback. They can edit or withdraw a request while it's waiting. A rejected request is final; they can submit a new one. Deactivating or deleting a user withdraws their waiting requests (as with invitations, R43b and R43c).
+- **R57. History.** The alias view (R35e) lists the alias's changes: what changed, who requested it, who approved or made it, and when. A deleted user shows as "deleted user" (R43c).
+- **R58. Import and export.** From M6, the database is the source of truth for aliases. Import (R30) only **adds** aliases for capcodes or patterns that have none; for existing ones, it lists the differences and changes nothing. Admins can **export** all aliases as a CSV in the import format.
 
 ## 8. Constraints
 
@@ -265,6 +274,12 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A39. One page, one delivery.** **Given** a webhook integration selecting `0100001`, **when** two clients receive the same page for `0100001`, **then** the endpoint gets exactly 1 request, carrying the page's ID; **when** the owner presses Send test, **then** the endpoint gets a request marked `"test": true` and the owner sees its answer.
 - **A40. One selection field.** **Given** capcode `0100001` has the alias "Station 1" and the pattern `0100%` has an alias, **when** user A types `0100001` in an integration's selection, **then** "Station 1 (0100001)" is offered and selected as the alias; **when** A types `0100009`, **then** only the capcode `0100009` is selected, with the pattern alias's name shown beside it.
 - **A41. Administration area.** **Given** admin A and user B, each with an integration, **when** B is signed in, **then** there is no Admin link and opening an admin page is refused; **when** A is signed in, **then** the header has one Admin link and its start page reaches every admin screen, B's page in Administration shows B's integration without its destination, and no page lists every user's integrations.
+- **A42. Admin edits aliases.** **Given** an admin and the alias "Station 1" on `0100001`, **when** the admin renames it "Station One", **then** the message list shows "Station One" for `0100001` pages at once; **when** the admin adds a second alias for `0100001`, **then** it is refused with the reason.
+- **A43. Request approved.** **Given** user B and no alias for `0100009`, **when** B requests the alias "Station 9" for `0100009` with an existing template, **then** the admin sees a count of 1 on the Admin link; **when** the admin approves it, **then** the alias exists, its history shows B requested it and the admin approved it, and B's requests show "approved".
+- **A44. Request rejected.** **Given** user B, **when** B requests renaming "Station 1" to "Station 7" and the admin rejects it with the feedback "Wrong station", **then** the alias is still "Station 1" and B's requests show "rejected" with "Wrong station". Rejecting without feedback is refused.
+- **A45. Out-of-date requests.** **Given** B has requested renaming "Station 1", **when** the admin renames it directly before reviewing, **then** B's request shows "changed since requested" with the current and proposed names. **Given** B has requested an alias for `0100009`, **when** the admin creates a different alias for `0100009` before reviewing, **then** approving B's request is refused with the reason.
+- **A46. Import doesn't overwrite.** **Given** "Station 1" was renamed "Station One" in the browser, **when** a CSV still naming `0100001` "Station 1" and adding `0100010` is imported, **then** `0100001` stays "Station One", the import lists that difference, and `0100010` is added; **when** the aliases are exported and the export is imported, **then** it reports no differences.
+- **A47. Users can't edit directly.** **Given** user B, **when** B tries to edit an alias through the API, **then** it is refused; **when** B has a waiting request and is deactivated, **then** that request shows "withdrawn".
 
 ## 10. Example profile (made-up network)
 
@@ -309,6 +324,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M3** | Accounts, invitations, deactivation (Authentik) | §11 step 2, A23–A29, A33 |
 | **M4** | Location and map, reports, liveness, retention, resource budget | A11, A12, A13, A15, A34, §11 |
 | **M5** | Per-user integrations (webhook, MQTT, presets, Home Assistant discovery), metrics endpoint | A30–A32, A35–A41 |
+| **M6** | Aliases in the browser: admin editing, change requests and review, history, import and export | A42–A47 |
 
 ## 13. Open questions
 
