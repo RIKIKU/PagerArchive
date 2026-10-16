@@ -172,15 +172,21 @@ func clean(s string) string {
 	if strings.EqualFold(s, "null") {
 		return ""
 	}
-	return s
+	return unguard(s)
 }
+
+// byImport records the import's changes in history (R57). Each change's
+// re-parse is covered by the one full re-parse the import queues.
+var byImport = By{Source: SourceImport}
 
 // ImportCSV adds or updates aliases from a CSV export with a header row
 // (id, address, alias, agency, icon, color, ignore). It creates one template
 // per agency, with the most common icon and colour among that agency's
 // aliases and the profile from the mapping. An empty or "null" agency means
-// no template. An alias already in the database for the same capcode is
-// left alone and its differences reported, unless opts.Update. Rows for
+// no template. The database is the source of truth (R58): an alias already
+// there for the same capcode is left alone and its differences reported;
+// only opts.Update, from the command line, applies them (owner,
+// 2026-10-16). Every alias added or changed is recorded in history. Rows for
 // one capcode that are identical are squashed; real conflicts must be
 // resolved by an override, or nothing is imported (ErrUnresolved). It runs in one
 // transaction and then re-parses every message (R23a).
@@ -253,8 +259,8 @@ func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, opts ImportOptions
 			}
 			cur, err := q.AliasDetailByKey(ctx, row.pattern)
 			if errors.Is(err, pgx.ErrNoRows) {
-				if _, err := q.CreateAlias(ctx, db.CreateAliasParams{Pattern: row.pattern, Name: row.name, TemplateID: tid, Ignored: row.ignored}); err != nil {
-					return dbErr(fmt.Sprintf("row %d", row.line), err)
+				if _, err := addAlias(ctx, q, settings{pattern: row.pattern, name: row.name, tplID: tid, tplName: optional(row.agency), ignored: row.ignored}, byImport, reparses{}); err != nil {
+					return fmt.Errorf("row %d: %w", row.line, err)
 				}
 				res.AliasesAdded++
 				continue
@@ -270,8 +276,9 @@ func (c *Catalog) ImportCSV(ctx context.Context, r io.Reader, opts ImportOptions
 			}
 			res.Differences = append(res.Differences, AliasDifference{Pattern: row.pattern, Changes: changes})
 			if opts.Update {
-				if err := q.UpdateAlias(ctx, db.UpdateAliasParams{ID: cur.ID, Name: row.name, TemplateID: tid, Ignored: row.ignored}); err != nil {
-					return dbErr(fmt.Sprintf("row %d", row.line), err)
+				ch := change{name: &row.name, setTemplate: true, tplID: tid, tplName: optional(row.agency), ignored: &row.ignored}
+				if err := changeAlias(ctx, q, cur.ID, ch, byImport, reparses{}); err != nil {
+					return fmt.Errorf("row %d: %w", row.line, err)
 				}
 				res.AliasesUpdated++
 			}
@@ -315,13 +322,6 @@ func differences(cur db.AliasDetailByKeyRow, row importRow) []string {
 		out = append(out, fmt.Sprintf("ignored: %v → %v", cur.Ignored, row.ignored))
 	}
 	return out
-}
-
-func optional(s string) *string {
-	if s == "" {
-		return nil
-	}
-	return &s
 }
 
 // resolveDuplicates returns one row per capcode, applying overrides. Rows

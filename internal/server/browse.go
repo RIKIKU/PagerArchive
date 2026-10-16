@@ -150,6 +150,9 @@ type Meta struct {
 	Attribution    string   `json:"attribution"`     // the address dataset's (R24)
 	MapTiles       bool     `json:"map_tiles"`       // a tile extract is configured (R35)
 	MapAttribution string   `json:"map_attribution"` // the tiles' credit line
+	// Admins only: alias requests waiting for review (R55), for the count
+	// on the Admin link.
+	WaitingRequests *int64 `json:"waiting_requests,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +162,14 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 		m.Categories = append(m.Categories, c.Name)
 	}
 	m.Categories = append(m.Categories, "Other")
+	if s.isAdmin(r) {
+		n, err := s.Store.CountWaitingRequests(r.Context())
+		if err != nil {
+			s.Log.Error("meta: waiting requests", "error", store.SafeError(err))
+		} else {
+			m.WaitingRequests = &n
+		}
+	}
 	writeJSON(w, http.StatusOK, m)
 }
 
@@ -376,16 +387,40 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// AliasView is an alias as the alias view shows it (R35e). Read-only in v1.
+// AliasView is an alias as the alias view shows it (R35e). History is for
+// admins only, and left out for everyone else (owner, 2026-10-16).
+// MyRequest is the signed-in user's waiting request for it, if any (R56).
 type AliasView struct {
-	ID       int64   `json:"id"`
-	Pattern  string  `json:"pattern"` // capcode, or pattern with % and _
-	Name     string  `json:"name"`
-	Template *string `json:"template"`
-	Agency   *string `json:"agency"`
-	Icon     *string `json:"icon"`
-	Colour   *string `json:"colour"`
-	Ignored  bool    `json:"ignored"`
+	ID         int64                  `json:"id"`
+	Pattern    string                 `json:"pattern"` // capcode, or pattern with % and _
+	Name       string                 `json:"name"`
+	TemplateID *int64                 `json:"template_id"`
+	Template   *string                `json:"template"`
+	Agency     *string                `json:"agency"`
+	Icon       *string                `json:"icon"`
+	Colour     *string                `json:"colour"`
+	Ignored    bool                   `json:"ignored"`
+	History    []catalog.HistoryEntry `json:"history,omitempty"`
+	MyRequest  *catalog.RequestView   `json:"my_request,omitempty"`
+}
+
+// aliasView reads an alias, with its history for admins.
+func (s *Server) aliasView(r *http.Request, id int64, admin bool) (AliasView, bool, error) {
+	a, err := s.Store.AliasView(r.Context(), id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return AliasView{}, false, nil
+	}
+	if err != nil {
+		return AliasView{}, false, fmt.Errorf("alias: %s", store.SafeError(err))
+	}
+	v := AliasView{ID: a.ID, Pattern: a.Pattern, Name: a.Name, TemplateID: a.TemplateID, Template: a.TemplateName,
+		Agency: a.Agency, Icon: a.Icon, Colour: a.Colour, Ignored: a.Ignored}
+	if admin {
+		if v.History, err = s.Catalog.History(r.Context(), &a.ID, a.Pattern); err != nil {
+			return v, true, err
+		}
+	}
+	return v, true, nil
 }
 
 func (s *Server) getAlias(w http.ResponseWriter, r *http.Request) {
@@ -394,28 +429,37 @@ func (s *Server) getAlias(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "no such alias")
 		return
 	}
-	a, err := s.Store.AliasView(r.Context(), id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		problem(w, http.StatusNotFound, "no such alias")
-		return
+	v, found, err := s.aliasView(r, id, s.isAdmin(r))
+	if err == nil && found {
+		uid := currentUser(r).ID
+		var mine []catalog.RequestView
+		mine, err = s.Catalog.Requests(r.Context(), catalog.RequestFilter{RequestedBy: &uid, AliasID: &id, Which: "waiting", Max: 1})
+		if len(mine) > 0 {
+			v.MyRequest = &mine[0]
+		}
 	}
 	if err != nil {
-		s.Log.Error("alias", "error", store.SafeError(err))
+		s.Log.Error("alias", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, AliasView{ID: a.ID, Pattern: a.Pattern, Name: a.Name, Template: a.TemplateName,
-		Agency: a.Agency, Icon: a.Icon, Colour: a.Colour, Ignored: a.Ignored})
+	if !found {
+		problem(w, http.StatusNotFound, "no such alias")
+		return
+	}
+	writeJSON(w, http.StatusOK, v)
 }
 
 // CapcodeView is a capcode as the alias view shows it when the capcode has
 // no alias (R35e). AliasID is set instead when an alias now covers it.
+// History holds deleted aliases' entries for this capcode, for admins only.
 type CapcodeView struct {
-	Capcode   string     `json:"capcode"`
-	AliasID   *int64     `json:"alias_id"`
-	Messages  int64      `json:"messages"`
-	FirstSeen *time.Time `json:"first_seen"`
-	LastSeen  *time.Time `json:"last_seen"`
+	Capcode   string                 `json:"capcode"`
+	AliasID   *int64                 `json:"alias_id"`
+	Messages  int64                  `json:"messages"`
+	FirstSeen *time.Time             `json:"first_seen"`
+	LastSeen  *time.Time             `json:"last_seen"`
+	History   []catalog.HistoryEntry `json:"history,omitempty"`
 }
 
 func (s *Server) getCapcode(w http.ResponseWriter, r *http.Request) {
@@ -444,10 +488,17 @@ func (s *Server) getCapcode(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
+	if s.isAdmin(r) {
+		if out.History, err = s.Catalog.History(r.Context(), nil, capcode); err != nil {
+			s.Log.Error("capcode history", "error", err.Error())
+			problem(w, http.StatusInternalServerError, "lookup failed")
+			return
+		}
+	}
 	if len(rows) > 0 {
 		first, last := rows[0].FirstSeen.UTC(), rows[0].LastSeen.UTC()
 		out.Messages, out.FirstSeen, out.LastSeen = rows[0].Messages, &first, &last
-	} else if out.AliasID == nil {
+	} else if out.AliasID == nil && len(out.History) == 0 {
 		problem(w, http.StatusNotFound, "no messages to this capcode")
 		return
 	}

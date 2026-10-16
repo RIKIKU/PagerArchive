@@ -237,7 +237,7 @@ WHERE a.pattern_key = sqlc.arg(pattern_key)::text;
 
 -- name: AliasView :one
 -- R35e: an alias with its template's presentation.
-SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.agency, t.icon, t.colour
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE a.id = $1;
@@ -617,3 +617,148 @@ SELECT (SELECT count(*) FROM messages WHERE parse_failed)::bigint AS parse_faile
 
 -- name: CountIntegrationsByStatus :many
 SELECT status, count(*) AS n FROM integrations GROUP BY status;
+
+-- Aliases in the browser: history and requests (R53-R58, ADR 0007).
+
+-- name: AliasForUpdate :one
+-- Locks an alias for a change, with its template's name for history.
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.template_id, a.ignored, t.name AS template_name
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE a.id = $1
+FOR UPDATE OF a;
+
+-- name: AliasIDByKey :one
+SELECT id FROM aliases WHERE pattern_key = sqlc.arg(pattern_key)::text;
+
+-- name: SetAlias :exec
+UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5 WHERE id = $1;
+
+-- name: TemplateByID :one
+SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE id = $1;
+
+-- name: InsertAliasChange :one
+INSERT INTO alias_changes (alias_id, pattern_key, alias_name, action, changes, source, made_by, requested_by, request_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id;
+
+-- name: LatestAliasChange :one
+SELECT coalesce(max(id), 0)::bigint FROM alias_changes WHERE alias_id = $1;
+
+-- name: AliasHistory :many
+-- R57: an alias's changes, and those of deleted aliases that had its
+-- capcode or pattern (owner, 2026-10-16), newest first. For a capcode with
+-- no alias, alias_id is NULL. Admins only (owner, 2026-10-16).
+SELECT c.id, c.alias_id, c.pattern_key, c.alias_name, c.action, c.changes, c.source, c.at, c.request_id,
+       m.name AS made_by_name, m.email AS made_by_email, m.status AS made_by_status,
+       r.name AS requested_by_name, r.email AS requested_by_email, r.status AS requested_by_status
+FROM alias_changes c
+LEFT JOIN users m ON m.id = c.made_by
+LEFT JOIN users r ON r.id = c.requested_by
+WHERE c.alias_id = sqlc.narg(alias_id)::bigint
+   OR c.alias_id IN (SELECT d.alias_id FROM alias_changes d
+                     WHERE d.action = 'deleted' AND d.pattern_key = sqlc.arg(pattern_key)::text)
+ORDER BY c.id DESC
+LIMIT 200;
+
+-- name: CloseRequestsOfAlias :execrows
+-- R55: deleting an alias closes its waiting requests.
+UPDATE alias_requests SET status = 'alias_deleted', closed_at = now(), updated_at = now()
+WHERE alias_id = $1 AND status = 'waiting';
+
+-- name: CountIntegrationsSelectingAlias :one
+SELECT count(*) FROM integration_aliases WHERE alias_id = $1;
+
+-- name: SelectCapcodeInsteadOfAlias :exec
+-- Q4 (owner, 2026-10-16): integrations that selected a deleted one-capcode
+-- alias select its capcode instead. The alias's rows then go by cascade.
+INSERT INTO integration_capcodes (integration_id, capcode)
+SELECT integration_id, sqlc.arg(capcode)::text FROM integration_aliases WHERE alias_id = sqlc.arg(alias_id)
+ON CONFLICT DO NOTHING;
+
+-- name: CreateAliasRequest :one
+INSERT INTO alias_requests (kind, requested_by, alias_id, pattern, alias_name, name, set_template, template_id, template_name, ignored, note, base_change)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+RETURNING id;
+
+-- name: EditAliasRequest :execrows
+UPDATE alias_requests
+SET name = $2, set_template = $3, template_id = $4, template_name = $5, ignored = $6, note = $7, base_change = $8, updated_at = now()
+WHERE id = $1 AND status = 'waiting';
+
+-- name: AliasRequestForUpdate :one
+SELECT * FROM alias_requests WHERE id = $1 FOR UPDATE;
+
+-- name: CloseAliasRequest :exec
+UPDATE alias_requests
+SET status = sqlc.arg(status)::text, reviewed_by = sqlc.narg(reviewed_by)::bigint, feedback = sqlc.narg(feedback)::text,
+    alias_id = coalesce(sqlc.narg(alias_id)::bigint, alias_id), closed_at = now(), updated_at = now()
+WHERE id = sqlc.arg(id) AND status = 'waiting';
+
+-- name: WaitingRequestOf :one
+-- A user's other waiting request for the same alias, or for the same
+-- capcode or pattern if it asks for a new one (ADR 0007 §2).
+SELECT id FROM alias_requests
+WHERE requested_by = sqlc.arg(requested_by) AND status = 'waiting' AND id <> sqlc.arg(not_id)::bigint
+  AND ((sqlc.narg(alias_id)::bigint IS NOT NULL AND alias_id = sqlc.narg(alias_id)::bigint)
+       OR (kind = 'add' AND sqlc.narg(alias_id)::bigint IS NULL AND pattern = sqlc.arg(pattern)::text))
+LIMIT 1;
+
+-- name: CountWaitingRequestsOf :one
+SELECT count(*) FROM alias_requests WHERE requested_by = $1 AND status = 'waiting';
+
+-- name: CountWaitingRequests :one
+SELECT count(*) FROM alias_requests WHERE status = 'waiting';
+
+-- name: CountWaitingRequestsForTemplate :one
+SELECT count(*) FROM alias_requests WHERE status = 'waiting' AND set_template AND template_id = $1;
+
+-- name: WithdrawRequestsOf :execrows
+-- R56: deactivating or deleting a user withdraws their waiting requests.
+UPDATE alias_requests SET status = 'withdrawn', closed_at = now(), updated_at = now()
+WHERE requested_by = ANY(sqlc.arg(user_ids)::bigint[]) AND status = 'waiting';
+
+-- name: ClearRequestNotesOf :exec
+-- R43c: a deleted account's notes go; its requests stay, as "deleted user".
+UPDATE alias_requests SET note = NULL WHERE requested_by = $1;
+
+-- name: ListAliasRequests :many
+-- Requests with the people involved, the alias as it is now, and what's
+-- needed for the marks in ADR 0007 §3. Newest first.
+SELECT r.id, r.kind, r.requested_by, r.alias_id, r.pattern, r.alias_name, r.name, r.set_template, r.template_id,
+       r.template_name, r.ignored, r.note, r.base_change, r.status, r.feedback, r.created_at, r.updated_at, r.closed_at,
+       u.name AS requester_name, u.email AS requester_email, u.status AS requester_status,
+       v.name AS reviewer_name, v.email AS reviewer_email, v.status AS reviewer_status,
+       a.pattern AS cur_pattern, a.name AS cur_name, a.ignored AS cur_ignored, a.template_id AS cur_template_id,
+       ct.name AS cur_template_name,
+       (SELECT coalesce(max(c.id), 0) FROM alias_changes c WHERE c.alias_id = r.alias_id)::bigint AS latest_change,
+       occ.id AS occupant_id, occ.name AS occupant_name
+FROM alias_requests r
+JOIN users u ON u.id = r.requested_by
+LEFT JOIN users v ON v.id = r.reviewed_by
+LEFT JOIN aliases a ON a.id = r.alias_id
+LEFT JOIN templates ct ON ct.id = a.template_id
+LEFT JOIN aliases occ ON r.kind = 'add' AND r.status = 'waiting' AND occ.pattern_key = r.pattern
+WHERE (sqlc.narg(requested_by)::bigint IS NULL OR r.requested_by = sqlc.narg(requested_by)::bigint)
+  AND (sqlc.narg(id)::bigint IS NULL OR r.id = sqlc.narg(id)::bigint)
+  AND (sqlc.narg(alias_id)::bigint IS NULL OR r.alias_id = sqlc.narg(alias_id)::bigint)
+  AND (sqlc.arg(which)::text = 'all' OR (sqlc.arg(which)::text = 'waiting') = (r.status = 'waiting'))
+ORDER BY r.id DESC
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: AdminAliases :many
+-- R53: aliases for Administration, filtered by name, capcode or pattern.
+SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name,
+       (SELECT count(*) FROM alias_requests r WHERE r.alias_id = a.id AND r.status = 'waiting')::bigint AS waiting
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+WHERE sqlc.arg(q)::text = '' OR strpos(lower(a.name), lower(sqlc.arg(q)::text)) > 0 OR strpos(a.pattern, sqlc.arg(q)::text) > 0
+ORDER BY a.pattern
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: ExportAliases :many
+-- R58: every alias in the import format.
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.icon, t.colour
+FROM aliases a
+LEFT JOIN templates t ON t.id = a.template_id
+ORDER BY a.pattern;

@@ -178,9 +178,10 @@ func setup(t *testing.T) *env {
 		Hub:          hub,
 		Location:     time.UTC,
 		Accounts:     e.acc,
+		Catalog:      &catalog.Catalog{Store: st},
 	}
 	e.srv = srv
-	e.cat = &catalog.Catalog{Store: st}
+	e.cat = srv.Catalog
 	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute}
 	melbourne, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {

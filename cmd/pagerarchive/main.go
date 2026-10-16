@@ -31,6 +31,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
+	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
@@ -83,12 +84,15 @@ commands:
   alias set <pattern> <name> [--template T | --no-template] [--ignored[=false]]
                               rename; other settings change only if given
   alias import <file.csv> [--mapping M.json] [--overrides O.json] [--update] [--dry-run]
-                              add or update aliases from a CSV export (R30)
+                              add aliases from a CSV (R30, R58); existing ones only
+                              listed where they differ, unless --update
+  alias export [file.csv]     write every alias as a CSV in the import format (R58)
   alias delete <pattern>      delete an alias
   alias list                  list aliases
   version                     print the version
 
-Alias and template changes re-parse the affected messages (R23a).
+Alias and template changes re-parse the affected messages (R23a), and alias
+changes are recorded in the alias history (R57).
 
 serve reads its settings from the environment:
   DATABASE_URL     PostgreSQL connection string (required)
@@ -317,6 +321,7 @@ func serve(stderr io.Writer) error {
 		Hub:      hub,
 		Location: loc,
 		Accounts: acc,
+		Catalog:  &catalog.Catalog{Store: st},
 		OIDC: &server.OIDC{
 			Issuer:       auth.authentikURL.JoinPath("/application/o/pagerarchive/").String(),
 			ClientID:     auth.clientID,

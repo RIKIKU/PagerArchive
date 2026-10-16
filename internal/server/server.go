@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
@@ -40,8 +41,10 @@ type Server struct {
 	Location *time.Location // deployment time zone (R35a)
 	// Accounts and OIDC sign users in (R40-R44). AppURL is the public URL.
 	Accounts *accounts.Service
-	OIDC     *OIDC
-	AppURL   *url.URL
+	// Catalog changes aliases (R53-R58).
+	Catalog *catalog.Catalog
+	OIDC    *OIDC
+	AppURL  *url.URL
 	// AccountURL is where users change their name and password (Authentik).
 	AccountURL string
 	// UI serves the browser app; nil serves none.
@@ -108,6 +111,21 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/admin/integrations/{id}/resume": s.adminOnly(s.resumeIntegration(true)),
 		"GET /api/v1/admin/integration-hosts":         s.adminOnly(s.getAllowList),
 		"PUT /api/v1/admin/integration-hosts":         s.adminOnly(s.putAllowList),
+		// Aliases in the browser (R53-R58, ADR 0007).
+		"GET /api/v1/templates":                          s.listTemplates,
+		"GET /api/v1/alias-requests":                     s.myRequests,
+		"POST /api/v1/alias-requests":                    s.submitRequest,
+		"PUT /api/v1/alias-requests/{id}":                s.editRequest,
+		"POST /api/v1/alias-requests/{id}/withdraw":      s.withdrawRequest,
+		"GET /api/v1/admin/alias-requests":               s.adminOnly(s.adminRequests),
+		"POST /api/v1/admin/alias-requests/{id}/approve": s.adminOnly(s.approveRequest),
+		"POST /api/v1/admin/alias-requests/{id}/reject":  s.adminOnly(s.rejectRequest),
+		"GET /api/v1/admin/aliases":                      s.adminOnly(s.adminAliases),
+		"POST /api/v1/admin/aliases":                     s.adminOnly(s.createAlias),
+		"GET /api/v1/admin/aliases/export":               s.adminOnly(s.exportAliases),
+		"GET /api/v1/admin/aliases/{id}":                 s.adminOnly(s.adminAlias),
+		"PUT /api/v1/admin/aliases/{id}":                 s.adminOnly(s.editAlias),
+		"DELETE /api/v1/admin/aliases/{id}":              s.adminOnly(s.deleteAlias),
 	} {
 		mux.HandleFunc(pattern, s.signedIn(h))
 	}
