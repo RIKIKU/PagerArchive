@@ -27,7 +27,7 @@ Each integration lists its last 100 deliveries for 30 days: **Delivered**, **Ret
 
 ## Private addresses
 
-Integrations can't reach private, loopback, link-local or other reserved addresses (`10.x`, `192.168.x`, `127.x`, `169.254.x`, `100.64.x`, `198.18.x`, `240.x` and the like), so they can't be used to probe your network. IPv6 addresses that carry an IPv4 address (NAT64 `64:ff9b::`, 6to4 `2002::` and IPv4-compatible `::a.b.c.d`) are judged by that IPv4 address. If yours is on your LAN (Home Assistant, Node-RED, a self-hosted ntfy or broker), ask an admin to allow its address or range in **Admin → Integration addresses**.
+Integrations can't reach private, loopback, link-local or other reserved addresses (`10.x`, `192.168.x`, `127.x`, `169.254.x`, `100.64.x`, `198.18.x`, `240.x` and the like), so they can't be used to probe your network. IPv6 addresses that carry an IPv4 address (NAT64 `64:ff9b::`, 6to4 `2002::` and IPv4-compatible `::a.b.c.d`) are judged by that IPv4 address. Local-use NAT64 (`64:ff9b:1::/48`) and Teredo (`2001::/32`) addresses are refused whole. If yours is on your LAN (Home Assistant, Node-RED, a self-hosted ntfy or broker), ask an admin to allow its address or range in **Admin → Integration addresses**.
 
 ## Webhook
 

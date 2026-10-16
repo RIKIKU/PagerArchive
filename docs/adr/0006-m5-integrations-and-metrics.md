@@ -4,7 +4,7 @@ Date: 2026-10-16
 
 ## Status
 
-Accepted (owner, 2026-10-16). The owner took the recommendation on each of Q1–Q3. Later rounds from the owner are recorded below as decisions 4–9.
+Accepted (owner, 2026-10-16). The owner took the recommendation on each of Q1–Q3. Later rounds from the owner are recorded below as decisions 4–10.
 
 ## Context
 
@@ -46,7 +46,11 @@ The owner set the requirements; the choices below are the implementer's. M6 (sec
    - Also refused: `192.0.0.0/24` (IETF protocol assignments), `198.18.0.0/15` (benchmarking) and `240.0.0.0/4` (reserved; `255.255.255.255` is still reported as broadcast).
    - **IPv6 addresses that carry an IPv4 address are judged by it:** NAT64 `64:ff9b::/96` (the last 32 bits), 6to4 `2002::/16` (bits 16–47) and IPv4-compatible `::/96` (the last 32 bits; `::` and `::1` keep their own reasons). One is refused if its IPv4 address would be, and allowed if that address is public. The message names both, for example: "64:ff9b::c0a8:10a is a private address (192.168.1.10 inside an IPv6 address). Ask an admin to allow it."
    - An allowed IPv4 address or range also allows these IPv6 forms of it, since that's where they go.
-   - **Left out, for the owner to decide:** the local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215, where the IPv4 bits sit according to the operator's prefix length) and Teredo `2001::/32` (the client's IPv4 address is stored inverted). Neither was in the request. The simplest safe rule would refuse both ranges outright.
+   - Two ranges were left for the owner to decide; see decision 10.
+
+### Fourth round (owner, 2026-10-16)
+
+10. **Local-use NAT64 and Teredo are refused outright** (R51; §5). In the local-use NAT64 prefix `64:ff9b:1::/48` (RFC 8215), where the IPv4 address sits depends on the operator's prefix length. In Teredo, `2001::/32`, the client's IPv4 address is stored inverted. Neither can be judged by its IPv4 address reliably, so every address in either range is refused, whatever it carries: "2001::1 is a Teredo address. Ask an admin to allow it." An admin can still allow a whole range or one address in it through the allow list, like any other refused address. The nearby ranges stay public: `64:ff9b:2::`, `2001:1::`, and `2001:db8::/32` (the documentation range, which isn't Teredo).
 
 The questions as they were put to the owner follow.
 
@@ -145,7 +149,7 @@ Either way, the request is retried when it **can't be sent** (connection refused
 
 ### 5. Address safety (R51, A31)
 
-- **Refused by default:** loopback, private (RFC 1918, IPv6 unique local), link-local, unspecified, multicast and broadcast addresses, the shared address space `100.64.0.0/10` (which Tailscale uses), `192.0.0.0/24`, `198.18.0.0/15` and `240.0.0.0/4`, and IPv4-mapped forms of these. NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`) and IPv4-compatible (`::/96`) addresses are judged by the IPv4 address inside them (decision 9). Checked twice:
+- **Refused by default:** loopback, private (RFC 1918, IPv6 unique local), link-local, unspecified, multicast and broadcast addresses, the shared address space `100.64.0.0/10` (which Tailscale uses), `192.0.0.0/24`, `198.18.0.0/15` and `240.0.0.0/4`, and IPv4-mapped forms of these. NAT64 (`64:ff9b::/96`), 6to4 (`2002::/16`) and IPv4-compatible (`::/96`) addresses are judged by the IPv4 address inside them (decision 9). Local-use NAT64 (`64:ff9b:1::/48`) and Teredo (`2001::/32`) addresses are refused whole (decision 10). Checked twice:
   - **when saving**: the host is resolved, and every address must be allowed. The message names the address and says an admin can allow it ("192.168.1.10 is a private address. Ask an admin to allow it.");
   - **when connecting**: a custom dialer resolves the host, checks each address again and connects to that checked address. So DNS can't be changed after saving to point at an internal host (DNS rebinding). TLS still verifies the original host name.
 - **Redirects aren't followed.** A `3xx` answer counts as a failure. Proxy settings from the environment are ignored, so the check can't be routed around.
@@ -299,7 +303,7 @@ Each preset turns the same message into the service's documented request. Format
 | A39 | Two clients post the same page → exactly 1 request, with the page's `id`. A unique-key test inserts a second delivery row directly and it fails. Send test → a request with `"test": true`, and the owner sees the answer's status and body |
 | A40 | Go acceptance test with a pattern alias `0100%` ("Stations block"): typing `0100001` offers only the alias "Station 1 (0100001)"; typing `0100009` offers only the capcode, covered by "Stations block". Saved: the alias and the capcode, never the range; a capcode with its own alias sent through the API is saved as the alias; a page to `0100002` (covered by the range, not chosen) isn't sent. Playwright does the same in the form, with the keyboard and the mouse |
 | A41 | Go acceptance test: user B gets `403` from every admin endpoint; the admin's page for B lists B's integration without its destination, secrets, config or A's integration; `GET /api/v1/admin/integrations` is `404`; the users list counts integrations and those paused for failing. Playwright: B has no Admin link and every admin page says it's for admins only; A has one Admin link, the start page reaches every admin screen, and B's page shows B's integration without its URL |
-| Address guard | Unit tests for each new range (inside and just outside it) and for each IPv6 form: refused with the IPv4 address named when that address is private, loopback, link-local, shared, protocol, benchmarking or reserved, and allowed when it's public. An allowed `192.168.1.10` allows its three IPv6 forms and not `192.168.1.11`'s |
+| Address guard | Unit tests for each new range (inside and just outside it) and for each IPv6 form: refused with the IPv4 address named when that address is private, loopback, link-local, shared, protocol, benchmarking or reserved, and allowed when it's public. An allowed `192.168.1.10` allows its three IPv6 forms and not `192.168.1.11`'s. Every address in `64:ff9b:1::/48` and `2001::/32` is refused, whatever IPv4 address it carries, and the addresses just outside both ranges are not; an admin can allow either range or one address in it (`TestBlockedLocalNAT64AndTeredo`) |
 | Presets | Each stand-in rejects a wrong request (missing field, too long, wrong content type, mentions on). Each preset's request passes its stand-in, in Full and Summary |
 | Secrets | Round trip; wrong key; blob moved to another row; rotation; the API never returns a secret; the database row doesn't contain the URL or password in plain text |
 | P1 | Every integration test checks the server log, API responses (last error, deliveries) and the metrics for the posted page texts |

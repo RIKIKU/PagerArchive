@@ -91,13 +91,15 @@ func validHostName(h string) bool {
 }
 
 var (
-	sharedSpace   = netip.MustParsePrefix("100.64.0.0/10") // carrier-grade NAT, and Tailscale
-	protocolSpace = netip.MustParsePrefix("192.0.0.0/24")  // IETF protocol assignments
-	benchmarking  = netip.MustParsePrefix("198.18.0.0/15") // network benchmarking
-	reservedSpace = netip.MustParsePrefix("240.0.0.0/4")   // reserved for future use
-	nat64         = netip.MustParsePrefix("64:ff9b::/96")  // NAT64: IPv4 in the last 32 bits
-	sixToFour     = netip.MustParsePrefix("2002::/16")     // 6to4: IPv4 in bits 16-47
-	v4Compatible  = netip.MustParsePrefix("::/96")         // IPv4-compatible: IPv4 in the last 32 bits
+	sharedSpace   = netip.MustParsePrefix("100.64.0.0/10")  // carrier-grade NAT, and Tailscale
+	protocolSpace = netip.MustParsePrefix("192.0.0.0/24")   // IETF protocol assignments
+	benchmarking  = netip.MustParsePrefix("198.18.0.0/15")  // network benchmarking
+	reservedSpace = netip.MustParsePrefix("240.0.0.0/4")    // reserved for future use
+	nat64         = netip.MustParsePrefix("64:ff9b::/96")   // NAT64: IPv4 in the last 32 bits
+	sixToFour     = netip.MustParsePrefix("2002::/16")      // 6to4: IPv4 in bits 16-47
+	v4Compatible  = netip.MustParsePrefix("::/96")          // IPv4-compatible: IPv4 in the last 32 bits
+	localNAT64    = netip.MustParsePrefix("64:ff9b:1::/48") // local-use NAT64 (RFC 8215): refused outright
+	teredo        = netip.MustParsePrefix("2001::/32")      // Teredo: refused outright
 )
 
 // embeddedIPv4 is the IPv4 address that a NAT64, 6to4 or IPv4-compatible
@@ -141,6 +143,12 @@ func blockedReason(ip netip.Addr) string {
 		return "a benchmarking address"
 	case reservedSpace.Contains(ip):
 		return "a reserved address"
+	// Where these carry an IPv4 address depends on the operator (local-use
+	// NAT64) or is obfuscated (Teredo), so they are refused whole.
+	case localNAT64.Contains(ip):
+		return "a local-use NAT64 address"
+	case teredo.Contains(ip):
+		return "a Teredo address"
 	}
 	// An IPv6 address that carries an IPv4 one reaches that IPv4 address, so
 	// it's judged by it.

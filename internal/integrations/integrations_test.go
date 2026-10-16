@@ -122,7 +122,7 @@ func TestBlockedEmbeddedIPv4(t *testing.T) {
 		"64:ff9b::a9fe:a9fe": "a link-local address (169.254.169.254 inside an IPv6 address)",
 		"64:ff9b::c000:1":    "an IETF protocol address (192.0.0.1 inside an IPv6 address)",
 		"64:ff9b::5db8:d70e": "",
-		"64:ff9b:1::a00:1":   "", // not the well-known /96
+		"64:ff9b:1::a00:1":   "a local-use NAT64 address", // refused whole, whatever it carries
 		// 6to4 2002::/16: bits 16-47.
 		"2002:c0a8:10a::1":  "a private address (192.168.1.10 inside an IPv6 address)",
 		"2002:7f00:1::1":    "a loopback address (127.0.0.1 inside an IPv6 address)",
@@ -581,5 +581,58 @@ func TestRenderTimesInTheDeploymentZone(t *testing.T) {
 	r := s.render(integration(Discord, Summary, Config{}), s.pageOf(row1(), false))
 	if r.Title != "Emergency · Station 1" || r.Body != "HSF1 House fire · Job EX0000001 · 16 Oct 2026, 14:04:05" {
 		t.Errorf("rendered %q / %q", r.Title, r.Body)
+	}
+}
+
+// Local-use NAT64 and Teredo are refused whole (R51, ADR 0006 decision 10),
+// because where their IPv4 address sits can't be read reliably. An admin
+// can still allow them.
+func TestBlockedLocalNAT64AndTeredo(t *testing.T) {
+	for addr, want := range map[string]string{
+		// Local-use NAT64 64:ff9b:1::/48, public or private IPv4 inside alike.
+		"64:ff9b:1::":                        "a local-use NAT64 address",
+		"64:ff9b:1::5db8:d70e":               "a local-use NAT64 address",
+		"64:ff9b:1:5db8:d7:e00::":            "a local-use NAT64 address", // a /56 prefix layout
+		"64:ff9b:1:ffff:ffff:ffff:ffff:ffff": "a local-use NAT64 address",
+		"64:ff9b:2::1":                       "", // just outside
+		"64:ff9b:0:1::1":                     "", // just outside, and not the well-known /96
+		// Teredo 2001::/32 (2001:0000::/32), whatever the server and client.
+		"2001::1":                                 "a Teredo address",
+		"2001:0:5db8:d70e:0:fbff:a247:28f1":       "a Teredo address",
+		"2001:0:ffff:ffff:ffff:ffff:ffff:ffff":    "a Teredo address",
+		"2001:1::1":                               "", // just outside
+		"2000:ffff:ffff:ffff:ffff:ffff:ffff:ffff": "", // just outside
+		"2001:db8::1":                             "", // documentation range, not Teredo
+	} {
+		if got := blockedReason(netip.MustParseAddr(addr)); got != want {
+			t.Errorf("%s: %q, want %q", addr, got, want)
+		}
+	}
+
+	ctx := context.Background()
+	g := &Guard{}
+	for addr, msg := range map[string]string{
+		"64:ff9b:1::5db8:d70e": "64:ff9b:1::5db8:d70e is a local-use NAT64 address. Ask an admin to allow it.",
+		"2001::1":              "2001::1 is a Teredo address. Ask an admin to allow it.",
+	} {
+		_, err := g.Resolve(ctx, addr)
+		var ae *AddressError
+		if !errors.As(err, &ae) || ae.Error() != msg {
+			t.Errorf("%s: %v, want %q", addr, err, msg)
+		}
+	}
+	// An admin can allow either range, or one address in it.
+	allow, err := ParseAllowList([]string{"64:ff9b:1::/48", "2001::1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g.Allow = func(context.Context) (AllowList, error) { return allow, nil }
+	for _, a := range []string{"64:ff9b:1::5db8:d70e", "64:ff9b:1::a00:1", "2001::1"} {
+		if _, err := g.Resolve(ctx, a); err != nil {
+			t.Errorf("%s with it allowed: %v", a, err)
+		}
+	}
+	if _, err := g.Resolve(ctx, "2001::2"); err == nil {
+		t.Error("2001::2 was allowed by 2001::1")
 	}
 }
