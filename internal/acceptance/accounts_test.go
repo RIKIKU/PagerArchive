@@ -306,10 +306,11 @@ func TestA25DeactivatingAnInviteTree(t *testing.T) {
 	e.as = c
 	cStream := e.streamClosed("")
 
+	// Through the preview (R42b), confirmed with everyone ticked.
+	pv := e.preview(e.admin, a.id)
 	start := time.Now()
-	var res server.DeactivateResult
-	if code, p := e.admin.call(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", a.id), server.DeactivateRequest{Tree: true}, &res); code != http.StatusOK || res.Deactivated != 3 {
-		t.Fatalf("deactivate tree: %d %+v %s", code, res, p.Error)
+	if code, res, refused := e.confirm(e.admin, a.id, pv.Version, startTicked(pv.Root), ""); code != http.StatusOK || res.Deactivated != 3 {
+		t.Fatalf("deactivate tree: %d %+v %s", code, res, refused.Error)
 	}
 	for name, ch := range map[string]<-chan struct{}{"B": bStream, "C": cStream} {
 		select {
@@ -386,9 +387,7 @@ func TestA26ReactivatingOneUser(t *testing.T) {
 	a := e.inviteAndEnrol(e.admin, "a@example.com")
 	b := e.inviteAndEnrol(a, "b@example.com")
 	c := e.inviteAndEnrol(b, "c@example.com")
-	if code, _ := e.admin.call(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", a.id), server.DeactivateRequest{Tree: true}, nil); code != http.StatusOK {
-		t.Fatal("deactivate")
-	}
+	e.deactivateTree(e.admin, a.id)
 	if code, p := e.admin.call(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/reactivate", a.id), nil, nil); code != http.StatusNoContent {
 		t.Fatalf("reactivate A: %d %s", code, p.Error)
 	}
@@ -434,9 +433,8 @@ func TestA27DeletingYourOwnAccount(t *testing.T) {
 		t.Errorf("B's address is still stored: %v", rows)
 	}
 	// The invite tree stays connected through the placeholder (owner, 2026-10-13).
-	var res server.DeactivateResult
-	if code, _ := e.admin.call(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", e.user.id), server.DeactivateRequest{Tree: true}, &res); code != http.StatusOK || res.Deactivated != 2 {
-		t.Errorf("deactivating the tree above the deleted user: %d %+v", code, res)
+	if res := e.deactivateTree(e.admin, e.user.id); res.Deactivated != 2 {
+		t.Errorf("deactivating the tree above the deleted user: %+v", res)
 	}
 	if e.canSignIn(c) {
 		t.Error("C still signs in after deactivating the tree above B")
@@ -473,7 +471,16 @@ func TestA28TheLastAdminStays(t *testing.T) {
 	if code, _ := p.call(http.MethodPut, adminPath(e.admin, "role"), server.RoleRequest{Role: "user"}, nil); code != http.StatusNoContent {
 		t.Fatal("P demotes the first admin (second admin: succeeds)")
 	}
-	code, pr := p.call(http.MethodPost, adminPath(inviter, "deactivate"), server.DeactivateRequest{Tree: true}, nil)
+	// The preview locks the last admin's tick (R42b), and a confirmation
+	// that ticks them anyway is refused as a whole.
+	pv := e.preview(p, inviter.id)
+	if n := node(pv.Root, p.id); n == nil || n.Tick.Can || n.Tick.Start || n.Tick.Why != "last admin" {
+		t.Errorf("the last admin in the preview: %+v", n)
+	}
+	var everyone []int64
+	walk(pv.Root, func(n *server.TreeNode) { everyone = append(everyone, n.ID) })
+	code, _, refused := e.confirm(p, inviter.id, pv.Version, everyone, "")
+	pr := refused.Problem
 	if code != http.StatusConflict || pr.Code != "last_admin" {
 		t.Errorf("tree containing the last admin: %d %+v", code, pr)
 	}
@@ -508,6 +515,8 @@ func TestA29SignedInAndRolesEnforced(t *testing.T) {
 	for _, w := range []struct{ method, path string }{
 		{http.MethodPost, "/api/v1/invitations"}, {http.MethodDelete, "/api/v1/me"},
 		{http.MethodPost, "/api/v1/admin/users/1/deactivate"}, {http.MethodPut, "/api/v1/admin/users/1/role"},
+		{http.MethodGet, "/api/v1/admin/users/1/deactivation-preview"}, {http.MethodPost, "/api/v1/admin/users/1/deactivate-tree"},
+		{http.MethodPut, "/api/v1/admin/users/1/trusted"},
 	} {
 		resp, _ := nobody.do(w.method, e.url+w.path, map[string]string{})
 		resp.Body.Close()

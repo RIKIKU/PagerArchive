@@ -6,6 +6,7 @@
 	import { api, type AdminUser, type Meta } from '#lib/api.ts';
 	import { date, dateTime, isoAttr } from '#lib/format.ts';
 	import { kindLabels, statusLabel } from '#lib/integrations.ts';
+	import InviteTree from '#lib/InviteTree.svelte';
 
 	let meta: Meta | undefined = $state();
 	let data: AdminUser | undefined = $state();
@@ -23,6 +24,8 @@
 			.catch((e) => (error = e.message));
 	}
 	$effect(load);
+
+	const names = (ps: { label: string }[]) => (ps.length ? ps.map((p) => p.label).join(', ') : 'nobody');
 
 	async function act(fn: () => Promise<unknown>, done: string) {
 		error = notice = '';
@@ -53,8 +56,56 @@
 		<dd>{data.user.invited_by ?? 'nobody (first admin)'}</dd>
 		<dt>Joined</dt>
 		<dd><time datetime={isoAttr(data.user.created_at)}>{date(data.user.created_at, tz)}</time></dd>
+		<dt>Trusted</dt>
+		<dd data-testid="trusted">
+			{#if data.user.trusted}
+				Yes, marked by {data.user.trusted.by} on <time datetime={isoAttr(data.user.trusted.at)}>{date(data.user.trusted.at, tz)}</time>
+			{:else}No{/if}
+		</dd>
 	</dl>
-	<p class="note"><a href="/admin/users">Users</a> has deactivation and roles.</p>
+	<div class="buttons">
+		{#if data.user.trusted}
+			<button type="button" class="secondary" onclick={() => act(() => api.setTrusted(data!.user.id, false), `${label} is no longer marked trusted.`)}
+				>Remove trusted mark</button
+			>
+		{:else}
+			<button type="button" class="secondary" onclick={() => act(() => api.setTrusted(data!.user.id, true), `${label} is marked trusted.`)}
+				>Mark trusted</button
+			>
+		{/if}
+	</div>
+	<p class="note">
+		Trusted people start unticked when an invite tree they're in is deactivated. It doesn't stop anyone deactivating
+		them. Only admins see it. <a href="/admin/users">Users</a> has roles and deactivating one person.
+	</p>
+
+	<section aria-labelledby="tree-heading">
+		<h2 id="tree-heading">Invite tree</h2>
+		<p class="note">Who invited {label}, and everyone {label} invited, and so on.</p>
+		<InviteTree root={data.tree.root} inviter={data.tree.inviter} {tz} />
+		<p class="note"><a href="/admin/users/{data.user.id}/deactivate-tree">Deactivate with invite tree…</a> shows who would be deactivated first.</p>
+	</section>
+
+	<section aria-labelledby="records-heading">
+		<h2 id="records-heading">Tree deactivations</h2>
+		{#if data.deactivations.length === 0}
+			<p class="status">None involving {label}.</p>
+		{:else}
+			<ul class="records">
+				{#each data.deactivations as r (r.id)}
+					<li data-testid="deactivation-record">
+						<div>
+							<strong>{r.root.label}'s tree</strong>, by {r.by}, <time datetime={isoAttr(r.at)}>{dateTime(r.at, tz)}</time>
+						</div>
+						<div>Reason: {r.reason ?? 'none given'}</div>
+						<div>Deactivated: {names(r.deactivated)}</div>
+						<div>Spared: {names(r.spared)}</div>
+						<div>Unused invitations cancelled: {r.invitations_cancelled}</div>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</section>
 
 	<section aria-labelledby="integrations-heading">
 		<h2 id="integrations-heading">Integrations</h2>
@@ -120,6 +171,19 @@
 	h2 {
 		font-size: var(--text-lg);
 		margin: 0 0.75rem 0.25rem;
+	}
+	.buttons {
+		margin: 0.5rem 0.75rem 0;
+	}
+	.records {
+		list-style: none;
+		padding: 0;
+		margin: 0 0.75rem;
+	}
+	.records li {
+		padding: 0.5rem 0;
+		border-bottom: 1px solid var(--border);
+		overflow-wrap: anywhere;
 	}
 	.cards {
 		list-style: none;

@@ -10,6 +10,31 @@ import (
 	"time"
 )
 
+const activeAdminIDs = `-- name: ActiveAdminIDs :many
+SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id
+`
+
+// Read only, for a preview; changes lock them with LockActiveAdmins.
+func (q *Queries) ActiveAdminIDs(ctx context.Context) ([]int64, error) {
+	rows, err := q.db.Query(ctx, activeAdminIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const activeClientByKeyHash = `-- name: ActiveClientByKeyHash :one
 SELECT id FROM clients WHERE key_hash = $1 AND revoked_at IS NULL
 `
@@ -48,6 +73,22 @@ type AddIntegrationCapcodesParams struct {
 
 func (q *Queries) AddIntegrationCapcodes(ctx context.Context, arg AddIntegrationCapcodesParams) error {
 	_, err := q.db.Exec(ctx, addIntegrationCapcodes, arg.ID, arg.Capcodes)
+	return err
+}
+
+const addTreeDeactivationPeople = `-- name: AddTreeDeactivationPeople :exec
+INSERT INTO tree_deactivation_people (deactivation_id, user_id, outcome)
+SELECT $1::bigint, unnest($2::bigint[]), unnest($3::text[])
+`
+
+type AddTreeDeactivationPeopleParams struct {
+	DeactivationID int64
+	UserIds        []int64
+	Outcomes       []string
+}
+
+func (q *Queries) AddTreeDeactivationPeople(ctx context.Context, arg AddTreeDeactivationPeopleParams) error {
+	_, err := q.db.Exec(ctx, addTreeDeactivationPeople, arg.DeactivationID, arg.UserIds, arg.Outcomes)
 	return err
 }
 
@@ -966,6 +1007,23 @@ func (q *Queries) CountIntegrationsSelectingAlias(ctx context.Context, aliasID i
 	return count, err
 }
 
+const countLiveInvitationsBy = `-- name: CountLiveInvitationsBy :one
+SELECT count(*) FROM invitations
+WHERE invited_by = ANY($1::bigint[]) AND status = 'pending' AND expires_at > $2::timestamptz
+`
+
+type CountLiveInvitationsByParams struct {
+	Ids []int64
+	Now time.Time
+}
+
+func (q *Queries) CountLiveInvitationsBy(ctx context.Context, arg CountLiveInvitationsByParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveInvitationsBy, arg.Ids, arg.Now)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countWaitingRequests = `-- name: CountWaitingRequests :one
 SELECT count(*) FROM alias_requests WHERE status = 'waiting'
 `
@@ -1217,10 +1275,35 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 	return id, err
 }
 
+const createTreeDeactivation = `-- name: CreateTreeDeactivation :one
+INSERT INTO tree_deactivations (root_id, actor_id, reason, invitations_cancelled)
+VALUES ($1, $2, $3, $4)
+RETURNING id
+`
+
+type CreateTreeDeactivationParams struct {
+	RootID               int64
+	ActorID              int64
+	Reason               *string
+	InvitationsCancelled int32
+}
+
+func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeactivationParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createTreeDeactivation,
+		arg.RootID,
+		arg.ActorID,
+		arg.Reason,
+		arg.InvitationsCancelled,
+	)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by
 `
 
 type CreateUserParams struct {
@@ -1254,6 +1337,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CreatedAt,
 		&i.DeactivatedAt,
 		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
 	)
 	return i, err
 }
@@ -1372,7 +1457,7 @@ func (q *Queries) DeleteTemplate(ctx context.Context, id int64) (int64, error) {
 
 const deleteUserAccount = `-- name: DeleteUserAccount :exec
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
-    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL
 WHERE id = $1
 `
 
@@ -2091,36 +2176,65 @@ func (q *Queries) InvitationByID(ctx context.Context, id int64) (Invitation, err
 
 const inviteTree = `-- name: InviteTree :many
 WITH RECURSIVE tree AS (
-    SELECT u.id FROM users u WHERE u.id = $1::bigint
-    UNION
-    SELECT c.id FROM users c JOIN tree t ON c.invited_by = t.id
+    SELECT u.id, ARRAY[u.created_at] AS sort_path, ARRAY[u.id] AS id_path
+    FROM users u WHERE u.id = $2::bigint
+    UNION ALL
+    SELECT c.id, t.sort_path || c.created_at, t.id_path || c.id
+    FROM users c JOIN tree t ON c.invited_by = t.id
+    WHERE c.id <> $2::bigint
 )
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at FROM users u JOIN tree t ON t.id = u.id ORDER BY u.id
+SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status,
+       u.created_at, u.trusted_at,
+       -- Unused invitations that still work (ADR 0008 §3).
+       (SELECT count(*) FROM invitations i
+        WHERE i.invited_by = u.id AND i.status = 'pending' AND i.expires_at > $1::timestamptz) AS invitations
+FROM tree t JOIN users u ON u.id = t.id
+ORDER BY t.sort_path, t.id_path
 `
 
-// A user and everyone they invited, recursively, through deleted accounts
-// too (R42). Deleted accounts are placeholders and are returned as such.
-func (q *Queries) InviteTree(ctx context.Context, root int64) ([]User, error) {
-	rows, err := q.db.Query(ctx, inviteTree, root)
+type InviteTreeParams struct {
+	Now  time.Time
+	Root int64
+}
+
+type InviteTreeRow struct {
+	ID          int64
+	InvitedBy   *int64
+	Subject     *string
+	Email       *string
+	Name        *string
+	Role        string
+	Status      string
+	CreatedAt   time.Time
+	TrustedAt   *time.Time
+	Invitations int64
+}
+
+// A user and everyone they invited, recursively, through deactivated people
+// and deleted placeholders (R42, R42a). Each user has one inviter, so the
+// only cycle (an admin re-inviting the person who invited them) runs through
+// the root, which the recursion skips (ADR 0008 §1). Parents come before
+// their children; siblings by date joined.
+func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]InviteTreeRow, error) {
+	rows, err := q.db.Query(ctx, inviteTree, arg.Now, arg.Root)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []User
+	var items []InviteTreeRow
 	for rows.Next() {
-		var i User
+		var i InviteTreeRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.InvitedBy,
 			&i.Subject,
 			&i.Email,
-			&i.EmailKey,
 			&i.Name,
 			&i.Role,
 			&i.Status,
-			&i.InvitedBy,
 			&i.CreatedAt,
-			&i.DeactivatedAt,
-			&i.DeletedAt,
+			&i.TrustedAt,
+			&i.Invitations,
 		); err != nil {
 			return nil, err
 		}
@@ -2476,9 +2590,12 @@ SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
        u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
        -- R44b: how many integrations, and how many paused for failing.
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
-       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing,
+       -- R42c: the trusted mark, who set it and when.
+       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
+LEFT JOIN users t ON t.id = u.trusted_by
 WHERE u.status <> 'deleted'
 ORDER BY u.created_at, u.id
 `
@@ -2497,6 +2614,10 @@ type ListUsersRow struct {
 	InviterName         *string
 	Integrations        int64
 	IntegrationsFailing int64
+	TrustedAt           *time.Time
+	TrustedByStatus     *string
+	TrustedByEmail      *string
+	TrustedByName       *string
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -2522,6 +2643,10 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.InviterName,
 			&i.Integrations,
 			&i.IntegrationsFailing,
+			&i.TrustedAt,
+			&i.TrustedByStatus,
+			&i.TrustedByEmail,
+			&i.TrustedByName,
 		); err != nil {
 			return nil, err
 		}
@@ -2587,6 +2712,17 @@ SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))
 
 func (q *Queries) LockDedupKey(ctx context.Context, dedupKey []byte) error {
 	_, err := q.db.Exec(ctx, lockDedupKey, dedupKey)
+	return err
+}
+
+const lockUsers = `-- name: LockUsers :exec
+SELECT id FROM users WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE
+`
+
+// An invite tree's rows, before it's checked and changed (ADR 0008 §5).
+// Inserting a user or invitation that points at a locked row waits.
+func (q *Queries) LockUsers(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, lockUsers, ids)
 	return err
 }
 
@@ -3298,7 +3434,7 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
@@ -3315,6 +3451,8 @@ type SessionUserRow struct {
 	CreatedAt     time.Time
 	DeactivatedAt *time.Time
 	DeletedAt     *time.Time
+	TrustedAt     *time.Time
+	TrustedBy     *int64
 	SessionUsedAt time.Time
 }
 
@@ -3333,6 +3471,8 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.CreatedAt,
 		&i.DeactivatedAt,
 		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -3464,6 +3604,26 @@ func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64
 	return result.RowsAffected(), nil
 }
 
+const setUserTrusted = `-- name: SetUserTrusted :execrows
+UPDATE users SET trusted_at = CASE WHEN $1::bigint IS NULL THEN NULL ELSE now() END,
+    trusted_by = $1::bigint
+WHERE id = $2 AND status <> 'deleted'
+`
+
+type SetUserTrustedParams struct {
+	By *int64
+	ID int64
+}
+
+// R42c: marks or unmarks a user, recording who marked them and when.
+func (q *Queries) SetUserTrusted(ctx context.Context, arg SetUserTrustedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserTrusted, arg.By, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const streetPoint = `-- name: StreetPoint :one
 SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
 FROM street_points
@@ -3552,6 +3712,109 @@ type TouchSessionParams struct {
 func (q *Queries) TouchSession(ctx context.Context, arg TouchSessionParams) error {
 	_, err := q.db.Exec(ctx, touchSession, arg.TokenHash, arg.ExpiresAt)
 	return err
+}
+
+const treeDeactivationPeople = `-- name: TreeDeactivationPeople :many
+SELECT p.deactivation_id, p.user_id, p.outcome, u.name, u.email, u.status
+FROM tree_deactivation_people p JOIN users u ON u.id = p.user_id
+WHERE p.deactivation_id = ANY($1::bigint[])
+ORDER BY p.deactivation_id, u.created_at, u.id
+`
+
+type TreeDeactivationPeopleRow struct {
+	DeactivationID int64
+	UserID         int64
+	Outcome        string
+	Name           *string
+	Email          *string
+	Status         string
+}
+
+func (q *Queries) TreeDeactivationPeople(ctx context.Context, ids []int64) ([]TreeDeactivationPeopleRow, error) {
+	rows, err := q.db.Query(ctx, treeDeactivationPeople, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TreeDeactivationPeopleRow
+	for rows.Next() {
+		var i TreeDeactivationPeopleRow
+		if err := rows.Scan(
+			&i.DeactivationID,
+			&i.UserID,
+			&i.Outcome,
+			&i.Name,
+			&i.Email,
+			&i.Status,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const treeDeactivationsOf = `-- name: TreeDeactivationsOf :many
+SELECT d.id, d.reason, d.invitations_cancelled, d.created_at,
+       d.root_id, r.name AS root_name, r.email AS root_email, r.status AS root_status,
+       a.name AS actor_name, a.email AS actor_email, a.status AS actor_status
+FROM tree_deactivations d
+JOIN users r ON r.id = d.root_id
+JOIN users a ON a.id = d.actor_id
+WHERE d.root_id = $1
+   OR EXISTS (SELECT 1 FROM tree_deactivation_people p WHERE p.deactivation_id = d.id AND p.user_id = $1)
+ORDER BY d.created_at DESC, d.id DESC
+`
+
+type TreeDeactivationsOfRow struct {
+	ID                   int64
+	Reason               *string
+	InvitationsCancelled int32
+	CreatedAt            time.Time
+	RootID               int64
+	RootName             *string
+	RootEmail            *string
+	RootStatus           string
+	ActorName            *string
+	ActorEmail           *string
+	ActorStatus          string
+}
+
+// R42d: the records that name a user (root, deactivated or spared), newest
+// first, with everyone named as they are now.
+func (q *Queries) TreeDeactivationsOf(ctx context.Context, userID int64) ([]TreeDeactivationsOfRow, error) {
+	rows, err := q.db.Query(ctx, treeDeactivationsOf, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TreeDeactivationsOfRow
+	for rows.Next() {
+		var i TreeDeactivationsOfRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Reason,
+			&i.InvitationsCancelled,
+			&i.CreatedAt,
+			&i.RootID,
+			&i.RootName,
+			&i.RootEmail,
+			&i.RootStatus,
+			&i.ActorName,
+			&i.ActorEmail,
+			&i.ActorStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const unaliasedCapcode = `-- name: UnaliasedCapcode :many
@@ -3782,7 +4045,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -3800,12 +4063,14 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.CreatedAt,
 		&i.DeactivatedAt,
 		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -3823,13 +4088,15 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.CreatedAt,
 		&i.DeactivatedAt,
 		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -3848,6 +4115,8 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.CreatedAt,
 		&i.DeactivatedAt,
 		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
 	)
 	return i, err
 }

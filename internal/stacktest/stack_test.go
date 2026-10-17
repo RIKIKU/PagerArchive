@@ -18,6 +18,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
 type stack struct {
@@ -266,12 +268,11 @@ func TestA25A26InviteTree(t *testing.T) {
 	defer cancel()
 	bStream, cStream := b.stream(ctx), c.stream(ctx)
 
+	// Through the preview (R42b), confirmed with everyone ticked.
+	pv := o.preview(a.me().ID)
 	start := time.Now()
-	var res struct {
-		Deactivated int `json:"deactivated"`
-	}
-	if code, msg := o.api(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", a.me().ID), map[string]bool{"tree": true}, &res); code != http.StatusOK || res.Deactivated != 3 {
-		t.Fatalf("deactivate A's tree: %d %s %+v", code, msg, res)
+	if code, res, refused := o.confirmTree(a.me().ID, pv.Version, startTicked(pv.Root)); code != http.StatusOK || res.Deactivated != 3 {
+		t.Fatalf("deactivate A's tree: %d %s %+v", code, refused.Error, res)
 	}
 	for name, ch := range map[string]<-chan struct{}{"B": bStream, "C": cStream} {
 		select {
@@ -391,9 +392,8 @@ func TestA28TheLastAdminStays(t *testing.T) {
 		body         any
 	}{
 		"demoted":     {http.MethodPut, fmt.Sprintf("/api/v1/admin/users/%d/role", p2id), map[string]string{"role": "user"}},
-		"deactivated": {http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", p2id), map[string]bool{"tree": false}},
+		"deactivated": {http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", p2id), map[string]string{}},
 		"deleted":     {http.MethodDelete, "/api/v1/me", nil},
-		"in a tree":   {http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", p1id), map[string]bool{"tree": true}},
 	}
 	for name, r := range refusals {
 		if code, msg := p2.api(r.method, r.path, r.body, nil); code != http.StatusConflict {
@@ -401,6 +401,21 @@ func TestA28TheLastAdminStays(t *testing.T) {
 		} else {
 			t.Logf("A28: last admin %s: refused (%s)", name, msg)
 		}
+	}
+	// In a tree: the preview locks P2's tick (R42b), and confirming with
+	// everyone ticked anyway is refused.
+	pv := p2.preview(p1id)
+	var everyone []int64
+	walkTree(pv.Root, func(n *server.TreeNode) {
+		everyone = append(everyone, n.ID)
+		if n.ID == p2id && (n.Tick.Can || n.Tick.Why != "last admin") {
+			t.Errorf("the last admin in the preview: %+v", *n.Tick)
+		}
+	})
+	if code, _, refused := p2.confirmTree(p1id, pv.Version, everyone); code != http.StatusConflict || refused.Code != "last_admin" {
+		t.Errorf("last admin in a tree: %d %+v", code, refused.Problem)
+	} else {
+		t.Logf("A28: last admin in a tree: can't be ticked, and ticking them anyway is refused (%s)", refused.Error)
 	}
 	if m := p2.me(); m.Role != "admin" {
 		t.Errorf("P2 is %s", m.Role)

@@ -405,9 +405,7 @@ func TestM6PeopleAndRequestsOverTime(t *testing.T) {
 
 	// An invite tree: C's request goes when B and their tree are deactivated.
 	cReq := e.request(c, catalog.RequestInput{Kind: catalog.KindChange, AliasID: &station2, Ignored: ptr(true), Note: e.private("C's note")})
-	if code, p := e.admin.call(http.MethodPost, fmt.Sprintf("/api/v1/admin/users/%d/deactivate", b.id), server.DeactivateRequest{Tree: true}, nil); code != http.StatusOK {
-		t.Fatalf("deactivate tree: %d %s", code, p.Error)
-	}
+	e.deactivateTree(e.admin, b.id)
 	var closed []catalog.RequestView
 	e.admin.call(http.MethodGet, "/api/v1/admin/alias-requests?status=closed", nil, &closed)
 	if r := findRequest(closed, cReq); r == nil || r.Status != catalog.StatusWithdrawn {

@@ -8,8 +8,9 @@
 	let invitations: Invitation[] = $state([]);
 	let error = $state('');
 	let notice = $state('');
-	// The action waiting for confirmation, if any.
-	let confirming: { id: number; tree: boolean } | undefined = $state();
+	// The deactivation waiting for confirmation, if any. A tree goes through
+	// its preview instead (R42b).
+	let confirming: number | undefined = $state();
 	let busy = $state(false);
 
 	const tz = $derived(meta?.time_zone ?? 'UTC');
@@ -46,12 +47,10 @@
 		}
 	}
 
-	const deactivate = (u: UserRow, tree: boolean) =>
+	const deactivate = (u: UserRow) =>
 		run(async () => {
-			const r = await api.deactivate(u.id, tree);
-			return tree
-				? `${label(u)} and their invite tree deactivated: ${r.deactivated} ${r.deactivated === 1 ? 'person' : 'people'}.`
-				: `${label(u)} deactivated.`;
+			await api.deactivate(u.id);
+			return `${label(u)} deactivated.`;
 		});
 	const setRole = (u: UserRow, role: 'admin' | 'user') =>
 		run(async () => {
@@ -75,9 +74,10 @@
 <h1>Users</h1>
 <p class="status">
 	Deactivating someone signs them out at once and cancels their unused invitations. Deactivating their invite
-	tree does the same for everyone they invited, and everyone those people invited. Only an admin can invite a
-	deactivated person again.
+	tree first shows everyone they invited, and everyone those people invited, so you can choose who to spare. Only an
+	admin can invite a deactivated person again.
 </p>
+<p class="invite"><a href="/account#invite">Invite someone</a> from your account page, like everyone else.</p>
 <div aria-live="polite">
 	{#if notice}<p class="ok" role="status">{notice}</p>{/if}
 </div>
@@ -90,6 +90,7 @@
 				<a class="who" href="/admin/users/{u.id}">{label(u)}</a>
 				{#if u.role === 'admin'}<span class="tag">Admin</span>{/if}
 				{#if u.status === 'deactivated'}<span class="tag warn">Deactivated</span>{/if}
+				{#if u.trusted}<span class="tag">Trusted</span>{/if}
 				{#if u.id === me?.id}<span class="tag">You</span>{/if}
 				{#if u.integrations_failing > 0}<span class="tag warn" data-testid="failing"
 						>{u.integrations_failing} integration{u.integrations_failing === 1 ? '' : 's'} paused for failing</span
@@ -102,21 +103,17 @@
 				· {u.integrations} integration{u.integrations === 1 ? '' : 's'}
 			</div>
 			{#if u.id !== me?.id}
-				{#if confirming?.id === u.id}
+				{#if confirming === u.id}
 					<div class="actions" role="group" aria-label="Confirm">
-						<span>
-							{confirming.tree
-								? `Deactivate ${label(u)} and everyone in their invite tree?`
-								: `Deactivate ${label(u)}?`}
-						</span>
-						<button class="danger" type="button" disabled={busy} onclick={() => deactivate(u, confirming!.tree)}>Deactivate</button>
+						<span>Deactivate {label(u)}?</span>
+						<button class="danger" type="button" disabled={busy} onclick={() => deactivate(u)}>Deactivate</button>
 						<button class="secondary" type="button" onclick={() => (confirming = undefined)}>Don't</button>
 					</div>
 				{:else}
 					<div class="actions">
 						{#if u.status === 'active'}
-							<button class="secondary" type="button" onclick={() => (confirming = { id: u.id, tree: false })} aria-label="Deactivate: {label(u)}">Deactivate</button>
-							<button class="secondary" type="button" onclick={() => (confirming = { id: u.id, tree: true })} aria-label="Deactivate with invite tree: {label(u)}">Deactivate with invite tree</button>
+							<button class="secondary" type="button" onclick={() => (confirming = u.id)} aria-label="Deactivate: {label(u)}">Deactivate</button>
+							<a class="button secondary" href="/admin/users/{u.id}/deactivate-tree" aria-label="Deactivate with invite tree: {label(u)}">Deactivate with invite tree</a>
 							{#if u.role === 'user'}
 								<button class="secondary" type="button" disabled={busy} onclick={() => setRole(u, 'admin')} aria-label="Make admin: {label(u)}">Make admin</button>
 							{:else}
@@ -158,6 +155,9 @@
 	}
 	.ok {
 		margin: 0 0.75rem;
+	}
+	.invite {
+		margin: 0.5rem 0.75rem;
 	}
 	.cards {
 		list-style: none;

@@ -283,9 +283,12 @@ SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
        u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
        -- R44b: how many integrations, and how many paused for failing.
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
-       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing
+       (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing,
+       -- R42c: the trusted mark, who set it and when.
+       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
+LEFT JOIN users t ON t.id = u.trusted_by
 WHERE u.status <> 'deleted'
 ORDER BY u.created_at, u.id;
 
@@ -296,15 +299,74 @@ SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id FOR 
 -- name: CountActiveAdmins :one
 SELECT count(*) FROM users WHERE role = 'admin' AND status = 'active';
 
+-- name: ActiveAdminIDs :many
+-- Read only, for a preview; changes lock them with LockActiveAdmins.
+SELECT id FROM users WHERE role = 'admin' AND status = 'active' ORDER BY id;
+
 -- name: InviteTree :many
--- A user and everyone they invited, recursively, through deleted accounts
--- too (R42). Deleted accounts are placeholders and are returned as such.
+-- A user and everyone they invited, recursively, through deactivated people
+-- and deleted placeholders (R42, R42a). Each user has one inviter, so the
+-- only cycle (an admin re-inviting the person who invited them) runs through
+-- the root, which the recursion skips (ADR 0008 §1). Parents come before
+-- their children; siblings by date joined.
 WITH RECURSIVE tree AS (
-    SELECT u.id FROM users u WHERE u.id = sqlc.arg(root)::bigint
-    UNION
-    SELECT c.id FROM users c JOIN tree t ON c.invited_by = t.id
+    SELECT u.id, ARRAY[u.created_at] AS sort_path, ARRAY[u.id] AS id_path
+    FROM users u WHERE u.id = sqlc.arg(root)::bigint
+    UNION ALL
+    SELECT c.id, t.sort_path || c.created_at, t.id_path || c.id
+    FROM users c JOIN tree t ON c.invited_by = t.id
+    WHERE c.id <> sqlc.arg(root)::bigint
 )
-SELECT u.* FROM users u JOIN tree t ON t.id = u.id ORDER BY u.id;
+SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status,
+       u.created_at, u.trusted_at,
+       -- Unused invitations that still work (ADR 0008 §3).
+       (SELECT count(*) FROM invitations i
+        WHERE i.invited_by = u.id AND i.status = 'pending' AND i.expires_at > sqlc.arg(now)::timestamptz) AS invitations
+FROM tree t JOIN users u ON u.id = t.id
+ORDER BY t.sort_path, t.id_path;
+
+-- name: LockUsers :exec
+-- An invite tree's rows, before it's checked and changed (ADR 0008 §5).
+-- Inserting a user or invitation that points at a locked row waits.
+SELECT id FROM users WHERE id = ANY(sqlc.arg(ids)::bigint[]) ORDER BY id FOR UPDATE;
+
+-- name: CountLiveInvitationsBy :one
+SELECT count(*) FROM invitations
+WHERE invited_by = ANY(sqlc.arg(ids)::bigint[]) AND status = 'pending' AND expires_at > sqlc.arg(now)::timestamptz;
+
+-- name: SetUserTrusted :execrows
+-- R42c: marks or unmarks a user, recording who marked them and when.
+UPDATE users SET trusted_at = CASE WHEN sqlc.narg(by)::bigint IS NULL THEN NULL ELSE now() END,
+    trusted_by = sqlc.narg(by)::bigint
+WHERE id = sqlc.arg(id) AND status <> 'deleted';
+
+-- name: CreateTreeDeactivation :one
+INSERT INTO tree_deactivations (root_id, actor_id, reason, invitations_cancelled)
+VALUES ($1, $2, $3, $4)
+RETURNING id;
+
+-- name: AddTreeDeactivationPeople :exec
+INSERT INTO tree_deactivation_people (deactivation_id, user_id, outcome)
+SELECT sqlc.arg(deactivation_id)::bigint, unnest(sqlc.arg(user_ids)::bigint[]), unnest(sqlc.arg(outcomes)::text[]);
+
+-- name: TreeDeactivationsOf :many
+-- R42d: the records that name a user (root, deactivated or spared), newest
+-- first, with everyone named as they are now.
+SELECT d.id, d.reason, d.invitations_cancelled, d.created_at,
+       d.root_id, r.name AS root_name, r.email AS root_email, r.status AS root_status,
+       a.name AS actor_name, a.email AS actor_email, a.status AS actor_status
+FROM tree_deactivations d
+JOIN users r ON r.id = d.root_id
+JOIN users a ON a.id = d.actor_id
+WHERE d.root_id = sqlc.arg(user_id)
+   OR EXISTS (SELECT 1 FROM tree_deactivation_people p WHERE p.deactivation_id = d.id AND p.user_id = sqlc.arg(user_id))
+ORDER BY d.created_at DESC, d.id DESC;
+
+-- name: TreeDeactivationPeople :many
+SELECT p.deactivation_id, p.user_id, p.outcome, u.name, u.email, u.status
+FROM tree_deactivation_people p JOIN users u ON u.id = p.user_id
+WHERE p.deactivation_id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY p.deactivation_id, u.created_at, u.id;
 
 -- name: DeactivateUsers :many
 UPDATE users SET status = 'deactivated', deactivated_at = now()
@@ -321,7 +383,7 @@ UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted';
 -- R43c: only an anonymous placeholder stays, so the invite tree stays
 -- connected (owner, 2026-10-13).
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
-    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL
 WHERE id = $1;
 
 -- name: ScrubInvitationsTo :exec

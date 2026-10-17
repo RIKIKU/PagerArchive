@@ -486,11 +486,11 @@ func lastAdmin(admins []int64, ids []int64) bool {
 	return len(admins) > 0
 }
 
-// Deactivate deactivates a user, or a user and their whole invite tree
-// (R42, R43b): at once in the app (sessions ended, live connections
-// closed, unused invitations cancelled), then in Authentik.
-func (s *Service) Deactivate(ctx context.Context, actor db.User, targetID int64, tree bool) (int, error) {
-	var set []db.User
+// Deactivate deactivates one user (R43b): at once in the app (sessions
+// ended, live connections closed, unused invitations cancelled), then in
+// Authentik. A tree goes through Preview and DeactivateTree (R42b).
+func (s *Service) Deactivate(ctx context.Context, actor db.User, targetID int64) (int, error) {
+	var target db.User
 	var changed []db.DeactivateUsersRow
 	var cancelled []*string
 	err := s.Store.InTx(ctx, func(q *db.Queries) error {
@@ -498,75 +498,78 @@ func (s *Service) Deactivate(ctx context.Context, actor db.User, targetID int64,
 		if err != nil {
 			return dbErr("lock admins", err)
 		}
-		target, err := q.UserByID(ctx, targetID)
+		target, err = q.UserByID(ctx, targetID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && target.Status == "deleted") {
 			return refuse(http.StatusNotFound, "no_user", "No such user.")
 		}
 		if err != nil {
 			return dbErr("user", err)
 		}
-		set = []db.User{target}
-		if tree {
-			if set, err = q.InviteTree(ctx, targetID); err != nil {
-				return dbErr("invite tree", err)
-			}
-		}
-		ids := make([]int64, len(set))
-		for i, u := range set {
-			ids[i] = u.ID
-		}
+		ids := []int64{target.ID}
 		if lastAdmin(admins, ids) {
 			return refuse(http.StatusConflict, "last_admin", "That would leave PagerArchive with no active admin. Make someone else an admin first.")
 		}
-		if slices.Contains(ids, actor.ID) {
+		if target.ID == actor.ID {
 			return refuse(http.StatusConflict, "self", "You can't deactivate yourself.")
 		}
-		if changed, err = q.DeactivateUsers(ctx, ids); err != nil {
-			return dbErr("deactivate", err)
-		}
-		if err := q.DeleteUserSessions(ctx, ids); err != nil {
-			return dbErr("end sessions", err)
-		}
-		if cancelled, err = q.CancelInvitationsBy(ctx, ids); err != nil {
-			return dbErr("cancel invitations", err)
-		}
-		// R51: deactivating a user stops their integrations.
-		if _, err := q.CancelPendingDeliveriesOfOwners(ctx, ids); err != nil {
-			return dbErr("stop integrations", err)
-		}
-		// R56: and withdraws their waiting alias requests.
-		if _, err := q.WithdrawRequestsOf(ctx, ids); err != nil {
-			return dbErr("withdraw alias requests", err)
-		}
-		return nil
+		changed, cancelled, err = deactivateIn(ctx, q, ids)
+		return err
 	})
 	if err != nil {
 		return 0, err
 	}
-	var ids []int64
-	for _, u := range set {
-		ids = append(ids, u.ID)
+	s.Log.Info("deactivated", "by", actor.ID, "user", targetID, "users", len(changed))
+	// Authentik is synced even if they were already deactivated, so
+	// repeating a failed request repairs it.
+	if failed := s.afterDeactivate(ctx, []int64{target.ID}, []*string{target.Subject}, cancelled); failed > 0 {
+		return len(changed), refuse(http.StatusBadGateway, "directory_partial",
+			"Deactivated in PagerArchive (they can't use it any more), but Authentik couldn't be updated. Deactivate again to retry.")
 	}
+	return len(changed), nil
+}
+
+// deactivateIn deactivates ids in the app, inside q's transaction: status,
+// sessions, unused invitations (R43b), integrations (R51) and waiting alias
+// requests (R56). It returns who changed and the cancelled invitations'
+// Authentik IDs.
+func deactivateIn(ctx context.Context, q *db.Queries, ids []int64) ([]db.DeactivateUsersRow, []*string, error) {
+	changed, err := q.DeactivateUsers(ctx, ids)
+	if err != nil {
+		return nil, nil, dbErr("deactivate", err)
+	}
+	if err := q.DeleteUserSessions(ctx, ids); err != nil {
+		return nil, nil, dbErr("end sessions", err)
+	}
+	cancelled, err := q.CancelInvitationsBy(ctx, ids)
+	if err != nil {
+		return nil, nil, dbErr("cancel invitations", err)
+	}
+	if _, err := q.CancelPendingDeliveriesOfOwners(ctx, ids); err != nil {
+		return nil, nil, dbErr("stop integrations", err)
+	}
+	if _, err := q.WithdrawRequestsOf(ctx, ids); err != nil {
+		return nil, nil, dbErr("withdraw alias requests", err)
+	}
+	return changed, cancelled, nil
+}
+
+// afterDeactivate follows a committed deactivation: live connections are
+// closed, the users are disabled in Authentik and their cancelled
+// invitations deleted there. It returns how many couldn't be disabled.
+func (s *Service) afterDeactivate(ctx context.Context, ids []int64, subjects []*string, cancelled []*string) int {
 	s.signedOut(ids)
-	s.Log.Info("deactivated", "by", actor.ID, "user", targetID, "tree", tree, "users", len(changed))
-	// Authentik follows. Every deactivated user in the set is synced, not
-	// just the ones changed now, so repeating a failed request repairs it.
 	var failed int
-	for _, u := range set {
-		if u.Subject == nil || (u.Status != "active" && u.Status != "deactivated") {
+	for i, sub := range subjects {
+		if sub == nil {
 			continue
 		}
-		if err := s.Dir.SetActive(ctx, *u.Subject, false); err != nil {
-			s.Log.Error("authentik: disable user", "user", u.ID, "error", err.Error())
+		if err := s.Dir.SetActive(ctx, *sub, false); err != nil {
+			s.Log.Error("authentik: disable user", "user", ids[i], "error", err.Error())
 			failed++
 		}
 	}
 	s.deleteDirectoryInvitations(ctx, cancelled)
-	if failed > 0 {
-		return len(changed), refuse(http.StatusBadGateway, "directory_partial",
-			"Deactivated in PagerArchive (they can't use it any more), but Authentik couldn't be updated for %d of them. Deactivate again to retry.", failed)
-	}
-	return len(changed), nil
+	return failed
 }
 
 // Reactivate reactivates one user, not their invite tree (R43b).

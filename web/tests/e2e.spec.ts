@@ -4,6 +4,7 @@
 // signed-in user and admin (their session tokens).
 import { test, expect, type Browser, type BrowserContextOptions, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
+import { execFileSync } from 'node:child_process';
 
 const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
 const SESSIONS = { user: process.env.PA_USER_SESSION ?? '', admin: process.env.PA_ADMIN_SESSION ?? '' };
@@ -172,7 +173,8 @@ test('account and users pages', async ({ page, browser }) => {
 	await admin.goto('/admin/users');
 	const user = admin.locator('li').filter({ hasText: 'user@example.test' });
 	await expect(user).toContainText('Invited by Test Admin (admin@example.test)');
-	await expect(user.getByRole('button', { name: 'Deactivate with invite tree: Test User (user@example.test)' })).toBeVisible();
+	// R42b: a tree is deactivated from its preview.
+	await expect(user.getByRole('link', { name: 'Deactivate with invite tree: Test User (user@example.test)' })).toHaveAttribute('href', /\/admin\/users\/\d+\/deactivate-tree$/);
 	// No actions on your own row.
 	const self = admin.locator('li').filter({ has: admin.getByText('Test Admin (admin@example.test)', { exact: true }) });
 	await expect(self).toContainText('You');
@@ -237,7 +239,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', '/admin/aliases', 'admin-alias', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
@@ -287,10 +289,20 @@ for (const scheme of ['light', 'dark'] as const) {
 					await page.getByRole('button', { name: 'New integration' }).click();
 					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
 				} else {
-					const path = view === 'alias' ? `/aliases/${aliasID}` : view === 'admin-user' ? `/admin/users/${userID}` : view === 'admin-alias' ? `/admin/aliases/${aliasID}` : view;
+					const path =
+						view === 'alias'
+							? `/aliases/${aliasID}`
+							: view === 'admin-user'
+								? `/admin/users/${userID}`
+								: view === 'admin-tree-preview'
+									? `/admin/users/${userID}/deactivate-tree`
+									: view === 'admin-alias'
+										? `/admin/aliases/${aliasID}`
+										: view;
 					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
+					if (view === 'admin-user' || view === 'admin-tree-preview') await expect(page.getByTestId('tree-person').first()).toBeVisible();
 					if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
 					else if (path.startsWith('/reports')) await expect(page.getByTestId('report')).toBeVisible();
 					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
@@ -575,7 +587,7 @@ test('A30 integrations in the browser: notice, create, Send test, delivery, paus
 		// The admin sees it exists, never where it sends.
 		const admin = await (await signedIn(browser, 'admin')).newPage();
 		await admin.goto('/admin/users');
-		await admin.getByRole('link', { name: 'Test User (user@example.test)' }).click();
+		await admin.getByRole('link', { name: 'Test User (user@example.test)', exact: true }).click();
 		const row = admin.getByTestId('admin-integration').filter({ hasText: name });
 		await expect(row).toContainText('Webhook');
 		await expect(row).toContainText('Active');
@@ -705,11 +717,20 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			await admin.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Administration' }).click();
 		}
 
-		// B's page in Administration: B's integration, not where it sends, and not A's.
+		// The Users page links to the invite form on the Account page (R41, R44b).
 		await screens.getByRole('link', { name: 'Users' }).click();
+		await admin.getByRole('main').getByRole('link', { name: 'Invite someone' }).click();
+		await expect(admin).toHaveURL(/\/account#invite$/);
+		await expect(admin.getByRole('heading', { level: 2, name: 'Invite someone' })).toBeInViewport();
+		await expect(admin.getByLabel('Their email address')).toBeVisible();
+		await expect(admin.getByRole('button', { name: 'Send invitation' })).toBeVisible();
+		await admin.goBack();
+
+		// B's page in Administration: B's integration, not where it sends, and not A's.
+		await expect(admin.getByRole('heading', { level: 1 })).toHaveText('Users');
 		const bRow = admin.locator('li').filter({ hasText: 'user@example.test' });
 		await expect(bRow).toContainText(/\d+ integrations?/);
-		await bRow.getByRole('link', { name: 'Test User (user@example.test)' }).click();
+		await bRow.getByRole('link', { name: 'Test User (user@example.test)', exact: true }).click();
 		await expect(admin.getByRole('heading', { level: 1 })).toHaveText('Test User (user@example.test)');
 		const row = admin.getByTestId('admin-integration').filter({ hasText: bName });
 		await expect(row).toContainText('Webhook');
@@ -1094,3 +1115,140 @@ for (const f of [
 		expect(asked.filter((a) => a === '2026-10-10/2026-10-01'), 'reversed ranges sent to the API').toEqual([]);
 	});
 }
+
+// M7 (R42a-R42d, ADR 0008): invite trees, the deactivation preview, trusted
+// users and records. scripts/e2e.sh seeds each browser project n its own
+// copies of A48's tree (t = 48, 49a, 49b, 50a, 50b): the admin invited A,
+// A invited B and C, B invited D, and D has an unused invitation.
+function a48Tree(t: string, n: number) {
+	const k = `${t}-${n}`;
+	const who = (l: string) => ({ name: `${l} ${k}`, email: `${l.toLowerCase()}-${k}@example.test`, label: `${l} ${k} (${l.toLowerCase()}-${k}@example.test)` });
+	return { a: who('A'), b: who('B'), c: who('C'), d: who('D'), x: who('X') };
+}
+
+async function userIdByEmail(request: APIRequestContext, email: string): Promise<number> {
+	const r = await request.get(`${URL}/api/v1/admin/users`, { headers: asRole('admin') });
+	const u = (await r.json()).find((u: { email: string }) => u.email === email);
+	expect(u, email).toBeTruthy();
+	return u.id;
+}
+
+/** The tree on the page as "A(B(D) C)", by each person's first word. */
+function treeShape(page: Page): Promise<string> {
+	return page.getByTestId('invite-tree').evaluate((ul) => {
+		const shape = (li: Element): string => {
+			const who = li.querySelector(':scope > .row .who')?.textContent?.trim().split(' ')[0] ?? '?';
+			const kids = [...li.querySelectorAll(':scope > ul > li')].map(shape);
+			return kids.length ? `${who}(${kids.join(' ')})` : who;
+		};
+		return [...ul.querySelectorAll(':scope > li')].map(shape).join(' ');
+	});
+}
+
+// A48. The admin opens A's page: the tree A → B → D and A → C under the
+// admin who invited A; the preview starts with all 4 ticked, and its totals.
+test('A48 invite tree and preview', async ({ browser, request }, info) => {
+	const tr = a48Tree('48', projectN(info));
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto(`/admin/users/${await userIdByEmail(request, tr.a.email)}`);
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(tr.a.label);
+	await expect(admin.getByTestId('tree-person').first()).toBeVisible();
+	expect(await treeShape(admin)).toBe('Test(A(B(D) C))');
+	const d = admin.locator(`[data-person="${tr.d.label}"]`);
+	await expect(d).toContainText('User · joined');
+	await expect(d).toContainText('1 unused invitation');
+
+	await admin.getByRole('link', { name: 'Deactivate with invite tree…' }).click();
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(`Deactivate ${tr.a.label} and their invite tree`);
+	for (const p of [tr.a, tr.b, tr.c, tr.d]) await expect(admin.getByRole('checkbox', { name: p.label })).toBeChecked();
+	expect(await treeShape(admin)).toBe('A(B(D) C)');
+	await expect(admin.getByTestId('totals')).toHaveText('4 people will be deactivated and 1 unused invitation cancelled.');
+	await admin.context().close();
+});
+
+// A49. Unticking only B deactivates A, C and D, and B keeps A as inviter;
+// "Spare this branch" on B (a fresh copy) leaves B and D active and D's
+// invitation unused.
+test('A49 sparing', async ({ browser, request }, info) => {
+	const n = projectN(info);
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+
+	const tr = a48Tree('49a', n);
+	await admin.goto(`/admin/users/${await userIdByEmail(request, tr.a.email)}/deactivate-tree`);
+	await admin.getByRole('checkbox', { name: tr.b.label }).uncheck();
+	await expect(admin.getByTestId('totals')).toHaveText('3 people will be deactivated and 1 unused invitation cancelled.');
+	await admin.getByRole('button', { name: 'Deactivate 3 people' }).click();
+	await expect(admin.getByRole('status')).toContainText('Done: 3 people deactivated, 1 person spared');
+	await admin.goto(`/admin/users/${await userIdByEmail(request, tr.b.email)}`);
+	await expect(admin.locator('dl')).toContainText(`Invited by ${tr.a.label}`);
+	await expect(admin.locator('dl')).toContainText('Status Active');
+	await expect(admin.getByTestId('tree-person').first()).toBeVisible();
+	expect(await treeShape(admin)).toBe('A(B(D))');
+
+	const tr2 = a48Tree('49b', n);
+	await admin.goto(`/admin/users/${await userIdByEmail(request, tr2.a.email)}/deactivate-tree`);
+	await admin.getByRole('button', { name: `Spare this branch: ${tr2.b.label}` }).click();
+	for (const p of [tr2.b, tr2.d]) await expect(admin.getByRole('checkbox', { name: p.label })).not.toBeChecked();
+	await expect(admin.getByTestId('totals')).toHaveText('2 people will be deactivated and 0 unused invitations cancelled.');
+	await admin.getByRole('button', { name: 'Deactivate 2 people' }).click();
+	await expect(admin.getByRole('status')).toContainText('Done: 2 people deactivated, 2 people spared and 0 unused invitations cancelled');
+	await admin.goto('/admin/users');
+	const row = (label: string) => admin.locator('.cards > li').filter({ has: admin.getByRole('link', { name: label, exact: true }) });
+	for (const p of [tr2.b, tr2.d]) await expect(row(p.label).locator('.head')).not.toContainText('Deactivated');
+	for (const p of [tr2.a, tr2.c]) await expect(row(p.label).locator('.head')).toContainText('Deactivated');
+	// D's invitation is still unused, and still works.
+	await expect(admin.locator('.cards > li').filter({ hasText: tr2.x.email })).toContainText(`From ${tr2.d.label}`);
+	await admin.context().close();
+});
+
+// A50. C is marked trusted and starts unticked; the record shows the reason,
+// who was deactivated and who was spared. With a preview open on a fresh
+// copy, D's invitation is accepted: confirming is refused and the updated
+// preview includes the new person.
+test('A50 trusted, record and changes', async ({ browser, request }, info) => {
+	const n = projectN(info);
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+
+	const tr = a48Tree('50a', n);
+	const aID = await userIdByEmail(request, tr.a.email);
+	await admin.goto(`/admin/users/${await userIdByEmail(request, tr.c.email)}`);
+	await admin.getByRole('button', { name: 'Mark trusted' }).click();
+	await expect(admin.getByTestId('trusted')).toContainText('Yes, marked by Test Admin (admin@example.test)');
+	await admin.goto(`/admin/users/${aID}/deactivate-tree`);
+	await expect(admin.getByRole('checkbox', { name: tr.c.label })).not.toBeChecked();
+	await expect(admin.getByRole('checkbox', { name: tr.c.label })).toBeEnabled();
+	for (const p of [tr.a, tr.b, tr.d]) await expect(admin.getByRole('checkbox', { name: p.label })).toBeChecked();
+	await admin.getByLabel('Reason (optional, only admins see it)').fill('spam REASON-MARKER');
+	await admin.getByRole('button', { name: 'Deactivate 3 people' }).click();
+	await expect(admin.getByRole('status')).toContainText('Done: 3 people deactivated, 1 person spared');
+	await admin.goto(`/admin/users/${aID}`);
+	const record = admin.getByTestId('deactivation-record');
+	await expect(record).toHaveCount(1);
+	await expect(record).toContainText('Reason: spam REASON-MARKER');
+	await expect(record).toContainText(`Deactivated: ${tr.a.label}, ${tr.b.label}, ${tr.d.label}`);
+	await expect(record).toContainText(`Spared: ${tr.c.label}`);
+	await expect(record).toContainText('by Test Admin (admin@example.test)');
+
+	const tr2 = a48Tree('50b', n);
+	const a2 = await userIdByEmail(request, tr2.a.email);
+	await admin.goto(`/admin/users/${a2}/deactivate-tree`);
+	await expect(admin.getByTestId('totals')).toHaveText('4 people will be deactivated and 1 unused invitation cancelled.');
+	// D's invitation is accepted while the preview is open.
+	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
+		input: `INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+  SELECT '${tr2.x.email}', '${tr2.x.email}', '${tr2.x.name}', 'user', id, clock_timestamp() FROM users WHERE email_key = '${tr2.d.email}';
+UPDATE invitations SET status = 'used', used_at = now(), used_by = (SELECT id FROM users WHERE email_key = '${tr2.x.email}')
+  WHERE email_key = '${tr2.x.email}' AND status = 'pending';`
+	});
+	await admin.getByRole('button', { name: 'Deactivate 4 people' }).click();
+	await expect(admin.getByRole('alert')).toContainText('The invite tree changed since this preview, so nothing was deactivated.');
+	await expect(admin.getByRole('checkbox', { name: tr2.x.label })).toBeChecked();
+	await expect(admin.locator(`[data-person="${tr2.x.label}"]`)).toContainText('New');
+	expect(await treeShape(admin)).toBe('A(B(D(X)) C)');
+	await expect(admin.getByTestId('totals')).toHaveText('5 people will be deactivated and 0 unused invitations cancelled.');
+	const users = await request.get(`${URL}/api/v1/admin/users`, { headers: asRole('admin') });
+	expect((await users.json()).find((u: { id: number }) => u.id === a2).status, 'nothing was deactivated').toBe('active');
+	await admin.getByRole('button', { name: 'Deactivate 5 people' }).click();
+	await expect(admin.getByRole('status')).toContainText('Done: 5 people deactivated');
+	await admin.context().close();
+});

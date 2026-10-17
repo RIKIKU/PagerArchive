@@ -14,6 +14,11 @@ x-authentik: &authentik
     AUTHENTIK_POSTGRESQL__NAME: authentik
     AUTHENTIK_POSTGRESQL__USER: authentik
     AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
+    # TCP keepalives, so a database connection that died without being
+    # closed fails within about a minute and Authentik reconnects (ADR 0008
+    # §11). Base64 of:
+    # {"keepalives":1,"keepalives_idle":30,"keepalives_interval":10,"keepalives_count":3,"tcp_user_timeout":60000}
+    AUTHENTIK_POSTGRESQL__CONN_OPTIONS: eyJrZWVwYWxpdmVzIjoxLCJrZWVwYWxpdmVzX2lkbGUiOjMwLCJrZWVwYWxpdmVzX2ludGVydmFsIjoxMCwia2VlcGFsaXZlc19jb3VudCI6MywidGNwX3VzZXJfdGltZW91dCI6NjAwMDB9
     AUTHENTIK_EMAIL__HOST: ${SMTP_HOST:?set SMTP_HOST in .env}
     AUTHENTIK_EMAIL__PORT: ${SMTP_PORT:-587}
     AUTHENTIK_EMAIL__USERNAME: ${SMTP_USERNAME:-}
@@ -40,6 +45,11 @@ x-authentik: &authentik
   depends_on:
     db:
       condition: service_healthy
+      # When Compose restarts or recreates db (an upgrade, `docker compose
+      # restart db`), it restarts Authentik too, so Authentik never keeps
+      # connections to the old database (ADR 0008 §11). After a crash or a
+      # reboot, restart it by hand: see docs/deploy.md.
+      restart: true
 
 services:
   db:

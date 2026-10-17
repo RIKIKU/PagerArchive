@@ -38,7 +38,7 @@ The first start takes a minute or two while Authentik sets up its database and a
    docker compose exec api pagerarchive client add shed "Shed receiver"
    ```
 
-Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone or their whole invite tree, reactivate, and promote or demote admins. Deactivation signs people out at once. Templates are managed with `pagerarchive template …` (`docker compose exec api pagerarchive help`).
+Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once. Templates are managed with `pagerarchive template …` (`docker compose exec api pagerarchive help`).
 
 ### Aliases
 
@@ -179,6 +179,28 @@ scrape_configs:
 
 An alert for a quiet receiver, for example: `pagerarchive_client_receiving == 0`.
 
+## When the database restarts
+
+Authentik's workers can hang on database connections that went stale when the `db` container restarted. Sign-in pages may still load, but invitation and code emails stop going out. So whenever `db` restarts (an upgrade, a crash, or the host rebooting and starting containers in a different order), restart Authentik afterwards, from the directory with `compose.yaml`:
+
+```sh
+docker compose restart authentik-server authentik-worker
+```
+
+`compose.yaml` does two things to prevent the problem:
+
+- **Compose restarts Authentik for you** whenever Compose itself restarts or recreates `db` (`docker compose up -d` after a new PostGIS image, or `docker compose restart db`). That's `restart: true` under `depends_on`, which needs Docker Compose 2.17 or later. It can't help when Docker restarts `db` on its own (after a crash) or when the host reboots. Run the command above then.
+- **TCP keepalives** on Authentik's database connections (`AUTHENTIK_POSTGRESQL__CONN_OPTIONS`), so a connection that died without being closed fails within about a minute, and Authentik reconnects.
+
+To see whether Authentik is stuck, count tasks that have waited more than 5 minutes:
+
+```sh
+docker compose exec db psql -U postgres -d authentik -tAc \
+  "SELECT count(*) FROM authentik_tasks_task WHERE state = 'queued' AND mtime < now() - interval '5 minutes'"
+```
+
+Anything above 0 means its worker isn't picking up work. Restart Authentik as above.
+
 ## Backups
 
 Back up the `db` volume, which holds both databases. Messages that PagerArchive deletes (retention) can survive in your own backups.
@@ -206,7 +228,7 @@ Images are published to GitHub's container registry by CI, but only from a build
 git pull && docker compose pull && docker compose up -d
 ```
 
-Database migrations run when the API starts. Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version. That includes the locked-accounts metric, which reads Authentik's tables.
+Database migrations run when the API starts. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)). Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version. That includes the locked-accounts metric, which reads Authentik's tables.
 
 **From a version before integrations (M5)**, add to `.env`: `INTEGRATION_SECRETS_KEY`, `METRICS_TOKEN` and `AUTHENTIK_METRICS_DB_PASSWORD` (see [Integrations](#integrations) and [Metrics](#metrics)). Then create the metrics role once, after `docker compose up -d`:
 

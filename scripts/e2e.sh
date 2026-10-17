@@ -74,6 +74,30 @@ INSERT INTO sessions (token_hash, user_id, expires_at)
 UPDATE clients SET last_seen_at = now() - interval '31 minutes' WHERE id = 'quiet';
 SQL
 
+# M7 (A48-A50): each browser project n (1-3) gets its own copies of A48's
+# tree: the admin invited A, A invited B and C, B invited D, and D has an
+# unused invitation. They have no Authentik user (subject NULL), so
+# deactivating them calls nothing that isn't running here.
+for n in 1 2 3; do
+	for t in 48 49a 49b 50a 50b; do
+		k=$t-$n
+		cat <<SQL
+INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+  SELECT 'a-$k@example.test', 'a-$k@example.test', 'A $k', 'user', id, clock_timestamp() FROM users WHERE subject = 'e2e-admin';
+INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+  SELECT 'b-$k@example.test', 'b-$k@example.test', 'B $k', 'user', id, clock_timestamp() FROM users WHERE email_key = 'a-$k@example.test';
+INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+  SELECT 'c-$k@example.test', 'c-$k@example.test', 'C $k', 'user', id, clock_timestamp() FROM users WHERE email_key = 'a-$k@example.test';
+INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+  SELECT 'd-$k@example.test', 'd-$k@example.test', 'D $k', 'user', id, clock_timestamp() FROM users WHERE email_key = 'b-$k@example.test';
+INSERT INTO invitations (email, email_key, invited_by, expires_at)
+  SELECT 'x-$k@example.test', 'x-$k@example.test', id, now() + interval '7 days' FROM users WHERE email_key = 'd-$k@example.test';
+SQL
+	done
+done | docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
+# A50 adds someone to a tree while its preview is open.
+export PA_E2E_DB="$DB"
+
 # Authentik isn't running: sign-in reports it unavailable, which one test checks.
 PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080 MAP_TILES=deploy/example-map/example-map.pmtiles \
 	APP_URL=http://127.0.0.1:18080 AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
@@ -87,8 +111,8 @@ status=0
 (cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?
 
 # P1: no page text in the API log, and no alias request notes, feedback or
-# names (ADR 0007 §8).
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin' "$BIN.log"; then
+# names (ADR 0007 §8), or tree deactivation reasons (ADR 0008 §10).
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER' "$BIN.log"; then
 	echo "page text, a note, feedback or a name found in the API log" >&2
 	status=1
 else

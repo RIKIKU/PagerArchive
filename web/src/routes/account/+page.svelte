@@ -89,7 +89,7 @@
 	<button class="secondary" type="button" onclick={() => api.signOut()}>Sign out</button>
 </div>
 
-<section aria-labelledby="invite-heading">
+<section id="invite" aria-labelledby="invite-heading">
 	<h2 id="invite-heading">Invite someone</h2>
 	<form onsubmit={invite}>
 		<label for="invite-email">Their email address</label>
