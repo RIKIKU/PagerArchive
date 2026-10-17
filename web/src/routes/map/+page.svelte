@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
-	import { criteria } from '#lib/filters.ts';
+	import { criteria, rangeProblem } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import Filters from '#lib/Filters.svelte';
 	import MapView from '#lib/MapView.svelte';
@@ -39,6 +39,14 @@
 
 	$effect(() => {
 		const q = new URLSearchParams(queryKey);
+		// A reversed range in the URL: say so, without asking the API.
+		// error is only written here: reading it would make this effect depend on it.
+		const problem = rangeProblem(q.get('from'), q.get('to'));
+		error = problem;
+		if (problem) {
+			messages = [];
+			return;
+		}
 		load(q);
 		const es = new EventSource(`/api/v1/stream?${q}`);
 		let opened = false;

@@ -1002,3 +1002,95 @@ test('A47 users can only request changes', async ({ page }) => {
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('My requests');
 	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Requests' })).toHaveAttribute('aria-current', 'page');
 });
+
+// The sticky header stays above all page content: a row's alias link
+// scrolled under it is covered, and a click there reaches the header, not the
+// link (the header and the row links once shared one z-index).
+for (const width of [375, 1280]) {
+	test(`header covers message rows scrolled under it, ${width}px`, async ({ browser, request }) => {
+		const job = uniqueJob();
+		for (let n = 1; n <= 20; n++) await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF ${n} @ 12 FICTION ST, MADEUPTON #STN1`);
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 740 } })).newPage();
+		await page.goto(`/?job=${job}`);
+		const list = page.getByTestId('message-list');
+		await expect(list.locator('article')).toHaveCount(20);
+		const header = page.locator('header.top');
+
+		// Scroll the third row's alias link to the middle of the header.
+		const link = list.locator('article').nth(2).getByRole('link', { name: 'Station 1' });
+		const point = await link.evaluate((a) => {
+			const h = document.querySelector('header.top')!.getBoundingClientRect();
+			const r = a.getBoundingClientRect();
+			window.scrollBy(0, r.top + r.height / 2 - (h.top + h.height / 2));
+			const now = a.getBoundingClientRect();
+			return { x: now.left + Math.min(now.width / 2, 24), y: now.top + now.height / 2 };
+		});
+		const box = (await header.boundingBox())!;
+		expect(point.y, 'the alias link is under the header').toBeGreaterThan(box.y);
+		expect(point.y, 'the alias link is under the header').toBeLessThan(box.y + box.height);
+
+		// Click there and see which got it (the click itself goes nowhere).
+		await page.evaluate(() => {
+			window.addEventListener(
+				'click',
+				(e) => {
+					const t = e.target as Element;
+					document.body.dataset.clicked = t.closest('header.top') ? 'header' : t.closest('article') ? 'message row' : t.tagName;
+					e.preventDefault();
+				},
+				{ capture: true, once: true }
+			);
+		});
+		await page.mouse.click(point.x, point.y);
+		await expect(page.locator('body')).toHaveAttribute('data-clicked', 'header');
+		await expect(page).toHaveURL(new RegExp(`/\?job=${job}$`));
+		await page.context().close();
+	});
+}
+
+// From and To limit each other (min and max), and a range that is still
+// reversed is refused in the browser with a clear message, before the API is
+// asked (the report API refuses it; search and the map would find nothing).
+// Search is checked on the message list; the map uses the same search form.
+for (const f of [
+	{ name: 'reports', path: '/reports?capcode=0100001', api: '/api/v1/reports/', submit: 'Run report' },
+	{ name: 'search', path: '/', api: '/api/v1/messages', submit: 'Search' },
+	{ name: 'map', path: '/map', api: '/api/v1/map', submit: 'Search' }
+]) {
+	test(`${f.name}: To can't be before From`, async ({ page }) => {
+		const asked: string[] = [];
+		page.on('request', (r) => {
+			const u = new globalThis.URL(r.url());
+			if (u.pathname.startsWith(f.api) && u.searchParams.has('from')) asked.push(`${u.searchParams.get('from')}/${u.searchParams.get('to')}`);
+		});
+		await page.goto(f.path);
+		const submit = page.getByRole('button', { name: f.submit, exact: true });
+		const form = page.locator('form').filter({ has: submit });
+		const from = form.getByLabel('From', { exact: true });
+		const to = form.getByLabel('To', { exact: true });
+		const message = form.getByTestId('date-range-error');
+
+		await from.fill('2026-10-10');
+		await expect(to).toHaveAttribute('min', '2026-10-10');
+		await to.fill('2026-10-01');
+		await expect(from).toHaveAttribute('max', '2026-10-01');
+		await expect(message).toHaveText('The To date is before the From date. Choose a To date on or after the From date.');
+		await submit.click();
+		await page.waitForTimeout(500);
+		expect(page.url(), 'the form was not sent').not.toContain('from=');
+		await expect(message).toBeVisible();
+
+		// Put right, it's sent.
+		await to.fill('2026-10-12');
+		await expect(message).toHaveCount(0);
+		await submit.click();
+		await expect(page).toHaveURL(/from=2026-10-10&to=2026-10-12/);
+		await expect.poll(() => asked).toContain('2026-10-10/2026-10-12');
+
+		// A reversed range in the URL is reported, and the API isn't asked.
+		await page.goto(`${f.path}${f.path.includes('?') ? '&' : '?'}from=2026-10-10&to=2026-10-01`);
+		await expect(page.getByRole('alert').filter({ hasText: 'The To date is before the From date.' })).toBeVisible();
+		await page.waitForTimeout(500);
+		expect(asked.filter((a) => a === '2026-10-10/2026-10-01'), 'reversed ranges sent to the API').toEqual([]);
+	});
+}

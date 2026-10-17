@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type Meta, type Report } from '#lib/api.ts';
+	import { rangeProblem } from '#lib/filters.ts';
 	import { isoDate } from '#lib/format.ts';
+	import DateRange from '#lib/DateRange.svelte';
 
 	// R38: Emergency messages to one capcode per event category, for a date
 	// range (inclusive, deployment time zone). The form is a GET, so a report
@@ -24,6 +26,12 @@
 		report = undefined;
 		error = '';
 		if (!capcode || !from || !to) return;
+		// A reversed range in the URL: say so, without asking the API.
+		const problem = rangeProblem(from, to);
+		if (problem) {
+			error = problem;
+			return;
+		}
 		api
 			.report(capcode, from, to)
 			.then((r) => (report = r))
@@ -47,8 +55,7 @@
 	{#if meta}
 		<form method="GET" action="/reports" class="form">
 			<label>Capcode<input name="capcode" required inputmode="numeric" pattern="[0-9]{'{1,7}'}" value={capcode} /></label>
-			<label>From<input name="from" type="date" required value={from || defaultFrom} /></label>
-			<label>To<input name="to" type="date" required value={to || defaultTo} /></label>
+			<DateRange from={from || defaultFrom} to={to || defaultTo} required />
 			<button type="submit">Run report</button>
 		</form>
 	{/if}

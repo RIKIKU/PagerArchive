@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { untrack } from 'svelte';
 	import type { Meta } from './api.ts';
+	import DateRange from './DateRange.svelte';
 	import { labels, isFiltered } from './filters.ts';
 
 	let { query, meta }: { query: URLSearchParams; meta: Meta } = $props();
@@ -42,8 +43,7 @@
 					{#each meta.categories as c (c)}<option>{c}</option>{/each}
 				</select>
 			</label>
-			<label>{labels.from}<input name="from" type="date" value={v('from')} /></label>
-			<label>{labels.to}<input name="to" type="date" value={v('to')} /></label>
+			<DateRange from={v('from')} to={v('to')} fromLabel={labels.from} toLabel={labels.to} />
 		</div>
 		<fieldset>
 			<legend class="visually-hidden">Options</legend>

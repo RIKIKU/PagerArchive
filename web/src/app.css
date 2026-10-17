@@ -28,6 +28,12 @@
 	--text-2xl: 1.25rem;
 	/* Checkboxes and radios: exempt from the full-width, tall text-input box. */
 	--control-check: 1.1rem;
+	/* Stacking order: components use these, never their own z-index numbers.
+	   Page content stacks inside main, so nothing in it can rise above the
+	   header, whatever its z-index (a map's controls, say). */
+	--layer-content: 1; /* links raised above a row's whole-row link */
+	--layer-header: 10; /* the sticky header, above all page content */
+	--layer-overlay: 20; /* above the header: the skip link */
 	color-scheme: light;
 }
 
