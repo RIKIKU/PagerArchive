@@ -98,6 +98,7 @@ func TestA50JoinDuringPreview(t *testing.T) {
 	if exists, active := s.authentikUser(t, "a50a@example.com"); !exists || !active {
 		t.Error("the refused confirmation changed A")
 	}
+	why := refused.Error
 	code, res, refused := o.confirmTree(aID, refused.Preview.Version, startTicked(refused.Preview.Root))
 	if code != http.StatusOK || res.Deactivated != 3 {
 		t.Fatalf("confirm the updated preview: %d %+v %s", code, res, refused.Error)
@@ -107,5 +108,5 @@ func TestA50JoinDuringPreview(t *testing.T) {
 			t.Errorf("%s in Authentik: exists %v, active %v", m.email, exists, active)
 		}
 	}
-	t.Logf("A50: an enrolment through Authentik during the preview refused the confirmation (%q); the updated preview ticked the new person, and confirming it disabled all 3 in Authentik", refused.Error)
+	t.Logf("A50: an enrolment through Authentik during the preview refused the confirmation (%q); the updated preview ticked the new person, and confirming it disabled all 3 in Authentik", why)
 }
