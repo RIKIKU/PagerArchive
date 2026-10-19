@@ -4,7 +4,7 @@ Date: 2026-10-17
 
 ## Status
 
-Proposed
+Accepted (owner, 2026-10-20). The owner confirmed both choices under "Questions for the owner": the last admin is spared rather than the whole tree refused, and a role change counts as the tree changing while a new invitation doesn't.
 
 ## Context
 
