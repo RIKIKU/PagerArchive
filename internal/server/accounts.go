@@ -191,6 +191,14 @@ type UserRow struct {
 	// R44b: their integrations, and how many are paused for failing.
 	Integrations        int64 `json:"integrations"`
 	IntegrationsFailing int64 `json:"integrations_failing"`
+	// R42c: null unless trusted. Admins only.
+	Trusted *TrustedMark `json:"trusted"`
+}
+
+// TrustedMark is who marked a user trusted, and when (R42c).
+type TrustedMark struct {
+	By string    `json:"by"`
+	At time.Time `json:"at"`
 }
 
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
@@ -222,15 +230,22 @@ func (s *Server) userRows(ctx context.Context) ([]UserRow, error) {
 			d := accounts.Display(u.InviterName, u.InviterEmail, status)
 			row.InvitedBy = &d
 		}
+		if u.TrustedAt != nil {
+			status := "active"
+			if u.TrustedByStatus != nil {
+				status = *u.TrustedByStatus
+			}
+			row.Trusted = &TrustedMark{By: accounts.Display(u.TrustedByName, u.TrustedByEmail, status), At: u.TrustedAt.UTC()}
+		}
 		out = append(out, row)
 	}
 	return out, nil
 }
 
-// DeactivateRequest is the body of POST /api/v1/admin/users/{id}/deactivate.
-type DeactivateRequest struct {
-	Tree bool `json:"tree"` // also everyone they invited, recursively (R42)
-}
+// DeactivateRequest is the body of POST /api/v1/admin/users/{id}/deactivate,
+// which deactivates one user. An invite tree goes through its preview
+// (R42b): see deactivationPreview and deactivateTree.
+type DeactivateRequest struct{}
 
 // DeactivateResult says how many users were deactivated.
 type DeactivateResult struct {
@@ -246,7 +261,7 @@ func (s *Server) deactivate(w http.ResponseWriter, r *http.Request) {
 	if !decodeBody(w, r, &req) {
 		return
 	}
-	n, err := s.Accounts.Deactivate(r.Context(), currentUser(r), id, req.Tree)
+	n, err := s.Accounts.Deactivate(r.Context(), currentUser(r), id)
 	if err != nil {
 		s.accountsError(w, "deactivate", err)
 		return

@@ -210,6 +210,21 @@ type Template struct {
 	AgencyProfile *string
 }
 
+type TreeDeactivation struct {
+	ID                   int64
+	RootID               int64
+	ActorID              int64
+	Reason               *string
+	InvitationsCancelled int32
+	CreatedAt            time.Time
+}
+
+type TreeDeactivationPerson struct {
+	DeactivationID int64
+	UserID         int64
+	Outcome        string
+}
+
 type User struct {
 	ID            int64
 	Subject       *string
@@ -222,4 +237,6 @@ type User struct {
 	CreatedAt     time.Time
 	DeactivatedAt *time.Time
 	DeletedAt     *time.Time
+	TrustedAt     *time.Time
+	TrustedBy     *int64
 }

@@ -288,6 +288,69 @@ export interface UserRow {
 	// R44b: their integrations, and how many are paused for failing.
 	integrations: number;
 	integrations_failing: number;
+	// R42c: null unless trusted.
+	trusted: TrustedMark | null;
+}
+
+// Invite trees (R42a-R42d, ADR 0008). Admins only.
+
+export interface TrustedMark {
+	by: string;
+	at: string;
+}
+
+/** A person's checkbox in a deactivation preview. */
+export interface Tick {
+	can: boolean;
+	why?: 'last admin' | 'you' | 'already deactivated' | 'deleted';
+	start: boolean;
+}
+
+export interface TreeNode {
+	id: number;
+	label: string; // "name (email)", or "deleted user"
+	name: string | null;
+	email: string | null;
+	role: 'admin' | 'user';
+	status: 'active' | 'deactivated' | 'deleted';
+	joined: string;
+	trusted: boolean;
+	invitations: number; // unused invitations that still work
+	tick?: Tick; // previews only
+	children: TreeNode[];
+}
+
+export interface PersonRef {
+	id: number;
+	label: string;
+	deleted: boolean;
+}
+
+export interface InviteTree {
+	inviter: PersonRef | null;
+	root: TreeNode;
+}
+
+export interface DeactivationPreview extends InviteTree {
+	version: string;
+}
+
+export interface TreeDeactivateResult {
+	record: number;
+	deactivated: number;
+	spared: number;
+	invitations_cancelled: number;
+}
+
+export interface DeactivationRecord {
+	id: number;
+	at: string;
+	by: string;
+	root: PersonRef;
+	reason: string | null;
+	deactivated: PersonRef[];
+	spared: PersonRef[];
+	invitations_cancelled: number;
 }
 
 // Integrations (R47-R51c, ADR 0006).
@@ -418,6 +481,8 @@ export interface Suggestion {
 export interface AdminUser {
 	user: UserRow;
 	integrations: AdminIntegration[];
+	tree: InviteTree;
+	deactivations: DeactivationRecord[];
 }
 
 export class ApiError extends Error {
@@ -516,8 +581,14 @@ export const api = {
 	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),
 	users: () => get<UserRow[]>('/api/v1/admin/users'),
 	allInvitations: () => get<Invitation[]>('/api/v1/admin/invitations'),
-	deactivate: (id: number, tree: boolean) =>
-		request<{ deactivated: number }>('POST', `/api/v1/admin/users/${id}/deactivate`, { tree }),
+	deactivate: (id: number) => request<{ deactivated: number }>('POST', `/api/v1/admin/users/${id}/deactivate`, {}),
+	deactivationPreview: (id: number | string) =>
+		get<DeactivationPreview>(`/api/v1/admin/users/${encodeURIComponent(id)}/deactivation-preview`),
+	/** Confirms a preview (R42b). A tree that changed since is refused with
+	 * code "tree_changed" and the updated preview in the ApiError's body. */
+	deactivateTree: (id: number, version: string, ticked: number[], reason: string) =>
+		request<TreeDeactivateResult>('POST', `/api/v1/admin/users/${id}/deactivate-tree`, { version, ticked, reason }),
+	setTrusted: (id: number, trusted: boolean) => request<void>('PUT', `/api/v1/admin/users/${id}/trusted`, { trusted }),
 	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
 	// Integrations (R47-R51c).

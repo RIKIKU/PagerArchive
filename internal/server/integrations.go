@@ -185,6 +185,9 @@ func (s *Server) suggestSelection(w http.ResponseWriter, r *http.Request) {
 type AdminUser struct {
 	User         UserRow                  `json:"user"`
 	Integrations []integrations.AdminView `json:"integrations"`
+	// R42a, R42d: their invite tree, and the tree deactivations naming them.
+	Tree          InviteTree           `json:"tree"`
+	Deactivations []DeactivationRecord `json:"deactivations"`
 }
 
 func (s *Server) adminUser(w http.ResponseWriter, r *http.Request) {
@@ -204,6 +207,10 @@ func (s *Server) adminUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := AdminUser{User: users[i], Integrations: []integrations.AdminView{}}
+	if out.Tree, out.Deactivations, err = s.treeAndRecords(r.Context(), id); err != nil {
+		s.accountsError(w, "invite tree", err)
+		return
+	}
 	if s.Integrations != nil {
 		if out.Integrations, err = s.Integrations.AdminList(r.Context(), id); err != nil {
 			s.integrationsError(w, "admin integrations", err)
