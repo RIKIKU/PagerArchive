@@ -60,7 +60,7 @@ Receiving clients, ingest and redaction, profile-driven parsing, job grouping, m
 - **Operational alerting** (owner, 2026-10-16). PagerArchive is not critical infrastructure and must not replace issued pagers or an agency's official alerting. Integrations are a convenience: delivery is best-effort, and the app doesn't add features whose purpose is guaranteed alerting (e.g. repeat-until-acknowledged alarms, delivery receipts, escalation).
 - **A native mobile app.** The browser UI must work well on phones instead.
 - **Automatic client updates** (wanted later). v1 publishes multi-arch images and documents manual updates.
-- **Managing clients in the browser** (wanted later, owner 2026-10-13). Until then they are changed by CLI. Aliases are managed in the browser from M6 (section 7.12, owner 2026-10-16), and templates from M9 (section 7.14, owner 2026-10-20).
+- **Managing clients in the browser** (wanted later, owner 2026-10-13). Until then they are changed by CLI. Aliases are managed in the browser from M6 (section 7.12, owner 2026-10-16), and templates from M10 (section 7.14, owner 2026-10-20).
 - **API keys** (owner, 2026-10-20). Command-line work signs in as a person (R60). Unattended jobs, if ever wanted, would be a worker inside PagerArchive, not a script.
 - **PowerShell access for users** (wanted later, owner 2026-10-20). Users would request access and an admin would grant it. The module would then work for them with their own role's permissions (R60).
 - **Writing an identity provider.**
@@ -232,11 +232,21 @@ Many clients post to one server. Each client records its own receive time. The s
   - **Pipeline input:** aliases and capcodes can be piped in, e.g. `Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)`.
   - **What each message holds:** what the detail view shows (R35c): the full text (P2), priority, sent time, capcode, alias, agency, group, job number, event category, parsed fields, location, flags, and each client's receive time.
   - **Paging:** the command fetches messages from the API page by page, only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` stops after the first page. With no filter, it returns every message.
+- **R63b. Watching** (M9, owner 2026-10-20). `Watch-PagerArchiveMessage` (alias `Watch-PaMessage`) outputs new messages as they arrive, in arrival order, until it's stopped (Ctrl+C).
+  - **Filters:** the same as `Get-PagerArchiveMessage` (R63a), except the time range and paging. Only matching messages come out.
+  - **Speed:** a message comes out within 2 seconds of a client posting it, as in the browser (R32).
+  - **Lost connection:** it keeps retrying, with a warning. Once reconnected, it first outputs the matching messages that arrived while it was disconnected, so a short outage doesn't skip pages.
+  - **Account changes:** if the signed-in user is deactivated or loses admin, it stops with an error.
+  - **Best-effort:** like integrations, it's a convenience, not an alerting system (see Out of scope, "Operational alerting").
 
 ### 7.14 Templates in the browser (owner, 2026-10-20)
 - **R64. Admins manage templates** in Administration (R44b). They see a list showing each template's name, agency, icon, colour, agency profile and how many aliases use it, and can add, edit (name, agency, icon, colour, agency profile) and delete templates. Changes take effect at once for every alias using the template (R28), with no change requests and no history. The agency profile is chosen from the profiles loaded at start-up, or none; changing it re-parses the affected messages (R23a). A template still used by aliases can't be deleted, and the refusal says how many use it. Users choose from existing templates (R54) and can't change them; the API refuses them.
 - **R65. Template icons.** A template's icon is an **image stored in PagerArchive's database** with the template, never a link to another site, so browsers only ever fetch it from PagerArchive. Admins upload it in the browser, or with the PowerShell module (R63) from a file or a URL. The module downloads a URL on the admin's own machine and uploads the image, so PagerArchive's server never fetches anything from another site. Accepted: PNG, ICO, GIF, JPEG and WebP files of at most 100 KB. SVG and anything else are refused with the reason. Every icon is converted to a 64×64 PNG when it's added, and nothing else from the uploaded file is kept. Admins can replace or remove an icon. The API applies these checks and the conversion, whether the icon comes from the browser or the module.
 - **R66. Showing icons.** Wherever a page's sender is shown, its template's icon appears beside the alias name: message rows (the list, live updates, search results, the job view) and the alias view (R35e). The icon sits on a light tile, so dark artwork stays visible in both themes, and its text alternative is the agency name. With no icon, the row looks as it did before (the colour stays). Each browser fetches an icon once and reuses it until it changes. The icon's exact size and position are part of the UI redesign.
+
+### 7.15 Printing for training (owner, 2026-10-20)
+- **R67. Print sheet.** Any signed-in user can tick messages wherever messages are listed (the message list, search results, the job view and the alias view) to add them to their **print sheet**, and can untick them there or on the sheet. The sheet keeps them in the order they were added and shows how many it holds. It's kept in that browser until the user clears it, and it stores message IDs only, never message text.
+- **R68. Printing.** The print sheet prints as a plain layout for teaching recruits to read pages. Each message shows its text exactly as a pager displays it (R31), in full, and nothing else (no time, alias or priority badge). Each message sits inside a heavy border, with space between messages, so it's clear where one page ends and the next begins. A message is never split across two paper pages. The printout has no header or navigation, is black on white, and can be saved as a PDF through the browser's print dialog. The user documentation notes that printed pages are outside PagerArchive's control: retention and deactivation don't reach paper.
 
 ## 8. Constraints
 
@@ -323,6 +333,8 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A56. Admin manages templates.** **Given** an admin, **when** the admin adds the template "Example Rescue" (agency "Example Rescue Service", no agency profile), **then** it is listed with 0 aliases; **when** the admin moves "Station 4" to it, **then** pages from `0100004` show the agency "Example Rescue Service" at once; **when** the admin tries to delete "Example Fire", **then** it is refused, saying 3 aliases use it. **Given** user B, **when** B tries to edit a template through the API, **then** it is refused.
 - **A57. Icons shown.** **Given** an admin and the test icon `example-icon.png` (a made-up 32×32 image), **when** the admin uploads it to "Example Fire" in the browser, **then** the message list shows it beside "Station 1", in light and dark mode, with the text alternative "Example Fire Service", and the browser fetches it only from PagerArchive; **when** the admin uploads an SVG file, a 200 KB PNG, or a text file renamed `.png`, **then** each is refused with the reason and the icon is unchanged.
 - **A58. Stored, not linked.** **Given** a PNG icon carrying an extra text chunk "NOT-KEPT", **when** it's added with the PowerShell module, **then** the stored icon is a 64×64 PNG without that text. **Given** a test web server serving the test icon, **when** the module sets "Example Fire"'s icon from its URL and the server is then stopped, **then** the message list still shows the icon.
+- **A59. Watching from PowerShell.** **Given** an admin signed in with the module, running `Watch-PaMessage -Capcode 0100001`, **when** a client posts a page to `0100001` and one to `0100002`, **then** only the `0100001` page comes out, within 2 seconds; **when** the connection is cut, a page to `0100001` arrives, and the connection comes back, **then** that page comes out once, after a warning about the lost connection; **when** the admin is deactivated, **then** the watch stops with an error.
+- **A60. Print sheet.** **Given** user B, **when** B ticks 3 messages in search results and 1 in a job view, **then** B's print sheet shows those 4 messages in that order; **when** B prints it, **then** the printout has no header or navigation, and each message's text is in full, exactly as in the message list, inside its own heavy border; **when** B's sheet holds 30 messages and is printed, **then** no message is split across two paper pages; **when** B clears the sheet, **then** it's empty. The browser's storage holds message IDs only, never message text.
 
 ## 10. Example profile (made-up network)
 
@@ -370,7 +382,9 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M6** | Aliases in the browser: admin editing, change requests and review, history, import and export | A42–A47 |
 | **M7** | Invite tree view, deactivation preview with sparing, trusted users, deactivation records | A48–A50 |
 | **M8** | PowerShell module: browser sign-in with no API keys, template, alias and message commands, import through the pipeline; `pagerarchive` keeps the server-only commands | A20 and A21 (through the module), A51–A55 |
-| **M9** | Templates in Administration, template icons stored as images and shown beside aliases | A56–A58 |
+| **M9** | PowerShell watch: new messages streamed into the pipeline | A59 |
+| **M10** | Templates in Administration, template icons stored as images and shown beside aliases | A56–A58 |
+| **M11** | Print sheet for training: tick messages, print them as a pager shows them | A60 |
 
 ## 13. Open questions
 
