@@ -8,7 +8,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 
 ## 1. Platform and form
 
-- **PowerShell 7 or later only** (owner). The manifest sets `CompatiblePSEditions = 'Core'` and `PowerShellVersion` to the oldest PowerShell 7 release Microsoft still supports when the module is built. CI tests on that release and on the newest, on Windows and Linux. **[pester]**
+- **PowerShell 7 or later only** (owner). The manifest sets `CompatiblePSEditions = 'Core'` and `PowerShellVersion = '7.6'`, because 7.4 and 7.5 lose support on 2026-11-10 (owner, 2026-10-21). The minimum is raised in a normal change when a release loses support, never by a test that fails on a date. CI tests on the minimum and on the newest, on Windows and Linux. **[pester]**
 - **A script module of advanced functions, not compiled C#** (owner). Use compiled code only where it has a real advantage, which needs the owner's agreement. Microsoft's code guidelines map onto advanced functions as follows:
 
   | Microsoft's guideline | In this module |
@@ -43,7 +43,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 
 ## 4. Changes, confirmation and `-Force`
 
-- **Every command that changes data** declares `SupportsShouldProcess` and calls `$PSCmdlet.ShouldProcess()` once per item before changing it (RD04). `-WhatIf` is the dry run, and there's no separate dry-run switch. **[analyzer]** `PSUseShouldProcessForStateChangingFunctions`, **[pester]**
+- **Every command that changes data** declares `SupportsShouldProcess` and calls `$PSCmdlet.ShouldProcess()` once per item before changing it (RD04). `-WhatIf` is the dry run, and there's no separate dry-run switch. **Import is the exception:** its rows are one all-or-nothing batch (R27a), so it calls `ShouldProcess` once for the batch, with a summary such as "412 aliases: 380 new, 12 different", and under `-WhatIf` it still outputs every row's result, marked as not applied. **[analyzer]** `PSUseShouldProcessForStateChangingFunctions`, **[pester]**
 - **`ConfirmImpact`** is `High` for `Remove-*` and for import with `-Update`, and `Medium` otherwise. **[pester]**
 - **`-Force`** only where a command asks for more than `ShouldProcess` (RD05, AD02). It never gets around a rule the API enforces. **[review]**
 - **What changes output:** `New-*` and `Import-*` output what they created or did. `Set-*`, `Rename-*` and `Remove-*` output nothing unless `-PassThru` is given (SD03). **[pester]**
@@ -88,7 +88,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 
 ## 9. Security
 
-- **Tokens are `[securestring]` from start to finish** (AC06). They're sent with `Invoke-RestMethod -Authentication Bearer -Token` and are never converted to plain text in a variable. They are never written to a file, shown, logged, put in an error, or kept in `$Error` or a transcript. They're saved only through SecretManagement (R61). **[analyzer]** `PSAvoidUsingPlainTextForPassword`, `PSAvoidUsingConvertToSecureStringWithPlainText`, **[pester]**
+- **Tokens are `[securestring]` from start to finish** (AC06). They're sent with `Invoke-RestMethod -Authentication Bearer -Token` and are never converted to plain text in a variable. They are never written to a file unencrypted, shown, logged, put in an error, or kept in `$Error` or a transcript. They're saved only as R61 says: on Windows with `ConvertFrom-SecureString` and no key, which uses DPAPI, and otherwise through SecretManagement. Saving with no key is never used off Windows, where it doesn't encrypt. **[analyzer]** `PSAvoidUsingPlainTextForPassword`, `PSAvoidUsingConvertToSecureStringWithPlainText`, **[pester]**
 - **HTTPS only.** Plain HTTP (a LAN test copy) needs an explicit `-AllowUnencryptedAuthentication`, the same name `Invoke-RestMethod` uses, and gives a warning. **[pester]**
 - **The module never sends anything except to the PagerArchive server and its Authentik.** Downloading an icon from a URL (M9) is the user's own request and happens on their machine (R65). **[review]**
 
