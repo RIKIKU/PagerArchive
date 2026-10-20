@@ -11,3 +11,4 @@ Self-hosted archive and live browser for any POCSAG paging network. **`SPEC.md` 
 - Never commit anything named `*PRIVATE*`, `.env`, or secrets.
 - Show evidence when claiming something works: the command run and its output.
 - Styles use the tokens in web/src/app.css; no hard-coded colours or font sizes in components.
+- The PowerShell module follows `docs/powershell-guidelines.md`.
