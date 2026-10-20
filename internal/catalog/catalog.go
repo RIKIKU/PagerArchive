@@ -1,7 +1,7 @@
 // Package catalog changes aliases and templates (R27, R28). Every change
 // queues a re-parse of the affected messages in the same transaction
 // (R23a), and every alias change writes its history (R57), whichever tool
-// made it: the command line, the import, an admin, or an approved request.
+// made it: the import, an admin, or an approved request.
 package catalog
 
 import (
@@ -22,19 +22,6 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
-
-// Template is a template's settings.
-type Template struct {
-	Name, Agency  string
-	Icon, Colour  *string
-	AgencyProfile *string // nil: text only
-}
-
-// Alias is an alias's settings, with its template by name.
-type Alias struct {
-	Pattern, Name, Template string
-	Ignored                 bool
-}
 
 // Catalog changes aliases and templates.
 type Catalog struct {
@@ -78,7 +65,7 @@ func refuse(status int, code, format string, args ...any) error {
 const (
 	SourceAdmin   = "admin"
 	SourceRequest = "request"
-	SourceCLI     = "cli"
+	SourceCLI     = "cli" // before M8 (R59)
 	SourceImport  = "import"
 )
 
@@ -90,9 +77,6 @@ type By struct {
 	RequestedBy *int64
 	RequestID   *int64
 }
-
-// CLI is a change made with the command line.
-var CLI = By{Source: SourceCLI}
 
 func reparse(ctx context.Context, q *db.Queries, pattern, reason string) error {
 	return q.RequestReparse(ctx, db.RequestReparseParams{CapcodePattern: pattern, Reason: reason})
@@ -122,83 +106,6 @@ func dbErr(op string, err error) error {
 		return fmt.Errorf("%s: %w", op, ErrNotFound)
 	}
 	return fmt.Errorf("%s: %s", op, store.SafeError(err))
-}
-
-// AddTemplate creates a template.
-func (c *Catalog) AddTemplate(ctx context.Context, t Template) error {
-	if t.Name == "" || t.Agency == "" {
-		return errors.New("a template needs a name and an agency")
-	}
-	_, err := c.Store.CreateTemplate(ctx, db.CreateTemplateParams{Name: t.Name, Agency: t.Agency, Icon: t.Icon, Colour: t.Colour, AgencyProfile: t.AgencyProfile})
-	if err != nil {
-		return dbErr("add template "+t.Name, err)
-	}
-	return nil
-}
-
-// UpdateTemplate changes a template and re-parses every alias that uses it.
-func (c *Catalog) UpdateTemplate(ctx context.Context, t Template) error {
-	return c.Store.InTx(ctx, func(q *db.Queries) error {
-		cur, err := q.TemplateByName(ctx, t.Name)
-		if err != nil {
-			return dbErr("template "+t.Name, err)
-		}
-		if err := q.UpdateTemplate(ctx, db.UpdateTemplateParams{ID: cur.ID, Agency: t.Agency, Icon: t.Icon, Colour: t.Colour, AgencyProfile: t.AgencyProfile}); err != nil {
-			return dbErr("update template", err)
-		}
-		patterns, err := q.AliasPatternsForTemplate(ctx, &cur.ID)
-		if err != nil {
-			return dbErr("aliases of template", err)
-		}
-		for _, p := range patterns {
-			if err := reparse(ctx, q, p, "template changed"); err != nil {
-				return dbErr("request re-parse", err)
-			}
-		}
-		return nil
-	})
-}
-
-// DeleteTemplate deletes a template that no alias and no waiting request
-// uses (section 14, ADR 0007 §1).
-func (c *Catalog) DeleteTemplate(ctx context.Context, name string) error {
-	return c.Store.InTx(ctx, func(q *db.Queries) error {
-		cur, err := q.TemplateByName(ctx, name)
-		if err != nil {
-			return dbErr("template "+name, err)
-		}
-		patterns, err := q.AliasPatternsForTemplate(ctx, &cur.ID)
-		if err != nil {
-			return dbErr("aliases of template", err)
-		}
-		if len(patterns) > 0 {
-			return fmt.Errorf("template %s is used by %d aliases", name, len(patterns))
-		}
-		waiting, err := q.CountWaitingRequestsForTemplate(ctx, &cur.ID)
-		if err != nil {
-			return dbErr("requests for template", err)
-		}
-		if waiting > 0 {
-			return fmt.Errorf("template %s is named by %d waiting alias requests; review them first", name, waiting)
-		}
-		if _, err := q.DeleteTemplate(ctx, cur.ID); err != nil {
-			return dbErr("delete template", err)
-		}
-		return nil
-	})
-}
-
-// templateID looks up a template by name; "" means no template (R30:
-// an alias without an agency still has a name).
-func templateID(ctx context.Context, q *db.Queries, name string) (*int64, error) {
-	if name == "" {
-		return nil, nil
-	}
-	tpl, err := q.TemplateByName(ctx, name)
-	if err != nil {
-		return nil, dbErr("template "+name, err)
-	}
-	return &tpl.ID, nil
 }
 
 // templateName looks up a template by id for the browser's requests and
@@ -397,23 +304,6 @@ func deleteAlias(ctx context.Context, q *db.Queries, id int64, by By, rp reparse
 	return d, nil
 }
 
-// AddAlias creates an alias from the command line (template by name).
-func (c *Catalog) AddAlias(ctx context.Context, a Alias) error {
-	pattern, err := NormalisePattern(a.Pattern)
-	if err != nil {
-		return err
-	}
-	err = c.inTx(ctx, func(q *db.Queries, rp reparses) error {
-		tid, err := templateID(ctx, q, a.Template)
-		if err != nil {
-			return err
-		}
-		_, err = addAlias(ctx, q, settings{pattern: pattern, name: a.Name, tplID: tid, tplName: optional(a.Template), ignored: a.Ignored}, CLI, rp)
-		return err
-	})
-	return c.raced(ctx, pattern, err)
-}
-
 // raced turns a unique violation that another writer caused meanwhile into
 // the usual duplicate error (R27a).
 func (c *Catalog) raced(ctx context.Context, pattern string, err error) error {
@@ -440,67 +330,13 @@ type DuplicateAliasError struct {
 }
 
 func (e *DuplicateAliasError) Error() string {
-	return fmt.Sprintf("%s already has the alias %q, and each capcode or pattern has one alias (R27a); edit it instead: pagerarchive alias set %s <name> [--template T]",
-		e.Pattern, e.Existing, e.Pattern)
+	return fmt.Sprintf("%s already has the alias %q, and each capcode or pattern has one alias (R27a); edit it instead", e.Pattern, e.Existing)
 }
 
 // ForAdmin is the refusal an admin sees in the browser (R53, A42).
 func (e *DuplicateAliasError) ForAdmin() *Refusal {
 	return &Refusal{Status: http.StatusConflict, Code: "duplicate_alias",
 		Msg: fmt.Sprintf("%s already has the alias %q. Each capcode or pattern has one alias: edit %q instead.", e.Pattern, e.Existing, e.Existing)}
-}
-
-// GetAlias returns an alias's current settings.
-func (c *Catalog) GetAlias(ctx context.Context, pattern string) (Alias, error) {
-	pattern, err := NormalisePattern(pattern)
-	if err != nil {
-		return Alias{}, err
-	}
-	cur, err := c.Store.AliasDetailByKey(ctx, pattern)
-	if err != nil {
-		return Alias{}, dbErr("alias "+pattern, err)
-	}
-	a := Alias{Pattern: pattern, Name: cur.Name, Ignored: cur.Ignored}
-	if cur.TemplateName != nil {
-		a.Template = *cur.TemplateName
-	}
-	return a, nil
-}
-
-// UpdateAlias changes an alias's name, template or ignored flag from the
-// command line.
-func (c *Catalog) UpdateAlias(ctx context.Context, a Alias) error {
-	pattern, err := NormalisePattern(a.Pattern)
-	if err != nil {
-		return err
-	}
-	return c.inTx(ctx, func(q *db.Queries, rp reparses) error {
-		cur, err := q.AliasByPattern(ctx, pattern)
-		if err != nil {
-			return dbErr("alias "+pattern, err)
-		}
-		tid, err := templateID(ctx, q, a.Template)
-		if err != nil {
-			return err
-		}
-		return changeAlias(ctx, q, cur.ID, change{name: &a.Name, setTemplate: true, tplID: tid, tplName: optional(a.Template), ignored: &a.Ignored}, CLI, rp)
-	})
-}
-
-// DeleteAlias deletes an alias from the command line.
-func (c *Catalog) DeleteAlias(ctx context.Context, pattern string) error {
-	pattern, err := NormalisePattern(pattern)
-	if err != nil {
-		return err
-	}
-	return c.inTx(ctx, func(q *db.Queries, rp reparses) error {
-		cur, err := q.AliasByPattern(ctx, pattern)
-		if err != nil {
-			return dbErr("alias "+pattern, err)
-		}
-		_, err = deleteAlias(ctx, q, cur.ID, CLI, rp)
-		return err
-	})
 }
 
 // AliasInput is an alias as an admin enters it in the browser (R53).

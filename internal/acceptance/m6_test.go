@@ -299,26 +299,26 @@ func TestA46ImportDoesntOverwrite(t *testing.T) {
 	tpl := e.templateID("Example Fire")
 	e.adminEdit(e.aliasID("Station 1"), catalog.AliasInput{Pattern: "0100001", Name: "Station One", TemplateID: &tpl})
 	csvText := "id,address,alias,agency,icon,color,ignore\n1,0100001,Station 1,Example Fire,,,\n2,0100010,Station 10,Example Fire,,,\n"
-	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{})
+	res, err := e.importCSV(csvText, catalog.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("A46: import: added %d, differences %+v", res.AliasesAdded, res.Differences)
+	t.Logf("A46: import: %+v", res.Rows)
 	if got := e.aliasName("0100001"); got != "Station One" {
 		t.Errorf("0100001 after import: %q", got)
 	}
-	if len(res.Differences) != 1 || res.Differences[0].Pattern != "0100001" || res.Differences[0].Changes[0] != `name: "Station One" → "Station 1"` {
-		t.Errorf("differences: %+v", res.Differences)
+	if d := res.Rows[0]; d.Result != catalog.Different || d.Pattern != "0100001" || d.Changes[0] != `name: "Station One" → "Station 1"` {
+		t.Errorf("differences: %+v", d)
 	}
-	if res.AliasesAdded != 1 || e.aliasName("0100010") != "Station 10" {
+	if res.Rows[1].Result != catalog.Added || e.aliasName("0100010") != "Station 10" {
 		t.Errorf("0100010 not added: %+v", res)
 	}
 	if h := e.adminAlias(e.aliasID("Station 10")).History; len(h) != 1 || h[0].Source != catalog.SourceImport || h[0].MadeBy != "import" {
 		t.Errorf("import's history entry: %+v", h)
 	}
 
-	// A name a spreadsheet would run as a formula, from the command line.
-	if err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "0100011", Name: "=1+2", Template: "Example Fire"}); err != nil {
+	// A name a spreadsheet would run as a formula, from an import.
+	if _, err := e.importCSV("address,alias,agency\n0100011,=1+2,Example Fire\n", catalog.ImportOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	if code, _ := e.user.raw(http.MethodGet, "/api/v1/admin/aliases/export", nil); code != http.StatusForbidden {
@@ -336,12 +336,12 @@ func TestA46ImportDoesntOverwrite(t *testing.T) {
 		!strings.Contains(export, ",0100001,Station One,Example Fire,,,false\r\n") || !strings.Contains(export, ",0100011,'=1+2,Example Fire,,,false\r\n") {
 		t.Errorf("export: %d", resp.StatusCode)
 	}
-	again, err := e.cat.ImportCSV(e.ctx, strings.NewReader(export), catalog.ImportOptions{})
+	again, err := e.importCSV(export, catalog.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("A46: export imported: added %d, unchanged %d, differences %d", again.AliasesAdded, again.Unchanged, len(again.Differences))
-	if len(again.Differences) != 0 || again.AliasesAdded != 0 || again.Unchanged != 6 {
+	t.Logf("A46: export imported: %v", results(again))
+	if n := results(again); n[catalog.Unchanged] != 6 || len(again.Rows) != 6 {
 		t.Errorf("re-import of the export: %+v", again)
 	}
 }
@@ -558,13 +558,13 @@ func TestM6RequestRules(t *testing.T) {
 		t.Errorf("other user sees B's requests")
 	}
 	// A template a waiting request names can't be deleted.
-	if err := e.cat.AddTemplate(e.ctx, catalog.Template{Name: "Spare", Agency: "Spare Agency"}); err != nil {
+	if _, err := e.cat.CreateTemplate(e.ctx, catalog.TemplateInput{Name: "Spare", Agency: "Spare Agency"}, e.profiles()); err != nil {
 		t.Fatal(err)
 	}
 	spare := e.templateID("Spare")
 	station2 := e.aliasID("Station 2")
 	tplReq := e.request(b, catalog.RequestInput{Kind: catalog.KindChange, AliasID: &station2, SetTemplate: true, TemplateID: &spare})
-	if err := e.cat.DeleteTemplate(e.ctx, "Spare"); err == nil || !strings.Contains(err.Error(), "waiting alias requests") {
+	if err := e.cat.RemoveTemplate(e.ctx, spare); err == nil || !strings.Contains(err.Error(), "1 waiting alias request names it") {
 		t.Errorf("deleting a template a request names: %v", err)
 	}
 	// Two admins approve at once: one succeeds, the other is told.

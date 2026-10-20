@@ -118,17 +118,19 @@ func (q *Queries) AddressPoint(ctx context.Context, arg AddressPointParams) (Add
 }
 
 const adminAliases = `-- name: AdminAliases :many
-SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name,
+SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name, t.colour,
        (SELECT count(*) FROM alias_requests r WHERE r.alias_id = a.id AND r.status = 'waiting')::bigint AS waiting
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
-WHERE $1::text = '' OR strpos(lower(a.name), lower($1::text)) > 0 OR strpos(a.pattern, $1::text) > 0
-ORDER BY a.pattern
-LIMIT $2::int
+WHERE ($1::text = '' OR strpos(lower(a.name), lower($1::text)) > 0 OR strpos(a.pattern, $1::text) > 0)
+  AND ($2::text = '' OR a.pattern COLLATE "C" > $2::text COLLATE "C")
+ORDER BY a.pattern COLLATE "C"
+LIMIT $3::int
 `
 
 type AdminAliasesParams struct {
 	Q       string
+	After   string
 	MaxRows int32
 }
 
@@ -139,12 +141,14 @@ type AdminAliasesRow struct {
 	Ignored      bool
 	TemplateID   *int64
 	TemplateName *string
+	Colour       *string
 	Waiting      int64
 }
 
-// R53: aliases for Administration, filtered by name, capcode or pattern.
+// R53: aliases for Administration, filtered by name, capcode or pattern,
+// a page at a time after a pattern (the PowerShell module lists them all).
 func (q *Queries) AdminAliases(ctx context.Context, arg AdminAliasesParams) ([]AdminAliasesRow, error) {
-	rows, err := q.db.Query(ctx, adminAliases, arg.Q, arg.MaxRows)
+	rows, err := q.db.Query(ctx, adminAliases, arg.Q, arg.After, arg.MaxRows)
 	if err != nil {
 		return nil, err
 	}
@@ -159,6 +163,7 @@ func (q *Queries) AdminAliases(ctx context.Context, arg AdminAliasesParams) ([]A
 			&i.Ignored,
 			&i.TemplateID,
 			&i.TemplateName,
+			&i.Colour,
 			&i.Waiting,
 		); err != nil {
 			return nil, err
@@ -1658,7 +1663,7 @@ func (q *Queries) ExistingAliasIDs(ctx context.Context, ids []int64) ([]int64, e
 }
 
 const exportAliases = `-- name: ExportAliases :many
-SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.icon, t.colour
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 ORDER BY a.pattern
@@ -1670,7 +1675,6 @@ type ExportAliasesRow struct {
 	Name         string
 	Ignored      bool
 	TemplateName *string
-	Icon         *string
 	Colour       *string
 }
 
@@ -1690,7 +1694,6 @@ func (q *Queries) ExportAliases(ctx context.Context) ([]ExportAliasesRow, error)
 			&i.Name,
 			&i.Ignored,
 			&i.TemplateName,
-			&i.Icon,
 			&i.Colour,
 		); err != nil {
 			return nil, err
@@ -3101,6 +3104,47 @@ func (q *Queries) RecentDeliveries(ctx context.Context, integrationID int64) ([]
 	return items, nil
 }
 
+const receptionsForMessages = `-- name: ReceptionsForMessages :many
+SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
+FROM receptions r
+JOIN clients c ON c.id = r.client_id
+WHERE r.message_id = ANY($1::bigint[])
+ORDER BY r.message_id, r.received_at, r.client_id
+`
+
+type ReceptionsForMessagesRow struct {
+	MessageID  int64
+	ClientID   string
+	ClientName string
+	ReceivedAt time.Time
+}
+
+// R63a: each message's receive times, for a page of messages at once.
+func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]ReceptionsForMessagesRow, error) {
+	rows, err := q.db.Query(ctx, receptionsForMessages, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReceptionsForMessagesRow
+	for rows.Next() {
+		var i ReceptionsForMessagesRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.ClientID,
+			&i.ClientName,
+			&i.ReceivedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const relinkUser = `-- name: RelinkUser :exec
 UPDATE users SET subject = $2, name = $3, invited_by = $4, status = 'active', deactivated_at = NULL
 WHERE id = $1
@@ -3254,45 +3298,61 @@ LEFT JOIN templates t ON t.id = a.template_id
 WHERE ($1::bigint IS NULL OR m.id = $1)
   AND ($2::text IS NULL OR m.text ILIKE $2
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE $2))
-  AND ($3::text IS NULL OR m.capcode = $3)
-  AND ($4::text IS NULL OR a.name ILIKE $4)
-  AND ($5::bigint IS NULL OR m.alias_id = $5)
-  AND ($6::text IS NULL OR t.agency ILIKE $6)
-  AND ($7::text IS NULL OR upper(m.paging_group) = upper($7))
-  AND ($8::text IS NULL
-       OR ($8 = 'none' AND m.priority IS NULL)
-       OR m.priority = $8)
-  AND ($9::bool IS NULL
-       OR COALESCE(m.event_type = ANY($10::text[])
-                   OR m.event_type LIKE ANY($11::text[]), false) = $9)
-  AND ($12::text IS NULL OR m.job_number = $12)
-  AND ($13::timestamptz IS NULL OR m.sent_at >= $13)
-  AND ($14::timestamptz IS NULL OR m.sent_at < $14)
-  AND (NOT $15::bool OR m.alias_id IS NULL)
-  AND ($16::bool OR a.ignored IS NOT TRUE)
-  AND (NOT $17::bool OR m.parse_failed)
-  AND (NOT $18::bool OR m.address_unsplit)
-  AND (NOT $19::bool OR m.location_mismatch)
-  AND (NOT $20::bool OR m.location IS NOT NULL)
-  AND ($21::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($21, $22::bigint))
+  AND (cardinality($3::text[]) = 0 OR m.capcode = ANY($3::text[]))
+  AND (cardinality($4::text[]) = 0 OR a.name ILIKE ANY($4::text[]))
+  AND (cardinality($5::text[]) = 0 OR a.name ILIKE ANY($5::text[]))
+  AND (cardinality($6::bigint[]) = 0 OR m.alias_id = ANY($6::bigint[]))
+  AND (cardinality($7::text[]) = 0 OR t.agency ILIKE ANY($7::text[]))
+  AND (cardinality($8::text[]) = 0 OR t.agency ILIKE ANY($8::text[]))
+  AND (cardinality($9::text[]) = 0 OR upper(m.paging_group) = ANY($9::text[]))
+  AND (cardinality($10::text[]) = 0 OR m.paging_group ILIKE ANY($10::text[]))
+  AND (cardinality($11::text[]) = 0
+       OR ('none' = ANY($11::text[]) AND m.priority IS NULL)
+       OR m.priority = ANY($11::text[]))
+  AND (NOT $12::bool
+       OR COALESCE(m.event_type = ANY($13::text[])
+                   OR m.event_type LIKE ANY($14::text[]), false)
+       OR ($15::bool
+           AND NOT COALESCE(m.event_type = ANY($16::text[])
+                            OR m.event_type LIKE ANY($17::text[]), false)))
+  AND (cardinality($18::text[]) = 0 OR m.job_number = ANY($18::text[]))
+  AND ($19::timestamptz IS NULL OR m.sent_at >= $19)
+  AND ($20::timestamptz IS NULL OR m.sent_at < $20)
+  AND (NOT $21::bool OR m.alias_id IS NULL)
+  AND ($22::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $23::bool OR m.parse_failed)
+  AND (NOT $24::bool OR m.address_unsplit)
+  AND (NOT $25::bool OR m.location_mismatch)
+  AND (cardinality($26::text[]) = 0
+       OR ('parse_failed' = ANY($26::text[]) AND m.parse_failed)
+       OR ('address_unsplit' = ANY($26::text[]) AND m.address_unsplit)
+       OR ('location_mismatch' = ANY($26::text[]) AND m.location_mismatch))
+  AND (NOT $27::bool OR m.location IS NOT NULL)
+  AND ($28::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($28, $29::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $23::int
+LIMIT $30::int
 `
 
 type SearchMessagesParams struct {
 	OnlyID           *int64
 	Q                *string
-	Capcode          *string
-	Alias            *string
-	AliasID          *int64
-	Agency           *string
-	PagingGroup      *string
-	Priority         *string
-	CatWant          *bool
+	Capcodes         []string
+	Aliases          []string
+	AliasLikes       []string
+	AliasIds         []int64
+	Agencies         []string
+	AgencyLikes      []string
+	PagingGroups     []string
+	GroupLikes       []string
+	Priorities       []string
+	CatFilter        bool
 	CatCodes         []string
 	CatPrefixes      []string
-	JobNumber        *string
+	CatOther         bool
+	AllCatCodes      []string
+	AllCatPrefixes   []string
+	JobNumbers       []string
 	SentFrom         *time.Time
 	SentTo           *time.Time
 	Unaliased        bool
@@ -3300,6 +3360,7 @@ type SearchMessagesParams struct {
 	ParseFailed      bool
 	AddressUnsplit   bool
 	LocationMismatch bool
+	Flags            []string
 	Located          bool
 	BeforeSent       *time.Time
 	BeforeID         *int64
@@ -3338,23 +3399,30 @@ type SearchMessagesRow struct {
 	LocationSource   *string
 }
 
-// R33. Every filter is optional (NULL = any). Keyset pagination on
-// (sent_at, id), newest first. cat_want compares "event_type is in the
-// category's codes" with true (that category) or false (Other).
+// R33. Every filter is optional (NULL or an empty array = any). An array
+// matches any of its values (R63a). Keyset pagination on (sent_at, id),
+// newest first. cat_filter keeps messages whose event_type is in the chosen
+// categories' codes, or (cat_other) in no category's codes.
 func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
 	rows, err := q.db.Query(ctx, searchMessages,
 		arg.OnlyID,
 		arg.Q,
-		arg.Capcode,
-		arg.Alias,
-		arg.AliasID,
-		arg.Agency,
-		arg.PagingGroup,
-		arg.Priority,
-		arg.CatWant,
+		arg.Capcodes,
+		arg.Aliases,
+		arg.AliasLikes,
+		arg.AliasIds,
+		arg.Agencies,
+		arg.AgencyLikes,
+		arg.PagingGroups,
+		arg.GroupLikes,
+		arg.Priorities,
+		arg.CatFilter,
 		arg.CatCodes,
 		arg.CatPrefixes,
-		arg.JobNumber,
+		arg.CatOther,
+		arg.AllCatCodes,
+		arg.AllCatPrefixes,
+		arg.JobNumbers,
 		arg.SentFrom,
 		arg.SentTo,
 		arg.Unaliased,
@@ -3362,6 +3430,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.ParseFailed,
 		arg.AddressUnsplit,
 		arg.LocationMismatch,
+		arg.Flags,
 		arg.Located,
 		arg.BeforeSent,
 		arg.BeforeID,

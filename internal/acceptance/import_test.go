@@ -2,12 +2,13 @@ package acceptance
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
+	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
@@ -23,25 +24,7 @@ const exportCSV = `"id","address","alias","agency","icon","color","pluginconf","
 "8","0300005","","WX","","","","0"
 `
 
-const exportMapping = `{"_comment": "made up", "agency_profiles": {"Example Fire": "example-fire"}}`
-
-func writeTemp(t *testing.T, name, content string) string {
-	t.Helper()
-	p := filepath.Join(t.TempDir(), name)
-	if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	return p
-}
-
-func (e *env) mapping() catalog.Mapping {
-	e.t.Helper()
-	m, err := catalog.LoadMapping(writeTemp(e.t, "mapping.json", exportMapping))
-	if err != nil {
-		e.t.Fatal(err)
-	}
-	return m
-}
+var exportMapping = map[string]string{"Example Fire": "example-fire"}
 
 func (e *env) aliasCount() int {
 	e.t.Helper()
@@ -52,40 +35,47 @@ func (e *env) aliasCount() int {
 	return len(rows)
 }
 
-// R30: CSV import (owner decisions, 2026-10-10 and 2026-10-11).
+func resultList(rep catalog.ImportReport) string {
+	var out []string
+	for _, r := range rep.Rows {
+		out = append(out, r.Result)
+	}
+	return strings.Join(out, ",")
+}
+
+// R30: the import (owner decisions, 2026-10-10 and 2026-10-11; from M8
+// rows from the PowerShell pipeline, R63).
 func TestAliasImport(t *testing.T) {
 	e := setup(t)
 	e.mustPost("a", "0300001", "@@EX0000031 HSF1 SHED FIRE @ 3 FICTION ST, MADEUPTON #TV1", e.now)
 	e.mustPost("a", "0300004", "QDhello unknown agency", e.now)
 	e.mustPost("a", "0500001", "QDnetwork test", e.now)
-	m := e.mapping()
 
 	// Dry run: reports, changes nothing.
-	dry, err := e.cat.ImportCSV(e.ctx, strings.NewReader(exportCSV), catalog.ImportOptions{Mapping: m, DryRun: true})
+	dry, err := e.importCSV(exportCSV, catalog.ImportOptions{AgencyProfiles: exportMapping, DryRun: true})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if n := e.aliasCount(); n != 4 || dry.AliasesAdded != 5 {
-		t.Fatalf("dry run: %d aliases in the database (want the fixture's 4), result %+v", n, dry)
+	if n := e.aliasCount(); n != 4 || dry.Applied || resultList(dry) != "added,added,added,added,added,invalid,invalid" {
+		t.Fatalf("dry run: %d aliases in the database (want the fixture's 4), results %s, applied %v", n, resultList(dry), dry.Applied)
 	}
 
-	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(exportCSV), catalog.ImportOptions{Mapping: m})
+	res, err := e.importCSV(exportCSV, catalog.ImportOptions{AgencyProfiles: exportMapping})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("import: %+v", res)
-	if res.Rows != 7 || res.AliasesAdded != 5 || res.Ignored != 1 || res.WithoutTemplate != 1 || res.Skipped != 2 {
-		t.Errorf("counts: %+v", res)
+	t.Logf("import: %s, templates created %v", resultList(res), res.TemplatesCreated)
+	if !res.Applied || res.Plan != dry.Plan || resultList(res) != resultList(dry) {
+		t.Errorf("import: %+v (dry run's plan %s)", res, dry.Plan)
 	}
-	if strings.Join(res.TemplatesCreated, ",") != "WX" || strings.Join(res.TemplatesKept, ",") != "Example Fire" {
-		t.Errorf("templates: created %v, kept %v", res.TemplatesCreated, res.TemplatesKept)
+	if strings.Join(res.TemplatesCreated, ",") != "WX" {
+		t.Errorf("templates created: %v", res.TemplatesCreated)
 	}
-	want := []string{
-		"row 7: address isn't a capcode or pattern (at most 7 digits, % and _), skipped",
-		"row 8: no alias name, skipped",
+	if p := res.Rows[5]; p.Index != 6 || !strings.Contains(p.Problem, "isn't a capcode or pattern") {
+		t.Errorf("row 6: %+v", p)
 	}
-	if strings.Join(res.Problems, "|") != strings.Join(want, "|") {
-		t.Errorf("problems:\n got %q\nwant %q", res.Problems, want)
+	if p := res.Rows[6]; p.Index != 7 || p.Problem != "The row has no alias name." {
+		t.Errorf("row 7: %+v", p)
 	}
 
 	// Plugin settings never reach the database or the log.
@@ -117,15 +107,16 @@ func TestAliasImport(t *testing.T) {
 	}
 	tpls, _ := e.st.ListTemplates(e.ctx)
 	for _, tp := range tpls {
-		if tp.Name == "WX" && (tp.AgencyProfile != nil || s(tp.Icon) != "cloud" || s(tp.Colour) != "#1565c0") {
+		// The CSV's icon column is ignored (R30): icons are images (R65).
+		if tp.Name == "WX" && (tp.AgencyProfile != nil || tp.Icon != nil || s(tp.Colour) != "#1565c0") {
 			t.Errorf("WX template: %+v", tp)
 		}
 	}
 
-	// Importing the same file again changes nothing.
-	again, err := e.cat.ImportCSV(e.ctx, strings.NewReader(exportCSV), catalog.ImportOptions{Mapping: m})
-	if err != nil || again.AliasesAdded != 0 || again.Unchanged != 5 || len(again.Differences) != 0 || again.AliasesUpdated != 0 {
-		t.Errorf("second import: %+v, %v", again, err)
+	// Importing the same rows again changes nothing.
+	again, err := e.importCSV(exportCSV, catalog.ImportOptions{AgencyProfiles: exportMapping})
+	if err != nil || resultList(again) != "unchanged,unchanged,unchanged,unchanged,unchanged,invalid,invalid" {
+		t.Errorf("second import: %s, %v", resultList(again), err)
 	}
 }
 
@@ -133,19 +124,19 @@ func TestAliasImport(t *testing.T) {
 func TestA21ReimportDoesNotChangeExistingAliases(t *testing.T) {
 	e := setup(t)
 	first := "id,address,alias,agency,ignore\n1,0300001,Brigade,WX,0\n"
-	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(first), catalog.ImportOptions{}); err != nil {
+	if _, err := e.importCSV(first, catalog.ImportOptions{}); err != nil {
 		t.Fatal(err)
 	}
 	second := "id,address,alias,agency,ignore\n1,0300001,Brigade North,WX,1\n2,0300002,Tanker,WX,0\n"
 
-	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(second), catalog.ImportOptions{})
+	res, err := e.importCSV(second, catalog.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.AliasesAdded != 1 || res.AliasesUpdated != 0 || len(res.Differences) != 1 {
+	if resultList(res) != "different,added" {
 		t.Fatalf("default re-import: %+v", res)
 	}
-	d := res.Differences[0]
+	d := res.Rows[0]
 	if d.Pattern != "0300001" || strings.Join(d.Changes, "; ") != `name: "Brigade" → "Brigade North"; ignored: false → true` {
 		t.Errorf("difference: %+v", d)
 	}
@@ -153,23 +144,33 @@ func TestA21ReimportDoesNotChangeExistingAliases(t *testing.T) {
 	if !hasAlias(rows, "0300001", "Brigade") || !hasAlias(rows, "0300002", "Tanker") {
 		t.Errorf("default re-import changed an existing alias or didn't add the new one: %+v", rows)
 	}
-	t.Logf("A21: without --update: %+v", res.Differences)
+	t.Logf("A21: without update: %+v", d)
 
-	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(second), catalog.ImportOptions{Update: true})
-	if err != nil || res.AliasesUpdated != 1 || res.Unchanged != 1 {
-		t.Fatalf("--update: %v %+v", err, res)
+	res, err = e.importCSV(second, catalog.ImportOptions{Update: true})
+	if err != nil || resultList(res) != "updated,unchanged" {
+		t.Fatalf("update: %v %+v", err, res)
 	}
-	a, err := e.cat.GetAlias(e.ctx, "0300001")
-	if err != nil || a.Name != "Brigade North" || !a.Ignored || a.Template != "WX" {
-		t.Errorf("after --update: %+v, %v", a, err)
+	if got := e.aliasName("0300001"); got != "Brigade North" {
+		t.Errorf("after update: %q", got)
 	}
 }
 
-func TestAliasImportNeedsColumns(t *testing.T) {
+// A17. A duplicate alias is rejected with a message naming the existing one.
+func TestA17DuplicateAliasRejectedWithGuidance(t *testing.T) {
 	e := setup(t)
-	_, err := e.cat.ImportCSV(e.ctx, strings.NewReader("id,capcode,name\n1,0300001,x\n"), catalog.ImportOptions{})
-	if err == nil || !strings.Contains(err.Error(), `no "address" column`) {
-		t.Errorf("err = %v", err)
+	err := e.catAdd("100001", "Another name", "Example Fire", false)
+	var refusal *catalog.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != "duplicate_alias" {
+		t.Fatalf("err = %v", err)
+	}
+	for _, want := range []string{`"Station 1"`, `edit "Station 1" instead`} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("message %q doesn't contain %q", err, want)
+		}
+	}
+	t.Logf("A17: %v", err)
+	if rows, _ := e.st.ListAliases(e.ctx); rows[0].Pattern != "0100001" || rows[0].Name != "Station 1" {
+		t.Errorf("existing alias changed: %+v", rows[0])
 	}
 }
 
@@ -193,30 +194,11 @@ func TestA16OneAliasPerCapcodeInDatabase(t *testing.T) {
 	}
 }
 
-// A17. A duplicate alias is rejected with a message naming the existing one.
-func TestA17DuplicateAliasRejectedWithGuidance(t *testing.T) {
-	e := setup(t)
-	err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "100001", Name: "Another name", Template: "Example Fire"})
-	var dup *catalog.DuplicateAliasError
-	if !errors.As(err, &dup) || dup.Existing != "Station 1" {
-		t.Fatalf("err = %v", err)
-	}
-	for _, want := range []string{`"Station 1"`, "edit it instead", "alias set 0100001"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("message %q doesn't contain %q", err, want)
-		}
-	}
-	t.Logf("A17: %v", err)
-	if rows, _ := e.st.ListAliases(e.ctx); rows[0].Pattern != "0100001" || rows[0].Name != "Station 1" {
-		t.Errorf("existing alias changed: %+v", rows[0])
-	}
-}
-
 // A18. A wildcard pattern overlapping an exact capcode is allowed; R27
 // precedence decides which applies.
 func TestA18OverlappingPatternAllowed(t *testing.T) {
 	e := setup(t)
-	if err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "0100%", Name: "Stations block", Template: "Example Fire"}); err != nil {
+	if err := e.catAdd("0100%", "Stations block", "Example Fire", false); err != nil {
 		t.Fatalf("overlapping pattern rejected: %v", err)
 	}
 	e.mustPost("a", "0100001", "QDexact", e.now)
@@ -233,19 +215,21 @@ func TestA18OverlappingPatternAllowed(t *testing.T) {
 func TestA19RepeatedNamesAllowedAndReported(t *testing.T) {
 	e := setup(t)
 	csvText := "id,address,alias,agency\n1,0300001,Testville Brigade,WX\n2,300002,Testville Brigade,WX\n3,0300003,Other,WX\n"
-	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{})
+	res, err := e.importCSV(csvText, catalog.ImportOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.AliasesAdded != 3 || len(res.RepeatedNames) != 1 || res.RepeatedNames[0].Name != "Testville Brigade" ||
+	if resultList(res) != "added,added,added" || len(res.RepeatedNames) != 1 || res.RepeatedNames[0].Name != "Testville Brigade" ||
 		strings.Join(res.RepeatedNames[0].Patterns, ",") != "0300001,0300002" {
 		t.Fatalf("result %+v", res)
 	}
 	t.Logf("A19: repeated names %+v", res.RepeatedNames)
 }
 
-// A20. Duplicate CSV rows stop the import unless an override resolves them.
-func TestA20CSVDuplicatesNeedOverrides(t *testing.T) {
+// A20. Rows that differ for one capcode stop the import and change nothing;
+// leaving one out (from M8, in the pipeline) lets it through. Identical
+// rows are squashed.
+func TestA20DifferingRowsStopTheImport(t *testing.T) {
 	e := setup(t)
 	csvText := "id,address,alias,agency\n" +
 		"10,0300001,Brigade (old name),WX\n" +
@@ -253,68 +237,109 @@ func TestA20CSVDuplicatesNeedOverrides(t *testing.T) {
 		"12,300001,Brigade,WX\n" // same capcode as id 10 after padding
 	before := e.aliasCount()
 
-	res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{})
-	if !errors.Is(err, catalog.ErrUnresolved) || len(res.Unresolved) != 1 || res.Unresolved[0].Pattern != "0300001" || len(res.Unresolved[0].Rows) != 2 {
-		t.Fatalf("no overrides: err %v, result %+v", err, res)
+	res, err := e.importCSV(csvText, catalog.ImportOptions{})
+	if !catalog.IsConflict(err) || len(res.Conflicts) != 1 || res.Conflicts[0].Pattern != "0300001" || fmt.Sprint(res.Conflicts[0].Rows) != "[1 3]" {
+		t.Fatalf("conflict: err %v, report %+v", err, res)
 	}
-	if res.Unresolved[0].Rows[0].String() != `row 2 (id 10): "Brigade (old name)", WX` {
-		t.Errorf("listing: %s", res.Unresolved[0].Rows[0])
-	}
-	if e.aliasCount() != before {
+	if e.aliasCount() != before || res.Applied {
 		t.Fatal("a stopped import changed the database")
 	}
-	t.Logf("A20: stopped, listing %+v", res.Unresolved)
+	t.Logf("A20: stopped: %v; %+v", err, res.Conflicts)
 
-	// Overrides naming a capcode with no duplicates, or no row, are errors.
-	stale := catalog.Overrides{Duplicates: map[string]catalog.Override{"0300001": {KeepID: "12"}, "0300002": {KeepID: "11"}, "0399999": {Skip: true}}}
-	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: stale})
-	if !errors.Is(err, catalog.ErrUnresolved) || len(res.StaleOverrides) != 2 || e.aliasCount() != before {
-		t.Fatalf("stale overrides: err %v, stale %q", err, res.StaleOverrides)
-	}
-
-	// keep_id chooses the row (keys may be written unpadded).
-	ov := catalog.Overrides{Duplicates: map[string]catalog.Override{"300001": {KeepID: "12"}}}
-	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov})
-	if err != nil || res.AliasesAdded != 2 || res.Resolved != 1 || res.Skipped != 1 {
-		t.Fatalf("keep_id: err %v, result %+v", err, res)
-	}
-	if rows, _ := e.st.ListAliases(e.ctx); !hasAlias(rows, "0300001", "Brigade") {
-		t.Errorf("kept the wrong row")
+	// Leave out the first row, as Where-Object would.
+	res, err = e.importCSV("id,address,alias,agency\n11,0300002,Tanker,WX\n12,300001,Brigade,WX\n", catalog.ImportOptions{})
+	if err != nil || resultList(res) != "added,added" || e.aliasName("0300001") != "Brigade" {
+		t.Fatalf("without the first row: %v %+v", err, res)
 	}
 
-	// keep_row and skip work too.
-	// (The alias exists now, so the change needs Update: A21.)
-	ov = catalog.Overrides{Duplicates: map[string]catalog.Override{"0300001": {KeepRow: 2}}}
-	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov, Update: true}); err != nil {
-		t.Fatal(err)
-	}
-	if rows, _ := e.st.ListAliases(e.ctx); !hasAlias(rows, "0300001", "Brigade (old name)") {
-		t.Errorf("keep_row kept the wrong row")
-	}
-	ov = catalog.Overrides{Duplicates: map[string]catalog.Override{"0300001": {Skip: true}}}
-	if res, err := e.cat.ImportCSV(e.ctx, strings.NewReader(csvText), catalog.ImportOptions{Overrides: ov}); err != nil || res.Skipped != 2 {
-		t.Fatalf("skip: %v %+v", err, res)
-	}
-
-	// Rows identical in every imported field are squashed without an override;
+	// Rows identical in every imported field are squashed into the first;
 	// a real conflict alongside them still stops the import.
 	identicalCSV := "id,address,alias,agency,icon,color,ignore\n" +
 		"20,0300003,Weather,WX,cloud,#1565c0,0\n" +
 		"21,300003,Weather,WX,cloud,#1565c0,0\n"
-	res, err = e.cat.ImportCSV(e.ctx, strings.NewReader(identicalCSV), catalog.ImportOptions{})
-	if err != nil || res.Squashed != 1 || res.AliasesAdded != 1 {
+	res, err = e.importCSV(identicalCSV, catalog.ImportOptions{})
+	if err != nil || resultList(res) != "added,squashed" || res.Rows[1].SquashedInto != 1 {
 		t.Fatalf("identical rows: %v %+v", err, res)
 	}
-	t.Logf("A20: identical rows squashed: %d", res.Squashed)
+	t.Logf("A20: identical rows: %+v", res.Rows)
 	conflict := identicalCSV + "22,0300003,Weather (new),WX,cloud,#1565c0,0\n"
-	if _, err := e.cat.ImportCSV(e.ctx, strings.NewReader(conflict), catalog.ImportOptions{}); !errors.Is(err, catalog.ErrUnresolved) {
+	if _, err := e.importCSV(conflict, catalog.ImportOptions{}); !catalog.IsConflict(err) {
 		t.Errorf("identical rows plus a conflicting one: err = %v", err)
 	}
+	// Differing only in colour is a conflict too (R27a).
+	if _, err := e.importCSV("address,alias,agency,color\n0300009,A,WX,red\n0300009,A,WX,blue\n", catalog.ImportOptions{}); !catalog.IsConflict(err) {
+		t.Errorf("rows differing in colour: err = %v", err)
+	}
+}
 
-	// An overrides file must give exactly one choice per capcode.
-	bad := writeTemp(t, "overrides.json", `{"duplicates": {"0300001": {"keep_id": "10", "skip": true}}}`)
-	if _, err := catalog.LoadOverrides(bad); err == nil || !strings.Contains(err.Error(), "exactly one") {
-		t.Errorf("bad overrides file: %v", err)
+// ADR 0009 §8: an unknown agency profile name refuses the whole import.
+func TestImportRefusesUnknownProfile(t *testing.T) {
+	e := setup(t)
+	before := e.aliasCount()
+	_, err := e.importCSV("address,alias,agency\n0300001,Brigade,New Agency\n", catalog.ImportOptions{AgencyProfiles: map[string]string{"New Agency": "example-fier"}})
+	var refusal *catalog.Refusal
+	if !errors.As(err, &refusal) || refusal.Code != "unknown_profile" || !strings.Contains(refusal.Msg, `"example-fier"`) || !strings.Contains(refusal.Msg, "example-fire") {
+		t.Fatalf("err = %v", err)
+	}
+	if e.aliasCount() != before {
+		t.Error("a refused import changed the database")
+	}
+	t.Logf("unknown profile: %v", err)
+}
+
+// ADR 0009 §8: applying a plan refuses if anything changed since the dry run.
+func TestImportPlanChanged(t *testing.T) {
+	e := setup(t)
+	rows := "address,alias,agency\n0300001,Brigade,WX\n0300002,Tanker,WX\n"
+	dry, err := e.importCSV(rows, catalog.ImportOptions{DryRun: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.catAdd("0300002", "Tanker (added meanwhile)", "", false); err != nil {
+		t.Fatal(err)
+	}
+	res, err := e.importCSV(rows, catalog.ImportOptions{Plan: dry.Plan})
+	if !catalog.IsPlanChanged(err) || res.Applied || resultList(res) != "added,different" {
+		t.Fatalf("changed plan: %v %+v", err, res)
+	}
+	if e.aliasCount() != 5 {
+		t.Errorf("a refused plan changed the database: %d aliases", e.aliasCount())
+	}
+	// The same plan again, unchanged, applies.
+	dry, _ = e.importCSV(rows, catalog.ImportOptions{DryRun: true})
+	if res, err := e.importCSV(rows, catalog.ImportOptions{Plan: dry.Plan}); err != nil || !res.Applied {
+		t.Fatalf("unchanged plan: %v %+v", err, res)
+	}
+}
+
+// The import through the API (R63): admins only; a conflict answers 409
+// with every row; changes are recorded as the signed-in admin's (A54).
+func TestImportAPI(t *testing.T) {
+	e := setup(t)
+	req := server.ImportRequest{Rows: []catalog.ImportRow{{Pattern: "0300001", Name: "Brigade", Template: "WX"}}}
+	if code, _ := e.user.raw(http.MethodPost, "/api/v1/admin/aliases/import", req); code != http.StatusForbidden {
+		t.Errorf("user imports: %d", code)
+	}
+	var rep catalog.ImportReport
+	if code, p := e.admin.call(http.MethodPost, "/api/v1/admin/aliases/import", req, &rep); code != http.StatusOK || !rep.Applied {
+		t.Fatalf("admin imports: %d %+v %+v", code, p, rep)
+	}
+	h := e.adminAlias(e.aliasID("Brigade")).History
+	if len(h) != 1 || h[0].Source != catalog.SourceImport || !strings.Contains(h[0].MadeBy, "admin@example.com") {
+		t.Errorf("history: %+v", h)
+	}
+	t.Logf("A54: history made by %q", h[0].MadeBy)
+
+	conflict := server.ImportRequest{Rows: []catalog.ImportRow{{Pattern: "0300009", Name: "A"}, {Pattern: "300009", Name: "B"}}}
+	code, body := e.admin.raw(http.MethodPost, "/api/v1/admin/aliases/import", conflict)
+	if code != http.StatusConflict || !strings.Contains(body, `"code":"import_conflict"`) || !strings.Contains(body, `"rows":[1,2]`) {
+		t.Errorf("conflict: %d %s", code, body)
+	}
+	t.Logf("conflict: %d %s", code, body)
+
+	tooMany := server.ImportRequest{Rows: make([]catalog.ImportRow, catalog.MaxImportRows+1)}
+	if code, p := e.admin.call(http.MethodPost, "/api/v1/admin/aliases/import", tooMany, nil); code != http.StatusRequestEntityTooLarge || p.Code != "too_many_rows" {
+		t.Errorf("too many rows: %d %+v", code, p)
 	}
 }
 

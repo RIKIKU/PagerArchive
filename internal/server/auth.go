@@ -76,10 +76,31 @@ func currentUser(r *http.Request) db.User {
 }
 
 // signedIn admits only requests with a live session of an active user
-// (A29). Deactivation deletes sessions, so it takes effect at once (R43b).
+// (A29), or with the PowerShell module's access token for an active admin
+// (R60-R62). Deactivation deletes sessions, so it takes effect at once
+// (R43b); tokens are checked against the user on every request.
 func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		c, err := r.Cookie(sessionCookie)
+		if raw, ok := bearerToken(r); ok {
+			// Both at once would leave it unclear who is acting.
+			if err == nil {
+				writeJSON(w, http.StatusBadRequest, Problem{Error: "Send a session cookie or a bearer token, not both.", Code: CodeTwoCredentials})
+				return
+			}
+			u, err := s.bearerUser(r.Context(), raw)
+			var refusal *errTokenRefused
+			if errors.As(err, &refusal) {
+				refuseToken(w, refusal)
+				return
+			}
+			if err != nil {
+				problem(w, http.StatusServiceUnavailable, "couldn't check the sign-in")
+				return
+			}
+			h(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+			return
+		}
 		var u db.User
 		if err == nil {
 			u, err = s.Accounts.Session(r.Context(), c.Value)

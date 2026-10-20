@@ -44,7 +44,9 @@ type Server struct {
 	// Catalog changes aliases (R53-R58).
 	Catalog *catalog.Catalog
 	OIDC    *OIDC
-	AppURL  *url.URL
+	// PowerShell checks the PowerShell module's tokens (R60); nil refuses them.
+	PowerShell *PowerShell
+	AppURL     *url.URL
 	// AccountURL is where users change their name and password (Authentik).
 	AccountURL string
 	// UI serves the browser app; nil serves none.
@@ -130,6 +132,12 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/aliases/{id}":                 s.adminOnly(s.adminAlias),
 		"PUT /api/v1/admin/aliases/{id}":                 s.adminOnly(s.editAlias),
 		"DELETE /api/v1/admin/aliases/{id}":              s.adminOnly(s.deleteAlias),
+		// For the PowerShell module (R63, ADR 0009 §8).
+		"POST /api/v1/admin/aliases/import":   s.adminOnly(s.importAliases),
+		"GET /api/v1/admin/templates":         s.adminOnly(s.adminTemplates),
+		"POST /api/v1/admin/templates":        s.adminOnly(s.createTemplate),
+		"PATCH /api/v1/admin/templates/{id}":  s.adminOnly(s.editTemplate),
+		"DELETE /api/v1/admin/templates/{id}": s.adminOnly(s.deleteTemplate),
 	} {
 		mux.HandleFunc(pattern, s.signedIn(h))
 	}
@@ -139,6 +147,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /auth/callback", s.callback)
 	mux.HandleFunc("POST /auth/logout", s.logout)
 	mux.HandleFunc("GET /auth/status", s.authStatus)
+	mux.HandleFunc("GET /auth/powershell", s.powershellSettings)
 	mux.HandleFunc("POST /auth/first-admin", s.firstAdmin)
 	mux.HandleFunc("GET /metrics", s.metrics)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {

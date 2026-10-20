@@ -33,8 +33,9 @@ func unguard(s string) string {
 
 // ExportCSV writes every alias in the import format (R58): the template's
 // name in the agency column (the import looks templates up by it), and the
-// template's icon and colour. Importing it into the same database reports
-// no differences (A46). It returns the number of aliases written.
+// template's colour. The icon column is left empty: icons are images, added
+// to templates (R30, R65). Importing it into the same database reports no
+// differences (A46). It returns the number of aliases written.
 func (c *Catalog) ExportCSV(ctx context.Context, w io.Writer) (int, error) {
 	rows, err := c.Store.ExportAliases(ctx)
 	if err != nil {
@@ -47,7 +48,7 @@ func (c *Catalog) ExportCSV(ctx context.Context, w io.Writer) (int, error) {
 	}
 	for _, a := range rows {
 		rec := []string{strconv.FormatInt(a.ID, 10), a.Pattern, guard(a.Name), guard(deref(a.TemplateName)),
-			guard(deref(a.Icon)), guard(deref(a.Colour)), strconv.FormatBool(a.Ignored)}
+			"", guard(deref(a.Colour)), strconv.FormatBool(a.Ignored)}
 		if err := cw.Write(rec); err != nil {
 			return 0, err
 		}
