@@ -88,7 +88,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 
 ## 9. Security
 
-- **Tokens are `[securestring]` from start to finish** (AC06). They're sent with `Invoke-RestMethod -Authentication Bearer -Token` and are never converted to plain text in a variable. They are never written to a file, shown, logged, put in an error, or kept in `$Error` or a transcript. They're saved only through SecretManagement (R61). **[analyzer]** `PSAvoidUsingPlainTextForPassword`, `PSAvoidUsingConvertToSecureStringWithPlainText`, **[pester]**
+- **Tokens are `[securestring]` from start to finish** (AC06). They're sent with `Invoke-RestMethod -Authentication Bearer -Token` and are never converted to plain text in a variable. They are never written to a file unencrypted, shown, logged, put in an error, or kept in `$Error` or a transcript. They're saved only as R61 says: on Windows with `ConvertFrom-SecureString` and no key, which uses DPAPI, and otherwise through SecretManagement. Saving with no key is never used off Windows, where it doesn't encrypt. **[analyzer]** `PSAvoidUsingPlainTextForPassword`, `PSAvoidUsingConvertToSecureStringWithPlainText`, **[pester]**
 - **HTTPS only.** Plain HTTP (a LAN test copy) needs an explicit `-AllowUnencryptedAuthentication`, the same name `Invoke-RestMethod` uses, and gives a warning. **[pester]**
 - **The module never sends anything except to the PagerArchive server and its Authentik.** Downloading an icon from a URL (M9) is the user's own request and happens on their machine (R65). **[review]**
 
