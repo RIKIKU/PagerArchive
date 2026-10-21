@@ -54,6 +54,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 - **Write each object as soon as you have it** (SC03). Don't collect them into an array first. **[review]**
 - **Default display:** a `Format.ps1xml` table view with the few columns people scan, plus a `DefaultDisplayPropertySet` in `Types.ps1xml`. Every property is still there for `Select-Object *` and `Export-Csv`. **[pester]**
 - **Times** are `[datetimeoffset]` values, so they compare, sort and export correctly in any time zone. **[review]**
+- **Views show times in local time** (owner, 2026-10-22): every table and list view in the format file shows times converted to the user's time zone (`.LocalDateTime`), under the property's own name. The objects keep the `[datetimeoffset]` the API returned, so `Export-Csv` and `Select-Object` are unchanged. **[pester]**
 - **Document every output type** in `.OUTPUTS`, saying what its properties are for (RD06). **[pester]**
 
 ## 6. Feedback
