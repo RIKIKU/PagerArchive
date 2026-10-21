@@ -141,7 +141,7 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
     }
 }
 
-Describe 'Table views (guidelines section 5)' {
+Describe 'Table and list views (guidelines section 5)' {
     It 'labels every column computed by a script, so the header isn''t the script' {
         foreach ($view in $formats.Configuration.ViewDefinitions.View) {
             $headers = @($view.TableControl.TableHeaders.TableColumnHeader)
@@ -160,26 +160,49 @@ Describe 'Table views (guidelines section 5)' {
         $lines[0] | Should -Match '^SentAt\s+Priority\s+Alias\s+Text\s*$'
         $lines[2] | Should -Match '0999999'
     }
-    It 'shows every time as local time under its own name (owner, 2026-10-22)' {
+    It 'labels every list item computed by a script, so the label isn''t the script' {
         foreach ($view in $formats.Configuration.ViewDefinitions.View) {
-            $headers = @($view.TableControl.TableHeaders.TableColumnHeader)
-            $items = @($view.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem)
-            for ($i = 0; $i -lt $items.Count; $i++) {
-                "$($items[$i].PropertyName)" | Should -Not -Match 'At$' -Because "$($view.Name) column $($i + 1) is a time"
-                if ("$($items[$i].ScriptBlock)" -match '^\$_\.(\w+At)\b') {
-                    "$($items[$i].ScriptBlock)" | Should -Be "`$_.$($Matches[1]).LocalDateTime"
-                    "$($headers[$i].Label)" | Should -Be $Matches[1]
-                }
-            }
-            foreach ($item in @($view.ListControl.ListEntries.ListEntry.ListItems.ListItem)) {
-                if (-not $item) { continue }
-                "$($item.PropertyName)" | Should -Not -Match 'At$' -Because "$($view.Name) list item $($item.PropertyName) is a time"
-                if ("$($item.ScriptBlock)" -match '^\$_\.(\w+At)\b') {
-                    "$($item.ScriptBlock)" | Should -Be "`$_.$($Matches[1]).LocalDateTime"
-                    "$($item.Label)" | Should -Be $Matches[1]
+            foreach ($item in @($view.ListControl.ListEntries.ListEntry.ListItems.ListItem | Where-Object -FilterScript { $_ })) {
+                if ($item.ScriptBlock) {
+                    "$($item.Label)" | Should -Not -BeNullOrEmpty -Because "a $($view.Name) list item is computed: $($item.ScriptBlock)"
                 }
             }
         }
+    }
+    It 'shows every time as local time under its own name (owner, 2026-10-22)' {
+        # Times are the properties named ...At (SentAt, ReceivedAt, ExpiresAt).
+        foreach ($view in $formats.Configuration.ViewDefinitions.View) {
+            $headers = @($view.TableControl.TableHeaders.TableColumnHeader)
+            $shown = @(
+                $columns = @($view.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem | Where-Object -FilterScript { $_ })
+                for ($i = 0; $i -lt $columns.Count; $i++) {
+                    @{ Where = "$($view.Name) column $($i + 1)"; Label = "$($headers[$i].Label)"; Property = "$($columns[$i].PropertyName)"; Script = "$($columns[$i].ScriptBlock)" }
+                }
+                foreach ($item in @($view.ListControl.ListEntries.ListEntry.ListItems.ListItem | Where-Object -FilterScript { $_ })) {
+                    @{ Where = "$($view.Name) list item $($item.Label)$($item.PropertyName)"; Label = "$($item.Label)"; Property = "$($item.PropertyName)"; Script = "$($item.ScriptBlock)" }
+                }
+            )
+            foreach ($s in $shown) {
+                $s.Property | Should -Not -MatchExactly 'At$' -Because "$($s.Where) shows a time as it is"
+                $s.Script -creplace '\.\w+At\.LocalDateTime\b', '' | Should -Not -MatchExactly '\.\w+At\b' -Because "$($s.Where) shows a time not as .LocalDateTime"
+                if ($s.Script -cmatch '^\$_\.(\w+At)\b') {
+                    $s.Script | Should -BeExactly "`$_.$($Matches[1]).LocalDateTime" -Because $s.Where
+                    $s.Label | Should -BeExactly $Matches[1] -Because $s.Where
+                }
+            }
+        }
+    }
+    It 'has a list view for messages showing what the detail view shows (R35c, R63a)' {
+        $list = $formats.Configuration.ViewDefinitions.View | Where-Object -FilterScript { $_.ViewSelectedBy.TypeName -eq 'PagerArchive.Message' -and $_.ListControl }
+        $list | Should -HaveCount 1
+        $labels = @($list.ListControl.ListEntries.ListEntry.ListItems.ListItem | ForEach-Object -Process { "$($_.Label)$($_.PropertyName)" })
+        foreach ($field in @('SentAt', 'Priority', 'Alias', 'Capcode', 'Agency', 'Text', 'Group', 'JobNumber', 'EventType', 'Category', 'Description', 'Address', 'Locality', 'GridRef', 'Units', 'Fields', 'Location', 'ParseFailed', 'AddressUnsplit', 'LocationMismatch', 'Receptions')) {
+            $labels | Should -Contain $field
+        }
+    }
+    It 'shows messages as a table by default' {
+        $first = $formats.Configuration.ViewDefinitions.View | Where-Object -FilterScript { $_.ViewSelectedBy.TypeName -eq 'PagerArchive.Message' } | Select-Object -First 1
+        $first.TableControl | Should -Not -BeNullOrEmpty
     }
 }
 
@@ -217,6 +240,27 @@ Describe 'Times in a time zone that isn''t UTC (guidelines section 5)' {
         $message.SentAt.Offset | Should -Be ([timespan]::Zero)
         $message.SentAt.UtcDateTime | Should -Be ([datetime]::new(2026, 10, 21, 0, 0, 0, [DateTimeKind]::Utc))
         ($message | Select-Object -Property SentAt | ConvertTo-Csv)[1] | Should -BeLike '*+00:00*'
+    }
+    It 'shows a message''s SentAt and reception times in local time in its list view' {
+        $row = [pscustomobject]@{
+            id = 1; capcode = '0999999'; text = 'x'; display_text = 'x'; priority = 'Admin'; heartbeat = $false
+            sent_at = '2026-10-21T00:00:00Z'; alias = 'Station 4'; agency = 'Example Fire Service'; ignored = $false
+            job_number = $null; event_type = $null; category = $null; description = $null; address = $null
+            locality = $null; grid_ref = $null; group = $null; units = $null; extra = $null; location = $null
+            receptions = @(
+                [pscustomobject]@{ client = 'Receiver 1'; received_at = '2026-10-21T00:00:01Z' }
+                [pscustomobject]@{ client = 'Receiver 2'; received_at = '2026-10-21T00:00:02Z' }
+            )
+        }
+        $message = & (Get-Module PagerArchive) { param($r) ConvertTo-PaMessage -Row $r } $row
+        $text = $message | Format-List | Out-String -Width 200
+        $text | Should -Match "(?m)^SentAt\s+: $([regex]::Escape(([datetime]'2026-10-21T13:45:00').ToString()))\s*$"
+        $text | Should -Match "(?m)^Receptions\s+: $([regex]::Escape(([datetime]'2026-10-21T13:45:01').ToString()))\s+Receiver 1\s*$"
+        $text | Should -Match "(?m)^\s+$([regex]::Escape(([datetime]'2026-10-21T13:45:02').ToString()))\s+Receiver 2\s*$"
+        $text | Should -Not -Match '\+00:00'
+
+        $message.Receptions[0].ReceivedAt | Should -BeOfType [datetimeoffset]
+        $message.Receptions[0].ReceivedAt.Offset | Should -Be ([timespan]::Zero)
     }
 }
 

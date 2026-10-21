@@ -129,5 +129,44 @@
         </TableRowEntries>
       </TableControl>
     </View>
+    <View>
+      <!-- Format-List: what the detail view shows (R35c, R63a). -->
+      <Name>PagerArchive.Message</Name>
+      <ViewSelectedBy>
+        <TypeName>PagerArchive.Message</TypeName>
+      </ViewSelectedBy>
+      <ListControl>
+        <ListEntries>
+          <ListEntry>
+            <ListItems>
+              <ListItem><Label>SentAt</Label><ScriptBlock>$_.SentAt.LocalDateTime</ScriptBlock></ListItem>
+              <ListItem><PropertyName>Priority</PropertyName></ListItem>
+              <ListItem><PropertyName>Alias</PropertyName></ListItem>
+              <ListItem><PropertyName>Capcode</PropertyName></ListItem>
+              <ListItem><PropertyName>Agency</PropertyName></ListItem>
+              <ListItem><PropertyName>Text</PropertyName></ListItem>
+              <ListItem><PropertyName>Group</PropertyName></ListItem>
+              <ListItem><PropertyName>JobNumber</PropertyName></ListItem>
+              <ListItem><PropertyName>EventType</PropertyName></ListItem>
+              <ListItem><PropertyName>Category</PropertyName></ListItem>
+              <ListItem><PropertyName>Description</PropertyName></ListItem>
+              <ListItem><PropertyName>Address</PropertyName></ListItem>
+              <ListItem><PropertyName>Locality</PropertyName></ListItem>
+              <ListItem><PropertyName>GridRef</PropertyName></ListItem>
+              <ListItem><Label>Units</Label><ScriptBlock>$_.Units -join ', '</ScriptBlock></ListItem>
+              <ListItem><Label>Fields</Label><ScriptBlock>($_.Fields.PSObject.Properties | ForEach-Object -Process { "$($_.Name): $($_.Value)" }) -join "`n"</ScriptBlock></ListItem>
+              <ListItem><Label>Location</Label><ScriptBlock>if ($_.Location) { "$($_.Location.Latitude), $($_.Location.Longitude)$(if ($_.Location.Approximate) { ' (approximate)' }) from $($_.Location.Source)" } else { 'None' }</ScriptBlock></ListItem>
+              <ListItem><PropertyName>ParseFailed</PropertyName></ListItem>
+              <ListItem><PropertyName>AddressUnsplit</PropertyName></ListItem>
+              <ListItem><PropertyName>LocationMismatch</PropertyName></ListItem>
+              <ListItem><PropertyName>Heartbeat</PropertyName></ListItem>
+              <ListItem><PropertyName>Ignored</PropertyName></ListItem>
+              <ListItem><Label>Receptions</Label><ScriptBlock>($_.Receptions | ForEach-Object -Process { "$($_.ReceivedAt.LocalDateTime.ToString())  $($_.Client)" }) -join "`n"</ScriptBlock></ListItem>
+              <ListItem><PropertyName>Id</PropertyName></ListItem>
+            </ListItems>
+          </ListEntry>
+        </ListEntries>
+      </ListControl>
+    </View>
   </ViewDefinitions>
 </Configuration>

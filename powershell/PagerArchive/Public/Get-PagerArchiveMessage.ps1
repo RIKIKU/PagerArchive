@@ -28,6 +28,13 @@ function Get-PagerArchiveMessage {
     [datetimeoffset] the server sent.
 
     .EXAMPLE
+    Get-PagerArchiveMessage -First 1 | Format-List
+
+    Shows what the browser's detail view shows: the full text, the parsed
+    fields, the location, the flags and each client's receive time, with
+    times in your time zone.
+
+    .EXAMPLE
     Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
 
     .EXAMPLE
