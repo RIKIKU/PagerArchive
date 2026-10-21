@@ -75,7 +75,7 @@ func (i *testIssuer) accessToken(t *testing.T, subject string, change func(map[s
 func (e *env) usePowerShell(iss *testIssuer) {
 	e.srv.PowerShell = &server.PowerShell{
 		Issuer: iss.url, ClientID: psClient,
-		Verifier: oidc.NewVerifier(iss.url, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&iss.key.PublicKey}}, &oidc.Config{ClientID: psClient}),
+		Keys: &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&iss.key.PublicKey}},
 	}
 }
 
@@ -127,14 +127,18 @@ func TestA53PowerShellTokens(t *testing.T) {
 	other := newIssuer(t, iss.url)
 	elsewhere := newIssuer(t, "https://auth.example.test/application/o/pagerarchive/")
 	for name, bad := range map[string]string{
-		"expired":            iss.accessToken(t, adminSub, func(c map[string]any) { c["exp"] = time.Now().Add(-time.Minute).Unix() }),
-		"another key":        other.accessToken(t, adminSub, nil),
-		"another audience":   iss.accessToken(t, adminSub, func(c map[string]any) { c["aud"], c["azp"] = "pagerarchive", "pagerarchive" }),
-		"another issuer":     elsewhere.accessToken(t, adminSub, func(c map[string]any) { c["iss"] = elsewhere.url }),
-		"an ID token":        iss.accessToken(t, adminSub, func(c map[string]any) { delete(c, "azp"); delete(c, "scope") }),
-		"another client":     iss.accessToken(t, adminSub, func(c map[string]any) { c["azp"] = "pagerarchive" }),
-		"no signature":       strings.TrimRight(iss.accessToken(t, adminSub, nil), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
-		"not a token at all": "not-a-token",
+		"expired":          iss.accessToken(t, adminSub, func(c map[string]any) { c["exp"] = time.Now().Add(-time.Minute).Unix() }),
+		"another key":      other.accessToken(t, adminSub, nil),
+		"another audience": iss.accessToken(t, adminSub, func(c map[string]any) { c["aud"], c["azp"] = "pagerarchive", "pagerarchive" }),
+		// Only the issuer is wrong: the issuer check alone refuses it.
+		"another issuer, the right key": iss.accessToken(t, adminSub, func(c map[string]any) { c["iss"] = elsewhere.url }),
+		// Only the audience is wrong: the audience check alone refuses it.
+		"another audience, this client's azp": iss.accessToken(t, adminSub, func(c map[string]any) { c["aud"] = "pagerarchive" }),
+		"another issuer":                      elsewhere.accessToken(t, adminSub, func(c map[string]any) { c["iss"] = elsewhere.url }),
+		"an ID token":                         iss.accessToken(t, adminSub, func(c map[string]any) { delete(c, "azp"); delete(c, "scope") }),
+		"another client":                      iss.accessToken(t, adminSub, func(c map[string]any) { c["azp"] = "pagerarchive" }),
+		"no signature":                        strings.TrimRight(iss.accessToken(t, adminSub, nil), "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"),
+		"not a token at all":                  "not-a-token",
 	} {
 		keep(bad)
 		code, p, h := e.bearer(http.MethodGet, "/api/v1/me", bad, nil)

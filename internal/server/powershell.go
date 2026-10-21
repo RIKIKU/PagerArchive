@@ -27,18 +27,27 @@ type PowerShell struct {
 	Issuer   string // AUTHENTIK_URL/application/o/pagerarchive-powershell/
 	ClientID string // pagerarchive-powershell
 	HTTP     *http.Client
-	// Verifier replaces discovery (tests).
-	Verifier *oidc.IDTokenVerifier
+	// Keys, when set, are the issuer's signing keys, in place of discovery
+	// (tests). The checks are the same either way.
+	Keys oidc.KeySet
 
-	mu   sync.Mutex
-	seen map[string]time.Time // token IDs already logged, until they expire
+	mu       sync.Mutex
+	verifier *oidc.IDTokenVerifier
+	seen     map[string]time.Time // token IDs already logged, until they expire
 }
 
-func (p *PowerShell) verifier() (*oidc.IDTokenVerifier, error) {
+func (p *PowerShell) tokenVerifier() (*oidc.IDTokenVerifier, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.Verifier != nil {
-		return p.Verifier, nil
+	if p.verifier != nil {
+		return p.verifier, nil
+	}
+	// go-oidc's checks: the signature (RS256, keys from the issuer's JWKS),
+	// the issuer, expiry, and the audience being this client.
+	config := &oidc.Config{ClientID: p.ClientID}
+	if p.Keys != nil {
+		p.verifier = oidc.NewVerifier(p.Issuer, p.Keys, config)
+		return p.verifier, nil
 	}
 	// The provider keeps this context to fetch signing keys later (and again
 	// when a token names a key it hasn't seen), so it mustn't be a request's.
@@ -46,10 +55,8 @@ func (p *PowerShell) verifier() (*oidc.IDTokenVerifier, error) {
 	if err != nil {
 		return nil, err
 	}
-	// The default checks: signature (RS256, keys from the issuer's JWKS),
-	// issuer, expiry, and the audience being this client.
-	p.Verifier = pr.Verifier(&oidc.Config{ClientID: p.ClientID})
-	return p.Verifier, nil
+	p.verifier = pr.Verifier(config)
+	return p.verifier, nil
 }
 
 // firstUse reports whether a token ID hasn't been seen before, so sign-ins
@@ -102,7 +109,7 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, error) {
 	if s.PowerShell == nil {
 		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "PowerShell sign-in is off"}
 	}
-	v, err := s.PowerShell.verifier()
+	v, err := s.PowerShell.tokenVerifier()
 	if err != nil {
 		s.Log.Error("powershell token: discovery", "error", err.Error())
 		return db.User{}, errors.New("directory unavailable")

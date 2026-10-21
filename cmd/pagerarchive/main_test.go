@@ -65,3 +65,30 @@ func TestValidateProfileExample(t *testing.T) {
 		}
 	}
 }
+
+// A54 (R59): pagerarchive keeps only the server's jobs; templates and
+// aliases are the PowerShell module's.
+func TestA54HelpListsNoTemplateOrAliasCommands(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"help"}, &out, &errOut); code != 0 {
+		t.Fatalf("help exited %d: %s", code, errOut.String())
+	}
+	t.Logf("A54: pagerarchive help:\n%s", out.String())
+	commands := strings.SplitN(out.String(), "serve reads its settings", 2)[0]
+	for _, line := range strings.Split(commands, "\n") {
+		f := strings.Fields(line)
+		if len(f) > 0 && (f[0] == "template" || f[0] == "alias") {
+			t.Errorf("help lists %q", line)
+		}
+	}
+	for _, cmd := range []string{"serve", "validate-profile", "client", "version"} {
+		if !strings.Contains(commands, "  "+cmd) {
+			t.Errorf("help doesn't list %s", cmd)
+		}
+	}
+	for _, removed := range [][]string{{"template", "list"}, {"alias", "list"}} {
+		if code := run(removed, &out, &errOut); code == 0 {
+			t.Errorf("pagerarchive %s still runs", strings.Join(removed, " "))
+		}
+	}
+}

@@ -49,11 +49,11 @@ const MaxImportRows = 20000
 
 // Row results.
 const (
-	Added     = "added"
-	Unchanged = "unchanged"
-	Different = "different" // differs from the existing alias; applied only with Update
-	Updated   = "updated"
-	Squashed  = "squashed" // identical to an earlier row for the same capcode
+	Added      = "added"
+	Unchanged  = "unchanged"
+	Different  = "different" // differs from the existing alias; applied only with Update
+	Updated    = "updated"
+	Squashed   = "squashed" // identical to an earlier row for the same capcode
 	Invalid    = "invalid"  // refused on its own and skipped
 	InConflict = "conflict" // differs from another row for the same capcode; nothing is imported
 )

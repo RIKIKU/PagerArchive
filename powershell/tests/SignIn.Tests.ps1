@@ -108,7 +108,9 @@ Describe 'Saving the sign-in (R61)' {
         It 'with no vault: signs in for this session only, warns, writes nothing and never calls it (A51)' {
             Mock -ModuleName PagerArchive Import-PaSecretManagement { $false }
             Mock -ModuleName PagerArchive ConvertFrom-SecureString { throw 'ConvertFrom-SecureString was called' }
-            $connection = Connect-Fake -WarningVariable warnings -WarningAction SilentlyContinue
+            $all = @(Connect-Fake 3>&1)
+            $warnings = @($all | Where-Object -FilterScript { $_ -is [System.Management.Automation.WarningRecord] })
+            $connection = $all | Where-Object -FilterScript { $_ -isnot [System.Management.Automation.WarningRecord] }
             $connection.SavedIn | Should -Be 'This session only'
             ($warnings -join ' ') | Should -Match 'No SecretManagement vault is registered.*Register-SecretVault'
             Should -Invoke -ModuleName PagerArchive ConvertFrom-SecureString -Times 0 -Exactly
@@ -160,7 +162,7 @@ Describe 'Saving the sign-in (R61)' {
 "@
             Invoke-Child -Script @'
     Register-SecretVault -Name TestStore -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
-    Set-SecretStoreConfiguration -Scope CurrentUser -Authentication None -Interaction None -Confirm:$false
+    Reset-SecretStore -Scope CurrentUser -Authentication None -Interaction None -Force -Confirm:$false 3>$null
 '@
         }
         It 'saves the sign-in in the default vault, and a new window reads it' {

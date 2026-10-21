@@ -8,12 +8,13 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Sensitive details are removed **before** anything is stored
 - Per-user integrations forward new pages to your own systems (a convenience, not a replacement for your pager)
 
-**Status:** milestone M7 (invite trees in Administration, a preview before deactivating a tree with people spared by hand or by branch, trusted users, deactivation records) on top of M6 (aliases managed in the browser, with change requests, review and history), M5 (per-user integrations: webhook, MQTT with Home Assistant discovery, Discord, Telegram, Pushover and ntfy; Prometheus metrics; an Administration area) on top of M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR), M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
+**Status:** milestone M8 (a PowerShell module for admins, signing in as yourself with no API keys: templates, aliases, imports through the pipeline and message search; `pagerarchive` keeps only server jobs) on top of M7 (invite trees in Administration, a preview before deactivating a tree with people spared by hand or by branch, trusted users, deactivation records) on top of M6 (aliases managed in the browser, with change requests, review and history), M5 (per-user integrations: webhook, MQTT with Home Assistant discovery, Discord, Telegram, Pushover and ntfy; Prometheus metrics; an Administration area) on top of M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR), M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
 
 - [Deploying the server](docs/deploy.md)
 - [Integrations](docs/integrations.md)
 - [Profiles and `validate-profile`](docs/profiles.md)
 - [Receiving client](docs/client.md)
+- [PowerShell module](docs/powershell.md)
 - [Architecture decisions](docs/adr/)
 
 ## Development
@@ -40,9 +41,15 @@ cd .. && sh scripts/e2e.sh                           # browser tests against a r
 The account checks run against the full compose stack, with Authentik and a [Mailpit](https://mailpit.axllent.org) mail catcher (never a real mail server). They need Docker with compose and ports 8080, 9000 and 8025 free:
 
 ```
-sh scripts/stack-checks.sh                 # A23-A28 and A33 through Authentik's flow executor API
+sh scripts/stack-checks.sh                 # A23-A28, A33 and the PowerShell module's A20, A21, A51-A55 (needs pwsh)
 sh scripts/stack-e2e.sh --project=chromium # section 11 steps 2 and 3 in a browser
 sh scripts/a15.sh                          # A15 resource budget: one hour plus 10 idle minutes (CI: -m 5 -w 1 -i 2 -r 30000)
+```
+
+The PowerShell module is in `powershell/PagerArchive`, with its tests in `powershell/tests` (Pester 5.9.1 and PSScriptAnalyzer 1.25.0 on `PSModulePath`; `scripts/ci/Save-TestModules.ps1` saves them):
+
+```
+pwsh -NoProfile -File powershell/tests/Invoke-Tests.ps1   # analyzer, meta-tests, behaviour and sign-in tests
 ```
 
 The example dataset and its tiny test map are generated: `go run scripts/example-map/main.go`, then `sh scripts/example-map/build-tiles.sh` (needs tippecanoe).

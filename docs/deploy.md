@@ -32,13 +32,13 @@ The first start takes a minute or two while Authentik sets up its database and a
 1. **Create the first admin** from a machine on your LAN. Open the app and choose **Set up the first admin**. Only the address in `INITIAL_ADMIN_EMAIL` can finish, by entering the code emailed to it. It doesn't have to be in `ALLOWED_EMAIL_DOMAINS`. Once an admin exists, this option disappears and the setting is ignored.
 2. **Open the app to the internet**: remove the LAN-only lines from both hostnames' `location /` blocks. Leave them on Authentik's admin interface (`/if/admin/`).
 3. **Invite people** from **Account**. Invitations go to addresses in `ALLOWED_EMAIL_DOMAINS` only, work once, and expire after 7 days. Each person sets a password and confirms their address with an emailed code.
-4. **Add receiving clients** with the CLI (see [the client](client.md)):
+4. **Add receiving clients** with the CLI (see [the client](client.md)). `pagerarchive` on the server keeps only the jobs that need the server: `serve`, `validate-profile`, `client` and `version`. A client key can post pages, and pages can fire integrations, so creating one needs a shell on the server. Everything else an admin does from a command line goes through the [PowerShell module](powershell.md).
 
    ```sh
    docker compose exec api pagerarchive client add shed "Shed receiver"
    ```
 
-Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once. Templates are managed with `pagerarchive template …` (`docker compose exec api pagerarchive help`).
+Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once. Templates are managed with the [PowerShell module](powershell.md) until the browser has template screens (M10).
 
 ### Aliases
 
@@ -48,8 +48,8 @@ From M6 the database is the source of truth for aliases (ADR 0007).
 - **Everyone else** asks for a new alias, a change or a deletion: from an alias's page (**Request a change**, **Request deletion**), from a capcode with no alias, or on **Requests**. A request can carry a note. People follow their requests on **Requests**, and can edit or withdraw them while they wait.
 - **Admin → Alias requests** lists the waiting requests, with a count on the Admin link. Each shows the current value beside the proposed one, and is marked when the alias has changed since it was requested. **Approve** applies the request exactly as it was made. **Reject** needs feedback for the person who asked.
 - Deleting an alias closes its waiting requests ("alias deleted"). Integrations that selected an alias for one capcode keep that capcode. Deactivating or deleting someone withdraws their waiting requests.
-- **Import** (`pagerarchive alias import aliases.csv`) only adds aliases for capcodes and patterns that have none, and lists how existing ones differ from the file. `--update`, on the command line only, applies those differences.
-- **Export** with **Admin → Aliases → Export CSV**, or `pagerarchive alias export aliases.csv`. The file is in the import format, with the template's name in the `agency` column, so importing it back reports no differences. Values that a spreadsheet would run as a formula are written with a leading `'`, which the import removes.
+- **Import** with the [PowerShell module](powershell.md): `Import-Csv aliases.csv | Import-PagerArchiveAlias`. It only adds aliases for capcodes and patterns that have none, and lists how existing ones differ from the file. `-Update` applies those differences, recorded in each alias's history as made by the admin who ran it. Rows for one capcode that differ stop the whole import; leave rows out in the pipeline and run it again. `-WhatIf` is the dry run. Unknown agency profile names in `-AgencyProfile` refuse the import.
+- **Export** with **Admin → Aliases → Export CSV**, or `Get-PagerArchiveAlias | Export-Csv aliases.csv`. Both are in the import format, with the template's name in the `agency` column (or `Template`), so importing it back reports no differences. In the browser's export, values that a spreadsheet would run as a formula are written with a leading `'`, which the import removes, and the `icon` column is empty: icons will be images added to templates.
 
 ### Authentik's administrator
 
@@ -121,6 +121,7 @@ The `api` container reaches Authentik directly on the compose network (`AUTHENTI
 ## Privacy
 
 - No page text is ever written to the logs (SPEC.md P1).
+- **Authentik logs rejected refresh tokens.** When the PowerShell module, or anyone, presents a refresh token that has expired, been revoked or been replaced, Authentik writes a warning (`Refresh token does not exist`, `is expired` or `is revoked`) that includes the token's value. Such a token no longer works, but treat Authentik's log as sensitive: keep it to the server, and don't paste it into issues. PagerArchive's own log never contains a token.
 - Integrations send pages where their owners choose (below). With **Full** content that includes the page text, so Discord, Telegram, Pushover and ntfy default to **Summary**, which has no text or address.
 - Authentik is set up not to contact third parties: avatars show initials only, and analytics, error reporting and update checks are off.
 
