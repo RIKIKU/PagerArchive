@@ -88,7 +88,7 @@
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
-          <TableColumnHeader />
+          <TableColumnHeader><Label>Changes</Label></TableColumnHeader>
           <TableColumnHeader />
         </TableHeaders>
         <TableRowEntries>
@@ -114,7 +114,7 @@
         <TableHeaders>
           <TableColumnHeader />
           <TableColumnHeader />
-          <TableColumnHeader />
+          <TableColumnHeader><Label>Alias</Label></TableColumnHeader>
           <TableColumnHeader />
         </TableHeaders>
         <TableRowEntries>

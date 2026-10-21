@@ -141,6 +141,27 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
     }
 }
 
+Describe 'Table views (guidelines section 5)' {
+    It 'labels every column computed by a script, so the header isn''t the script' {
+        foreach ($view in $formats.Configuration.ViewDefinitions.View) {
+            $headers = @($view.TableControl.TableHeaders.TableColumnHeader)
+            $items = @($view.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem)
+            $headers.Count | Should -Be $items.Count -Because $view.Name
+            for ($i = 0; $i -lt $items.Count; $i++) {
+                if ($items[$i].ScriptBlock) {
+                    "$($headers[$i].Label)" | Should -Not -BeNullOrEmpty -Because "$($view.Name) column $($i + 1) is computed"
+                }
+            }
+        }
+    }
+    It 'shows a message''s alias, or its capcode when it has none, under "Alias"' {
+        $message = [pscustomobject]@{ PSTypeName = 'PagerArchive.Message'; SentAt = [datetimeoffset]'2026-10-21T00:00:00Z'; Priority = 'Admin'; Alias = $null; Capcode = '0999999'; Text = 'x' }
+        $lines = ($message | Format-Table | Out-String -Width 200) -split "`n" | Where-Object -FilterScript { $_.Trim() }
+        $lines[0] | Should -Match '^SentAt\s+Priority\s+Alias\s+Text\s*$'
+        $lines[2] | Should -Match '0999999'
+    }
+}
+
 Describe 'Objects and parameters line up (guidelines section 3)' {
     It 'an alias''s properties bind the import''s parameters' {
         $import = Get-Command -Name Import-PagerArchiveAlias
