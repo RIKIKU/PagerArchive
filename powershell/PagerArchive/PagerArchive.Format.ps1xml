@@ -112,7 +112,7 @@
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
-          <TableColumnHeader />
+          <TableColumnHeader><Label>SentAt</Label></TableColumnHeader>
           <TableColumnHeader />
           <TableColumnHeader><Label>Alias</Label></TableColumnHeader>
           <TableColumnHeader />
@@ -120,7 +120,7 @@
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
-              <TableColumnItem><PropertyName>SentAt</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>$_.SentAt.LocalDateTime</ScriptBlock></TableColumnItem>
               <TableColumnItem><PropertyName>Priority</PropertyName></TableColumnItem>
               <TableColumnItem><ScriptBlock>if ($_.Alias) { $_.Alias } else { $_.Capcode }</ScriptBlock></TableColumnItem>
               <TableColumnItem><PropertyName>Text</PropertyName></TableColumnItem>

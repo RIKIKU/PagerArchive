@@ -160,6 +160,64 @@ Describe 'Table views (guidelines section 5)' {
         $lines[0] | Should -Match '^SentAt\s+Priority\s+Alias\s+Text\s*$'
         $lines[2] | Should -Match '0999999'
     }
+    It 'shows every time as local time under its own name (owner, 2026-10-22)' {
+        foreach ($view in $formats.Configuration.ViewDefinitions.View) {
+            $headers = @($view.TableControl.TableHeaders.TableColumnHeader)
+            $items = @($view.TableControl.TableRowEntries.TableRowEntry.TableColumnItems.TableColumnItem)
+            for ($i = 0; $i -lt $items.Count; $i++) {
+                "$($items[$i].PropertyName)" | Should -Not -Match 'At$' -Because "$($view.Name) column $($i + 1) is a time"
+                if ("$($items[$i].ScriptBlock)" -match '^\$_\.(\w+At)\b') {
+                    "$($items[$i].ScriptBlock)" | Should -Be "`$_.$($Matches[1]).LocalDateTime"
+                    "$($headers[$i].Label)" | Should -Be $Matches[1]
+                }
+            }
+            foreach ($item in @($view.ListControl.ListEntries.ListEntry.ListItems.ListItem)) {
+                if (-not $item) { continue }
+                "$($item.PropertyName)" | Should -Not -Match 'At$' -Because "$($view.Name) list item $($item.PropertyName) is a time"
+                if ("$($item.ScriptBlock)" -match '^\$_\.(\w+At)\b') {
+                    "$($item.ScriptBlock)" | Should -Be "`$_.$($Matches[1]).LocalDateTime"
+                    "$($item.Label)" | Should -Be $Matches[1]
+                }
+            }
+        }
+    }
+}
+
+Describe 'Times in a time zone that isn''t UTC (guidelines section 5)' {
+    BeforeAll {
+        # .NET reads the local time zone once and caches it, and on Windows it
+        # ignores TZ, so the test sets the cached zone itself: Chatham Islands,
+        # +13:45 in October, an offset no CI runner or developer has.
+        $cache = [TimeZoneInfo].GetField('s_cachedData', [Reflection.BindingFlags]'NonPublic, Static')
+        $cache | Should -Not -BeNullOrEmpty -Because 'the test needs .NET''s time zone cache'
+        $null = [TimeZoneInfo]::Local
+        $data = $cache.GetValue($null)
+        $data.GetType().GetField('_localTimeZone', [Reflection.BindingFlags]'NonPublic, Instance').SetValue($data, [TimeZoneInfo]::FindSystemTimeZoneById('Pacific/Chatham'))
+    }
+    AfterAll {
+        [TimeZoneInfo]::ClearCachedData()
+    }
+    It 'runs in Chatham time' {
+        [TimeZoneInfo]::Local.BaseUtcOffset | Should -Be ([timespan]'12:45:00')
+    }
+    It 'shows a message''s SentAt in local time, and keeps the [datetimeoffset] the API sent' {
+        $row = [pscustomobject]@{
+            id = 1; capcode = '0999999'; text = 'x'; display_text = 'x'; priority = 'Admin'; heartbeat = $false
+            sent_at = '2026-10-21T00:00:00Z'; alias = 'Station 4'; agency = 'Example Fire Service'; ignored = $false
+            job_number = $null; event_type = $null; category = $null; description = $null; address = $null
+            locality = $null; grid_ref = $null; group = $null; units = $null; extra = $null; location = $null
+        }
+        $message = & (Get-Module PagerArchive) { param($r) ConvertTo-PaMessage -Row $r } $row
+        $lines = ($message | Format-Table | Out-String -Width 200) -split "`n" | Where-Object -FilterScript { $_.Trim() }
+        $lines[0] | Should -Match '^SentAt\s+Priority\s+Alias\s+Text\s*$'
+        $lines[2] | Should -BeLike "$(([datetime]'2026-10-21T13:45:00').ToString()) *"
+        $lines[2] | Should -Not -Match '\+00:00'
+
+        $message.SentAt | Should -BeOfType [datetimeoffset]
+        $message.SentAt.Offset | Should -Be ([timespan]::Zero)
+        $message.SentAt.UtcDateTime | Should -Be ([datetime]::new(2026, 10, 21, 0, 0, 0, [DateTimeKind]::Utc))
+        ($message | Select-Object -Property SentAt | ConvertTo-Csv)[1] | Should -BeLike '*+00:00*'
+    }
 }
 
 Describe 'Objects and parameters line up (guidelines section 3)' {

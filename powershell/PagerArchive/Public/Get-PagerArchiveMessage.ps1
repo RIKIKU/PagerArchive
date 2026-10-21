@@ -20,9 +20,12 @@ function Get-PagerArchiveMessage {
     .EXAMPLE
     Get-PagerArchiveMessage -Capcode 0100001 -Priority Emergency
 
-    SentAt                     Priority  Alias     Text
-    ------                     --------  -----     ----
-    20/10/2026 9:14:03 am +11:00 Emergency Station 1 EX0000031 HSF1 SHED FIRE @ 3 FICTION ST, MADEUPTON #TV1
+    SentAt               Priority  Alias     Text
+    ------               --------  -----     ----
+    20/10/2026 9:14:03 am Emergency Station 1 EX0000031 HSF1 SHED FIRE @ 3 FICTION ST, MADEUPTON #TV1
+
+    The table shows SentAt in your time zone; the object's SentAt is the
+    [datetimeoffset] the server sent.
 
     .EXAMPLE
     Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
