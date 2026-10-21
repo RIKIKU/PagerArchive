@@ -6,7 +6,7 @@ BeforeDiscovery {
     $root = Join-Path -Path $PSScriptRoot -ChildPath '../PagerArchive'
     Import-Module -Name (Join-Path -Path $root -ChildPath 'PagerArchive.psd1') -Force
     $commands = @(Get-Command -Module PagerArchive -CommandType Function | ForEach-Object -Process { @{ Name = $_.Name } })
-    $files = @(Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath '..') -Recurse -Include '*.ps1', '*.psm1', '*.psd1' |
+    $files = @(Get-ChildItem -Path $root -Recurse -Include '*.ps1', '*.psm1', '*.psd1' |
             ForEach-Object -Process { @{ Path = $_.FullName; Name = $_.Name } })
 }
 
@@ -161,7 +161,16 @@ Describe 'Objects and parameters line up (guidelines section 3)' {
 Describe 'PSScriptAnalyzer: <Name> (guidelines section 11)' -ForEach $files {
     It 'has no findings' {
         $settings = Join-Path -Path $PSScriptRoot -ChildPath '../PSScriptAnalyzerSettings.psd1'
-        $findings = @(Invoke-ScriptAnalyzer -Path $Path -Settings $settings)
+        # PSUseCorrectCasing sometimes throws a NullReferenceException inside
+        # PSScriptAnalyzer 1.25.0 while looking up commands; a retry passes.
+        for ($attempt = 1; $attempt -le 3; $attempt++) {
+            try {
+                $findings = @(Invoke-ScriptAnalyzer -Path $Path -Settings $settings -ErrorAction Stop)
+                break
+            } catch [System.NullReferenceException] {
+                if ($attempt -eq 3) { throw }
+            }
+        }
         $findings | ForEach-Object -Process { Write-Warning -Message ('{0}:{1} {2} {3}' -f $_.ScriptName, $_.Line, $_.RuleName, $_.Message) }
         $findings.Count | Should -Be 0
     }

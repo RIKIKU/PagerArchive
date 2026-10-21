@@ -180,7 +180,7 @@ func TestA53PowerShellTokens(t *testing.T) {
 	// Deleting an account clears its subject (DeleteUserAccount).
 	d := e.newMember("d@example.com", "admin", e.admin)
 	dTok := keep(iss.accessToken(t, d.claims.Subject, nil))
-	if _, err := e.st.Pool.Exec(e.ctx, "UPDATE users SET subject = NULL, status = 'deleted' WHERE id = $1", d.id); err != nil {
+	if err := e.st.DeleteUserAccount(e.ctx, d.id); err != nil {
 		t.Fatal(err)
 	}
 	if code, p, _ := e.bearer(http.MethodGet, "/api/v1/me", dTok, nil); code != http.StatusUnauthorized || p.Code != server.CodeNotSignedIn {

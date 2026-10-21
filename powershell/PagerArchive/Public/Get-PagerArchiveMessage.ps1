@@ -31,14 +31,19 @@ function Get-PagerArchiveMessage {
     Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-Csv -Path fires.csv
 
     .EXAMPLE
+    '0100001', '0100002' | ForEach-Object -Process { [pscustomobject]@{ Capcode = $_ } } | Get-PagerArchiveMessage -First 10
+
+    Capcodes piped in as objects with a Capcode property.
+
+    .EXAMPLE
     Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-1) | Group-Object -Property Capcode
 
     Capcodes with no alias that paged in the last day.
 
     .INPUTS
-    System.String. Capcodes by value. Objects with a Capcode property, or
-    with a Name property (such as PagerArchive.Alias), whose value is taken
-    as an alias name.
+    System.Management.Automation.PSObject. Objects with a Capcode property
+    (such as PagerArchive.Message), or with a Name property (such as
+    PagerArchive.Alias), whose value is taken as an alias name.
 
     .OUTPUTS
     PagerArchive.Message. Id, SentAt, Capcode, Alias, Agency, Priority
@@ -65,7 +70,7 @@ function Get-PagerArchiveMessage {
         [string] $Text,
 
         # Capcodes (1 to 7 digits). Default: any. No wildcards.
-        [Parameter(ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Parameter(ValueFromPipelineByPropertyName)]
         [ValidatePattern('^[0-9]{1,7}$')]
         [string[]] $Capcode,
 
@@ -145,14 +150,14 @@ function Get-PagerArchiveMessage {
             alias_like  = @()
             agency_like = @()
             group_like  = @()
-            priority    = @($Priority | ForEach-Object -Process { if ($_ -eq 'None') { 'none' } else { $_ } })
+            priority    = @(foreach ($p in $Priority) { if ($p -eq 'None') { 'none' } else { $p } })
             category    = @($Category)
             job         = @($JobNumber)
             from        = if ($PSBoundParameters.ContainsKey('After')) { $After.ToString('o') } else { $null }
             to          = if ($PSBoundParameters.ContainsKey('Before')) { $Before.ToString('o') } else { $null }
             unaliased   = if ($Unaliased) { 'true' } else { $null }
             ignored     = if ($IncludeIgnored) { 'true' } else { $null }
-            flag        = @($Flag | ForEach-Object -Process { @{ ParseFailed = 'parse_failed'; AddressUnsplit = 'address_unsplit'; LocationMismatch = 'location_mismatch' }[$_] })
+            flag        = @(foreach ($f in $Flag) { @{ ParseFailed = 'parse_failed'; AddressUnsplit = 'address_unsplit'; LocationMismatch = 'location_mismatch' }[$f] })
             receptions  = 'true'
             limit       = 200
             before      = $null
@@ -183,7 +188,7 @@ function Get-PagerArchiveMessage {
         try {
             while ($written -lt $first) {
                 $wanted = ([double]$first - $written) + [math]::Max(0, [double]$skip - $seen)
-                $query.limit = [int][math]::Min(200, [math]::Max(1, $wanted))
+                $query.limit = [int][math]::Min(200.0, [math]::Max(1.0, $wanted))
                 $page = Invoke-PaApi -Method GET -Path '/api/v1/messages' -Query $query
                 foreach ($row in $page.messages) {
                     $message = ConvertTo-PaMessage -Row $row

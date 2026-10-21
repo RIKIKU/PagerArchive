@@ -185,7 +185,7 @@ function Import-PagerArchiveAlias {
             }
             foreach ($result in $report.rows) {
                 if ($result.result -eq 'invalid') {
-                    $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'invalid_row' -Category InvalidData -TargetObject $inputs[$result.index - 1] `
+                    $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'invalid_row' -Category InvalidData -TargetObject $(if ($result.index -le $inputs.Count) { $inputs[$result.index - 1] }) `
                                 -Message "Row $($result.index) was skipped: $($result.problem)"))
                     continue
                 }

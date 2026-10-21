@@ -54,7 +54,8 @@ const (
 	Different = "different" // differs from the existing alias; applied only with Update
 	Updated   = "updated"
 	Squashed  = "squashed" // identical to an earlier row for the same capcode
-	Invalid   = "invalid"  // refused on its own and skipped
+	Invalid    = "invalid"  // refused on its own and skipped
+	InConflict = "conflict" // differs from another row for the same capcode; nothing is imported
 )
 
 // RowResult is what the import does with one row. Index counts from 1, in
@@ -174,6 +175,7 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 			cf := Conflict{Pattern: p}
 			for _, c := range cands {
 				cf.Rows = append(cf.Rows, c.index)
+				rep.Rows[c.index-1].Result = InConflict
 			}
 			rep.Conflicts = append(rep.Conflicts, cf)
 			continue

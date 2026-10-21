@@ -6,6 +6,16 @@
 BeforeAll {
     Import-Module -Name (Join-Path -Path $PSScriptRoot -ChildPath '../PagerArchive/PagerArchive.psd1') -Force
 
+    # Splits a command's output from the errors it wrote to the error
+    # stream. (-ErrorVariable also collects errors caught inside the
+    # command, so it isn't what a user sees.)
+    function Split-Output([object[]] $All) {
+        @{
+            Out    = @($All | Where-Object -FilterScript { $_ -isnot [System.Management.Automation.ErrorRecord] })
+            Errors = @($All | Where-Object -FilterScript { $_ -is [System.Management.Automation.ErrorRecord] })
+        }
+    }
+
     # A message as the API sends it.
     function New-ApiMessage([long] $Id, [string] $Capcode = '0100001', [string] $Alias = 'Station 1') {
         [pscustomobject]@{
@@ -37,6 +47,13 @@ Describe 'Get-PagerArchiveMessage' {
         }
     }
 
+    It 'Get-PagerArchiveAlias filters by name, pattern and template, with wildcards' {
+        (Get-PagerArchiveAlias -Name 'Station*').Name | Should -Be @('Station 1', 'Station 2')
+        (Get-PagerArchiveAlias -Pattern '03*').Name | Should -Be @('Brigade')
+        (Get-PagerArchiveAlias -Pattern '100002').Name | Should -Be @('Station 2')
+        (Get-PagerArchiveAlias -Template 'wx').Name | Should -Be @('Brigade')
+        @(Get-PagerArchiveAlias).Count | Should -Be 3
+    }
     It 'combines piped aliases into one request, matching each name exactly (A55)' {
         $out = @(Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -First 2)
         $out.Count | Should -Be 2
@@ -49,7 +66,7 @@ Describe 'Get-PagerArchiveMessage' {
         $out[0].Receptions[0].Client | Should -Be 'Receiver 1'
     }
     It 'takes capcodes from the pipeline' {
-        $null = '0100001', '0100002' | Get-PagerArchiveMessage -First 1
+        $null = [pscustomobject]@{ Capcode = '0100001' }, [pscustomobject]@{ Capcode = '0100002' } | Get-PagerArchiveMessage -First 1
         $script:calls[0].capcode | Should -Be @('0100001', '0100002')
     }
     It 'turns wildcards into LIKE patterns, escaping % and _' {
@@ -109,7 +126,8 @@ Describe 'Import-PagerArchiveAlias' {
     }
 
     It 'sends the import columns only, as one batch, and outputs a result per row' {
-        $out = @($csv | ConvertFrom-Csv | Import-PagerArchiveAlias -Confirm:$false -ErrorVariable errors -ErrorAction SilentlyContinue)
+        $split = Split-Output -All ($csv | ConvertFrom-Csv | Import-PagerArchiveAlias -Confirm:$false 2>&1)
+        $out, $errors = $split.Out, $split.Errors
         $script:sent.Count | Should -Be 2
         $script:sent[0].dry_run | Should -BeTrue
         $script:sent[1].dry_run | Should -BeFalse
@@ -144,7 +162,8 @@ Describe 'Import-PagerArchiveAlias' {
             [pscustomobject]@{ address = '0300002'; alias = 'Tanker' }
             [pscustomobject]@{ address = '300001'; alias = 'Brigade' }
         )
-        $out = @($rows | Import-PagerArchiveAlias -Confirm:$false -ErrorVariable errors -ErrorAction SilentlyContinue)
+        $split = Split-Output -All ($rows | Import-PagerArchiveAlias -Confirm:$false 2>&1)
+        $out, $errors = $split.Out, $split.Errors
         $out.Count | Should -Be 0
         $script:sent.Count | Should -Be 1
         $errors.Count | Should -Be 2
@@ -217,7 +236,8 @@ Describe 'Errors (guidelines section 7)' {
             throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'template_in_use' -Status 409 -Message '"Example Fire" can''t be deleted: 3 aliases use it.' })
         }
         Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'DELETE' -and $Path -eq '/api/v1/admin/templates/2' } -MockWith { $null }
-        $out = @(Remove-PagerArchiveTemplate -Name 'Example Fire', 'Spare' -Confirm:$false -PassThru -ErrorVariable errors -ErrorAction SilentlyContinue)
+        $split = Split-Output -All (Remove-PagerArchiveTemplate -Name 'Example Fire', 'Spare' -Confirm:$false -PassThru 2>&1)
+        $out, $errors = $split.Out, $split.Errors
         $out.Name | Should -Be @('Spare')
         $errors.Count | Should -Be 1
         $errors[0].FullyQualifiedErrorId | Should -Be 'template_in_use,Remove-PagerArchiveTemplate'

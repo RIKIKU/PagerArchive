@@ -73,13 +73,13 @@ function Get-PagerArchiveAlias {
     )
     begin {
         $all = $null
-        $templates = @($Template | ForEach-Object -Process { [System.Management.Automation.WildcardPattern]::new($_, [System.Management.Automation.WildcardOptions]::IgnoreCase) })
+        $templates = @(foreach ($t in $Template) { [System.Management.Automation.WildcardPattern]::new($t, [System.Management.Automation.WildcardOptions]::IgnoreCase) })
     }
     process {
         try {
-            $names = @($Name | ForEach-Object -Process { [System.Management.Automation.WildcardPattern]::new($_, [System.Management.Automation.WildcardOptions]::IgnoreCase) })
-            $patterns = @($Pattern | ForEach-Object -Process {
-                    $p = if ($_ -match '^[0-9]{1,7}$') { $_.PadLeft(7, '0') } else { $_ }
+            $names = @(foreach ($n in $Name) { [System.Management.Automation.WildcardPattern]::new($n, [System.Management.Automation.WildcardOptions]::IgnoreCase) })
+            $patterns = @(foreach ($p in $Pattern) {
+                    $p = if ($p -match '^[0-9]{1,7}$') { $p.PadLeft(7, '0') } else { $p }
                     [System.Management.Automation.WildcardPattern]::new([System.Management.Automation.WildcardPattern]::Escape($p).Replace('`*', '*').Replace('`?', '?'), [System.Management.Automation.WildcardOptions]::IgnoreCase)
                 })
             # One exact name or capcode: let the server narrow the list.

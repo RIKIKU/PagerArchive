@@ -128,8 +128,8 @@ function Connect-PagerArchive {
                 User             = $null
             }
             Import-PaTokenReply -Connection $connection -Reply $reply
-            if ($reply.id_token) {
-                $reply.id_token.Dispose()
+            if ($reply['id_token']) {
+                $reply['id_token'].Dispose()
             }
 
             # The API decides: only active admins (R62).
