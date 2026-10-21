@@ -168,7 +168,7 @@ function Import-PagerArchiveAlias {
             $applied = $false
             $changes = @($report.rows | Where-Object -FilterScript { $_.result -in @('added', 'updated') }).Count
             if ($PSCmdlet.ShouldProcess($summary, $action)) {
-                if ($changes -gt 0 -or $report.templates_created.Count -gt 0) {
+                if ($changes -gt 0 -or @($report.templates_created).Count -gt 0) {
                     Write-Progress -Activity 'Importing aliases' -Status "Applying $($rows.Count) rows"
                     $request.dry_run = $false
                     $request.plan = $report.plan
@@ -180,8 +180,8 @@ function Import-PagerArchiveAlias {
                 $applied = $true
             }
             Write-Progress -Activity 'Importing aliases' -Completed
-            foreach ($name in $report.repeated_names) {
-                Write-Verbose -Message "$($name.patterns.Count) aliases share one name: $($name.patterns -join ', ')"
+            foreach ($repeated in $report.repeated_names) {
+                Write-Verbose -Message "$(@($repeated.patterns).Count) aliases share one name: $($repeated.patterns -join ', ')"
             }
             foreach ($result in $report.rows) {
                 if ($result.result -eq 'invalid') {

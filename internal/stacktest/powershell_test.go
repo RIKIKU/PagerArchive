@@ -32,7 +32,8 @@ type psStack struct {
 	pwsh, modules, vault string
 	module               string // the module's manifest
 	bin                  string // a fake xdg-open, first on PATH
-	prefix               string // capcodes and addresses unique to this run
+	prefix               string // capcodes and addresses unique to this vault run
+	run                  string // and to this test run, so a kept stack can run them again
 }
 
 func setupPS(t *testing.T) *psStack {
@@ -52,6 +53,7 @@ func setupPS(t *testing.T) *psStack {
 	if ps.prefix == "" {
 		t.Fatalf("PA_STACK_PS_VAULT is secretstore or none, not %q", vault)
 	}
+	ps.run = fmt.Sprintf("%02d", time.Now().Unix()%100)
 	// The module opens the browser with xdg-open; this one writes the URL
 	// to $PA_TEST_URL_FILE for the test to visit.
 	script := "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$PA_TEST_URL_FILE\"\n"
@@ -208,17 +210,19 @@ func (w *psWindow) do(script string) []string {
 func (w *psWindow) line(match func(string) bool) string {
 	w.t.Helper()
 	timeout := time.After(2 * time.Minute)
+	var seen []string
 	for {
 		select {
 		case l, ok := <-w.lines:
 			if !ok {
-				w.t.Fatal("pwsh ended")
+				w.t.Fatalf("pwsh ended: %q", seen)
 			}
 			if match(l) {
 				return l
 			}
+			seen = append(seen, l)
 		case <-timeout:
-			w.t.Fatal("no such line from pwsh")
+			w.t.Fatalf("no such line from pwsh: %q", seen)
 		}
 	}
 }
@@ -258,9 +262,15 @@ func (b *browser) follow(start string, answers answer) (*url.URL, challenge) {
 	b.t.Helper()
 	next, _ := url.Parse(start)
 	for range 40 {
+		if os.Getenv("PA_DEBUG_FOLLOW") != "" {
+			b.t.Logf("follow: %s", next)
+		}
 		if m := flowPath.FindStringSubmatch(next.Path); m != nil && next.Host == b.s.authentik.Host {
 			c := b.executor(m[1], next.RawQuery, nil)
 			for c.Component != "xak-flow-redirect" {
+				if os.Getenv("PA_DEBUG_FOLLOW") != "" {
+					b.t.Logf("follow: challenge %s %.300s", c.Component, c.raw)
+				}
 				body := answers(c)
 				if body == nil {
 					return next, c
@@ -537,7 +547,7 @@ func TestPowerShellA53StatusAndRole(t *testing.T) {
 	owner := ps.owner(t)
 
 	// B isn't an admin: refused, nothing saved.
-	b := ps.inviteAndEnrol(t, owner, "ps"+ps.prefix+"-b@example.com")
+	b := ps.inviteAndEnrol(t, owner, "ps"+ps.prefix+"-b-"+ps.run+"@example.com")
 	home := ps.psHome(t)
 	w := ps.window(t, home)
 	out := ps.connect(w, b, "")
@@ -550,7 +560,7 @@ func TestPowerShellA53StatusAndRole(t *testing.T) {
 	t.Logf("A53: user B: %q", out)
 
 	// C is an admin, signed in with the module.
-	cEmail := "ps" + ps.prefix + "-c@example.com"
+	cEmail := "ps" + ps.prefix + "-c-" + ps.run + "@example.com"
 	c := ps.inviteAndEnrol(t, owner, cEmail)
 	cid := ps.userID(t, owner, cEmail)
 	role := func(r string) {
@@ -614,7 +624,7 @@ func TestPowerShellA54Import(t *testing.T) {
 	owner := ps.owner(t)
 	w := ps.window(t, ps.psHome(t))
 	ps.connect(w, owner, "")
-	p := "03" + ps.prefix + "00" // capcodes 03P00xx, unique to this run
+	p := "03" + ps.prefix + ps.run // capcodes 03PRRxx, unique to this run
 	csv := filepath.Join(w.dir, "a21.csv")
 	write := func(name, content string) string {
 		f := filepath.Join(w.dir, name)
@@ -768,8 +778,14 @@ func TestPowerShellA55Messages(t *testing.T) {
 			ID int64 `json:"id"`
 		} `json:"messages"`
 	}
-	if code, msg := owner.api(http.MethodGet, "/api/v1/messages?capcode=0100001&priority=Emergency", nil, &want); code != http.StatusOK {
-		t.Fatalf("browser list: %d %s", code, msg)
+	resp, err := owner.client.Get(ps.app.String() + "/api/v1/messages?capcode=0100001&priority=Emergency&limit=200")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = json.NewDecoder(resp.Body).Decode(&want)
+	resp.Body.Close()
+	if err != nil || resp.StatusCode != http.StatusOK {
+		t.Fatalf("browser list: %d %v", resp.StatusCode, err)
 	}
 	type message struct {
 		ID       int64

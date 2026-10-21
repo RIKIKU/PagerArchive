@@ -255,6 +255,23 @@ Describe 'Signing in over plain HTTP (guidelines section 9)' {
     }
 }
 
+Describe 'Reading tokens from Authentik''s replies' {
+    It 'decodes JSON escapes, blanks the value, and leaves the rest readable' {
+        $json = '{"device_code": "a\"b\\c\/dAe!#%", "user_code": "123456789", "interval": 5}'
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
+        $secure = & (Get-Module PagerArchive) { param($b) Read-PaSecretField -Buffer $b -Name 'device_code' } $bytes
+        $secure | ConvertFrom-SecureString -AsPlainText | Should -Be 'a"b\c/dAe!#%'
+        $text = [System.Text.Encoding]::UTF8.GetString($bytes)
+        $text | Should -Not -Match 'a\\"b'
+        ($text | ConvertFrom-Json).user_code | Should -Be '123456789'
+        ($text | ConvertFrom-Json).device_code | Should -Match '^x+$'
+    }
+    It 'returns nothing for a field that isn''t there' {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes('{"error": "invalid_grant"}')
+        & (Get-Module PagerArchive) { param($b) Read-PaSecretField -Buffer $b -Name 'access_token' } $bytes | Should -BeNullOrEmpty
+    }
+}
+
 Describe 'Wildcards to LIKE patterns' {
     It '<Wildcard> becomes <Like>' -ForEach @(
         @{ Wildcard = 'Station*'; Like = 'Station%'; Exact = $true }
