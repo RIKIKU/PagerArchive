@@ -38,7 +38,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 - **Wildcards on `-Name`** wherever it selects existing items, and the parameter's help says so (section 8). Matching is case-insensitive and case-preserving (SC04). **[pester]**
 - **Files** (from M9: icons) use `-Path`, which allows wildcards and has a `PSPath` alias, and `-LiteralPath`. Both are resolved through PowerShell's provider paths, so `~` and PowerShell drives work. **[review]**
 - **The default parameter set** is the one people use most at the prompt. **[review]**
-- **Commands that can return many items** (e.g. `Get-PagerArchiveMessage`) declare `SupportsPaging` (`-First`, `-Skip`). They fetch pages from the API only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` stops further requests. **[pester]**
+- **Commands that can return many items** (e.g. `Get-PagerArchiveMessage`) declare their own `-First` and `-Skip` parameters (`[uint64]`), not `SupportsPaging`, so there's no `-IncludeTotalCount` (owner, 2026-10-22): it puts a second kind of object in the output, and `@(...).Count` or `Measure-Object` already counts. They fetch pages from the API only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` stops further requests. **[pester]**
 - **Time ranges** use `-After` and `-Before`, typed `[datetimeoffset]`, so `(Get-Date).AddDays(-7)` just works. **[review]**
 
 ## 4. Changes, confirmation and `-Force`
