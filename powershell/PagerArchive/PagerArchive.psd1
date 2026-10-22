@@ -1,11 +1,11 @@
 @{
     RootModule           = 'PagerArchive.psm1'
-    ModuleVersion        = '0.8.0'
+    ModuleVersion        = '0.9.0'
     GUID                 = '5e2fd431-890a-492d-8fc8-f7217b3bb42d'
     Author               = 'PagerArchive contributors'
     CompanyName          = 'PagerArchive'
     Copyright            = '(c) PagerArchive contributors. MIT licence.'
-    Description          = 'Manage a PagerArchive server from PowerShell: sign in with your PagerArchive account, manage templates and aliases, import aliases through the pipeline, and search messages.'
+    Description          = 'Manage a PagerArchive server from PowerShell: sign in with your PagerArchive account, manage templates and aliases, import aliases through the pipeline, and search and watch messages.'
     CompatiblePSEditions = @('Core')
     PowerShellVersion    = '7.6'
     FormatsToProcess     = @('PagerArchive.Format.ps1xml')
@@ -24,6 +24,7 @@
         'Rename-PagerArchiveAlias'
         'Set-PagerArchiveAlias'
         'Set-PagerArchiveTemplate'
+        'Watch-PagerArchiveMessage'
     )
     AliasesToExport      = @(
         'Connect-Pa'
@@ -39,6 +40,7 @@
         'Rename-PaAlias'
         'Set-PaAlias'
         'Set-PaTemplate'
+        'Watch-PaMessage'
     )
     CmdletsToExport      = @()
     VariablesToExport    = @()

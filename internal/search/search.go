@@ -227,6 +227,7 @@ func categoryCodes(c profile.Category, codes, prefixes *[]string) {
 // Params builds the database query. n is the page size.
 func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.SearchMessagesParams, error) {
 	p := db.SearchMessagesParams{
+		OnlyIds:          []int64{},
 		Capcodes:         orEmpty(f.Capcode),
 		Aliases:          likeContains(f.Alias),
 		AliasLikes:       orEmpty(f.AliasLike),

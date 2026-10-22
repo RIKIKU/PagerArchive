@@ -47,7 +47,11 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	const admin = await (await browser.newContext()).newPage();
 	await admin.goto('/');
 	await admin.waitForURL((u) => u.origin === app && u.pathname === '/signin');
+	// Authentik's page draws its form when the flow executor answers: wait
+	// for that answer, not a fixed time (it can be slow after a cold start).
+	const flowAnswered = admin.waitForResponse((r) => r.url().includes('/api/v3/flows/executor/') && r.request().method() === 'GET', { timeout: 120_000 });
 	await admin.getByRole('button', { name: 'Set up the first admin' }).click();
+	await flowAnswered;
 	await expect(admin.locator('input[name="password"]')).toBeVisible();
 	await enrol(admin, request, OWNER, 'Owner Person');
 	await admin.waitForURL((u) => u.origin === app && u.pathname === '/');

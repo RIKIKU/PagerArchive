@@ -323,12 +323,17 @@ func (e *env) stream(query string) <-chan server.Message {
 	go func() {
 		defer resp.Body.Close()
 		sc := bufio.NewScanner(resp.Body)
+		event := ""
 		for sc.Scan() {
 			line := sc.Text()
 			if line == ": connected" {
 				close(ready)
 			}
-			if data, ok := strings.CutPrefix(line, "data: "); ok {
+			if e, ok := strings.CutPrefix(line, "event: "); ok {
+				event = e
+			}
+			// Only messages, as the browser listens: not ready or reconnect.
+			if data, ok := strings.CutPrefix(line, "data: "); ok && event == "message" {
 				var m server.Message
 				if json.Unmarshal([]byte(data), &m) == nil {
 					out <- m

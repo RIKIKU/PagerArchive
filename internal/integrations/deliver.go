@@ -75,7 +75,7 @@ func (s *Service) message(ctx context.Context, q *db.Queries, id int64) (*db.Sea
 	if err != nil {
 		return nil, err
 	}
-	p.OnlyID = &id
+	p.OnlyIds = []int64{id}
 	rows, err := q.SearchMessages(ctx, p)
 	if err != nil || len(rows) == 0 {
 		return nil, err

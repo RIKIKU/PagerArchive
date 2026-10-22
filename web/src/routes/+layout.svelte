@@ -15,12 +15,17 @@
 				.meta()
 				.then((m) => (meta = m))
 				.catch(() => {}); // 401 goes to the sign-in page
+		// A live list reloads meta when its stream reconnects, e.g. after a role
+		// change (ADR 0010 §4).
+		const update = (e: Event) => (meta = (e as CustomEvent<Meta>).detail);
+		window.addEventListener('pagerarchive:meta', update);
 		try {
 			const saved = localStorage.getItem('theme');
 			if (saved === 'light' || saved === 'dark') theme = saved;
 		} catch {
 			// storage unavailable: follow the system
 		}
+		return () => window.removeEventListener('pagerarchive:meta', update);
 	});
 
 	$effect(() => {

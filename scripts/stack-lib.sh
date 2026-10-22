@@ -34,6 +34,24 @@ stack_up() {
 		[ $(($(date +%s) - start)) -gt 300 ] && { echo "Authentik wasn't ready after 300 s" >&2; stack_compose logs --tail 30 authentik-server authentik-worker >&2; return 1; }
 		sleep 3
 	done
+	# On a cold start the flow executor can still take seconds to answer its
+	# first visitors after that (stack-e2e.sh once timed out on the
+	# enrolment page's spinner). Ready means it answers an anonymous visitor
+	# for the sign-in and the enrolment flow, three times in a row, each
+	# within 2 s.
+	for flow in pagerarchive-authentication pagerarchive-enrolment; do
+		ok=0
+		until [ $ok -ge 3 ]; do
+			if curl -sf -m 2 -H 'Accept: application/json' \
+				"http://127.0.0.1:9000/api/v3/flows/executor/$flow/?query=" 2>/dev/null | grep -q '"component"'; then
+				ok=$((ok + 1))
+			else
+				ok=0
+				[ $(($(date +%s) - start)) -gt 300 ] && { echo "Authentik's $flow flow didn't answer within 300 s" >&2; return 1; }
+				sleep 1
+			fi
+		done
+	done
 	stack_wait_api
 	echo "--- stack ready after $(($(date +%s) - start)) s"
 }

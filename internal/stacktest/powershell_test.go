@@ -305,7 +305,13 @@ func (b *browser) follow(start string, answers answer) (*url.URL, challenge) {
 // connect signs w in as b, in the browser as normal (A51).
 func (ps *psStack) connect(w *psWindow, b *browser, extra string) []string {
 	w.t.Helper()
-	w.send("Connect-PagerArchive -Uri '" + ps.app.String() + "' -AllowUnencryptedAuthentication " + extra)
+	return ps.connectTo(w, b, ps.app.String(), extra)
+}
+
+// connectTo is connect with the app at uri (e.g. through a proxy).
+func (ps *psStack) connectTo(w *psWindow, b *browser, uri, extra string) []string {
+	w.t.Helper()
+	w.send("Connect-PagerArchive -Uri '" + uri + "' -AllowUnencryptedAuthentication " + extra)
 	end, c := b.follow(w.browserURL(), b.signInAnswers())
 	if end == nil || end.Hostname() != "127.0.0.1" {
 		w.t.Fatalf("%s's browser stopped at %v %s %.300s", b.email, end, c.errorText(), c.raw)

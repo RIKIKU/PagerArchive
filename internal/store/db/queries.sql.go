@@ -2263,6 +2263,18 @@ func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAt
 	return err
 }
 
+const lastMessageID = `-- name: LastMessageID :one
+SELECT COALESCE(max(id), 0)::bigint FROM messages
+`
+
+// Where a live connection without after_id starts (ADR 0010 §2).
+func (q *Queries) LastMessageID(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, lastMessageID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const latestAliasChange = `-- name: LatestAliasChange :one
 SELECT coalesce(max(id), 0)::bigint FROM alias_changes WHERE alias_id = $1
 `
@@ -2787,6 +2799,37 @@ func (q *Queries) MatchingIntegrations(ctx context.Context, arg MatchingIntegrat
 	return items, nil
 }
 
+const messageIDsAfter = `-- name: MessageIDsAfter :many
+SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT $2::int
+`
+
+type MessageIDsAfterParams struct {
+	ID      int64
+	MaxRows int32
+}
+
+// A live connection's catch-up (ADR 0010 §3): messages stored after one,
+// oldest first. IDs are assigned in the order pages are stored.
+func (q *Queries) MessageIDsAfter(ctx context.Context, arg MessageIDsAfterParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, messageIDsAfter, arg.ID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const messageReceptions = `-- name: MessageReceptions :many
 SELECT r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
@@ -3295,7 +3338,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
-WHERE ($1::bigint IS NULL OR m.id = $1)
+WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   AND ($2::text IS NULL OR m.text ILIKE $2
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE $2))
   AND (cardinality($3::text[]) = 0 OR m.capcode = ANY($3::text[]))
@@ -3335,7 +3378,7 @@ LIMIT $30::int
 `
 
 type SearchMessagesParams struct {
-	OnlyID           *int64
+	OnlyIds          []int64
 	Q                *string
 	Capcodes         []string
 	Aliases          []string
@@ -3402,10 +3445,11 @@ type SearchMessagesRow struct {
 // R33. Every filter is optional (NULL or an empty array = any). An array
 // matches any of its values (R63a). Keyset pagination on (sent_at, id),
 // newest first. cat_filter keeps messages whose event_type is in the chosen
-// categories' codes, or (cat_other) in no category's codes.
+// categories' codes, or (cat_other) in no category's codes. only_ids, when
+// not empty, keeps just those messages (a live update, a catch-up batch).
 func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
 	rows, err := q.db.Query(ctx, searchMessages,
-		arg.OnlyID,
+		arg.OnlyIds,
 		arg.Q,
 		arg.Capcodes,
 		arg.Aliases,
