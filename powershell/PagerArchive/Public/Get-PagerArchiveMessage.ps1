@@ -158,10 +158,12 @@ function Get-PagerArchiveMessage {
 
         # Returns only this many messages, fetching no more pages than that
         # needs. Default: every message.
+        [PSDefaultValue(Help = 'every message')]
         [uint64] $First,
 
         # Leaves out this many matching messages, newest first, before
-        # returning any. Default: 0.
+        # returning any. Default: none.
+        [PSDefaultValue(Help = 'none')]
         [uint64] $Skip
     )
     begin {

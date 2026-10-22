@@ -119,6 +119,7 @@ function Import-PagerArchiveAlias {
         # @{ 'Agency name' = 'profile-name' }. Agencies not listed are text
         # only. An unknown profile name refuses the whole import. Default:
         # none.
+        [PSDefaultValue(Help = 'none')]
         [hashtable] $AgencyProfile = @{},
 
         # Apply differences to existing aliases (R58). Asks for

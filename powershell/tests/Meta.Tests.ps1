@@ -116,6 +116,8 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
         if ($Name -eq 'Get-PagerArchiveMessage') {
             $command.Parameters['First'].ParameterType | Should -Be ([uint64])
             $command.Parameters['Skip'].ParameterType | Should -Be ([uint64])
+            ($help.parameters.parameter | Where-Object -Property name -EQ 'First').defaultValue | Should -Be 'every message'
+            ($help.parameters.parameter | Where-Object -Property name -EQ 'Skip').defaultValue | Should -Be 'none'
         }
     }
     It 'has full comment-based help' {
@@ -135,6 +137,22 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
         foreach ($parameter in $command.Parameters.Keys | Where-Object -FilterScript { $_ -notin $common }) {
             $text = ($help.parameters.parameter | Where-Object -Property name -EQ $parameter).description | Out-String
             $text.Trim() | Should -Not -BeNullOrEmpty -Because "-$parameter needs help"
+        }
+    }
+    It 'shows no type''s empty value as a parameter''s default in its help ([PSDefaultValue] says the real one)' {
+        # A [uint64] with no value shows 0 and an empty [hashtable] @{}, which
+        # read as real values. A switch's False is its real default (off), as
+        # in PowerShell's own help, so switches are left as they are.
+        foreach ($parameter in $command.Parameters.Values | Where-Object -FilterScript { $_.Name -notin $common }) {
+            $type = $parameter.ParameterType
+            if ($type -eq [switch]) { continue }
+            $empty = @('@{}', '@()', '{}')
+            $element = if ($type.IsArray) { $type.GetElementType() } else { $type }
+            if ($element.IsValueType -and -not [Nullable]::GetUnderlyingType($element)) {
+                $empty += "$([Activator]::CreateInstance($element))"
+            }
+            $shown = "$(($help.parameters.parameter | Where-Object -Property name -EQ $parameter.Name).defaultValue)"
+            $shown | Should -Not -BeIn $empty -Because "-$($parameter.Name)'s help says its default is '$shown'"
         }
     }
     It 'has a table view and a default property set for each output type' {
