@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mutation proof for the security checks (M8): break one check at a time in
+# Mutation proof for the security checks (M8, M9): break one check at a time in
 # a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
@@ -32,11 +32,11 @@ mutate() {
 	case $test in
 	go:*)
 		out=$(go test -p 1 -count=1 -v -run "${test#go:}" ./internal/acceptance/ 2>&1)
-		printf '%s\n' "$out" | grep -E '^\s+[a-z_]+_test.go:[0-9]+: ' | grep -vE ': 401 invalid_token$|^\s+[a-z_]+_test.go:[0-9]+: A53: user B' | head -4
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | grep -vE ': 401 invalid_token$|^\s+[a-z0-9_]+_test.go:[0-9]+: (A53: user B|ADR 0010)' | head -4
 		;;
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
-		printf '%s\n' "$out" | grep -E '^\s*\[-\]|Expected' | head -4
+		printf '%s\n' "$out" | grep -E '\[-\]|Expected|Timed out' | head -4
 		;;
 	esac
 	if printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]'; then
@@ -66,6 +66,12 @@ mutate "token and cookie together allowed" internal/server/auth.go go:TestA53Pow
 				writeJSON(w, http.StatusBadRequest' 'if false {
 				writeJSON(w, http.StatusBadRequest'
 
+# M9 (ADR 0010 §4): live streams follow account changes and token expiry.
+mutate "a role change doesn't close live streams" internal/accounts/accounts.go go:TestM9RoleChangeClosesStreams \
+	'if err == nil && changed {' 'if false && err == nil && changed {'
+mutate "a bearer stream outlives its token" internal/server/browse.go go:TestM9BearerStreamEndsAtTokenExpiry \
+	'if exp, ok := tokenExpiry(r); ok {' 'if exp, ok := tokenExpiry(r); false && ok {'
+
 if [ -n "$PA_PWSH" ]; then
 	P=powershell/PagerArchive/Private
 	mutate "DPAPI save allowed off Windows" $P/SignInStore.ps1 pester:powershell/tests/SignIn.Tests.ps1 \
@@ -78,11 +84,13 @@ if [ -n "$PA_PWSH" ]; then
         return @{ Store = '"'"'dpapi'"'"''
 	mutate "plain HTTP allowed without -AllowUnencryptedAuthentication" $P/Connection.ps1 pester:powershell/tests/Module.Tests.ps1 \
 		'if ($Uri.Scheme -eq '"'"'http'"'"' -and -not $AllowUnencryptedAuthentication) {' 'if ($false) {'
+	mutate "the watch retries after deactivation instead of stopping" powershell/PagerArchive/Public/Watch-PagerArchiveMessage.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		"-in @('ConnectionError', 'LimitsExceeded')" "-in @('ConnectionError', 'LimitsExceeded', 'AuthenticationError')"
 else
 	echo "=== the module's mutations skipped: no pwsh (set PA_PWSH)"
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run TestA53PowerShellTokens ./internal/acceptance/ 2>&1 | tail -1
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9' ./internal/acceptance/ 2>&1 | tail -1
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1
 exit $survived
