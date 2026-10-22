@@ -134,6 +134,50 @@ test('R35c flags are shown to admins only', async ({ page, browser, request }) =
 	await expect(admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 });
 
+// ADR 0010 §4: a role change closes that person's live connections, and the
+// open list reconnects with the new role's view, without reloading the page.
+test('a demoted admin\'s open list loses admin-only details without a reload', async ({ browser, request }, info) => {
+	const n = projectN(info);
+	const marker = `DEMOTE-${n}-${Date.now()}`;
+	const email = `demoted-${marker.toLowerCase()}@example.test`;
+	const token = `e2e-demoted-${crypto.randomUUID()}`;
+	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
+		input: `INSERT INTO users (subject, email, email_key, name, role, invited_by)
+  SELECT 'e2e-${marker}', '${email}', '${email}', 'Demoted ${n}', 'admin', id FROM users WHERE subject = 'e2e-admin';
+INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE email_key = '${email}';`
+	});
+	await post(request, '0100004', `@@GARBLED ${marker} ONE`);
+	const ctx = await browser.newContext();
+	await ctx.addCookies([{ name: 'pa_session', value: token, url: URL }]);
+	const page = await ctx.newPage();
+	await page.goto(`/?q=${marker}`);
+	const list = page.getByTestId('message-list');
+	const adminLink = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' });
+	await expect(list.locator('article')).toHaveCount(1);
+	await expect(list.getByText('parse failed')).toHaveCount(1);
+	await expect(adminLink).toBeVisible();
+	await expect(page.getByText('Flags (admins only)')).toHaveCount(1);
+	await expect(page.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
+	await page.evaluate(() => ((window as unknown as { notReloaded: boolean }).notReloaded = true));
+
+	const users = await (await request.get(`${URL}/api/v1/admin/users`, { headers: asRole('admin') })).json();
+	const id = users.find((u: { email: string }) => u.email === email).id;
+	const start = Date.now();
+	const res = await request.put(`${URL}/api/v1/admin/users/${id}/role`, { headers: asRole('admin'), data: { role: 'user' } });
+	expect(res.status()).toBeLessThan(300);
+	await expect(list.getByText('parse failed')).toHaveCount(0, { timeout: 10_000 });
+	await expect(adminLink).toHaveCount(0);
+	await expect(page.getByText('Flags (admins only)')).toHaveCount(0);
+	console.log(`ADR 0010 §4: demoted; the open list showed the user's view ${Date.now() - start} ms later`);
+	await expect(page.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
+	await post(request, '0100004', `@@GARBLED ${marker} TWO`);
+	await expect(list.locator('article')).toHaveCount(2, { timeout: 2000 });
+	await expect(list.getByText('parse failed')).toHaveCount(0);
+	expect(await page.evaluate(() => (window as unknown as { notReloaded?: boolean }).notReloaded)).toBe(true);
+	await ctx.close();
+});
+
 // A29 in the browser: without a session the app sends you to sign in. An
 // admin exists here, so that's Authentik straight away. (No Authentik runs
 // here, so the sign-in page says it can't be reached.)

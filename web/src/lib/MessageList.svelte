@@ -97,8 +97,19 @@
 		let opened = false;
 		let timer: ReturnType<typeof setTimeout> | undefined;
 		es.onopen = () => {
-			// After a reconnect, reload so nothing sent meanwhile is missed.
-			if (opened) loadFirst(q);
+			// After a reconnect, reload so nothing sent meanwhile is missed, and
+			// what the role allows: a role change ends the stream (ADR 0010 §4).
+			// The header hears of it too (the Admin link).
+			if (opened) {
+				loadFirst(q);
+				api
+					.refreshMeta()
+					.then((m) => {
+						meta = m;
+						window.dispatchEvent(new CustomEvent<Meta>('pagerarchive:meta', { detail: m }));
+					})
+					.catch(() => {});
+			}
 			opened = true;
 			live = 'live';
 		};

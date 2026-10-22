@@ -546,6 +546,11 @@ let mePromise: Promise<Me> | undefined;
 
 export const api = {
 	meta: () => (metaPromise ??= get<Meta>('/api/v1/meta')),
+	// Meta again, e.g. after a live connection reconnects (a role change ends it).
+	refreshMeta: () => {
+		metaPromise = undefined;
+		return api.meta();
+	},
 	messages: (query: URLSearchParams, before?: string) => {
 		const q = new URLSearchParams(query);
 		if (before) q.set('before', before);
