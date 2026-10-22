@@ -4,7 +4,7 @@ Date: 2026-10-20, updated 2026-10-21
 
 ## Status
 
-Proposed on 2026-10-20. The owner answered its four questions and changed where the sign-in is saved on 2026-10-21 (commits 237aaed and 27d91b8), and this ADR was updated to match. The owner verifies the branch before it's merged.
+Accepted (owner, 2026-10-22). The owner answered its four questions and changed where the sign-in is saved on 2026-10-21 (commits 237aaed and 27d91b8), then, while testing, asked for local times in views (d87fb9b) and own `-First` and `-Skip` instead of `SupportsPaging` (cf39d1d). This ADR was updated to match.
 
 ## Context
 
