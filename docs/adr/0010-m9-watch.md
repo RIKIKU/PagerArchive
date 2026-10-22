@@ -4,7 +4,7 @@ Date: 2026-10-22
 
 ## Status
 
-Proposed. The owner answered the questions on 2026-10-22 (at the end); it stays proposed until the owner merges.
+Accepted (owner, 2026-10-23). The owner answered the questions on 2026-10-22 (at the end), asked for HttpClient, the system proxy and a reconnected warning (main 1a46365), and tested the watch on the live copy.
 
 ## Context
 
