@@ -176,38 +176,27 @@ function Get-PagerArchiveMessage {
     }
     end {
         # Every piped alias and capcode, in one search (A55).
-        $query = [ordered]@{
-            q           = $Text
-            capcode     = @($capcodes)
-            alias_like  = @()
-            agency_like = @()
-            group_like  = @()
-            priority    = @(foreach ($p in $Priority) { if ($p -eq 'None') { 'none' } else { $p } })
-            category    = @($Category)
-            job         = @($JobNumber)
-            from        = if ($PSBoundParameters.ContainsKey('After')) { $After.ToString('o') } else { $null }
-            to          = if ($PSBoundParameters.ContainsKey('Before')) { $Before.ToString('o') } else { $null }
-            unaliased   = if ($Unaliased) { 'true' } else { $null }
-            ignored     = if ($IncludeIgnored) { 'true' } else { $null }
-            flag        = @(foreach ($f in $Flag) { @{ ParseFailed = 'parse_failed'; AddressUnsplit = 'address_unsplit'; LocationMismatch = 'location_mismatch' }[$f] })
-            receptions  = 'true'
-            limit       = 200
-            before      = $null
+        $filter = @{
+            Text           = $Text
+            Capcode        = @($capcodes)
+            Alias          = @($aliases)
+            Agency         = $Agency
+            Group          = $Group
+            Priority       = $Priority
+            Category       = $Category
+            JobNumber      = $JobNumber
+            Unaliased      = $Unaliased
+            IncludeIgnored = $IncludeIgnored
+            Flag           = $Flag
         }
-        # Wildcards become LIKE patterns; a [set], which LIKE can't express,
-        # is checked here as well.
-        $check = @{}
-        foreach ($pair in @(@('alias_like', @($aliases), 'Alias'), @('agency_like', @($Agency), 'Agency'), @('group_like', @($Group), 'Group'))) {
-            $likes = foreach ($w in $pair[1]) {
-                if (-not $w) { continue }
-                $converted = ConvertTo-PaLikePattern -Wildcard $w
-                if (-not $converted.Exact) {
-                    $check[$pair[2]] = @($pair[1] | ForEach-Object -Process { [System.Management.Automation.WildcardPattern]::new($_, [System.Management.Automation.WildcardOptions]::IgnoreCase) })
-                }
-                $converted.Like
-            }
-            $query[$pair[0]] = @($likes)
-        }
+        $filter = New-PaMessageFilter @filter
+        $check = $filter.Check
+        $query = $filter.Query
+        $query.from = if ($PSBoundParameters.ContainsKey('After')) { $After.ToString('o') } else { $null }
+        $query.to = if ($PSBoundParameters.ContainsKey('Before')) { $Before.ToString('o') } else { $null }
+        $query.receptions = 'true'
+        $query.limit = 200
+        $query.before = $null
 
         # Our own -First and -Skip, not SupportsPaging, so there's no
         # -IncludeTotalCount (guidelines section 3).
@@ -222,13 +211,7 @@ function Get-PagerArchiveMessage {
                 $page = Invoke-PaApi -Method GET -Path '/api/v1/messages' -Query $query
                 foreach ($row in $page.messages) {
                     $message = ConvertTo-PaMessage -Row $row
-                    $match = $true
-                    foreach ($property in $check.Keys) {
-                        if (-not ($check[$property] | Where-Object -FilterScript { $_.IsMatch([string]$message.$property) })) {
-                            $match = $false
-                        }
-                    }
-                    if (-not $match) { continue }
+                    if (-not (Test-PaMessageFilter -Message $message -Check $check)) { continue }
                     $seen++
                     if ($seen -le $skip) { continue }
                     $message
