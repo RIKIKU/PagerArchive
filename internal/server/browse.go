@@ -481,8 +481,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	// since, or after the newest message now. Either runs after subscribing,
 	// so a page stored meanwhile is in the reads, announced afterwards, or
 	// both; IDs are announced in the order they're stored (postPage), so the
-	// hub's copy of any ID up to covered is skipped (ADR 0010 §3). The ready
-	// event tells the client covered, its next after_id.
+	// hub's copy of any ID up to covered is skipped (ADR 0010 §3). A catch-up
+	// event says how many messages the catch-up sends, before them; the
+	// ready event tells the client covered, its next after_id.
 	var covered int64
 	count := 0
 	if after == nil {
@@ -491,6 +492,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
+		// First the IDs that match, so the catch-up event can say how many
+		// follow before they do (R63b), then the messages themselves.
+		var matching []int64
 		for covered = *after; ; {
 			ids, err := s.Store.MessageIDsAfter(ctx, db.MessageIDsAfterParams{ID: covered, MaxRows: catchUpBatch})
 			if err != nil {
@@ -501,6 +505,22 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 			rows, err := s.search(ctx, f, nil, len(ids), ids)
+			if err != nil {
+				s.Log.Error("stream: catch-up", "error", err.Error())
+				return
+			}
+			for _, m := range rows {
+				matching = append(matching, m.ID)
+			}
+			covered = ids[len(ids)-1]
+			if len(ids) < catchUpBatch {
+				break
+			}
+		}
+		slices.Sort(matching)
+		fmt.Fprintf(w, "event: catch-up\ndata: {\"count\":%d}\n\n", len(matching))
+		for batch := range slices.Chunk(matching, catchUpBatch) {
+			rows, err := s.search(ctx, f, nil, len(batch), batch)
 			if err == nil {
 				slices.SortFunc(rows, func(a, b db.SearchMessagesRow) int { return cmp.Compare(a.ID, b.ID) })
 				err = send(rows)
@@ -513,10 +533,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			count += len(rows)
-			covered = ids[len(ids)-1]
-			if len(ids) < catchUpBatch {
-				break
-			}
 		}
 	}
 	fmt.Fprintf(w, "event: ready\ndata: {\"caught_up\":%d,\"last_id\":%d}\n\n", count, covered)

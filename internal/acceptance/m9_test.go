@@ -245,8 +245,9 @@ func TestM9BearerStreamEndsAtTokenExpiry(t *testing.T) {
 	t.Logf("ADR 0010 §4: the bearer stream sent reconnect (expired) %v after its token's expiry", ev.At.Sub(exp).Round(time.Millisecond))
 }
 
-// after_id: the matching messages stored since, oldest first, then ready
-// with the count and the next after_id, then live; each exactly once while pages keep
+// after_id: a catch-up event with how many follow, the matching messages
+// stored since, oldest first, then ready with the count and the next
+// after_id, then live; each exactly once while pages keep
 // arriving during the catch-up, and IDs only increase (ADR 0010 §3).
 func TestM9CatchUpExactlyOnce(t *testing.T) {
 	e := setup(t)
@@ -304,6 +305,16 @@ func TestM9CatchUpExactlyOnce(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	ch := e.sse(fmt.Sprintf("capcode=0100001&receptions=true&after_id=%d", first.MessageID), nil, token)
+	// First how many follow (R63b: the module's "Reconnected" warning says
+	// so before they come out), then exactly that many.
+	catchUp, before := until(t, ch, "catch-up", 30*time.Second)
+	if len(before) != 0 {
+		t.Errorf("%d events before catch-up", len(before))
+	}
+	var announced struct {
+		Count int `json:"count"`
+	}
+	_ = json.Unmarshal([]byte(catchUp.Data), &announced)
 	ready, replayed := until(t, ch, "ready", 30*time.Second)
 	wg.Wait()
 	close(errs)
@@ -315,8 +326,8 @@ func TestM9CatchUpExactlyOnce(t *testing.T) {
 		LastID int64 `json:"last_id"`
 	}
 	_ = json.Unmarshal([]byte(ready.Data), &count)
-	if count.Count != len(replayed) || count.Count < 225 {
-		t.Errorf("ready says %d caught up, %d messages before it", count.Count, len(replayed))
+	if count.Count != len(replayed) || count.Count < 225 || announced.Count != count.Count {
+		t.Errorf("catch-up said %d follow, ready says %d caught up, %d messages between", announced.Count, count.Count, len(replayed))
 	}
 	if last := replayed[len(replayed)-1].ID; count.LastID < mustAtoi(t, last) {
 		t.Errorf("ready says last_id %d, but %s was sent", count.LastID, last)
@@ -391,7 +402,7 @@ func TestM9CatchUpExactlyOnce(t *testing.T) {
 			duringIn++
 		}
 	}
-	t.Logf("ADR 0010 §3: caught up %d messages (count %d), then %d live; of the matching pages posted from 8 clients around the subscription, %d came in the catch-up and %d live; each matching page once, IDs increasing", len(replayed), count.Count, len(msgs)-len(replayed), duringIn, len(msgs)-len(replayed))
+	t.Logf("ADR 0010 §3: the catch-up event said %d follow; caught up %d messages (ready: %d), then %d live; of the matching pages posted from 8 clients around the subscription, %d came in the catch-up and %d live; each matching page once, IDs increasing", announced.Count, len(replayed), count.Count, len(msgs)-len(replayed), duringIn, len(msgs)-len(replayed))
 
 	// A bad after_id is refused.
 	if code, _, _ := e.bearer(http.MethodGet, "/api/v1/stream?after_id=x", token, nil); code != http.StatusBadRequest {
