@@ -146,10 +146,10 @@ Watch-PaMessage -JobNumber EX0000041 | Export-Csv job.csv -Append
 
 `Watch-PagerArchiveMessage` (`Watch-PaMessage`) outputs each new message the moment it arrives, as the same objects `Get-PagerArchiveMessage` returns, until you press Ctrl+C. It takes the same filters, except `-After`, `-Before`, `-First` and `-Skip`.
 
-- **A lost connection** gives one warning, then it keeps retrying (after 1, 2, 4, 8, 16, then every 30 seconds; `-Verbose` shows each try). When it's back it says so as an information message (`-InformationAction Continue` shows it), outputs the matching messages that arrived meanwhile, oldest first, and carries on. Each message comes out once. If more than 1,000 arrived meanwhile, it warns how many.
+- **A lost connection** gives one warning, then it keeps retrying (after 1, 2, 4, 8, 16, then every 30 seconds; `-Verbose` shows each try). When it's back, a second warning says how long it was down and how many messages follow ("Reconnected after 7 s; 3 messages that arrived meanwhile follow."); then it outputs the matching messages that arrived meanwhile, oldest first, and carries on. Each message comes out once.
 - **Signing in** is renewed as it goes, so a watch can run for days. It stops with an error, without retrying, if your account is deactivated (`deactivated`), you're no longer an admin (`powershell_admins_only`), or your sign-in has ended (`sign_in_ended`, for example revoked in Authentik; at the latest when the current 5-minute access token expires).
 - **Receive times:** each message has the receive times known when it arrived, usually the first receiver's. `Get-PagerArchiveMessage` shows later copies.
-- **Proxies:** the watch connects to PagerArchive directly; it doesn't use the system's proxy settings.
+- **Proxies:** like every other command, the watch uses the system's proxy settings: `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` if set, otherwise Windows' or macOS's own.
 - It's a convenience, not an alerting system: don't rely on it in place of an issued pager.
 
 ## Errors

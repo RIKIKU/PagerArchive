@@ -86,6 +86,10 @@ if [ -n "$PA_PWSH" ]; then
 		'if ($Uri.Scheme -eq '"'"'http'"'"' -and -not $AllowUnencryptedAuthentication) {' 'if ($false) {'
 	mutate "the watch retries after deactivation instead of stopping" powershell/PagerArchive/Public/Watch-PagerArchiveMessage.ps1 pester:powershell/tests/Watch.Tests.ps1 \
 		"-in @('ConnectionError', 'LimitsExceeded')" "-in @('ConnectionError', 'LimitsExceeded', 'AuthenticationError')"
+	mutate "the watch sends its token over plain HTTP without -AllowUnencryptedAuthentication" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		'-AllowUnencryptedAuthentication:([bool]$Connection.AllowUnencrypted)' '-AllowUnencryptedAuthentication'
+	mutate "the watch accepts any certificate" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		'$state.Client = [System.Net.Http.HttpClient]::new()' '$state.Client = [System.Net.Http.HttpClient]::new([System.Net.Http.HttpClientHandler]@{ ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator })'
 else
 	echo "=== the module's mutations skipped: no pwsh (set PA_PWSH)"
 fi

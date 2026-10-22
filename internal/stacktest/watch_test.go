@@ -15,7 +15,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -402,8 +404,8 @@ func (ps *psStack) disableInAuthentik(t *testing.T, username string) {
 }
 
 // A59. Watching from PowerShell: only matching pages, within 2 seconds; a
-// cut connection is retried with one warning and every page comes out
-// once; deactivation and demotion stop it with an error; a token expiry
+// cut connection is retried with a warning, a second says it's back and how
+// many follow, and every page comes out once; deactivation and demotion stop it with an error; a token expiry
 // mid-watch changes nothing; revocations in Authentik stop it by the next
 // expiry; Ctrl+C closes the connection.
 func TestPowerShellA59Watch(t *testing.T) {
@@ -418,7 +420,7 @@ func TestPowerShellA59Watch(t *testing.T) {
 		t.Fatalf("aliases: %q", out)
 	}
 	stops := map[string]string{} // what was measured, for the log
-	watchScript := `Watch-PaMessage -Capcode 0100001 -Verbose -InformationAction Continue`
+	watchScript := `Watch-PaMessage -Capcode 0100001 -Verbose`
 
 	// The watchers whose account changes, each an admin with their own window.
 	admin := func(tag string) (*browser, int64, *psWindow) {
@@ -486,20 +488,47 @@ func TestPowerShellA59Watch(t *testing.T) {
 	mainLog.wait("WARNING Lost the connection to PagerArchive", 5*time.Second)
 	time.Sleep(4 * time.Second)
 	proxy.start()
-	back := mainLog.wait("INFO Connected to PagerArchive again", 40*time.Second)
+	back := mainLog.wait("WARNING Reconnected after ", 40*time.Second)
 	time.Sleep(2 * time.Second)
 	pages := feed.finish()
 	time.Sleep(2 * time.Second)
 	slowest := exactlyOnce(t, "A59 cut", pages, mainLog.messages()[before:])
-	if n := mainLog.count("WARNING"); n != 1 {
-		t.Errorf("A59: %d warnings, want 1: %q", n, mainLog.text())
+	if n := mainLog.count("WARNING"); n != 2 {
+		t.Errorf("A59: %d warnings, want 2: %q", n, mainLog.text())
 	}
 	retries := mainLog.count("VERBOSE Reconnecting to PagerArchive")
 	if retries == 0 {
 		t.Errorf("A59: no verbose retry lines")
 	}
-	t.Logf("A59: connection cut for %v: 1 warning (%q), %d verbose retries, %q; all %d pages posted every 100 ms around the outage came out once, in order (slowest %v, from those posted during the outage)",
-		back.at.Sub(cut).Round(100*time.Millisecond), mainLog.wait("WARNING", 0).line, retries, back.line, len(pages), slowest.Round(time.Millisecond))
+	// The second warning comes before the pages it counts: every page posted
+	// while the connection was down comes out after it, and as many as it says
+	// come out before the first page posted once it was back.
+	var follow int
+	if m := regexp.MustCompile(`; (\d+|no) messages? (that )?arrived meanwhile`).FindStringSubmatch(back.line); m == nil {
+		t.Errorf("A59: %q doesn't say how many follow", back.line)
+	} else if m[1] != "no" {
+		follow, _ = strconv.Atoi(m[1])
+	}
+	postedAt := map[int64]time.Time{}
+	for _, p := range pages {
+		postedAt[p.id] = p.at
+	}
+	during := 0
+	for _, m := range mainLog.messages()[before:] {
+		if at := postedAt[m.ID]; at.After(cut) && at.Before(back.at) {
+			during++
+			if m.at.Before(back.at) {
+				t.Errorf("A59: page %d, posted during the outage, came out before the warning that it's back", m.ID)
+			}
+		}
+	}
+	// The count is what the server caught up on when the watch reconnected:
+	// within a few pages of those posted from the cut to the warning.
+	if follow == 0 || follow < during-5 || follow > during+5 {
+		t.Errorf("A59: %q, for %d pages posted while it was down", back.line, during)
+	}
+	t.Logf("A59: connection cut for %v: warnings %q then %q, %d verbose retries; %d pages were posted while it was down; all %d pages posted every 100 ms around the outage came out once, in order (slowest %v, from those posted during the outage)",
+		back.at.Sub(cut).Round(100*time.Millisecond), mainLog.wait("WARNING", 0).line, back.line, retries, during, len(pages), slowest.Round(time.Millisecond))
 
 	// Demotion and deactivation stop their watches with the API's code.
 	start := time.Now()
@@ -586,7 +615,7 @@ $child.Stop()
 	pages = feed.finish()
 	time.Sleep(2 * time.Second)
 	slowest = exactlyOnce(t, "A59 expiry", pages, mainLog.messages()[before:])
-	if mainLog.count("WARNING") != warnings || mainLog.count("INFO") != 1 {
+	if mainLog.count("WARNING") != warnings || mainLog.count("INFO") != 0 {
 		t.Errorf("A59: the token's expiry was noticed: %q", mainLog.text())
 	}
 	if mainLog.count("VERBOSE GET /api/v1/stream") != streams+1 {

@@ -17,10 +17,11 @@ function Watch-PagerArchiveMessage {
 
     If the connection is lost, it warns once and keeps retrying, waiting 1,
     2, 4, 8, 16 and then 30 seconds between tries (-Verbose shows each). When
-    it's back it says so (an information message: add -InformationAction
-    Continue to see it), outputs the matching messages that arrived
-    meanwhile, oldest first, and carries on. Each message comes out once. If
-    more than 1,000 arrived, it warns how many after outputting them.
+    it's back, a second warning says how long it was down and how many
+    messages follow; then it outputs the matching messages that arrived
+    meanwhile, oldest first, and carries on. Each message comes out once.
+
+    It uses the system's proxy settings, as every other command does.
 
     It renews your sign-in as it goes, quietly, so it can run for days. It
     stops with an error if your account is deactivated, you're no longer an
@@ -49,9 +50,9 @@ function Watch-PagerArchiveMessage {
     Watches every alias whose name starts with Station.
 
     .EXAMPLE
-    Watch-PagerArchiveMessage -Category 'Structure fire' -InformationAction Continue -Verbose
+    Watch-PagerArchiveMessage -Category 'Structure fire' -Verbose
 
-    Also shows when the connection comes back, and each retry while it's lost.
+    Also shows each retry while the connection is lost.
 
     .EXAMPLE
     Watch-PagerArchiveMessage -JobNumber EX0000041 | Export-Csv -Path job.csv -Append
@@ -230,6 +231,21 @@ function Watch-PagerArchiveMessage {
                             if (Test-PaMessageFilter -Message $message -Check $filter.Check) {
                                 $message
                             }
+                        } elseif ($next.Type -eq 'catch-up') {
+                            # Before the messages that arrived meanwhile: how many follow.
+                            $count = [long]($next.Data | ConvertFrom-Json).count
+                            if ($null -ne $lost) {
+                                $follow = switch ($count) {
+                                    0 { 'no messages arrived meanwhile' }
+                                    1 { '1 message that arrived meanwhile follows' }
+                                    default { '{0:N0} messages that arrived meanwhile follow' -f $count }
+                                }
+                                Write-Warning -Message "Reconnected after $(Format-PaDuration -Duration $lost.Elapsed); $follow."
+                                $lost = $null
+                            } elseif ($count -gt 1000) {
+                                # A quiet reconnect (the server's), with a lot to catch up.
+                                Write-Warning -Message ('{0:N0} messages arrived while reconnecting; they follow, oldest first.' -f $count)
+                            }
                         } elseif ($next.Type -eq 'ready') {
                             $ready = $next.Data | ConvertFrom-Json
                             if ($null -eq $last -or [long]$ready.last_id -gt $last) {
@@ -238,14 +254,12 @@ function Watch-PagerArchiveMessage {
                             $connected = $true
                             $attempt = 0
                             if ($null -ne $lost) {
-                                Write-Information -MessageData "Connected to PagerArchive again after $(Format-PaDuration -Duration $lost.Elapsed)." -Tags 'PagerArchive'
+                                # A server without the catch-up event.
+                                Write-Warning -Message "Reconnected after $(Format-PaDuration -Duration $lost.Elapsed)."
                                 $lost = $null
                             }
                             if ($null -ne $query.after_id) {
                                 Write-Verbose -Message "Caught up: $($ready.caught_up) messages arrived while reconnecting."
-                            }
-                            if ([long]$ready.caught_up -gt 1000) {
-                                Write-Warning -Message ('{0:N0} messages arrived while the connection was lost; they were output first, oldest first.' -f [long]$ready.caught_up)
                             }
                         } elseif ($next.Type -eq 'reconnect') {
                             # The server ended the stream on purpose (the token's

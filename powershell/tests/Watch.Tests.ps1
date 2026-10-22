@@ -1,8 +1,9 @@
 #Requires -Modules @{ ModuleName = 'Pester'; RequiredVersion = '5.9.1' }
 # Watch-PagerArchiveMessage (R63b, ADR 0010) against a test server on a real
 # local socket, played by this script: the request, chunked replies,
-# catch-up dedupe, backoff, refusals, renewals, silence, Ctrl+C and what
-# -Verbose and -Debug show. The watch runs in its own runspace, so this
+# catch-up dedupe, backoff and the warnings, refusals, renewals, silence,
+# the proxy, plain HTTP and certificate checks, Ctrl+C and what -Verbose
+# and -Debug show. The watch runs in its own runspace, so this
 # thread can answer it; Wait-PaRetry and Request-PaToken are replaced
 # there, so backoff takes milliseconds and no Authentik is needed. A59 runs
 # against the real stack in internal/stacktest.
@@ -29,12 +30,12 @@ BeforeAll {
     # terminating error ends the runspace's script, so it's in Streams.Error
     # and the state is Completed.
     function Start-TestWatch {
-        param([int] $Port, [hashtable] $Parameters = @{}, [double] $Silence = 60, [switch] $RenewalFails)
+        param([int] $Port, [hashtable] $Parameters = @{}, [double] $Silence = 60, [switch] $RenewalFails, [string] $Uri = "http://127.0.0.1:$Port", [bool] $AllowUnencrypted = $true)
         $secure = [securestring]::new()
         foreach ($c in $script:token.ToCharArray()) { $secure.AppendChar($c) }
         $connection = @{
-            Uri = "http://127.0.0.1:$Port"; AccessToken = $secure; ExpiresAt = [datetimeoffset]::UtcNow.AddHours(1)
-            Store = 'session'; AllowUnencrypted = $true; RenewalFails = [bool]$RenewalFails
+            Uri = $Uri; AccessToken = $secure; ExpiresAt = [datetimeoffset]::UtcNow.AddHours(1)
+            Store = 'session'; AllowUnencrypted = $AllowUnencrypted; RenewalFails = [bool]$RenewalFails
         }
         $waits = [System.Collections.Concurrent.ConcurrentQueue[int]]::new()
         $renewals = [System.Collections.Concurrent.ConcurrentQueue[datetimeoffset]]::new()
@@ -148,6 +149,10 @@ BeforeAll {
         Send-TestEvent $Conn 'ready' ('{"caught_up":' + $CaughtUp + ',"last_id":' + $LastId + '}')
     }
 
+    function Send-TestCatchUp($Conn, [long] $Count) {
+        Send-TestEvent $Conn 'catch-up' ('{"count":' + $Count + '}')
+    }
+
     function Send-TestRefusal($Conn, [int] $Status, [string] $Code, [string] $Message) {
         $body = [System.Text.Encoding]::UTF8.GetBytes((@{ error = $Message; code = $Code } | ConvertTo-Json -Compress))
         Send-TestBytes $Conn ([System.Text.Encoding]::ASCII.GetBytes("HTTP/1.1 $Status Refused`r`nContent-Type: application/json`r`nContent-Length: $($body.Length)`r`n`r`n") + $body)
@@ -221,6 +226,7 @@ Describe 'Watch-PagerArchiveMessage' {
         (Get-Query $conn.Request).after_id | Should -Be '12'
         Send-TestHead $conn
         # The server repeats 12, catches up 13, and the live stream repeats 13.
+        Send-TestCatchUp $conn 2
         foreach ($id in 12, 13) { Send-TestEvent $conn 'message' (New-StreamMessage $id) "$id" }
         Send-TestReady $conn -LastId 13 -CaughtUp 2
         foreach ($id in 13, 14, 11) { Send-TestEvent $conn 'message' (New-StreamMessage $id) "$id" }
@@ -241,32 +247,43 @@ Describe 'Watch-PagerArchiveMessage' {
         $conn.Client.Dispose()
     }
 
-    It 'retries with backoff: one warning, a verbose line per retry, an information message when back' {
+    It 'retries with backoff: one warning, a verbose line per retry, a second warning when back, before what follows' {
         $watch = Start-TestWatch -Port $port
         $conn = Receive-TestRequest $listener
         Send-TestHead $conn
         Send-TestReady $conn -LastId 1
         Start-Sleep -Milliseconds 200
         $conn.Client.Dispose()
-        # Down: 7 tries are refused (the connection closes before a reply).
-        for ($i = 1; $i -le 7; $i++) {
-            (Receive-TestRequest $listener).Client.Dispose()
+        # Down: 7 tries are refused (the connection closes before a reply;
+        # HttpClient itself makes up to 4 connections for each try).
+        while ($true) {
+            $conn = Receive-TestRequest $listener
+            if ($watch.Waits.Count -ge 8) { break }
+            $conn.Client.Dispose()
         }
-        $conn = Receive-TestRequest $listener
         Send-TestHead $conn
-        Send-TestReady $conn -LastId 1 -CaughtUp 0
-        Wait-Until { $watch.PS.Streams.Information.Count -ge 1 } -Because 'the information message'
+        Send-TestCatchUp $conn 3
+        Wait-Until { @(Get-TestItem $watch.PS.Streams.Warning).Count -ge 2 } -Because 'the reconnected warning'
+        $watch.Output.Count | Should -Be 0 -Because 'the warning comes before the messages that follow'
         $watch.Waits.ToArray() | Should -Be @(1, 2, 4, 8, 16, 30, 30, 30)
-        @(Get-TestItem $watch.PS.Streams.Warning).Count | Should -Be 1
         $watch.PS.Streams.Warning[0].Message | Should -Match "^Lost the connection to PagerArchive at http://127\.0\.0\.1:$port \(the server closed the connection\)\. Retrying until it's back"
+        $watch.PS.Streams.Warning[1].Message | Should -Match '^Reconnected after \d+ s; 3 messages that arrived meanwhile follow\.$'
         @(Get-TestItem $watch.PS.Streams.Verbose | Where-Object -Property Message -Match '^Reconnecting to PagerArchive in \d+ s \(attempt \d\)\.$').Count | Should -Be 8
-        @(Get-TestItem $watch.PS.Streams.Information).Count | Should -Be 1
-        [string]$watch.PS.Streams.Information[0].MessageData | Should -Match '^Connected to PagerArchive again after \d+ s\.$'
+        foreach ($id in 2, 3, 4) { Send-TestEvent $conn 'message' (New-StreamMessage $id) "$id" }
+        Send-TestReady $conn -LastId 4 -CaughtUp 3
+        Wait-Until { $watch.Output.Count -eq 3 } -Because 'the messages that arrived meanwhile'
+        Start-Sleep -Milliseconds 200
+        @(Get-TestItem $watch.PS.Streams.Warning).Count | Should -Be 2
+        @(Get-TestItem $watch.PS.Streams.Information).Count | Should -Be 0
         $watch.PS.InvocationStateInfo.State | Should -Be 'Running'
         $conn.Client.Dispose()
     }
 
-    It 'warns how many messages it caught up when more than 1,000 arrived meanwhile' {
+    It 'says how many follow when back: <Count>' -ForEach @(
+        @{ Count = 0; Expected = 'no messages arrived meanwhile' }
+        @{ Count = 1; Expected = '1 message that arrived meanwhile follows' }
+        @{ Count = 1234; Expected = '1?234 messages that arrived meanwhile follow' }
+    ) {
         $watch = Start-TestWatch -Port $port
         $conn = Receive-TestRequest $listener
         Send-TestHead $conn
@@ -274,10 +291,78 @@ Describe 'Watch-PagerArchiveMessage' {
         $conn.Client.Dispose()
         $conn = Receive-TestRequest $listener
         Send-TestHead $conn
-        Send-TestReady $conn -LastId 1235 -CaughtUp 1234
-        Wait-Until { @(Get-TestItem $watch.PS.Streams.Warning).Count -ge 2 } -Because 'the catch-up warning'
-        $watch.PS.Streams.Warning[1].Message | Should -BeLike '1?234 messages arrived while the connection was lost; they were output first, oldest first.'
+        Send-TestCatchUp $conn $Count
+        Wait-Until { @(Get-TestItem $watch.PS.Streams.Warning).Count -ge 2 } -Because 'the reconnected warning'
+        $watch.PS.Streams.Warning[1].Message | Should -BeLike "Reconnected after * s; $Expected."
         $conn.Client.Dispose()
+    }
+
+    It 'warns how many follow when more than 1,000 arrived during a quiet reconnect' {
+        $watch = Start-TestWatch -Port $port
+        $conn = Receive-TestRequest $listener
+        Send-TestHead $conn
+        Send-TestReady $conn -LastId 1
+        Send-TestEvent $conn 'reconnect' '{"reason":"behind"}'
+        $conn.Client.Dispose()
+        $conn = Receive-TestRequest $listener
+        Send-TestHead $conn
+        Send-TestCatchUp $conn 1500
+        Wait-Until { @(Get-TestItem $watch.PS.Streams.Warning).Count -ge 1 } -Because 'the catch-up warning'
+        $watch.PS.Streams.Warning[0].Message | Should -BeLike '1?500 messages arrived while reconnecting; they follow, oldest first.'
+        @(Get-TestItem $watch.PS.Streams.Warning).Count | Should -Be 1
+        $conn.Client.Dispose()
+    }
+
+    It 'goes through the system''s proxy, as every other command does' {
+        $default = [System.Net.Http.HttpClient]::DefaultProxy
+        try {
+            # The listener plays an HTTP proxy; the server's name doesn't resolve.
+            [System.Net.Http.HttpClient]::DefaultProxy = [System.Net.WebProxy]::new("http://127.0.0.1:$port")
+            $watch = Start-TestWatch -Port $port -Uri 'http://pagerarchive.invalid:8095'
+            $conn = Receive-TestRequest $listener
+            $conn.Request | Should -Match "^GET http://pagerarchive\.invalid:8095/api/v1/stream\?\S+ HTTP/1\.1`r`n"
+            $conn.Request | Should -Match "`r`nAuthorization: Bearer $([regex]::Escape($script:token))`r`n"
+            Send-TestHead $conn
+            Send-TestReady $conn -LastId 1
+            Send-TestEvent $conn 'message' (New-StreamMessage 2) '2'
+            Wait-Until { $watch.Output.Count -eq 1 } -Because 'a message through the proxy'
+            $conn.Client.Dispose()
+        } finally {
+            [System.Net.Http.HttpClient]::DefaultProxy = $default
+        }
+    }
+
+    It 'refuses plain HTTP unless the sign-in allowed it (-AllowUnencryptedAuthentication), before connecting' {
+        $watch = Start-TestWatch -Port $port -AllowUnencrypted $false
+        Wait-Until { $watch.PS.InvocationStateInfo.State -ne 'Running' } -Because 'the watch to stop'
+        $watch.PS.Streams.Error[0].FullyQualifiedErrorId | Should -Be 'unencrypted_refused,Watch-PagerArchiveMessage'
+        $listener.Pending() | Should -BeFalse -Because 'nothing was sent'
+    }
+
+    It 'checks the server''s certificate as strictly as every other command' {
+        # A certificate for localhost that nothing trusts.
+        $key = [System.Security.Cryptography.RSA]::Create(2048)
+        $csr = [System.Security.Cryptography.X509Certificates.CertificateRequest]::new('CN=localhost', $key, 'SHA256', [System.Security.Cryptography.RSASignaturePadding]::Pkcs1)
+        $names = [System.Security.Cryptography.X509Certificates.SubjectAlternativeNameBuilder]::new()
+        $names.AddDnsName('localhost')
+        $csr.CertificateExtensions.Add($names.Build())
+        $made = $csr.CreateSelfSigned([datetimeoffset]::UtcNow.AddDays(-1), [datetimeoffset]::UtcNow.AddDays(1))
+        $cert = [System.Security.Cryptography.X509Certificates.X509CertificateLoader]::LoadPkcs12($made.Export('Pfx'), $null)
+        $watch = Start-TestWatch -Port $port -Uri "https://localhost:$port"
+        $task = $listener.AcceptTcpClientAsync()
+        $task.Wait(10000) | Should -BeTrue
+        $ssl = [System.Net.Security.SslStream]::new($task.Result.GetStream(), $false)
+        try {
+            $ssl.AuthenticateAsServerAsync($cert).Wait(10000)
+        } catch {
+            $null = $_  # the watch refuses the certificate
+        }
+        Wait-Until { $watch.PS.InvocationStateInfo.State -ne 'Running' } -Because 'the watch to stop'
+        $err = $watch.PS.Streams.Error[0]
+        $err.FullyQualifiedErrorId | Should -Be 'server_unreachable,Watch-PagerArchiveMessage'
+        $err.Exception.Message | Should -Match 'certificate'
+        $ssl.Dispose()
+        $task.Result.Dispose()
     }
 
     It 'stops with the API''s error when <Case>, without retrying' -ForEach @(
