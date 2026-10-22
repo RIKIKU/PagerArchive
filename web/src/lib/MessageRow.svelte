@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Message } from './api.ts';
 	import { date, time, isoAttr } from './format.ts';
+	import AgencyIcon from './AgencyIcon.svelte';
 	import PriorityBadge from './PriorityBadge.svelte';
 
 	let { m, tz, fresh = false }: { m: Message; tz: string; fresh?: boolean } = $props();
@@ -18,6 +19,7 @@
 			<span class="time">{time(m.sent_at, tz)}</span>
 		</time>
 		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+		{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 		<a id="m{m.id}-who" class="who" href={whoHref} style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a>
 		{#if m.group}<span class="group">{m.group}</span>{/if}
 	</header>

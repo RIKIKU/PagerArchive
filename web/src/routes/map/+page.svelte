@@ -3,6 +3,7 @@
 	import { api, type Message, type Meta } from '#lib/api.ts';
 	import { criteria, rangeProblem } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import Filters from '#lib/Filters.svelte';
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
@@ -104,6 +105,7 @@
 			<li>
 				<a href="/messages/{m.id}">
 					<span class="when"><time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time></span>
+					{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 					<span class="who">{m.alias ?? m.capcode}</span>
 					<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
 					<span class="text">{m.display_text}</span>

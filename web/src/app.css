@@ -16,6 +16,9 @@
 	--warn-bg: #fff0d6;
 	--warn-fg: #6b3d00;
 	--ok-fg: #2e7d32;
+	/* Template icons sit on a light tile in both themes, so dark artwork stays
+	   visible (R66): it isn't redefined for dark mode. */
+	--icon-tile: #ffffff;
 	--mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
 	/* Type scale: components use these, never their own sizes (CLAUDE.md). */
 	--text-xxs: 0.75rem;

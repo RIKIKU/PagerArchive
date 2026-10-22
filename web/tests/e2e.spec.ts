@@ -5,6 +5,8 @@
 import { test, expect, type Browser, type BrowserContextOptions, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
 const SESSIONS = { user: process.env.PA_USER_SESSION ?? '', admin: process.env.PA_ADMIN_SESSION ?? '' };
@@ -283,17 +285,19 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(240_000); // 26 views
+			test.setTimeout(270_000); // 29 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			const aliasID = (await res.json()).messages[0].alias_id;
 			const users = await request.get(`${URL}/api/v1/admin/users`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
 			const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
+			const templates = await request.get(`${URL}/api/v1/admin/templates`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
+			const templateID = (await templates.json()).find((t: { name: string }) => t.name === 'Example Fire').id;
 			// M6: a waiting alias request, so the review screen and My requests
 			// are checked with one; rejected at the end so it doesn't linger.
 			const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}`;
@@ -342,7 +346,9 @@ for (const scheme of ['light', 'dark'] as const) {
 									? `/admin/users/${userID}/deactivate-tree`
 									: view === 'admin-alias'
 										? `/admin/aliases/${aliasID}`
-										: view;
+										: view === 'admin-template'
+											? `/admin/templates/${templateID}`
+											: view;
 					await page.goto(path);
 					// Pages with a live stream never go network-idle; wait for content.
 					await expect(page.locator('main h1').first()).toBeVisible();
@@ -731,7 +737,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -746,10 +752,11 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
+			['Templates', 'Templates'],
 			['Alias requests', 'Alias requests'],
 			['Receiving clients', 'Receiving clients'],
 			['Retention', 'Retention'],
@@ -1295,4 +1302,201 @@ UPDATE invitations SET status = 'used', used_at = now(), used_by = (SELECT id FR
 	await admin.getByRole('button', { name: 'Deactivate 5 people' }).click();
 	await expect(admin.getByRole('status')).toContainText('Done: 5 people deactivated');
 	await admin.context().close();
+});
+
+// M10 (ADR 0011). The made-up test icons are in testdata/icons.
+const testIcon = (name: string) => join(process.cwd(), '..', 'testdata', 'icons', name);
+
+// A56 in the browser (R64): the admin adds a template, which is listed with 0
+// aliases; an alias moved to it shows its agency at once; deleting a template
+// that aliases use is refused with how many use it; a user can't change one.
+// Each project has its own template and alias ("Rescue test <n>", 05000<n>1).
+test('A56 admin manages templates', async ({ page, browser, request }, info) => {
+	const n = projectN(info);
+	const name = `Example Rescue ${n}`;
+	const job = uniqueJob();
+	await post(request, `05000${n}1`, `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN4`);
+
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin');
+	await admin.getByTestId('admin-screens').getByRole('link', { name: 'Templates' }).click();
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText('Templates');
+	await admin.getByRole('button', { name: 'Add template' }).click();
+	const form = admin.getByTestId('template-form');
+	await form.getByLabel('Name').fill(name);
+	await form.getByLabel('Agency', { exact: true }).fill('Example Rescue Service');
+	await expect(form.getByLabel('Agency profile')).toHaveValue('');
+	await form.getByRole('button', { name: 'Add template' }).click();
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(`Template “${name}”`);
+	await expect(admin.getByRole('status')).toContainText('Template added');
+	await admin.getByRole('link', { name: 'All templates' }).click();
+	const row = admin.getByTestId('template-table').locator(`tr[data-template="${name}"]`);
+	await expect(row.locator('td')).toHaveText([name, 'None', 'Example Rescue Service', 'None', 'None (text only)', '0']);
+	await admin.screenshot({ path: info.outputPath('a56-templates.png'), fullPage: true });
+
+	// The alias moves to it, and its page shows the new agency at once.
+	await admin.goto(`/admin/aliases/${await aliasIdByName(request, `Rescue test ${n}`)}`);
+	const aliasForm = admin.getByTestId('alias-form');
+	await aliasForm.getByLabel('Template').selectOption({ label: `${name} (Example Rescue Service)` });
+	await aliasForm.getByRole('button', { name: 'Save' }).click();
+	await expect(admin.getByRole('status')).toContainText('Saved');
+	await page.goto(`/?job=${job}`);
+	await page.getByTestId('message-list').locator('article a.open').first().click();
+	await expect(page.locator('dt:text-is("Agency") + dd')).toHaveText('Example Rescue Service');
+	await admin.goto('/admin/templates');
+	await expect(row.locator('td').last()).toHaveText('1');
+
+	// Deleting "Example Fire" is refused, saying how many aliases use it.
+	const listed = await (await request.get(`${URL}/api/v1/admin/templates`, { headers: asRole('admin') })).json();
+	const fire = listed.find((t: { name: string }) => t.name === 'Example Fire');
+	await admin.getByTestId('template-table').getByRole('link', { name: 'Example Fire' }).click();
+	await admin.getByRole('button', { name: 'Delete…' }).click();
+	await admin.getByRole('button', { name: 'Delete template' }).click();
+	await expect(admin.getByRole('alert')).toHaveText(`"Example Fire" can't be deleted: ${fire.aliases} aliases use it. Move them to another template first.`);
+	await expect(admin.getByRole('heading', { level: 1 })).toHaveText('Template “Example Fire”');
+
+	// A user can't change a template through the API, nor open the screens.
+	const refused = await request.patch(`${URL}/api/v1/admin/templates/${fire.id}`, { headers: asRole('user'), data: { agency: 'Changed by B' } });
+	expect(refused.status()).toBe(403);
+	await page.goto('/admin/templates');
+	await expect(page.getByRole('alert')).toHaveText('This page is for admins only.');
+	await admin.context().close();
+});
+
+// A57 in the browser (R65, R66): the admin uploads the made-up 32×32 test
+// icon to "Example Fire". The message list shows it beside "Station 1" on a
+// light tile, in light and dark mode (axe passes), with the text
+// alternative "Example Fire Service". Every request the page makes is to
+// PagerArchive, and its CSP stops a request anywhere else. The icon is
+// fetched once and then reused. An SVG, a 200 KB PNG and a text file renamed
+// .png are each refused with the reason, and the icon is unchanged.
+test('A57 icons shown', async ({ browser, request }, info) => {
+	test.setTimeout(90_000);
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/admin/templates');
+	await admin.getByTestId('template-table').getByRole('link', { name: 'Example Fire' }).click();
+	const fileInput = admin.getByLabel(/^(Add an icon|Replace it with)$/);
+	await fileInput.setInputFiles(testIcon('example-icon.png'));
+	await admin.getByRole('button', { name: /^(Upload|Replace) icon$/ }).click();
+	await expect(admin.getByRole('status').filter({ hasText: 'Icon saved' })).toBeVisible();
+	const current = admin.getByTestId('current-icon').getByRole('img', { name: 'Example Fire Service' });
+	await expect(current).toBeVisible();
+	const src = (await current.getAttribute('src'))!;
+	expect(src).toMatch(/^\/api\/v1\/icons\/[0-9a-f]{64}\.png$/);
+
+	for (const [file, reason] of [
+		['example.svg', "SVG icons aren't accepted, because an SVG file can hold scripts and links to other sites."],
+		['large-200kb.png', 'An icon file can be at most 100 KB, and this one is larger.'],
+		['not-an-image.png', 'Icons must be PNG, ICO, GIF, JPEG or WebP images, and this file is none of those.']
+	]) {
+		await fileInput.setInputFiles(testIcon(file));
+		await admin.getByRole('button', { name: 'Replace icon' }).click();
+		await expect(admin.getByTestId('icon-error'), file).toContainText(reason);
+		await expect(current, file).toHaveAttribute('src', src);
+	}
+	await admin.context().close();
+
+	// Something that isn't PagerArchive, which no request may reach.
+	const http = await import('node:http');
+	let elsewhere = 0;
+	const other = http.createServer((_req, res) => {
+		elsewhere++;
+		res.writeHead(200, { 'Content-Type': 'image/png' }).end();
+	});
+	await new Promise<void>((r) => other.listen(0, '127.0.0.1', r));
+	const probe = `http://127.0.0.1:${(other.address() as { port: number }).port}/elsewhere.png`;
+	// The browsers reach PagerArchive through a proxy that counts the icon
+	// requests the server gets: each browser fetches an icon once.
+	const apiPort = Number(new globalThis.URL(URL).port);
+	let iconFetches = 0;
+	const proxy = http.createServer((req, res) => {
+		if (req.url?.startsWith('/api/v1/icons/')) iconFetches++;
+		const up = http.request({ host: '127.0.0.1', port: apiPort, path: req.url, method: req.method, headers: req.headers }, (r) => {
+			res.writeHead(r.statusCode ?? 502, r.headers);
+			r.pipe(res);
+		});
+		up.on('error', () => res.destroy());
+		req.pipe(up);
+	});
+	await new Promise<void>((r) => proxy.listen(0, '127.0.0.1', r));
+	const app = `http://127.0.0.1:${(proxy.address() as { port: number }).port}`;
+
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+	try {
+		for (const scheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { colorScheme: scheme, baseURL: app });
+			const page = await ctx.newPage();
+			const origins = new Set<string>();
+			page.on('request', (r) => {
+				if (!r.url().startsWith('data:')) origins.add(new globalThis.URL(r.url()).origin);
+			});
+			const before = iconFetches;
+			const doc = await page.goto('/');
+			expect(doc?.headers()['content-security-policy']).toContain("img-src 'self' data:");
+			await waitLive(page);
+			const row = page.getByTestId('message-list').locator('article').filter({ hasText: job });
+			const img = row.getByRole('img', { name: 'Example Fire Service' });
+			await expect(img).toBeVisible();
+			await expect(img).toHaveAttribute('src', src);
+			await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBe(64);
+			// Beside the alias name, on a light tile in both themes.
+			await expect(img.locator('xpath=../following-sibling::a[1]')).toHaveText('Station 1');
+			expect(await img.locator('..').evaluate((t) => getComputedStyle(t).backgroundColor)).toBe('rgb(255, 255, 255)');
+			await row.screenshot({ path: info.outputPath(`a57-row-${scheme}.png`) });
+			await page.screenshot({ path: info.outputPath(`a57-list-${scheme}.png`) });
+			const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+			expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), scheme).toEqual([]);
+
+			// Fetched once: the job view and a reload, new documents, reuse it.
+			await page.goto(`/jobs/${job}`);
+			await expect(page.getByRole('img', { name: 'Example Fire Service' }).first()).toBeVisible();
+			await page.reload();
+			await expect(page.getByRole('img', { name: 'Example Fire Service' }).first()).toBeVisible();
+			await expect.poll(() => page.getByRole('img', { name: 'Example Fire Service' }).first().evaluate((i: HTMLImageElement) => i.naturalWidth)).toBe(64);
+			const fetched = iconFetches - before;
+			expect(fetched, 'icon requests the server got for three page loads').toBe(1);
+			const requested = [...origins];
+			expect(requested, 'origins the page requested').toEqual([app]);
+
+			// The page's Content-Security-Policy stops an image from anywhere else.
+			const directive = await page.evaluate(
+				(u) =>
+					new Promise<string>((resolve) => {
+						document.addEventListener('securitypolicyviolation', (e) => resolve(e.effectiveDirective), { once: true });
+						const i = new Image();
+						i.src = u;
+						document.body.append(i);
+						setTimeout(() => resolve('not blocked'), 5000);
+					}),
+				probe
+			);
+			expect(directive).toBe('img-src');
+			console.log(`A57 (${scheme}): icon on a white tile, fetched ${fetched} time(s) for 3 page loads, origins requested ${requested.join(' ')}, another site blocked by ${directive}`);
+
+			// Until it changes: a new icon has a new URL, which is fetched.
+			if (scheme === 'dark') {
+				const fire = (await (await request.get(`${URL}/api/v1/admin/templates`, { headers: asRole('admin') })).json()).find(
+					(t: { name: string }) => t.name === 'Example Fire'
+				);
+				const set = async (file: string) => {
+					const res = await request.put(`${URL}/api/v1/admin/templates/${fire.id}/icon`, { headers: asRole('admin'), data: readFileSync(testIcon(file)) });
+					expect(res.status(), file).toBe(200);
+					return (await res.json()).icon as string;
+				};
+				const changed = await set('wide.webp');
+				expect(changed).not.toBe(src);
+				await page.goto(`/jobs/${job}`);
+				await expect(page.getByRole('img', { name: 'Example Fire Service' }).first()).toHaveAttribute('src', changed);
+				expect(iconFetches - before, 'after the icon changed').toBe(2);
+				expect(await set('example-icon.png')).toBe(src);
+			}
+			await ctx.close();
+		}
+		expect(elsewhere, 'requests that reached the other site').toBe(0);
+	} finally {
+		other.close();
+		proxy.closeAllConnections();
+		proxy.close();
+	}
 });
