@@ -142,6 +142,11 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/admin/templates":        s.adminOnly(s.createTemplate),
 		"PATCH /api/v1/admin/templates/{id}":  s.adminOnly(s.editTemplate),
 		"DELETE /api/v1/admin/templates/{id}": s.adminOnly(s.deleteTemplate),
+		// Template icons (R64-R66, ADR 0011).
+		"PUT /api/v1/admin/templates/{id}/icon":    s.adminOnly(s.putTemplateIcon),
+		"DELETE /api/v1/admin/templates/{id}/icon": s.adminOnly(s.deleteTemplateIcon),
+		"GET /api/v1/admin/agency-profiles":        s.adminOnly(s.agencyProfiles),
+		"GET /api/v1/icons/{file}":                 s.getIcon,
 	} {
 		mux.HandleFunc(pattern, s.signedIn(h))
 	}

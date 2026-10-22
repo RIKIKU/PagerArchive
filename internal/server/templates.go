@@ -9,9 +9,9 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 )
 
-// Templates and the one-batch import for admins (R63, R64; ADR 0009 §8):
-// what the removed template and alias commands did, for the PowerShell
-// module now and M10's template screens later.
+// Templates and the one-batch import for admins (R63, R64; ADR 0009 §8): what
+// the removed template and alias commands did, for the PowerShell module and
+// the template screens in Administration (ADR 0011).
 
 // AdminTemplate is a template with how many aliases use it.
 type AdminTemplate struct {
@@ -20,6 +20,7 @@ type AdminTemplate struct {
 	Agency        string  `json:"agency"`
 	Colour        *string `json:"colour"`
 	AgencyProfile *string `json:"agency_profile"`
+	Icon          *string `json:"icon"` // its URL, or null (R65)
 	Aliases       int64   `json:"aliases"`
 }
 
@@ -41,7 +42,7 @@ func (s *Server) adminTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]AdminTemplate, len(rows))
 	for i, t := range rows {
-		out[i] = AdminTemplate{ID: t.ID, Name: t.Name, Agency: t.Agency, Colour: t.Colour, AgencyProfile: t.AgencyProfile, Aliases: t.AliasCount}
+		out[i] = AdminTemplate{ID: t.ID, Name: t.Name, Agency: t.Agency, Colour: t.Colour, AgencyProfile: t.AgencyProfile, Icon: iconURL(t.IconSha256), Aliases: t.AliasCount}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -57,7 +57,7 @@ func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]TemplateChoice, len(rows))
 	for i, t := range rows {
-		out[i] = TemplateChoice{ID: t.ID, Name: t.Name, Agency: t.Agency, Icon: t.Icon, Colour: t.Colour}
+		out[i] = TemplateChoice{ID: t.ID, Name: t.Name, Agency: t.Agency, Icon: iconURL(t.IconSha256), Colour: t.Colour}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

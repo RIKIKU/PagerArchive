@@ -108,7 +108,7 @@ func TestAliasImport(t *testing.T) {
 	tpls, _ := e.st.ListTemplates(e.ctx)
 	for _, tp := range tpls {
 		// The CSV's icon column is ignored (R30): icons are images (R65).
-		if tp.Name == "WX" && (tp.AgencyProfile != nil || tp.Icon != nil || s(tp.Colour) != "#1565c0") {
+		if tp.Name == "WX" && (tp.AgencyProfile != nil || tp.IconSha256 != nil || s(tp.Colour) != "#1565c0") {
 			t.Errorf("WX template: %+v", tp)
 		}
 	}

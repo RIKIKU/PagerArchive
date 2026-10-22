@@ -470,7 +470,7 @@ func (q *Queries) AliasRequestForUpdate(ctx context.Context, id int64) (AliasReq
 }
 
 const aliasView = `-- name: AliasView :one
-SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon, t.colour
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon_sha256, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE a.id = $1
@@ -485,7 +485,7 @@ type AliasViewRow struct {
 	TemplateID   *int64
 	TemplateName *string
 	Agency       *string
-	Icon         *string
+	IconSha256   *string
 	Colour       *string
 }
 
@@ -502,7 +502,7 @@ func (q *Queries) AliasView(ctx context.Context, id int64) (AliasViewRow, error)
 		&i.TemplateID,
 		&i.TemplateName,
 		&i.Agency,
-		&i.Icon,
+		&i.IconSha256,
 		&i.Colour,
 	)
 	return i, err
@@ -1254,15 +1254,14 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) er
 }
 
 const createTemplate = `-- name: CreateTemplate :one
-INSERT INTO templates (name, agency, icon, colour, agency_profile)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO templates (name, agency, colour, agency_profile)
+VALUES ($1, $2, $3, $4)
 RETURNING id
 `
 
 type CreateTemplateParams struct {
 	Name          string
 	Agency        string
-	Icon          *string
 	Colour        *string
 	AgencyProfile *string
 }
@@ -1271,7 +1270,6 @@ func (q *Queries) CreateTemplate(ctx context.Context, arg CreateTemplateParams) 
 	row := q.db.QueryRow(ctx, createTemplate,
 		arg.Name,
 		arg.Agency,
-		arg.Icon,
 		arg.Colour,
 		arg.AgencyProfile,
 	)
@@ -1775,6 +1773,17 @@ func (q *Queries) GetSetting(ctx context.Context, key string) (string, error) {
 	var value string
 	err := row.Scan(&value)
 	return value, err
+}
+
+const iconBySHA256 = `-- name: IconBySHA256 :one
+SELECT icon_png FROM templates WHERE icon_sha256 = $1 LIMIT 1
+`
+
+func (q *Queries) IconBySHA256(ctx context.Context, iconSha256 *string) ([]byte, error) {
+	row := q.db.QueryRow(ctx, iconBySHA256, iconSha256)
+	var icon_png []byte
+	err := row.Scan(&icon_png)
+	return icon_png, err
 }
 
 const insertAliasChange = `-- name: InsertAliasChange :one
@@ -2556,7 +2565,7 @@ func (q *Queries) ListInvitations(ctx context.Context, inviter *int64) ([]ListIn
 }
 
 const listTemplates = `-- name: ListTemplates :many
-SELECT t.id, t.name, t.agency, t.icon, t.colour, t.agency_profile,
+SELECT t.id, t.name, t.agency, t.icon_sha256, t.colour, t.agency_profile,
        (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
 FROM templates t
 ORDER BY t.name
@@ -2566,7 +2575,7 @@ type ListTemplatesRow struct {
 	ID            int64
 	Name          string
 	Agency        string
-	Icon          *string
+	IconSha256    *string
 	Colour        *string
 	AgencyProfile *string
 	AliasCount    int64
@@ -2585,7 +2594,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]ListTemplatesRow, error)
 			&i.ID,
 			&i.Name,
 			&i.Agency,
-			&i.Icon,
+			&i.IconSha256,
 			&i.Colour,
 			&i.AgencyProfile,
 			&i.AliasCount,
@@ -3333,7 +3342,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
-       t.agency, t.icon, t.colour, t.agency_profile,
+       t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
@@ -3434,7 +3443,7 @@ type SearchMessagesRow struct {
 	AliasName        *string
 	AliasIgnored     bool
 	Agency           *string
-	Icon             *string
+	IconSha256       *string
 	Colour           *string
 	AgencyProfile    *string
 	Lon              *float64
@@ -3511,7 +3520,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			&i.AliasName,
 			&i.AliasIgnored,
 			&i.Agency,
-			&i.Icon,
+			&i.IconSha256,
 			&i.Colour,
 			&i.AgencyProfile,
 			&i.Lon,
@@ -3686,6 +3695,25 @@ func (q *Queries) SetSetting(ctx context.Context, arg SetSettingParams) error {
 	return err
 }
 
+const setTemplateIcon = `-- name: SetTemplateIcon :execrows
+UPDATE templates SET icon_png = $1, icon_sha256 = $2 WHERE id = $3
+`
+
+type SetTemplateIconParams struct {
+	Png    []byte
+	Sha256 *string
+	ID     int64
+}
+
+// R65: a 64×64 PNG the API encoded and its SHA-256, or NULL for none.
+func (q *Queries) SetTemplateIcon(ctx context.Context, arg SetTemplateIconParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setTemplateIcon, arg.Png, arg.Sha256, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setUserName = `-- name: SetUserName :exec
 UPDATE users SET name = $2 WHERE id = $1 AND status <> 'deleted'
 `
@@ -3761,17 +3789,26 @@ func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (Stree
 }
 
 const templateByID = `-- name: TemplateByID :one
-SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE id = $1
+SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE id = $1
 `
 
-func (q *Queries) TemplateByID(ctx context.Context, id int64) (Template, error) {
+type TemplateByIDRow struct {
+	ID            int64
+	Name          string
+	Agency        string
+	IconSha256    *string
+	Colour        *string
+	AgencyProfile *string
+}
+
+func (q *Queries) TemplateByID(ctx context.Context, id int64) (TemplateByIDRow, error) {
 	row := q.db.QueryRow(ctx, templateByID, id)
-	var i Template
+	var i TemplateByIDRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Agency,
-		&i.Icon,
+		&i.IconSha256,
 		&i.Colour,
 		&i.AgencyProfile,
 	)
@@ -3779,17 +3816,26 @@ func (q *Queries) TemplateByID(ctx context.Context, id int64) (Template, error) 
 }
 
 const templateByName = `-- name: TemplateByName :one
-SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE name = $1
+SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE name = $1
 `
 
-func (q *Queries) TemplateByName(ctx context.Context, name string) (Template, error) {
+type TemplateByNameRow struct {
+	ID            int64
+	Name          string
+	Agency        string
+	IconSha256    *string
+	Colour        *string
+	AgencyProfile *string
+}
+
+func (q *Queries) TemplateByName(ctx context.Context, name string) (TemplateByNameRow, error) {
 	row := q.db.QueryRow(ctx, templateByName, name)
-	var i Template
+	var i TemplateByNameRow
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
 		&i.Agency,
-		&i.Icon,
+		&i.IconSha256,
 		&i.Colour,
 		&i.AgencyProfile,
 	)
@@ -4117,13 +4163,13 @@ func (q *Queries) UpdateRedactedText(ctx context.Context, arg UpdateRedactedText
 }
 
 const updateTemplate = `-- name: UpdateTemplate :exec
-UPDATE templates SET agency = $2, icon = $3, colour = $4, agency_profile = $5 WHERE id = $1
+UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5 WHERE id = $1
 `
 
 type UpdateTemplateParams struct {
 	ID            int64
+	Name          string
 	Agency        string
-	Icon          *string
 	Colour        *string
 	AgencyProfile *string
 }
@@ -4131,8 +4177,8 @@ type UpdateTemplateParams struct {
 func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) error {
 	_, err := q.db.Exec(ctx, updateTemplate,
 		arg.ID,
+		arg.Name,
 		arg.Agency,
-		arg.Icon,
 		arg.Colour,
 		arg.AgencyProfile,
 	)
