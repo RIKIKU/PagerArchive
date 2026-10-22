@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
@@ -190,11 +191,13 @@ type AdminAliasRow struct {
 	Name       string  `json:"name"`
 	TemplateID *int64  `json:"template_id"`
 	Template   *string `json:"template"`
+	Colour     *string `json:"colour"` // the template's
 	Ignored    bool    `json:"ignored"`
 	Waiting    int64   `json:"waiting_requests"`
 }
 
-// AdminAliasList is a page of aliases; More says there are more than shown.
+// AdminAliasList is a page of aliases; More says there are more than shown,
+// and the next page starts after the last one's pattern (?after=).
 type AdminAliasList struct {
 	Aliases []AdminAliasRow `json:"aliases"`
 	More    bool            `json:"more"`
@@ -204,7 +207,16 @@ const adminAliasLimit = 500
 
 func (s *Server) adminAliases(w http.ResponseWriter, r *http.Request) {
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	rows, err := s.Store.AdminAliases(r.Context(), db.AdminAliasesParams{Q: q, MaxRows: adminAliasLimit + 1})
+	limit := adminAliasLimit
+	if v := r.URL.Query().Get("limit"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 || n > adminAliasLimit {
+			problem(w, http.StatusBadRequest, fmt.Sprintf("limit must be 1 to %d", adminAliasLimit))
+			return
+		}
+		limit = n
+	}
+	rows, err := s.Store.AdminAliases(r.Context(), db.AdminAliasesParams{Q: q, After: r.URL.Query().Get("after"), MaxRows: int32(limit + 1)})
 	if err != nil {
 		s.Log.Error("admin aliases", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
@@ -212,11 +224,11 @@ func (s *Server) adminAliases(w http.ResponseWriter, r *http.Request) {
 	}
 	out := AdminAliasList{Aliases: []AdminAliasRow{}}
 	for i, a := range rows {
-		if i == adminAliasLimit {
+		if i == limit {
 			out.More = true
 			break
 		}
-		out.Aliases = append(out.Aliases, AdminAliasRow{ID: a.ID, Pattern: a.Pattern, Name: a.Name, TemplateID: a.TemplateID, Template: a.TemplateName, Ignored: a.Ignored, Waiting: a.Waiting})
+		out.Aliases = append(out.Aliases, AdminAliasRow{ID: a.ID, Pattern: a.Pattern, Name: a.Name, TemplateID: a.TemplateID, Template: a.TemplateName, Colour: a.Colour, Ignored: a.Ignored, Waiting: a.Waiting})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

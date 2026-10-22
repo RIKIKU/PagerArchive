@@ -22,8 +22,9 @@ import (
 )
 
 const (
-	pageSize = 50
-	jobLimit = 500
+	pageSize    = 50
+	maxPageSize = 200
+	jobLimit    = 500
 )
 
 func (s *Server) isAdmin(r *http.Request) bool { return currentUser(r).Role == accounts.RoleAdmin }
@@ -208,22 +209,68 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	rows, err := s.search(r, f, before, pageSize+1, nil)
+	// The PowerShell module asks for as many as it needs (-First), and for
+	// every message's receive times (R63a).
+	limit := pageSize
+	if v := r.URL.Query().Get("limit"); v != "" {
+		if limit, err = strconv.Atoi(v); err != nil || limit < 1 || limit > maxPageSize {
+			problem(w, http.StatusBadRequest, fmt.Sprintf("limit must be 1 to %d", maxPageSize))
+			return
+		}
+	}
+	rows, err := s.search(r, f, before, limit+1, nil)
 	if err != nil {
 		s.Log.Error("list messages", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
 		return
 	}
 	page := MessagePage{Messages: []Message{}}
-	if len(rows) > pageSize {
-		last := rows[pageSize-1]
+	if len(rows) > limit {
+		last := rows[limit-1]
 		page.Next = search.EncodeCursor(search.Cursor{SentAt: last.SentAt, ID: last.ID})
-		rows = rows[:pageSize]
+		rows = rows[:limit]
 	}
 	for _, m := range rows {
 		page.Messages = append(page.Messages, s.toMessage(m, admin))
 	}
+	if r.URL.Query().Get("receptions") == "true" && len(rows) > 0 {
+		ids := make([]int64, len(rows))
+		for i, m := range rows {
+			ids[i] = m.ID
+		}
+		recs, err := s.Store.ReceptionsForMessages(r.Context(), ids)
+		if err != nil {
+			s.Log.Error("receptions", "error", store.SafeError(err))
+			problem(w, http.StatusInternalServerError, "lookup failed")
+			return
+		}
+		byMessage := map[int64][]db.MessageReceptionsRow{}
+		for _, rc := range recs {
+			byMessage[rc.MessageID] = append(byMessage[rc.MessageID], db.MessageReceptionsRow{ClientID: rc.ClientID, ClientName: rc.ClientName, ReceivedAt: rc.ReceivedAt})
+		}
+		for i := range page.Messages {
+			page.Messages[i].Receptions = receptions(byMessage[page.Messages[i].ID], admin)
+		}
+	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// receptions labels receive times. Client names may reveal where receivers
+// are, so users see "Receiver 1", "Receiver 2" (R39).
+func receptions(recs []db.MessageReceptionsRow, admin bool) []Reception {
+	out := []Reception{}
+	names := map[string]string{}
+	for _, rc := range recs {
+		label := rc.ClientName
+		if !admin {
+			if _, seen := names[rc.ClientID]; !seen {
+				names[rc.ClientID] = fmt.Sprintf("Receiver %d", len(names)+1)
+			}
+			label = names[rc.ClientID]
+		}
+		out = append(out, Reception{Client: label, ReceivedAt: rc.ReceivedAt.UTC()})
+	}
+	return out
 }
 
 func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
@@ -251,17 +298,7 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	names := map[string]string{}
-	for _, rc := range recs {
-		label := rc.ClientName
-		if !admin {
-			if _, seen := names[rc.ClientID]; !seen {
-				names[rc.ClientID] = fmt.Sprintf("Receiver %d", len(names)+1)
-			}
-			label = names[rc.ClientID]
-		}
-		msg.Receptions = append(msg.Receptions, Reception{Client: label, ReceivedAt: rc.ReceivedAt.UTC()})
-	}
+	msg.Receptions = receptions(recs, admin)
 	writeJSON(w, http.StatusOK, msg)
 }
 
@@ -274,7 +311,7 @@ type Job struct {
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	job := r.PathValue("job")
 	admin := s.isAdmin(r)
-	rows, err := s.search(r, search.Filter{Job: job, Ignored: true}, nil, jobLimit, nil)
+	rows, err := s.search(r, search.Filter{Job: []string{job}, Ignored: true}, nil, jobLimit, nil)
 	if err != nil {
 		s.Log.Error("job", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")

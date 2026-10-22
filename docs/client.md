@@ -27,11 +27,28 @@ The key is printed once. `pagerarchive client revoke <id>` revokes it immediatel
 | `BUFFER_SIZE` | `1000` | Pages held **in memory** while the server is unreachable. The oldest are dropped when full; all are lost on restart |
 | `PRINT_PAGES` | `false` | `true` prints decoded pages to the console for troubleshooting |
 
+## Reaching the server
+
+The client only posts to `SERVER_URL`. A receiver on the server's own network can use its LAN address. A **remote receiver** (at another site, on a mobile connection) needs to reach the server's **public URL**, through your reverse proxy with HTTPS. If the server stays LAN-only, give the remote receiver a VPN into the server's network (WireGuard, Tailscale or similar) and use the LAN address over it. The client only needs to reach the app (`/api/v1/pages`), not Authentik.
+
+## The dongle: blacklist the DVB-T driver
+
+Linux loads its DVB-T TV driver for RTL-SDR dongles as soon as one is plugged in, and then `rtl_fm` can't open it (`usb_claim_interface error -6`). On the machine the dongle is plugged into (the Docker host, for Docker), stop the driver from loading:
+
+```sh
+echo 'blacklist dvb_usb_rtl28xxu' | sudo tee /etc/modprobe.d/blacklist-rtl.conf
+sudo modprobe -r dvb_usb_rtl28xxu   # or reboot
+```
+
+`rtl_test` should then find the dongle without errors.
+
+## Clock
+
 Keep the client's clock in sync with NTP. The server rejects receive times more than 60 seconds ahead of its own clock. The client then logs a warning (without page text) and drops the page, and `pagerarchive client list` shows the client as `clock ahead` until it next sends a page the server accepts.
 
 ## Docker
 
-Images aren't published yet (ADR 0002). Until then, build the image with `docker build -f Dockerfile.client -t ghcr.io/rikiku/pagerarchive-client .`
+The image is published on GitHub's container registry for linux/amd64 and linux/arm64, and pulls without signing in: `ghcr.io/rikiku/pagerarchive-client` (`latest` follows `main`; releases are tagged with their version). To build it yourself: `docker build -f Dockerfile.client -t ghcr.io/rikiku/pagerarchive-client .`
 
 ```
 docker run -d --name pager-client --restart unless-stopped \
@@ -49,4 +66,31 @@ To replay captured decoder output instead of using a radio, leave `RADIO_FREQUEN
 
 ## Raspberry Pi (no Docker)
 
-Install `rtl-sdr` and `multimon-ng` from the distribution, copy the `pagerarchive-client` binary (linux/arm64) to `/usr/local/bin`, and run it as a systemd service with the settings above in an `EnvironmentFile`. The client logs to the journal; leave `PRINT_PAGES` off so page text never reaches the journal.
+Each [release](https://github.com/RIKIKU/PagerArchive/releases) has the client as a single binary for linux/arm64 (Raspberry Pi 3, 4 and 5 with a 64-bit OS) and linux/amd64, with a `SHA256SUMS` file. Install `rtl-sdr` and `multimon-ng` from the distribution, blacklist the DVB-T driver (above), and install the binary:
+
+```sh
+sudo apt install rtl-sdr multimon-ng
+curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/pagerarchive-client-<version>-linux-arm64
+curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/SHA256SUMS
+sha256sum --ignore-missing -c SHA256SUMS
+sudo install -m 755 pagerarchive-client-<version>-linux-arm64 /usr/local/bin/pagerarchive-client
+```
+
+Then run it as a systemd service with the settings above in an `EnvironmentFile` (readable by root only, since it holds the key), e.g. `/etc/systemd/system/pagerarchive-client.service`:
+
+```ini
+[Unit]
+Description=PagerArchive receiving client
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+EnvironmentFile=/etc/pagerarchive-client.env
+ExecStart=/usr/local/bin/pagerarchive-client
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+The client logs to the journal; leave `PRINT_PAGES` off so page text never reaches the journal.

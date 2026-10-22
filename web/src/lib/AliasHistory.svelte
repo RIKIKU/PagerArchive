@@ -30,7 +30,7 @@
 
 	function who(h: HistoryEntry): string {
 		if (h.source === 'cli') return 'with the command line';
-		if (h.source === 'import') return 'by import';
+		if (h.source === 'import') return h.made_by === 'import' ? 'by import' : `imported by ${h.made_by}`;
 		if (h.source === 'request') return `requested by ${h.requested_by ?? 'deleted user'}, approved by ${h.made_by}`;
 		return `by ${h.made_by}`;
 	}

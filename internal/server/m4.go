@@ -137,13 +137,13 @@ func (s *Server) capcodeReport(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "from must not be after to")
 		return
 	}
-	rows, err := s.Store.CapcodeReport(r.Context(), db.CapcodeReportParams{Capcode: f.Capcode, SentFrom: *f.From, SentTo: *f.To})
+	rows, err := s.Store.CapcodeReport(r.Context(), db.CapcodeReportParams{Capcode: f.Capcode[0], SentFrom: *f.From, SentTo: *f.To})
 	if err != nil {
 		s.Log.Error("report", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "report failed")
 		return
 	}
-	out := Report{Capcode: f.Capcode, From: from, To: to, Categories: []ReportCategory{}}
+	out := Report{Capcode: f.Capcode[0], From: from, To: to, Categories: []ReportCategory{}}
 	counts := map[string]*ReportCategory{}
 	for _, row := range rows {
 		cat := "Other"

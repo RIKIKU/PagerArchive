@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -16,59 +17,103 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
-// Filter is a set of search criteria. Empty fields mean "any".
+// Filter is a set of search criteria. Empty fields mean "any". A field with
+// several values matches any of them; different fields must all match
+// (R63a, ADR 0009 §8).
 type Filter struct {
-	Text      string // case-insensitive substring of the text or an extra field
-	Capcode   string
-	Alias     string // substring of the alias name
-	AliasID   *int64 // messages that resolved to this alias (R35e)
-	Agency    string // substring of the template's agency
-	Group     string // exact, case-insensitive
-	Priority  string // Emergency, Non-emergency, Admin, or none
-	Category  string // a network event category, or Other
-	Job       string
-	From, To  *time.Time // sent time, From inclusive, To exclusive
-	Unaliased bool       // "capcodes with no alias"
-	Ignored   bool       // include pages to ignored aliases (R27)
-	Located   bool       // only messages placed on the map (R35)
+	Text       string   // case-insensitive substring of the text or an extra field
+	Capcode    []string // zero-padded capcodes
+	Alias      []string // substrings of the alias name
+	AliasLike  []string // case-insensitive LIKE patterns for the alias name
+	AliasID    []int64  // messages that resolved to these aliases (R35e)
+	Agency     []string // substrings of the template's agency
+	AgencyLike []string
+	Group      []string // exact, case-insensitive
+	GroupLike  []string
+	Priority   []string // Emergency, Non-emergency, Admin, or none
+	Category   []string // network event categories, or Other
+	Job        []string
+	From, To   *time.Time // sent time, From inclusive, To exclusive
+	Unaliased  bool       // "capcodes with no alias"
+	Ignored    bool       // include pages to ignored aliases (R27)
+	Located    bool       // only messages placed on the map (R35)
 
-	// Admin only (R33): filter by flag.
+	// Admin only (R33): filter by flag. Each true field must be set; Flags
+	// matches messages with any of the flags it names.
 	ParseFailed, AddressUnsplit, LocationMismatch bool
+	Flags                                         []string
+}
+
+// Flags are the flags admins can filter by (R33).
+var Flags = []string{"parse_failed", "address_unsplit", "location_mismatch"}
+
+// MaxValues caps how many values one parameter may repeat.
+const MaxValues = 500
+
+// listParams are the parameters that may repeat, and the field each fills.
+func (f *Filter) listParams() map[string]*[]string {
+	return map[string]*[]string{
+		"capcode": &f.Capcode, "alias": &f.Alias, "alias_like": &f.AliasLike, "agency": &f.Agency, "agency_like": &f.AgencyLike,
+		"group": &f.Group, "group_like": &f.GroupLike, "priority": &f.Priority, "category": &f.Category, "job": &f.Job, "flag": &f.Flags,
+	}
+}
+
+// values reads a repeated parameter, trimmed, without empty values.
+func values(v url.Values, key string) ([]string, error) {
+	var out []string
+	for _, s := range v[key] {
+		if s = strings.TrimSpace(s); s != "" {
+			out = append(out, s)
+		}
+	}
+	if len(out) > MaxValues {
+		return nil, fmt.Errorf("%s: at most %d values", key, MaxValues)
+	}
+	return out, nil
 }
 
 // Parse reads a Filter from query parameters. Admin-only flags are ignored
 // unless admin is true. loc is the deployment time zone for date-only
 // values (R35a).
 func Parse(v url.Values, admin bool, loc *time.Location) (Filter, error) {
-	f := Filter{
-		Text:     strings.TrimSpace(v.Get("q")),
-		Alias:    strings.TrimSpace(v.Get("alias")),
-		Agency:   strings.TrimSpace(v.Get("agency")),
-		Group:    strings.TrimSpace(v.Get("group")),
-		Priority: v.Get("priority"),
-		Category: v.Get("category"),
-		Job:      strings.TrimSpace(v.Get("job")),
+	f := Filter{Text: strings.TrimSpace(v.Get("q"))}
+	for key, dst := range f.listParams() {
+		vs, err := values(v, key)
+		if err != nil {
+			return f, err
+		}
+		*dst = vs
 	}
-	if s := strings.TrimSpace(v.Get("alias_id")); s != "" {
+	ids, err := values(v, "alias_id")
+	if err != nil {
+		return f, err
+	}
+	for _, s := range ids {
 		id, err := strconv.ParseInt(s, 10, 64)
 		if err != nil {
 			return f, errors.New("alias_id must be a number")
 		}
-		f.AliasID = &id
+		f.AliasID = append(f.AliasID, id)
 	}
-	if c := strings.TrimSpace(v.Get("capcode")); c != "" {
+	for i, c := range f.Capcode {
 		p, err := catalog.NormalisePattern(c)
 		if err != nil || strings.ContainsAny(p, "%_") {
 			return f, errors.New("capcode must be 1 to 7 digits")
 		}
-		f.Capcode = p
+		f.Capcode[i] = p
 	}
-	switch f.Priority {
-	case "", "Emergency", "Non-emergency", "Admin", "none":
-	default:
-		return f, fmt.Errorf("unknown priority %q", f.Priority)
+	for _, p := range f.Priority {
+		switch p {
+		case "Emergency", "Non-emergency", "Admin", "none":
+		default:
+			return f, fmt.Errorf("unknown priority %q", p)
+		}
 	}
-	var err error
+	for _, fl := range f.Flags {
+		if !slices.Contains(Flags, fl) {
+			return f, fmt.Errorf("unknown flag %q", fl)
+		}
+	}
 	if f.From, err = parseTime(v.Get("from"), loc, false); err != nil {
 		return f, err
 	}
@@ -81,6 +126,8 @@ func Parse(v url.Values, admin bool, loc *time.Location) (Filter, error) {
 		f.ParseFailed = v.Get("parse_failed") == "true"
 		f.AddressUnsplit = v.Get("address_unsplit") == "true"
 		f.LocationMismatch = v.Get("location_mismatch") == "true"
+	} else {
+		f.Flags = nil
 	}
 	return f, nil
 }
@@ -107,22 +154,17 @@ func parseTime(s string, loc *time.Location, end bool) (*time.Time, error) {
 // Values encodes the filter as query parameters (inverse of Parse).
 func (f Filter) Values() url.Values {
 	v := url.Values{}
-	set := func(k, s string) {
-		if s != "" {
-			v.Set(k, s)
+	if f.Text != "" {
+		v.Set("q", f.Text)
+	}
+	for k, vs := range f.listParams() {
+		for _, s := range *vs {
+			v.Add(k, s)
 		}
 	}
-	set("q", f.Text)
-	set("capcode", f.Capcode)
-	set("alias", f.Alias)
-	if f.AliasID != nil {
-		v.Set("alias_id", strconv.FormatInt(*f.AliasID, 10))
+	for _, id := range f.AliasID {
+		v.Add("alias_id", strconv.FormatInt(id, 10))
 	}
-	set("agency", f.Agency)
-	set("group", f.Group)
-	set("priority", f.Priority)
-	set("category", f.Category)
-	set("job", f.Job)
 	if f.From != nil {
 		v.Set("from", f.From.Format(time.RFC3339))
 	}
@@ -137,21 +179,31 @@ func (f Filter) Values() url.Values {
 	return v
 }
 
-// likeContains escapes s for ILIKE and wraps it in %…%.
-func likeContains(s string) *string {
-	if s == "" {
-		return nil
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
+
+// likeContains escapes each value for ILIKE and wraps it in %…%.
+func likeContains(vs []string) []string {
+	out := make([]string, 0, len(vs))
+	for _, s := range vs {
+		out = append(out, "%"+likeEscaper.Replace(s)+"%")
 	}
-	r := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
-	r = "%" + r + "%"
-	return &r
+	return out
 }
 
-func ptr(s string) *string {
-	if s == "" {
-		return nil
+func upper(vs []string) []string {
+	out := make([]string, 0, len(vs))
+	for _, s := range vs {
+		out = append(out, strings.ToUpper(s))
 	}
-	return &s
+	return out
+}
+
+// orEmpty passes an empty array, not NULL, for "any".
+func orEmpty[T any](vs []T) []T {
+	if vs == nil {
+		return []T{}
+	}
+	return vs
 }
 
 // Cursor is a keyset position: messages strictly older than it.
@@ -160,17 +212,31 @@ type Cursor struct {
 	ID     int64
 }
 
+// categoryCodes adds a category's event codes to codes, and its prefixes
+// (codes ending in *) to prefixes as LIKE patterns.
+func categoryCodes(c profile.Category, codes, prefixes *[]string) {
+	for _, code := range c.Codes {
+		if prefix, ok := strings.CutSuffix(code, "*"); ok {
+			*prefixes = append(*prefixes, likeEscaper.Replace(prefix)+"%")
+		} else {
+			*codes = append(*codes, code)
+		}
+	}
+}
+
 // Params builds the database query. n is the page size.
 func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.SearchMessagesParams, error) {
 	p := db.SearchMessagesParams{
-		Q:                likeContains(f.Text),
-		Capcode:          ptr(f.Capcode),
-		Alias:            likeContains(f.Alias),
-		AliasID:          f.AliasID,
-		Agency:           likeContains(f.Agency),
-		PagingGroup:      ptr(f.Group),
-		Priority:         ptr(f.Priority),
-		JobNumber:        ptr(f.Job),
+		Capcodes:         orEmpty(f.Capcode),
+		Aliases:          likeContains(f.Alias),
+		AliasLikes:       orEmpty(f.AliasLike),
+		AliasIds:         orEmpty(f.AliasID),
+		Agencies:         likeContains(f.Agency),
+		AgencyLikes:      orEmpty(f.AgencyLike),
+		PagingGroups:     upper(f.Group),
+		GroupLikes:       orEmpty(f.GroupLike),
+		Priorities:       orEmpty(f.Priority),
+		JobNumbers:       orEmpty(f.Job),
 		SentFrom:         f.From,
 		SentTo:           f.To,
 		Unaliased:        f.Unaliased,
@@ -178,31 +244,34 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		ParseFailed:      f.ParseFailed,
 		AddressUnsplit:   f.AddressUnsplit,
 		LocationMismatch: f.LocationMismatch,
+		Flags:            orEmpty(f.Flags),
 		Located:          f.Located,
 		CatCodes:         []string{},
 		CatPrefixes:      []string{},
+		AllCatCodes:      []string{},
+		AllCatPrefixes:   []string{},
 		MaxRows:          int32(limit),
 	}
-	if f.Category != "" {
-		want := f.Category != "Other"
-		found := !want
+	if f.Text != "" {
+		q := "%" + likeEscaper.Replace(f.Text) + "%"
+		p.Q = &q
+	}
+	for _, name := range f.Category {
+		if name == "Other" {
+			p.CatOther = true
+			continue
+		}
+		i := slices.IndexFunc(n.Categories, func(c profile.Category) bool { return c.Name == name })
+		if i < 0 {
+			return p, fmt.Errorf("unknown category %q", name)
+		}
+		categoryCodes(n.Categories[i], &p.CatCodes, &p.CatPrefixes)
+	}
+	if len(f.Category) > 0 {
+		p.CatFilter = true
 		for _, c := range n.Categories {
-			if want && c.Name != f.Category {
-				continue
-			}
-			found = true
-			for _, code := range c.Codes {
-				if prefix, ok := strings.CutSuffix(code, "*"); ok {
-					p.CatPrefixes = append(p.CatPrefixes, strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)+"%")
-				} else {
-					p.CatCodes = append(p.CatCodes, code)
-				}
-			}
+			categoryCodes(c, &p.AllCatCodes, &p.AllCatPrefixes)
 		}
-		if !found {
-			return p, fmt.Errorf("unknown category %q", f.Category)
-		}
-		p.CatWant = &want
 	}
 	if before != nil {
 		p.BeforeSent, p.BeforeID = &before.SentAt, &before.ID

@@ -47,7 +47,7 @@ jobs:
       - name: Acceptance check summary
         if: always()
         run: |
-          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7)|postgis:|^(ok|FAIL)' test.log || true
+          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, R31, WCAG)
@@ -84,8 +84,43 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  powershell:
+    name: PowerShell module (${{ matrix.os }}, PowerShell ${{ matrix.pwsh }})
+    # The module's analyzer, meta-tests, behaviour tests and sign-in tests
+    # (docs/powershell-guidelines.md, ADR 0009 §11): on the minimum (7.6.0)
+    # and the newest stable release, on Windows (the DPAPI file) and Linux
+    # (a SecretStore vault, and no vault).
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+        pwsh: ["7.6.0", newest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install PowerShell ${{ matrix.pwsh }} and the test modules
+        shell: pwsh
+        run: |
+          $pwsh = ./scripts/ci/Install-PowerShell.ps1 -Version '${{ matrix.pwsh }}' -Destination (Join-Path $env:RUNNER_TEMP 'pwsh')
+          "PA_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
+          ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
+      - name: PSScriptAnalyzer, meta-tests, behaviour and sign-in tests
+        shell: pwsh
+        run: |
+          $env:PSModulePath = Join-Path $env:RUNNER_TEMP 'psmodules'
+          & $env:PA_PWSH -NoProfile -NonInteractive -File ./powershell/tests/Invoke-Tests.ps1 -ResultPath pester-results.xml
+          exit $LASTEXITCODE
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pester-${{ matrix.os }}-${{ matrix.pwsh }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pester-results.xml
+          if-no-files-found: ignore
+          retention-days: 14
+
   stack:
-    name: Accounts against Authentik (A23-A28, A33, A50 join during a preview, locked-accounts metric, section 11 steps 2 and 3)
+    name: Accounts and the PowerShell module against Authentik (A20, A21, A23-A28, A33, A50 join during a preview, A51-A55, locked-accounts metric, section 11 steps 2 and 3)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
@@ -103,7 +138,14 @@ jobs:
       - name: Install browser
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: A23-A28, A33, A50 join during a preview and the locked-accounts metric against the compose stack (API, PostgreSQL, Authentik, Mailpit)
+      - name: Install PowerShell 7.6.0 (the module's minimum) and the test modules
+        shell: pwsh
+        run: |
+          $pwsh = ./scripts/ci/Install-PowerShell.ps1 -Version 7.6.0 -Destination (Join-Path $env:RUNNER_TEMP 'pwsh')
+          "PA_STACK_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PA_STACK_PS_MODULES=$(Join-Path $env:RUNNER_TEMP 'psmodules')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
+      - name: A23-A28, A33, A50 join during a preview, the locked-accounts metric, and the PowerShell module (A20, A21, A51-A55, with a SecretStore vault and with none) against the compose stack (API, PostgreSQL, Authentik, Mailpit)
         run: sh scripts/stack-checks.sh
       - name: Section 11 steps 2 and 3 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium
@@ -180,7 +222,7 @@ jobs:
   # pushes build the images without publishing them.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, web, stack, images, budget]
+    needs: [test, web, stack, images, budget, powershell]
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -221,7 +263,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, web, stack, images, budget]
+    needs: [test, web, stack, images, budget, powershell]
     strategy:
       matrix:
         include:
@@ -309,3 +351,69 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
           docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+
+  # The PowerShell module on the PowerShell Gallery (R63), only from a
+  # release (a v* tag) whose checks all passed, with the release's version.
+  # Skipped, successfully, while the PSGALLERY_API_KEY secret doesn't exist
+  # (the owner creates it).
+  publish-powershell:
+    name: Publish the PowerShell module to the PowerShell Gallery
+    needs: [test, web, stack, images, budget, powershell]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    env:
+      PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+    steps:
+      - name: Is the Gallery key set?
+        id: key
+        run: |
+          if [ -z "$PSGALLERY_API_KEY" ]; then
+            echo "PowerShell Gallery key not set: skipping publishing"
+            echo "set=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "set=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v5
+        if: steps.key.outputs.set == 'true'
+      - name: Set the release's version, check and publish
+        if: steps.key.outputs.set == 'true'
+        shell: pwsh
+        run: |
+          $version = '${{ github.ref_name }}'.TrimStart('v')
+          $out = Join-Path $env:RUNNER_TEMP 'PagerArchive'
+          Copy-Item -Path powershell/PagerArchive -Destination $out -Recurse
+          $manifest = Join-Path $out 'PagerArchive.psd1'
+          Update-PSModuleManifest -Path $manifest -ModuleVersion $version
+          Test-ModuleManifest -Path $manifest -ErrorAction Stop | Format-List Name, Version, PowerShellVersion, CompatiblePSEditions
+          Publish-PSResource -Path $out -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY
+
+  # The receiving client's binaries for linux/amd64 and linux/arm64 (for a
+  # Raspberry Pi without Docker, docs/client.md), with SHA-256 checksums,
+  # attached to the release of a v* tag whose checks all passed.
+  release-binaries:
+    name: Attach client binaries to the release
+    needs: [test, web, stack, images, budget, powershell]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" \
+              -o "dist/pagerarchive-client-$GITHUB_REF_NAME-linux-$arch" ./cmd/pagerarchive-client
+          done
+          (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes "PagerArchive $GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber

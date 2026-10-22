@@ -34,26 +34,28 @@ until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do 
 (cd web && npm run build >/dev/null)
 go build -o "$BIN" ./cmd/pagerarchive
 
-# Standard test fixture: template "Example Fire" and Stations 1-4.
-"$BIN" template add "Example Fire" --agency "Example Fire Service" --profile example-fire --colour "#b3261e" >/dev/null
-for n in 1 2 3 4; do
-	"$BIN" alias add "010000$n" "Station $n" --template "Example Fire" >/dev/null
-done
-# A40: a range alias over the stations, which typing one capcode never selects.
-"$BIN" alias add "0100%" "Stations block" --template "Example Fire" >/dev/null
-# The capcode report test (R38) uses one capcode per browser project.
-for n in 1 2 3; do
-	"$BIN" alias add "030010$n" "Report test $n" --template "Example Fire" >/dev/null
-done
-# M6 (A42-A45): each browser project edits and requests changes to its own
-# aliases (n = 1, 2, 3 for chromium, firefox, webkit): 04001n1-04001n3.
-for n in 1 2 3; do
-	for k in 1 2 3; do
-		"$BIN" alias add "04001$n$k" "Edit test $n$k" --template "Example Fire" >/dev/null
-	done
-done
+# Adding a client creates the tables, then the standard test fixture goes in
+# with SQL (template "Example Fire" and Stations 1-4; R59 took the template
+# and alias commands out of pagerarchive).
 PA_CLIENT_KEY=$("$BIN" client add e2e "E2E client" | tail -n 1)
 export PA_CLIENT_KEY
+{
+	cat scripts/fixture.sql
+	cat <<'SQL'
+-- A40: a range alias over the stations, which typing one capcode never selects.
+-- The capcode report test (R38) uses one capcode per browser project.
+-- M6 (A42-A45): each browser project edits and requests changes to its own
+-- aliases (n = 1, 2, 3 for chromium, firefox, webkit): 04001n1-04001n3.
+INSERT INTO aliases (pattern, name, template_id)
+SELECT p, name, (SELECT id FROM templates WHERE name = 'Example Fire')
+FROM (VALUES ('0100%', 'Stations block')) AS v (p, name)
+UNION ALL
+SELECT '030010' || n, 'Report test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n
+UNION ALL
+SELECT '04001' || n || k, 'Edit test ' || n || k, (SELECT id FROM templates WHERE name = 'Example Fire')
+FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k;
+SQL
+} | docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
 # R39: a receiver last heard 31 minutes ago (set below).
 "$BIN" client add quiet "Quiet receiver" >/dev/null
 

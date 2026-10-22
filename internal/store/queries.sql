@@ -168,9 +168,10 @@ INSERT INTO settings (key, value) VALUES ($1, $2)
 ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 
 -- name: SearchMessages :many
--- R33. Every filter is optional (NULL = any). Keyset pagination on
--- (sent_at, id), newest first. cat_want compares "event_type is in the
--- category's codes" with true (that category) or false (Other).
+-- R33. Every filter is optional (NULL or an empty array = any). An array
+-- matches any of its values (R63a). Keyset pagination on (sent_at, id),
+-- newest first. cat_filter keeps messages whose event_type is in the chosen
+-- categories' codes, or (cat_other) in no category's codes.
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
@@ -183,18 +184,24 @@ LEFT JOIN templates t ON t.id = a.template_id
 WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
   AND (sqlc.narg(q)::text IS NULL OR m.text ILIKE sqlc.narg(q)
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE sqlc.narg(q)))
-  AND (sqlc.narg(capcode)::text IS NULL OR m.capcode = sqlc.narg(capcode))
-  AND (sqlc.narg(alias)::text IS NULL OR a.name ILIKE sqlc.narg(alias))
-  AND (sqlc.narg(alias_id)::bigint IS NULL OR m.alias_id = sqlc.narg(alias_id))
-  AND (sqlc.narg(agency)::text IS NULL OR t.agency ILIKE sqlc.narg(agency))
-  AND (sqlc.narg(paging_group)::text IS NULL OR upper(m.paging_group) = upper(sqlc.narg(paging_group)))
-  AND (sqlc.narg(priority)::text IS NULL
-       OR (sqlc.narg(priority) = 'none' AND m.priority IS NULL)
-       OR m.priority = sqlc.narg(priority))
-  AND (sqlc.narg(cat_want)::bool IS NULL
+  AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
+  AND (cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
+  AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))
+  AND (cardinality(sqlc.arg(alias_ids)::bigint[]) = 0 OR m.alias_id = ANY(sqlc.arg(alias_ids)::bigint[]))
+  AND (cardinality(sqlc.arg(agencies)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agencies)::text[]))
+  AND (cardinality(sqlc.arg(agency_likes)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agency_likes)::text[]))
+  AND (cardinality(sqlc.arg(paging_groups)::text[]) = 0 OR upper(m.paging_group) = ANY(sqlc.arg(paging_groups)::text[]))
+  AND (cardinality(sqlc.arg(group_likes)::text[]) = 0 OR m.paging_group ILIKE ANY(sqlc.arg(group_likes)::text[]))
+  AND (cardinality(sqlc.arg(priorities)::text[]) = 0
+       OR ('none' = ANY(sqlc.arg(priorities)::text[]) AND m.priority IS NULL)
+       OR m.priority = ANY(sqlc.arg(priorities)::text[]))
+  AND (NOT sqlc.arg(cat_filter)::bool
        OR COALESCE(m.event_type = ANY(sqlc.arg(cat_codes)::text[])
-                   OR m.event_type LIKE ANY(sqlc.arg(cat_prefixes)::text[]), false) = sqlc.narg(cat_want))
-  AND (sqlc.narg(job_number)::text IS NULL OR m.job_number = sqlc.narg(job_number))
+                   OR m.event_type LIKE ANY(sqlc.arg(cat_prefixes)::text[]), false)
+       OR (sqlc.arg(cat_other)::bool
+           AND NOT COALESCE(m.event_type = ANY(sqlc.arg(all_cat_codes)::text[])
+                            OR m.event_type LIKE ANY(sqlc.arg(all_cat_prefixes)::text[]), false)))
+  AND (cardinality(sqlc.arg(job_numbers)::text[]) = 0 OR m.job_number = ANY(sqlc.arg(job_numbers)::text[]))
   AND (sqlc.narg(sent_from)::timestamptz IS NULL OR m.sent_at >= sqlc.narg(sent_from))
   AND (sqlc.narg(sent_to)::timestamptz IS NULL OR m.sent_at < sqlc.narg(sent_to))
   AND (NOT sqlc.arg(unaliased)::bool OR m.alias_id IS NULL)
@@ -202,6 +209,10 @@ WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
   AND (NOT sqlc.arg(parse_failed)::bool OR m.parse_failed)
   AND (NOT sqlc.arg(address_unsplit)::bool OR m.address_unsplit)
   AND (NOT sqlc.arg(location_mismatch)::bool OR m.location_mismatch)
+  AND (cardinality(sqlc.arg(flags)::text[]) = 0
+       OR ('parse_failed' = ANY(sqlc.arg(flags)::text[]) AND m.parse_failed)
+       OR ('address_unsplit' = ANY(sqlc.arg(flags)::text[]) AND m.address_unsplit)
+       OR ('location_mismatch' = ANY(sqlc.arg(flags)::text[]) AND m.location_mismatch))
   AND (NOT sqlc.arg(located)::bool OR m.location IS NOT NULL)
   AND (sqlc.narg(before_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
@@ -809,18 +820,28 @@ ORDER BY r.id DESC
 LIMIT sqlc.arg(max_rows)::int;
 
 -- name: AdminAliases :many
--- R53: aliases for Administration, filtered by name, capcode or pattern.
-SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name,
+-- R53: aliases for Administration, filtered by name, capcode or pattern,
+-- a page at a time after a pattern (the PowerShell module lists them all).
+SELECT a.id, a.pattern, a.name, a.ignored, a.template_id, t.name AS template_name, t.colour,
        (SELECT count(*) FROM alias_requests r WHERE r.alias_id = a.id AND r.status = 'waiting')::bigint AS waiting
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
-WHERE sqlc.arg(q)::text = '' OR strpos(lower(a.name), lower(sqlc.arg(q)::text)) > 0 OR strpos(a.pattern, sqlc.arg(q)::text) > 0
-ORDER BY a.pattern
+WHERE (sqlc.arg(q)::text = '' OR strpos(lower(a.name), lower(sqlc.arg(q)::text)) > 0 OR strpos(a.pattern, sqlc.arg(q)::text) > 0)
+  AND (sqlc.arg(after)::text = '' OR a.pattern COLLATE "C" > sqlc.arg(after)::text COLLATE "C")
+ORDER BY a.pattern COLLATE "C"
 LIMIT sqlc.arg(max_rows)::int;
 
 -- name: ExportAliases :many
 -- R58: every alias in the import format.
-SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.icon, t.colour
+SELECT a.id, a.pattern, a.name, a.ignored, t.name AS template_name, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 ORDER BY a.pattern;
+
+-- name: ReceptionsForMessages :many
+-- R63a: each message's receive times, for a page of messages at once.
+SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
+FROM receptions r
+JOIN clients c ON c.id = r.client_id
+WHERE r.message_id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY r.message_id, r.received_at, r.client_id;

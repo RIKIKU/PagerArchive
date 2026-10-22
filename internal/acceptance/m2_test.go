@@ -200,7 +200,7 @@ func TestAdminOnlyData(t *testing.T) {
 // R27: an ignored alias's pages are stored but hidden by default.
 func TestIgnoredAlias(t *testing.T) {
 	e := setup(t)
-	if err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "0500%", Name: "Paging test", Template: "Example Fire", Ignored: true}); err != nil {
+	if err := e.catAdd("0500%", "Paging test", "Example Fire", true); err != nil {
 		t.Fatal(err)
 	}
 	e.mustPost("a", "0500001", "QDtest page", e.now)
@@ -214,7 +214,7 @@ func TestIgnoredAlias(t *testing.T) {
 }
 
 // R23a: alias and template changes re-parse stored messages, whichever
-// tool made them (here the catalog, as the CLI does).
+// tool made them (here the catalog, as the API does).
 func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 	e := setup(t)
 	e.mustPost("a", "0777777", "@@EX0000007 HSF1 SHED FIRE @ 3 FICTION ST, MADEUPTON #STN7", e.now)
@@ -222,7 +222,7 @@ func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 	if m.Alias != nil || m.Format != nil || m.JobNumber == nil {
 		t.Fatalf("before: alias %s, format %s, job %s", s(m.Alias), s(m.Format), s(m.JobNumber))
 	}
-	if err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "777777", Name: "Station 7", Template: "Example Fire"}); err != nil {
+	if err := e.catAdd("777777", "Station 7", "Example Fire", false); err != nil {
 		t.Fatal(err)
 	}
 	if n, err := e.worker.RunOnce(e.ctx); err != nil || n != 1 {
@@ -233,14 +233,14 @@ func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 		t.Fatalf("after alias: alias %s, format %s, group %s, address %s", s(m.Alias), s(m.Format), s(m.Group), s(m.Address))
 	}
 	// Renaming needs no re-parse: names are read through the join.
-	if err := e.cat.UpdateAlias(e.ctx, catalog.Alias{Pattern: "0777777", Name: "Station Seven", Template: "Example Fire"}); err != nil {
+	if err := e.catSet("0777777", "Station Seven", "Example Fire"); err != nil {
 		t.Fatal(err)
 	}
 	if m = e.list("")[0]; s(m.Alias) != "Station Seven" {
 		t.Errorf("renamed alias shows %s", s(m.Alias))
 	}
 	// Template loses its profile: pages become text only.
-	if err := e.cat.UpdateTemplate(e.ctx, catalog.Template{Name: "Example Fire", Agency: "Example Fire Service"}); err != nil {
+	if err := e.cat.EditTemplate(e.ctx, e.templateID("Example Fire"), catalog.TemplateChange{AgencyProfile: ptr("")}, e.profiles()); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.worker.RunOnce(e.ctx); err != nil {
@@ -250,7 +250,7 @@ func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 		t.Errorf("after template: format %s, group %s, job %s", s(m.Format), s(m.Group), s(m.JobNumber))
 	}
 	// Deleting the alias leaves the message unaliased.
-	if err := e.cat.DeleteAlias(e.ctx, "0777777"); err != nil {
+	if err := e.catDelete("0777777"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.worker.RunOnce(e.ctx); err != nil {
@@ -294,7 +294,7 @@ func TestReparseWorkerWakesOnNotify(t *testing.T) {
 	defer cancel()
 	go e.worker.Run(ctx)
 	time.Sleep(300 * time.Millisecond) // let it LISTEN
-	if err := e.cat.AddAlias(e.ctx, catalog.Alias{Pattern: "0777777", Name: "Station 7", Template: "Example Fire"}); err != nil {
+	if err := e.catAdd("0777777", "Station 7", "Example Fire", false); err != nil {
 		t.Fatal(err)
 	}
 	deadline := time.Now().Add(5 * time.Second)

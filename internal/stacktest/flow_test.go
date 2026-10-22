@@ -123,6 +123,13 @@ func (b *browser) executor(slug, query string, body map[string]any) challenge {
 			data, _ := json.Marshal(body)
 			req, _ = http.NewRequest(http.MethodPost, u, bytes.NewReader(data))
 			req.Header.Set("Content-Type", "application/json")
+			// Once signed in, Authentik wants its CSRF cookie echoed in a
+			// header, as its web pages do (the device code, ADR 0009 §2).
+			for _, c := range b.client.Jar.Cookies(b.s.authentik) {
+				if c.Name == "authentik_csrf" {
+					req.Header.Set("X-authentik-CSRF", c.Value)
+				}
+			}
 		} else {
 			req, _ = http.NewRequest(http.MethodGet, u, nil)
 		}

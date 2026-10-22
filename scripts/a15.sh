@@ -85,8 +85,7 @@ echo "--- API up $(($(date +%s) - started)) s after start (dataset loaded)"
 grep -h '"address dataset loaded"' "$OUT/a15-api.log" 2>/dev/null || stack_compose logs --no-color api | grep 'address dataset loaded\|street index' || true
 
 cli() { stack_compose exec -T api /usr/local/bin/pagerarchive "$@"; }
-cli template add "Example Fire" --agency "Example Fire Service" --profile example-fire >/dev/null
-for n in 1 2 3 4; do cli alias add "010000$n" "Station $n" --template "Example Fire" >/dev/null; done
+stack_compose exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <scripts/fixture.sql
 KEY=$(cli client add a15 "A15 load" | tail -n 1)
 
 # 20 viewers: 20 users, each with a session (as scripts/e2e.sh seeds them).

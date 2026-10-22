@@ -22,8 +22,7 @@ stack_up
 echo "--- building the client image and adding the test fixture"
 docker build -q -f Dockerfile.client -t pagerarchive-client:stacktest . >/dev/null
 cli() { stack_compose exec -T api /usr/local/bin/pagerarchive "$@"; }
-cli template add "Example Fire" --agency "Example Fire Service" --profile example-fire >/dev/null
-for n in 1 2 3 4; do cli alias add "010000$n" "Station $n" --template "Example Fire" >/dev/null; done
+stack_compose exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <scripts/fixture.sql
 PA_CLIENT_KEY=$(cli client add section11 "Section 11 client" | tail -n 1)
 export PA_CLIENT_KEY PA_CLIENT_IMAGE=pagerarchive-client:stacktest PA_NETWORK="${COMPOSE_PROJECT_NAME}_default"
 

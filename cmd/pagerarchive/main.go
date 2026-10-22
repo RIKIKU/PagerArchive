@@ -77,22 +77,10 @@ commands:
   client add <id> [name]      add a receiving client and print its API key
   client revoke <id>          revoke a client's API key
   client list                 list clients
-  template add|set <name> --agency A [--profile P] [--icon I] [--colour C]
-  template delete <name>      delete a template no alias uses
-  template list               list templates
-  alias add <pattern> <name> [--template T] [--ignored]
-  alias set <pattern> <name> [--template T | --no-template] [--ignored[=false]]
-                              rename; other settings change only if given
-  alias import <file.csv> [--mapping M.json] [--overrides O.json] [--update] [--dry-run]
-                              add aliases from a CSV (R30, R58); existing ones only
-                              listed where they differ, unless --update
-  alias export [file.csv]     write every alias as a CSV in the import format (R58)
-  alias delete <pattern>      delete an alias
-  alias list                  list aliases
   version                     print the version
 
-Alias and template changes re-parse the affected messages (R23a), and alias
-changes are recorded in the alias history (R57).
+Templates and aliases are managed in the browser or with the PagerArchive
+PowerShell module (docs/powershell.md), which uses the same API and rules.
 
 serve reads its settings from the environment:
   DATABASE_URL     PostgreSQL connection string (required)
@@ -107,6 +95,7 @@ serve reads its settings from the environment:
   AUTHENTIK_API_TOKEN     the app.s Authentik API token (required)
   OIDC_CLIENT_ID          (default pagerarchive)
   OIDC_CLIENT_SECRET      (required)
+  POWERSHELL_CLIENT_ID    the PowerShell module's Authentik client (default pagerarchive-powershell)
   ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
@@ -137,10 +126,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = validateProfile(args, stdout, stderr)
 	case "client":
 		err = clientCmd(args, stdout)
-	case "template":
-		err = templateCmd(args, stdout, stderr)
-	case "alias":
-		err = aliasCmd(args, stdout, stderr)
+
 	case "version", "--version":
 		fmt.Fprintln(stdout, "pagerarchive", version)
 	case "help", "-h", "--help":
@@ -328,6 +314,11 @@ func serve(stderr io.Writer) error {
 			ClientSecret: auth.clientSecret,
 			RedirectURL:  auth.appURL.JoinPath("/auth/callback").String(),
 			HTTP:         auth.http,
+		},
+		PowerShell: &server.PowerShell{
+			Issuer:   auth.authentikURL.JoinPath("/application/o/pagerarchive-powershell/").String(),
+			ClientID: getenv("POWERSHELL_CLIENT_ID", "pagerarchive-powershell"),
+			HTTP:     auth.http,
 		},
 		AppURL:         auth.appURL,
 		AccountURL:     auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",

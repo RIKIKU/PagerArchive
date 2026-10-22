@@ -1,6 +1,10 @@
 # Never commit private material: real captures, names, phone numbers, health details, or members-only documents
 *.PRIVATE.*
 *PRIVATE*
+# Except the PowerShell module's private functions: source code, in the folder
+# docs/powershell-guidelines.md section 10 names Private/. (Git on Windows matches
+# *PRIVATE* without regard to case.)
+!/powershell/PagerArchive/Private/
 .env
 *.env
 .secrets/

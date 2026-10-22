@@ -1,0 +1,124 @@
+TOPIC
+    about_PagerArchive
+
+SHORT DESCRIPTION
+    Manage a PagerArchive server from PowerShell: sign in, manage templates
+    and aliases, import aliases through the pipeline, and search messages.
+
+LONG DESCRIPTION
+    The PagerArchive module uses PagerArchive's API, the same one the
+    browser uses, so the same rules apply and alias changes are recorded in
+    each alias's history as yours. PowerShell access is for admins.
+
+    Every command has a short alias with Pa in place of PagerArchive, e.g.
+    Get-PaAlias for Get-PagerArchiveAlias.
+
+  SIGNING IN
+    Connect-PagerArchive -Uri https://pager.example.org
+
+    Opens your browser at PagerArchive's normal sign-in (email and
+    password). When you've signed in, the browser says you can close it.
+    There are no API keys: the module signs in as you, with PKCE and a
+    redirect to a port on your own machine (127.0.0.1).
+
+    On a machine with no browser:
+
+        Connect-PagerArchive -Uri https://pager.example.org -UseDeviceCode
+
+    shows a code to enter at Authentik's /device page on any device.
+
+    The module renews its access automatically, and the sign-in is saved so
+    new PowerShell windows use it:
+
+    - Windows: a file in %LOCALAPPDATA%\PagerArchive\SignIns, with the
+      sign-in encrypted by Windows' data protection (DPAPI). Only your
+      Windows account on that machine can read it. Nothing needs installing.
+    - Linux and macOS: your default SecretManagement vault. With no vault
+      registered, the sign-in lasts for that session only, and a warning
+      says how to set one up:
+
+        Install-PSResource -Name Microsoft.PowerShell.SecretManagement, Microsoft.PowerShell.SecretStore
+        Register-SecretVault -Name SecretStore -ModuleName Microsoft.PowerShell.SecretStore -DefaultVault
+
+      SecretStore asks for its password when first used and again after
+      15 minutes; Set-SecretStoreConfiguration -PasswordTimeout changes
+      that. Unlock it with Unlock-SecretStore.
+    - Anywhere: Connect-PagerArchive -Vault <name> uses that vault.
+
+    A sign-in that isn't used for 30 days ends. Disconnect-PagerArchive
+    revokes it and deletes the saved copy. Deactivating, deleting or
+    demoting someone in PagerArchive takes effect on their next command.
+
+    A test copy on your own network over plain HTTP needs
+    -AllowUnencryptedAuthentication, and warns each time, because the
+    sign-in is sent unencrypted.
+
+  OBJECTS
+    PagerArchive.Template     Name, Agency, Colour, AgencyProfile, AliasCount
+    PagerArchive.Alias        Pattern, Name, Template, Colour, Ignored
+    PagerArchive.ImportResult Index, Result, Pattern, Name, Changes,
+                              SquashedInto, Applied
+    PagerArchive.Message      SentAt, Capcode, Alias, Agency, Priority, Text,
+                              and everything the detail view shows
+    PagerArchive.Connection   Uri, Name, Email, Role, SavedIn, ExpiresAt
+
+    An alias's properties are the import's parameters, so
+
+        Get-PagerArchiveAlias | Export-Csv -Path aliases.csv
+
+    writes the import format, and importing that file changes nothing.
+
+  IMPORTING ALIASES
+        Import-Csv -Path aliases.csv | Import-PagerArchiveAlias -AgencyProfile @{ 'Example Fire' = 'example-fire' }
+
+    The rows are one batch. New capcodes are added; existing aliases are
+    left alone and their differences reported, unless -Update. Rows for one
+    capcode that differ stop the whole import and are listed as errors;
+    leave rows out in the pipeline and import again:
+
+        Import-Csv -Path aliases.csv | Where-Object -FilterScript { $_.id -ne '10' } | Import-PagerArchiveAlias
+
+    -WhatIf is the dry run. It asks nothing, changes nothing, and outputs
+    every row's result with Applied $false:
+
+        Import-Csv -Path aliases.csv | Import-PagerArchiveAlias -WhatIf |
+            Where-Object -Property Result -EQ 'Different'
+
+  COMMON PIPELINES
+    Messages to a group of aliases in the last week:
+
+        Get-PagerArchiveAlias -Name 'Station*' |
+            Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
+
+    Emergency messages from one capcode, to a spreadsheet:
+
+        Get-PagerArchiveMessage -Capcode 0100001 -Priority Emergency |
+            Select-Object -Property SentAt, Alias, Text |
+            Export-Csv -Path station1.csv
+
+    Capcodes with no alias, busiest first:
+
+        Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-30) |
+            Group-Object -Property Capcode | Sort-Object -Property Count -Descending
+
+    Move aliases to another template, checking first:
+
+        Get-PagerArchiveAlias -Template 'Old Fire' |
+            Set-PagerArchiveAlias -Template 'Example Fire' -WhatIf
+
+  ERRORS
+    A refusal from PagerArchive is an error whose ErrorId is the API's
+    code (e.g. duplicate_alias, template_in_use, powershell_admins_only)
+    and whose message is the API's. A failure on one item doesn't stop the
+    rest of the pipeline; not being signed in, or the server being
+    unreachable, does.
+
+SEE ALSO
+    Connect-PagerArchive
+    Get-PagerArchiveAlias
+    Import-PagerArchiveAlias
+    Get-PagerArchiveMessage
+    https://github.com/RIKIKU/PagerArchive/blob/main/docs/powershell.md
+
+KEYWORDS
+    PagerArchive POCSAG pager alias template
