@@ -104,21 +104,22 @@ func (e *errTokenRefused) Error() string { return e.code }
 
 // bearerUser is the user a module access token belongs to, checked on every
 // request: nothing is cached, so deactivation, deletion and demotion take
-// effect on the next command (R60, A53).
-func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, error) {
+// effect on the next command (R60, A53). It also returns the token's expiry,
+// when a live stream on it must end (ADR 0010 §4).
+func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time, error) {
 	if s.PowerShell == nil {
-		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "PowerShell sign-in is off"}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "PowerShell sign-in is off"}
 	}
 	v, err := s.PowerShell.tokenVerifier()
 	if err != nil {
 		s.Log.Error("powershell token: discovery", "error", err.Error())
-		return db.User{}, errors.New("directory unavailable")
+		return db.User{}, time.Time{}, errors.New("directory unavailable")
 	}
 	tok, err := v.Verify(ctx, raw)
 	if err != nil {
 		// go-oidc's errors name the check that failed, never the token.
 		s.Log.Info("powershell token refused", "reason", err.Error())
-		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "invalid"}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "invalid"}
 	}
 	// An access token, not the ID token handed out with it: only access
 	// tokens carry azp and scope (ADR 0009 §2, E2).
@@ -129,24 +130,24 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, error) {
 	}
 	if err := tok.Claims(&c); err != nil || c.Azp != s.PowerShell.ClientID || c.Scope == "" {
 		s.Log.Info("powershell token refused", "reason", "not an access token for this client")
-		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "not an access token"}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "not an access token"}
 	}
 	u, err := s.Store.UserBySubject(ctx, &tok.Subject)
 	if errors.Is(err, pgx.ErrNoRows) {
 		s.Log.Info("powershell token refused", "reason", CodeNotSignedIn)
-		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeNotSignedIn, "No PagerArchive account for this sign-in.", "no account"}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeNotSignedIn, "No PagerArchive account for this sign-in.", "no account"}
 	}
 	if err != nil {
 		s.Log.Error("powershell token: user", "error", store.SafeError(err))
-		return db.User{}, err
+		return db.User{}, time.Time{}, err
 	}
 	if u.Status != "active" {
 		s.Log.Info("powershell token refused", "reason", CodeDeactivated, "user", u.ID)
-		return db.User{}, &errTokenRefused{http.StatusUnauthorized, CodeDeactivated, "Your account has been deactivated. Ask an admin if you think this is a mistake.", "deactivated"}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeDeactivated, "Your account has been deactivated. Ask an admin if you think this is a mistake.", "deactivated"}
 	}
 	if u.Role != accounts.RoleAdmin {
 		s.Log.Info("powershell token refused", "reason", CodeAdminsOnly, "user", u.ID)
-		return db.User{}, &errTokenRefused{http.StatusForbidden, CodeAdminsOnly, msgPowerShellAdmins, ""}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusForbidden, CodeAdminsOnly, msgPowerShellAdmins, ""}
 	}
 	id := c.JTI
 	if id == "" {
@@ -155,7 +156,7 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, error) {
 	if s.PowerShell.firstUse(id, tok.Expiry, s.Now()) {
 		s.Log.Info("signed in with PowerShell", "user", u.ID)
 	}
-	return u, nil
+	return u, tok.Expiry, nil
 }
 
 // bearerToken is the request's Authorization: Bearer token, if any.

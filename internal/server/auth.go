@@ -75,6 +75,15 @@ func currentUser(r *http.Request) db.User {
 	return u
 }
 
+type tokenExpiryKey struct{}
+
+// tokenExpiry is when the PowerShell module's access token of a request
+// that passed signedIn expires; ok is false for a browser session.
+func tokenExpiry(r *http.Request) (t time.Time, ok bool) {
+	t, ok = r.Context().Value(tokenExpiryKey{}).(time.Time)
+	return t, ok
+}
+
 // signedIn admits only requests with a live session of an active user
 // (A29), or with the PowerShell module's access token for an active admin
 // (R60-R62). Deactivation deletes sessions, so it takes effect at once
@@ -88,7 +97,7 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 				writeJSON(w, http.StatusBadRequest, Problem{Error: "Send a session cookie or a bearer token, not both.", Code: CodeTwoCredentials})
 				return
 			}
-			u, err := s.bearerUser(r.Context(), raw)
+			u, expires, err := s.bearerUser(r.Context(), raw)
 			var refusal *errTokenRefused
 			if errors.As(err, &refusal) {
 				refuseToken(w, refusal)
@@ -98,7 +107,8 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 				problem(w, http.StatusServiceUnavailable, "couldn't check the sign-in")
 				return
 			}
-			h(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
+			ctx := context.WithValue(context.WithValue(r.Context(), userKey{}, u), tokenExpiryKey{}, expires)
+			h(w, r.WithContext(ctx))
 			return
 		}
 		var u db.User

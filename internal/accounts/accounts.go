@@ -95,9 +95,10 @@ type Service struct {
 	InitialAdmin   string   // INITIAL_ADMIN_EMAIL, may be empty (R44)
 	Now            func() time.Time
 	Log            *slog.Logger
-	// SignedOut is told which users lost their sessions, so their live
-	// connections can be closed (R43b).
-	SignedOut func(userIDs []int64)
+	// CloseLive closes these users' live connections: they lost their
+	// sessions (R43b), or their role changed, so what they may see changed
+	// (ADR 0010 §4).
+	CloseLive func(userIDs []int64)
 }
 
 func (s *Service) now() time.Time {
@@ -107,9 +108,9 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-func (s *Service) signedOut(ids []int64) {
-	if s.SignedOut != nil && len(ids) > 0 {
-		s.SignedOut(ids)
+func (s *Service) closeLive(ids []int64) {
+	if s.CloseLive != nil && len(ids) > 0 {
+		s.CloseLive(ids)
 	}
 }
 
@@ -411,6 +412,17 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 			return dbErr("use invitation", err)
 		}
 		if n != 1 {
+			// It changed since it was read above: a tree deactivation can cancel
+			// it while this sign-in waits on the tree's locks (ADR 0008 §5).
+			// Each statement sees the latest commit, so read it again.
+			now, err := q.InvitationByID(ctx, inv.ID)
+			if err != nil {
+				return dbErr("invitation", err)
+			}
+			if now.Status != "used" {
+				cancelled = true
+				return refuse(http.StatusForbidden, "invitation_cancelled", "Your invitation was cancelled before you finished enrolling.")
+			}
 			return refuse(http.StatusConflict, "invitation_used", "That invitation has already been used.")
 		}
 		return nil
@@ -557,7 +569,7 @@ func deactivateIn(ctx context.Context, q *db.Queries, ids []int64) ([]db.Deactiv
 // closed, the users are disabled in Authentik and their cancelled
 // invitations deleted there. It returns how many couldn't be disabled.
 func (s *Service) afterDeactivate(ctx context.Context, ids []int64, subjects []*string, cancelled []*string) int {
-	s.signedOut(ids)
+	s.closeLive(ids)
 	var failed int
 	for i, sub := range subjects {
 		if sub == nil {
@@ -598,11 +610,14 @@ func (s *Service) Reactivate(ctx context.Context, actor db.User, targetID int64)
 }
 
 // SetRole promotes or demotes a user (R44). The last active admin stays.
+// A change closes their live connections, which then reconnect with the new
+// role's view (ADR 0010 §4).
 func (s *Service) SetRole(ctx context.Context, actor db.User, targetID int64, role string) error {
 	if role != RoleUser && role != RoleAdmin {
 		return refuse(http.StatusUnprocessableEntity, "bad_role", `Role must be "user" or "admin".`)
 	}
-	return s.Store.InTx(ctx, func(q *db.Queries) error {
+	var changed bool
+	err := s.Store.InTx(ctx, func(q *db.Queries) error {
 		admins, err := q.LockActiveAdmins(ctx)
 		if err != nil {
 			return dbErr("lock admins", err)
@@ -623,9 +638,14 @@ func (s *Service) SetRole(ctx context.Context, actor db.User, targetID int64, ro
 		if _, err := q.SetUserRole(ctx, db.SetUserRoleParams{ID: u.ID, Role: role}); err != nil {
 			return dbErr("set role", err)
 		}
+		changed = u.Role != role
 		s.Log.Info("role changed", "by", actor.ID, "user", u.ID, "role", role)
 		return nil
 	})
+	if err == nil && changed {
+		s.closeLive([]int64{targetID})
+	}
+	return err
 }
 
 // DeleteAccount deletes the signed-in user's own account (R43c). People
@@ -671,7 +691,7 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 	if err != nil {
 		return err
 	}
-	s.signedOut([]int64{u.ID})
+	s.closeLive([]int64{u.ID})
 	s.Log.Info("account deleted", "user", u.ID)
 	if u.Subject != nil {
 		if err := s.Dir.DeleteUser(ctx, *u.Subject); err != nil {

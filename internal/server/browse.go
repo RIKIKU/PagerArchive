@@ -1,10 +1,13 @@
 package server
 
 import (
+	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,6 +16,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/search"
@@ -180,13 +184,16 @@ type MessagePage struct {
 	Next     string    `json:"next,omitempty"` // cursor for the following page
 }
 
-func (s *Server) search(r *http.Request, f search.Filter, before *search.Cursor, limit int, onlyID *int64) ([]db.SearchMessagesRow, error) {
+// search runs a message search. ids, when not empty, keeps just those messages.
+func (s *Server) search(ctx context.Context, f search.Filter, before *search.Cursor, limit int, ids []int64) ([]db.SearchMessagesRow, error) {
 	p, err := f.Params(s.Ingest.Network, before, limit)
 	if err != nil {
 		return nil, err
 	}
-	p.OnlyID = onlyID
-	rows, err := s.Store.SearchMessages(r.Context(), p)
+	if len(ids) > 0 {
+		p.OnlyIds = ids
+	}
+	rows, err := s.Store.SearchMessages(ctx, p)
 	if err != nil {
 		return nil, fmt.Errorf("search: %s", store.SafeError(err))
 	}
@@ -218,7 +225,7 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	rows, err := s.search(r, f, before, limit+1, nil)
+	rows, err := s.search(r.Context(), f, before, limit+1, nil)
 	if err != nil {
 		s.Log.Error("list messages", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
@@ -233,26 +240,38 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range rows {
 		page.Messages = append(page.Messages, s.toMessage(m, admin))
 	}
-	if r.URL.Query().Get("receptions") == "true" && len(rows) > 0 {
-		ids := make([]int64, len(rows))
-		for i, m := range rows {
-			ids[i] = m.ID
-		}
-		recs, err := s.Store.ReceptionsForMessages(r.Context(), ids)
-		if err != nil {
-			s.Log.Error("receptions", "error", store.SafeError(err))
+	if r.URL.Query().Get("receptions") == "true" {
+		if err := s.addReceptions(r.Context(), page.Messages, admin); err != nil {
+			s.Log.Error("receptions", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return
 		}
-		byMessage := map[int64][]db.MessageReceptionsRow{}
-		for _, rc := range recs {
-			byMessage[rc.MessageID] = append(byMessage[rc.MessageID], db.MessageReceptionsRow{ClientID: rc.ClientID, ClientName: rc.ClientName, ReceivedAt: rc.ReceivedAt})
-		}
-		for i := range page.Messages {
-			page.Messages[i].Receptions = receptions(byMessage[page.Messages[i].ID], admin)
-		}
 	}
 	writeJSON(w, http.StatusOK, page)
+}
+
+// addReceptions adds each message's receive times, in one query, for the
+// PowerShell module (R63a).
+func (s *Server) addReceptions(ctx context.Context, msgs []Message, admin bool) error {
+	if len(msgs) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(msgs))
+	for i, m := range msgs {
+		ids[i] = m.ID
+	}
+	recs, err := s.Store.ReceptionsForMessages(ctx, ids)
+	if err != nil {
+		return errors.New(store.SafeError(err))
+	}
+	byMessage := map[int64][]db.MessageReceptionsRow{}
+	for _, rc := range recs {
+		byMessage[rc.MessageID] = append(byMessage[rc.MessageID], db.MessageReceptionsRow{ClientID: rc.ClientID, ClientName: rc.ClientName, ReceivedAt: rc.ReceivedAt})
+	}
+	for i := range msgs {
+		msgs[i].Receptions = receptions(byMessage[msgs[i].ID], admin)
+	}
+	return nil
 }
 
 // receptions labels receive times. Client names may reveal where receivers
@@ -281,7 +300,7 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	admin := s.isAdmin(r)
 	// A detail view shows the message whatever the list's filters (ignored included).
-	rows, err := s.search(r, search.Filter{Ignored: true}, nil, 1, &id)
+	rows, err := s.search(r.Context(), search.Filter{Ignored: true}, nil, 1, []int64{id})
 	if err != nil {
 		s.Log.Error("get message", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
@@ -311,7 +330,7 @@ type Job struct {
 func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	job := r.PathValue("job")
 	admin := s.isAdmin(r)
-	rows, err := s.search(r, search.Filter{Job: []string{job}, Ignored: true}, nil, jobLimit, nil)
+	rows, err := s.search(r.Context(), search.Filter{Job: []string{job}, Ignored: true}, nil, jobLimit, nil)
 	if err != nil {
 		s.Log.Error("job", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
@@ -373,18 +392,41 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// catchUpBatch is how many stored messages a catch-up reads at a time.
+const catchUpBatch = 200
+
 // stream sends new messages that match the viewer's filter as Server-Sent
 // Events (R32). The browser reloads the list when it reconnects.
+//
+// For the PowerShell module's watch (ADR 0010): after_id first sends the
+// matching messages stored after that one, oldest first; a ready event then
+// says the stream is live and gives the next after_id; receptions=true adds
+// receive times. The stream ends with a
+// reconnect event when the hub drops it (the user's status or role changed,
+// or it fell behind) and, for a bearer token, when the token expires, so a
+// stream never outlives the checks a request would get (R60).
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
-	admin := s.isAdmin(r)
-	f, err := search.Parse(r.URL.Query(), admin, s.Location)
+	ctx := r.Context()
+	u := currentUser(r)
+	admin := u.Role == accounts.RoleAdmin
+	q := r.URL.Query()
+	f, err := search.Parse(q, admin, s.Location)
 	if err == nil {
 		_, err = f.Params(s.Ingest.Network, nil, 1)
+	}
+	var after *int64
+	if v := q.Get("after_id"); err == nil && v != "" {
+		id, perr := strconv.ParseInt(v, 10, 64)
+		if perr != nil || id < 0 {
+			err = errors.New("after_id must be a message ID")
+		}
+		after = &id
 	}
 	if err != nil {
 		problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	withReceptions := q.Get("receptions") == "true"
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -394,20 +436,116 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if err := rc.Flush(); err != nil {
 		return
 	}
-	sub := s.Hub.Subscribe(currentUser(r).ID)
+	reconnect := func(reason string) {
+		data, _ := json.Marshal(map[string]string{"reason": reason})
+		fmt.Fprintf(w, "event: reconnect\ndata: %s\n\n", data)
+		_ = rc.Flush()
+	}
+	send := func(rows []db.SearchMessagesRow) error {
+		msgs := make([]Message, len(rows))
+		for i, m := range rows {
+			msgs[i] = s.toMessage(m, admin)
+		}
+		if withReceptions {
+			if err := s.addReceptions(ctx, msgs, admin); err != nil {
+				return err
+			}
+		}
+		for _, m := range msgs {
+			data, _ := json.Marshal(m)
+			fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", m.ID, data)
+		}
+		return nil
+	}
+
+	sub := s.Hub.Subscribe(u.ID)
 	defer s.Hub.Unsubscribe(sub)
+	// The sign-in was checked before subscribing, so a change of status or
+	// role in between found no connection to close: look again. A change
+	// after this finds the subscription (ADR 0010 §4).
+	if now, err := s.Store.UserByID(ctx, u.ID); err != nil || now.Status != "active" || now.Role != u.Role {
+		if err != nil {
+			s.Log.Error("stream: user", "error", store.SafeError(err))
+		}
+		reconnect(live.Account)
+		return
+	}
+	var expired <-chan time.Time
+	if exp, ok := tokenExpiry(r); ok {
+		t := time.NewTimer(exp.Sub(s.Now()))
+		defer t.Stop()
+		expired = t.C
+	}
+
+	// Where the stream starts: after after_id, catching up on what was stored
+	// since, or after the newest message now. Either runs after subscribing,
+	// so a page stored meanwhile is in the reads, announced afterwards, or
+	// both; IDs are announced in the order they're stored (postPage), so the
+	// hub's copy of any ID up to covered is skipped (ADR 0010 §3). The ready
+	// event tells the client covered, its next after_id.
+	var covered int64
+	count := 0
+	if after == nil {
+		if covered, err = s.Store.LastMessageID(ctx); err != nil {
+			s.Log.Error("stream: last message", "error", store.SafeError(err))
+			return
+		}
+	} else {
+		for covered = *after; ; {
+			ids, err := s.Store.MessageIDsAfter(ctx, db.MessageIDsAfterParams{ID: covered, MaxRows: catchUpBatch})
+			if err != nil {
+				s.Log.Error("stream: catch-up", "error", store.SafeError(err))
+				return
+			}
+			if len(ids) == 0 {
+				break
+			}
+			rows, err := s.search(ctx, f, nil, len(ids), ids)
+			if err == nil {
+				slices.SortFunc(rows, func(a, b db.SearchMessagesRow) int { return cmp.Compare(a.ID, b.ID) })
+				err = send(rows)
+			}
+			if err != nil {
+				s.Log.Error("stream: catch-up", "error", err.Error())
+				return
+			}
+			if err := rc.Flush(); err != nil {
+				return
+			}
+			count += len(rows)
+			covered = ids[len(ids)-1]
+			if len(ids) < catchUpBatch {
+				break
+			}
+		}
+	}
+	fmt.Fprintf(w, "event: ready\ndata: {\"caught_up\":%d,\"last_id\":%d}\n\n", count, covered)
+	if err := rc.Flush(); err != nil {
+		return
+	}
+
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()
 	for {
 		select {
-		case <-r.Context().Done():
+		case <-ctx.Done():
 			return
 		case <-sub.Dropped:
+			reconnect(sub.Reason())
+			return
+		case <-expired:
+			reconnect("expired")
 			return
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keepalive\n\n")
 		case id := <-sub.C:
-			rows, err := s.search(r, f, nil, 1, &id)
+			if id <= covered {
+				continue // before the stream started, or sent by the catch-up
+			}
+			rows, err := s.search(ctx, f, nil, 1, []int64{id})
+			if err == nil && len(rows) > 0 {
+				err = send(rows)
+			}
 			if err != nil {
 				s.Log.Error("stream", "error", err.Error())
 				return
@@ -415,8 +553,6 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			if len(rows) == 0 {
 				continue // doesn't match this viewer's filter (A4)
 			}
-			data, _ := json.Marshal(s.toMessage(rows[0], admin))
-			fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", id, data)
 		}
 		if err := rc.Flush(); err != nil {
 			return

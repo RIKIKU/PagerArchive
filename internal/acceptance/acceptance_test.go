@@ -156,7 +156,7 @@ func setup(t *testing.T) *env {
 	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	hub := live.NewHub()
 	e.dir = newFakeDir()
-	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, SignedOut: hub.CloseUsers}
+	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, CloseLive: hub.CloseUsers}
 	// Integrations: a random key, and a guard that refuses anything outside
 	// 127.0.0.0/8, so no test can reach a real service (ADR 0006 §8).
 	box, err := integrations.NewBox(base64.StdEncoding.EncodeToString([]byte(randomKey())), "")

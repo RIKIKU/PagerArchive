@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -66,6 +67,9 @@ type Server struct {
 	Version      string
 
 	pages pageCounts
+	// ingest stores one page at a time and announces it before the next, so
+	// message IDs reach live connections in increasing order (ADR 0010 §3).
+	ingest sync.Mutex
 }
 
 // Handler returns the API's routes.
@@ -228,6 +232,7 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.ingest.Lock()
 	outcome, id, err := s.Ingest.Ingest(ctx, clientID, ingest.Page{
 		Capcode:    decoder.PadCapcode(req.Capcode),
 		Text:       req.Text,
@@ -235,6 +240,10 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		Function:   req.Function,
 		Baud:       req.Baud,
 	})
+	if err == nil && outcome == ingest.Stored && s.Hub != nil {
+		s.Hub.Publish(id)
+	}
+	s.ingest.Unlock()
 	if err != nil {
 		s.Log.Error("ingest failed", "client", clientID, "error", err.Error())
 		problem(w, http.StatusInternalServerError, "couldn't store the page")
@@ -245,9 +254,6 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 	if outcome == ingest.Stored {
 		// Its deliveries were queued with it; send them now (R51a: within 5 s).
 		s.Integrations.Wake()
-		if s.Hub != nil {
-			s.Hub.Publish(id)
-		}
 	}
 	writeJSON(w, http.StatusOK, PageResponse{Outcome: outcome, MessageID: id})
 }

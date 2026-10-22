@@ -171,7 +171,8 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 -- R33. Every filter is optional (NULL or an empty array = any). An array
 -- matches any of its values (R63a). Keyset pagination on (sent_at, id),
 -- newest first. cat_filter keeps messages whose event_type is in the chosen
--- categories' codes, or (cat_other) in no category's codes.
+-- categories' codes, or (cat_other) in no category's codes. only_ids, when
+-- not empty, keeps just those messages (a live update, a catch-up batch).
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
@@ -181,7 +182,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
-WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
+WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only_ids)::bigint[]))
   AND (sqlc.narg(q)::text IS NULL OR m.text ILIKE sqlc.narg(q)
        OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE sqlc.narg(q)))
   AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
@@ -218,6 +219,15 @@ WHERE (sqlc.narg(only_id)::bigint IS NULL OR m.id = sqlc.narg(only_id))
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT sqlc.arg(max_rows)::int;
+
+-- name: LastMessageID :one
+-- Where a live connection without after_id starts (ADR 0010 §2).
+SELECT COALESCE(max(id), 0)::bigint FROM messages;
+
+-- name: MessageIDsAfter :many
+-- A live connection's catch-up (ADR 0010 §3): messages stored after one,
+-- oldest first. IDs are assigned in the order pages are stored.
+SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT sqlc.arg(max_rows)::int;
 
 -- name: UnaliasedCapcodes :many
 -- R33: capcodes with no alias, with message count and first- and last-seen times.

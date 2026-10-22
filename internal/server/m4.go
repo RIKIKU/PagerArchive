@@ -48,7 +48,7 @@ func (s *Server) mapMessages(w http.ResponseWriter, r *http.Request) {
 		f.From = &from
 	}
 	f.Located = true
-	rows, err := s.search(r, f, nil, mapLimit+1, nil)
+	rows, err := s.search(r.Context(), f, nil, mapLimit+1, nil)
 	if err != nil {
 		s.Log.Error("map", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")

@@ -233,7 +233,7 @@ func serve(stderr io.Writer) error {
 	dir := &authentik.Client{URL: auth.authentikURL, Token: auth.apiToken, HTTP: auth.http}
 	acc := &accounts.Service{
 		Store: st, Dir: dir, AllowedDomains: auth.domains, InitialAdmin: auth.initialAdmin,
-		Now: time.Now, Log: log, SignedOut: hub.CloseUsers,
+		Now: time.Now, Log: log, CloseLive: hub.CloseUsers,
 	}
 	go expireSessions(ctx, st, log)
 
