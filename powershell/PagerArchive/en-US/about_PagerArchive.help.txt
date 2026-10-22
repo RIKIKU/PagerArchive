@@ -96,6 +96,12 @@ LONG DESCRIPTION
             Select-Object -Property SentAt, Alias, Text |
             Export-Csv -Path station1.csv
 
+    New Emergency pages as they arrive, until Ctrl+C (a lost connection is
+    retried, and what arrived meanwhile comes out once it's back):
+
+        Watch-PagerArchiveMessage -Priority Emergency |
+            ForEach-Object -Process { "$($_.Alias): $($_.Text)" }
+
     Capcodes with no alias, busiest first:
 
         Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-30) |
@@ -118,6 +124,7 @@ SEE ALSO
     Get-PagerArchiveAlias
     Import-PagerArchiveAlias
     Get-PagerArchiveMessage
+    Watch-PagerArchiveMessage
     https://github.com/RIKIKU/PagerArchive/blob/main/docs/powershell.md
 
 KEYWORDS
