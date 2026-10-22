@@ -130,7 +130,28 @@ Queries that show templates or messages select only the hash; only the icon endp
 
 ## Evidence
 
-(Filled in from the runs below.)
+Run on cld01 on 2026-10-23 (Go 1.27.2, Node with Playwright's Chromium, Firefox and WebKit, pwsh 7.6.7, the compose stack with Authentik 2026.5.5), at commits 9fe4de3–6cf3b49.
+
+- **CI's checks:** `gofmt -l .` empty; `go vet ./...` clean; `sqlc diff` clean; `validate-profile -v profiles/example` all rows passed; `npm run check` 0 errors and 0 warnings.
+- **`PAGERARCHIVE_REQUIRE_DB=1 go test -count=1 -v ./...`:** every package `ok` (`internal/icon` 0.17 s, `internal/acceptance` 136 s); 158 tests passed, and the 21 skipped are the stack tests, which need the compose stack.
+- **Fuzzing** `FuzzConvert` for 60 s (121,478 inputs): no panic, no non-refusal error, and, timed in a second run, no input over 1 s.
+- **`scripts/e2e.sh`** (all three browsers): `123 passed (13.0m)`, "API log lines checked: 407, page texts found: 0". A57 in each engine and theme: "icon on a white tile, fetched 1 time(s) for 3 page loads, origins requested http://127.0.0.1:<proxy>, another site blocked by img-src", and after the icon changed, its new URL was fetched once more.
+- **`scripts/stack-checks.sh`:** every test in every phase passed, with both vault settings: "A56: … \"Example Fire\" can't be deleted: 3 aliases use it."; "A56: user B refused (403) editing a template and uploading an icon"; "A58: not-kept.png (292 bytes, with a tEXt chunk) stored as a 2304-byte 64×64 PNG without it"; "A58: -Uri downloaded once by the module (no credentials), the site stopped, and the list's page shows /api/v1/icons/4eb21574….png (2304 bytes)", byte for byte what converting the file in the test gives. "API log lines checked: 554, page texts or email addresses found: 0". A first run found a bug in the new stack test's helper (it escaped the `?` of a query, so the request got 404 after the module's steps had passed), fixed in 6cf3b49.
+- **`scripts/stack-e2e.sh --project=chromium`:** `1 passed`; "A57: icon /api/v1/icons/4eb21574….png shown beside Station 1 in light and dark mode; 3 files refused; origins requested: http://localhost:8080"; "API log lines checked: 23, page texts or email addresses found: 0".
+- **Pester:** `Passed 321, failed 0, skipped 4` (the skips are Windows-only), PSScriptAnalyzer with no findings.
+- **`scripts/mutation-checks.sh`:** all 29 mutations, the 13 new ones included, made a test fail; the unmutated copy passed. The new ones and what failed:
+
+  | Mutation | Failing check |
+  |---|---|
+  | Size checked after reading the whole body | "read 10485760 bytes of the body" (declared and undeclared) |
+  | Type taken from the Content-Type when the bytes aren't an image | not-an-image.png "200, want 422 icon_type", and the icon changed |
+  | SVG not refused with its own reason | "422 icon_type …, want 422 icon_svg" |
+  | Declared size not checked before decoding | huge-canvas.png "422 icon_unreadable …, want 422 icon_dimensions" |
+  | Upload stored as it came | "stored: Width:32 Height:32", "the stored icon kept the uploaded file's text" |
+  | Admins only off, for each of create, edit, delete, upload icon, remove icon | user B's request "201/204/409/200/204, want 403" |
+  | The server fetches an icon sent as a URL | "a URL as the icon: 200", "the server fetched the URL 1 times" |
+  | The module's download with no size limit | "stops a download as soon as it passes 100 KB": no error |
+  | The module's download with no time limit | "stops a download that takes longer than the time limit": `icon_download_failed` after 15 s, not the timeout |
 
 ## Consequences
 
