@@ -15,6 +15,8 @@ function Get-PagerArchiveMessage {
 
     Messages are fetched a page at a time, only as the pipeline asks for
     more, so -First 10 or Select-Object -First 10 stops after the first page.
+    -Skip leaves out the newest matches first. There's no
+    -IncludeTotalCount: count with Measure-Object or @(...).Count.
     Aliases and capcodes piped in are combined into one search.
 
     .EXAMPLE
@@ -50,6 +52,16 @@ function Get-PagerArchiveMessage {
 
     Capcodes with no alias that paged in the last day.
 
+    .EXAMPLE
+    Get-PagerArchiveMessage -Capcode 0100001 -Skip 20 -First 20
+
+    The second 20 messages to one capcode, newest first.
+
+    .EXAMPLE
+    (Get-PagerArchiveMessage -JobNumber EX0000031 | Measure-Object).Count
+
+    How many messages a job has.
+
     .INPUTS
     System.Management.Automation.PSObject. Objects with a Capcode property
     (such as PagerArchive.Message), or with a Name property (such as
@@ -70,7 +82,7 @@ function Get-PagerArchiveMessage {
     .LINK
     about_PagerArchive
     #>
-    [CmdletBinding(SupportsPaging)]
+    [CmdletBinding()]
     [OutputType('PagerArchive.Message')]
     param(
         # Text the message, or one of its parsed fields, contains
@@ -142,7 +154,15 @@ function Get-PagerArchiveMessage {
 
         # Only messages with any of these flags. Default: any.
         [ValidateSet('ParseFailed', 'AddressUnsplit', 'LocationMismatch')]
-        [string[]] $Flag
+        [string[]] $Flag,
+
+        # Returns only this many messages, fetching no more pages than that
+        # needs. Default: every message.
+        [uint64] $First,
+
+        # Leaves out this many matching messages, newest first, before
+        # returning any. Default: 0.
+        [uint64] $Skip
     )
     begin {
         $capcodes = [System.Collections.Generic.List[string]]::new()
@@ -187,14 +207,12 @@ function Get-PagerArchiveMessage {
             $query[$pair[0]] = @($likes)
         }
 
-        $first = $PSCmdlet.PagingParameters.First
-        $skip = $PSCmdlet.PagingParameters.Skip
-        if ($PSCmdlet.PagingParameters.IncludeTotalCount) {
-            # The API doesn't count matches; the total is unknown.
-            $PSCmdlet.PagingParameters.NewTotalCount(0, 0.0)
-        }
-        $written = 0.0
-        $seen = 0.0
+        # Our own -First and -Skip, not SupportsPaging, so there's no
+        # -IncludeTotalCount (guidelines section 3).
+        $first = if ($PSBoundParameters.ContainsKey('First')) { $First } else { [uint64]::MaxValue }
+        $skip = $Skip
+        $written = [uint64]0
+        $seen = [uint64]0
         try {
             while ($written -lt $first) {
                 $wanted = ([double]$first - $written) + [math]::Max(0, [double]$skip - $seen)

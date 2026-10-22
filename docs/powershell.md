@@ -125,9 +125,15 @@ Get-PagerArchiveMessage -Capcode 0100001 -Priority Emergency
 Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
 Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-Csv fires.csv
 Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-30) | Group-Object -Property Capcode
+Get-PagerArchiveMessage -Capcode 0100001 -Skip 20 -First 20
+Get-PagerArchiveMessage -First 1 | Format-List
 ```
 
-Messages come out newest first, with everything the detail view shows: the full text, priority, sent time, capcode, alias, agency, group, job number, category, parsed fields, location, flags and each receiver's time. Filters combine; a filter with several values matches any of them; `-Alias`, `-Agency` and `-Group` accept wildcards. Pages to ignored aliases are included only with `-IncludeIgnored`. Messages are fetched a page at a time, only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` stops early.
+Messages come out newest first, with everything the detail view shows: the full text, priority, sent time, capcode, alias, agency, group, job number, category, parsed fields, location, flags and each receiver's time. Filters combine; a filter with several values matches any of them; `-Alias`, `-Agency` and `-Group` accept wildcards. Pages to ignored aliases are included only with `-IncludeIgnored`.
+
+- **Paging:** messages are fetched a page at a time, only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` makes one request and stops. `-Skip` leaves out the newest matches first. There's no `-IncludeTotalCount`: count with `Measure-Object` or `@(...).Count`, which fetches every match.
+- **Display:** a table (sent time, priority, alias or capcode, text) by default. `Format-List` shows what the detail view shows, including each receiver's time.
+- **Times:** tables and lists show times in your time zone. The objects' `SentAt` and `ReceivedAt` are the `[datetimeoffset]` values the server sent (UTC), so `Export-Csv` and comparisons don't depend on where you are.
 
 ## Errors
 

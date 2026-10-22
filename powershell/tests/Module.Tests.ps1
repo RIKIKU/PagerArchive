@@ -80,9 +80,35 @@ Describe 'Get-PagerArchiveMessage' {
         $script:calls.Count | Should -Be 2
         $script:calls[1].before | Should -Be '200'
     }
+    It 'makes one API request for -First 10' {
+        $out = @(Get-PagerArchiveMessage -First 10)
+        $out.Count | Should -Be 10
+        $script:calls.Count | Should -Be 1
+        $script:calls[0].limit | Should -Be 10
+    }
+    It 'fetches only the pages -First needs, past the first page' {
+        $out = @(Get-PagerArchiveMessage -First 250)
+        $out.Count | Should -Be 250
+        $script:calls.Count | Should -Be 2
+        $script:calls[1].limit | Should -Be 50
+    }
     It 'honours -Skip' {
         $out = @(Get-PagerArchiveMessage -Skip 3 -First 2)
         $out.Id | Should -Be @(4, 5)
+        $script:calls[0].limit | Should -Be 5
+    }
+    It 'returns nothing, and asks nothing, for -First 0' {
+        @(Get-PagerArchiveMessage -First 0).Count | Should -Be 0
+        $script:calls.Count | Should -Be 0
+    }
+    It 'has no -IncludeTotalCount (guidelines section 3)' {
+        (Get-Command -Name Get-PagerArchiveMessage).Parameters.ContainsKey('IncludeTotalCount') | Should -BeFalse
+        { Get-PagerArchiveMessage -IncludeTotalCount -First 1 } | Should -Throw -ErrorId 'NamedParameterNotFound,Get-PagerArchiveMessage'
+        $script:calls.Count | Should -Be 0
+    }
+    It 'refuses a negative -First or -Skip' {
+        { Get-PagerArchiveMessage -First -1 } | Should -Throw -ErrorId 'ParameterArgumentTransformationError,Get-PagerArchiveMessage'
+        { Get-PagerArchiveMessage -Skip -1 } | Should -Throw -ErrorId 'ParameterArgumentTransformationError,Get-PagerArchiveMessage'
     }
     It 'maps priorities, flags and switches to the API''s names' {
         $null = Get-PagerArchiveMessage -Priority None, Emergency -Flag ParseFailed -Unaliased -IncludeIgnored -After ([datetimeoffset]'2026-10-01T00:00:00+11:00') -First 1

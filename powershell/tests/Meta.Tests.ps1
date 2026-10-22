@@ -17,7 +17,7 @@ BeforeAll {
     $manifest = Import-PowerShellDataFile -Path $manifestPath
     [xml]$formats = Get-Content -Path (Join-Path -Path $root -ChildPath 'PagerArchive.Format.ps1xml') -Raw
     [xml]$types = Get-Content -Path (Join-Path -Path $root -ChildPath 'PagerArchive.Types.ps1xml') -Raw
-    $common = [System.Management.Automation.PSCmdlet]::CommonParameters + [System.Management.Automation.PSCmdlet]::OptionalCommonParameters + @('First', 'Skip', 'IncludeTotalCount')
+    $common = [System.Management.Automation.PSCmdlet]::CommonParameters + [System.Management.Automation.PSCmdlet]::OptionalCommonParameters
 
     function Get-Binding([string] $Name) {
         (Get-Command -Name $Name).ScriptBlock.Attributes | Where-Object -FilterScript { $_ -is [System.Management.Automation.CmdletBindingAttribute] }
@@ -110,8 +110,13 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
             $command.Parameters['Name'].Attributes.TypeId.Name | Should -Contain 'SupportsWildcardsAttribute'
         }
     }
-    It 'supports paging when it can return many items' {
-        $binding.SupportsPaging | Should -Be ($Name -eq 'Get-PagerArchiveMessage')
+    It 'has its own -First and -Skip ([uint64]) when it can return many items, not SupportsPaging' {
+        $binding.SupportsPaging | Should -BeFalse
+        $command.Parameters.ContainsKey('IncludeTotalCount') | Should -BeFalse
+        if ($Name -eq 'Get-PagerArchiveMessage') {
+            $command.Parameters['First'].ParameterType | Should -Be ([uint64])
+            $command.Parameters['Skip'].ParameterType | Should -Be ([uint64])
+        }
     }
     It 'has full comment-based help' {
         $help.Synopsis | Should -Not -BeNullOrEmpty
