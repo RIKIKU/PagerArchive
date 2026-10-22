@@ -46,6 +46,7 @@ export PA_CLIENT_KEY
 -- The capcode report test (R38) uses one capcode per browser project.
 -- M6 (A42-A45): each browser project edits and requests changes to its own
 -- aliases (n = 1, 2, 3 for chromium, firefox, webkit): 04001n1-04001n3.
+-- M10 (A56): each browser project moves its own alias to a new template: 05000n1.
 INSERT INTO aliases (pattern, name, template_id)
 SELECT p, name, (SELECT id FROM templates WHERE name = 'Example Fire')
 FROM (VALUES ('0100%', 'Stations block')) AS v (p, name)
@@ -53,7 +54,9 @@ UNION ALL
 SELECT '030010' || n, 'Report test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n
 UNION ALL
 SELECT '04001' || n || k, 'Edit test ' || n || k, (SELECT id FROM templates WHERE name = 'Example Fire')
-FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k;
+FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k
+UNION ALL
+SELECT '05000' || n || '1', 'Rescue test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n;
 SQL
 } | docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
 # R39: a receiver last heard 31 minutes ago (set below).

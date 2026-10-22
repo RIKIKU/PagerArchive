@@ -1,5 +1,5 @@
 #!/bin/sh
-# Mutation proof for the security checks (M8, M9): break one check at a time in
+# Mutation proof for the security checks (M8, M9, M10): break one check at a time in
 # a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
@@ -72,6 +72,43 @@ mutate "a role change doesn't close live streams" internal/accounts/accounts.go 
 mutate "a bearer stream outlives its token" internal/server/browse.go go:TestM9BearerStreamEndsAtTokenExpiry \
 	'if exp, ok := tokenExpiry(r); ok {' 'if exp, ok := tokenExpiry(r); false && ok {'
 
+# M10 (ADR 0011): template icons, and admins only on the template endpoints.
+I=internal/server/icons.go
+C=internal/icon/icon.go
+mutate "the icon's size is checked after reading the whole body" $I go:TestIconSizeLimitBeforeReading \
+	'	if r.ContentLength > icon.MaxBytes {
+		s.iconRefused(w, r, id, http.StatusRequestEntityTooLarge, icon.TooLarge())
+		return
+	}
+	data, err := io.ReadAll(http.MaxBytesReader(w, r.Body, icon.MaxBytes))' '	data, err := io.ReadAll(r.Body)'
+mutate "the icon's type is taken from its Content-Type when its bytes aren't an image" $I go:TestA57IconsShown \
+	'	png, err := icon.Convert(data)
+' '	png, err := icon.Convert(data)
+	if err != nil && r.Header.Get("Content-Type") == "image/png" {
+		png, err = data, nil
+	}
+'
+mutate "SVG isn't refused with its own reason" $C go:TestA57IconsShown \
+	'case strings.Contains(head, "<svg"):' 'case false && strings.Contains(head, "<svg"):'
+mutate "the declared size isn't checked before decoding" $C go:TestA57IconsShown \
+	'if r := checkSize(c.Width, c.Height); r != nil {' 'if r := checkSize(c.Width, c.Height); false && r != nil {'
+mutate "the uploaded file is stored as it came, not encoded afresh" $C go:TestA58StoredNotLinked \
+	'	return buf.Bytes(), nil' '	return data, nil'
+S=internal/server/server.go
+for h in createTemplate editTemplate deleteTemplate putTemplateIcon deleteTemplateIcon; do
+	mutate "admins only off: $h" $S go:TestA56AdminManagesTemplates "s.adminOnly(s.$h)," "s.$h,"
+done
+mutate "the server fetches an icon sent as a URL" $I go:TestA58StoredNotLinked \
+	'	png, err := icon.Convert(data)
+' '	if len(data) > 4 && string(data[:4]) == "http" {
+		if resp, err := http.Get(string(data)); err == nil {
+			data, _ = io.ReadAll(resp.Body)
+			resp.Body.Close()
+		}
+	}
+	png, err := icon.Convert(data)
+'
+
 if [ -n "$PA_PWSH" ]; then
 	P=powershell/PagerArchive/Private
 	mutate "DPAPI save allowed off Windows" $P/SignInStore.ps1 pester:powershell/tests/SignIn.Tests.ps1 \
@@ -90,11 +127,15 @@ if [ -n "$PA_PWSH" ]; then
 		'-AllowUnencryptedAuthentication:([bool]$Connection.AllowUnencrypted)' '-AllowUnencryptedAuthentication'
 	mutate "the watch accepts any certificate" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
 		'$state.Client = [System.Net.Http.HttpClient]::new()' '$state.Client = [System.Net.Http.HttpClient]::new([System.Net.Http.HttpClientHandler]@{ ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator })'
+	mutate "an icon download has no size limit while downloading" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \
+		'            if ($bytes.Length -gt $script:PaIconMaxBytes) {' '            if ($false) {'
+	mutate "an icon download has no time limit" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \
+		'[System.Threading.CancellationTokenSource]::new($script:PaIconDownloadTimeout)' '[System.Threading.CancellationTokenSource]::new()'
 else
 	echo "=== the module's mutations skipped: no pwsh (set PA_PWSH)"
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9' ./internal/acceptance/ 2>&1 | tail -1
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize' ./internal/acceptance/ 2>&1 | tail -1
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1
 exit $survived
