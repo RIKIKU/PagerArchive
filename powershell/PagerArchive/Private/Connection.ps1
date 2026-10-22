@@ -282,6 +282,9 @@ function Invoke-PaApi {
         # A body, sent as JSON.
         [object] $Body,
 
+        # A body sent as it is, as application/octet-stream (an icon file).
+        [byte[]] $RawBody,
+
         # Statuses that aren't errors, besides 2xx (e.g. 409 for the import).
         [int[]] $Accept = @()
     )
@@ -309,6 +312,10 @@ function Invoke-PaApi {
         if ($PSBoundParameters.ContainsKey('Body')) {
             $request.Body = [System.Text.Encoding]::UTF8.GetBytes(($Body | ConvertTo-Json -Depth 8 -Compress))
             $request.ContentType = 'application/json; charset=utf-8'
+        }
+        if ($PSBoundParameters.ContainsKey('RawBody')) {
+            $request.Body = $RawBody
+            $request.ContentType = 'application/octet-stream'
         }
         try {
             $reply = Invoke-RestMethod @request

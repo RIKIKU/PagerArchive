@@ -48,6 +48,7 @@ function ConvertTo-PaTemplate {
             Agency        = $Row.agency
             Colour        = if ($Row.colour) { $Row.colour } else { '' }
             AgencyProfile = if ($Row.agency_profile) { $Row.agency_profile } else { '' }
+            HasIcon       = [bool]($Row.PSObject.Properties['icon'] -and $Row.icon)
             AliasCount    = [int]$Row.aliases
             Id            = [long]$Row.id
         }
