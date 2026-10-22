@@ -47,10 +47,10 @@ func (b *browser) template(name string) adminTemplate {
 	return adminTemplate{}
 }
 
-// get fetches path with b's session.
+// get fetches path, which may have a query, with b's session.
 func (b *browser) get(path string) (*http.Response, []byte) {
 	b.t.Helper()
-	resp, err := b.client.Get(b.s.app.JoinPath(path).String())
+	resp, err := b.client.Get(b.s.app.String() + path)
 	if err != nil {
 		b.t.Fatal(err)
 	}
