@@ -141,7 +141,7 @@ Run on cld01 on 2026-10-23 (Go 1.27.2, Node with Playwright's Chromium, Firefox 
 - **`scripts/stack-checks.sh`:** every test in every phase passed, with both vault settings: "A56: … \"Example Fire\" can't be deleted: 3 aliases use it."; "A56: user B refused (403) editing a template and uploading an icon"; "A58: not-kept.png (292 bytes, with a tEXt chunk) stored as a 2304-byte 64×64 PNG without it"; "A58: -Uri downloaded once by the module (no credentials), the site stopped, and the list's page shows /api/v1/icons/4eb21574….png (2304 bytes)", byte for byte what converting the file in the test gives. "API log lines checked: 554, page texts or email addresses found: 0". A first run found a bug in the new stack test's helper (it escaped the `?` of a query, so the request got 404 after the module's steps had passed), fixed in 6cf3b49.
 - **`scripts/stack-e2e.sh --project=chromium`:** `1 passed`; "A57: icon /api/v1/icons/4eb21574….png shown beside Station 1 in light and dark mode; 3 files refused; origins requested: http://localhost:8080"; "API log lines checked: 23, page texts or email addresses found: 0".
 - **Pester:** `Passed 321, failed 0, skipped 4` (the skips are Windows-only), PSScriptAnalyzer with no findings.
-- **`scripts/mutation-checks.sh`:** all 29 mutations, the 13 new ones included, made a test fail; the unmutated copy passed. The new ones and what failed:
+- **`scripts/mutation-checks.sh`:** all 28 mutations (first reported here as 29, a miscount: the script has 24 `mutate` lines, one of them a loop over the 5 template handlers), the 13 new ones included, made a test fail; the unmutated copy passed. The new ones and what failed:
 
   | Mutation | Failing check |
   |---|---|
@@ -154,6 +154,15 @@ Run on cld01 on 2026-10-23 (Go 1.27.2, Node with Playwright's Chromium, Firefox 
   | The server fetches an icon sent as a URL | "a URL as the icon: 200", "the server fetched the URL 1 times" |
   | The module's download with no size limit | "stops a download as soon as it passes 100 KB": no error |
   | The module's download with no time limit | "stops a download that takes longer than the time limit": `icon_download_failed` after 15 s, not the timeout |
+
+**After the owner's answers** (run on cld01 on 2026-10-23, at bbeacb5, with main merged):
+
+- **`PAGERARCHIVE_REQUIRE_DB=1 go test -count=1 ./...`:** every package `ok` (`internal/acceptance` 136.7 s); `gofmt -l .` empty, `go vet ./...` clean.
+- **Pester:** `Passed 341, failed 0, skipped 4` (the 4 are Windows-only), including the `-PSPath` test and `Rename-PagerArchiveTemplate`'s, its guideline meta-tests and PSScriptAnalyzer.
+- **`scripts/stack-checks.sh`:** every phase `ok`, no `FAIL`, with both vault settings: A56 renamed "Example Rescue 103" to "Example Rescue 103 North" and back, Station 4 kept it, and renaming it to "Example Fire" gave `ERROR template_exists,Rename-PagerArchiveTemplate There's already a template called "Example Fire".` "API log lines checked: 565, page texts or email addresses found: 0".
+- **`scripts/mutation-checks.sh`:** 28 mutations, 28 guarded, none survived; the unmutated copy passed (`internal/acceptance` ok, Pester `Passed 341, failed 0`).
+- **`scripts/ci/Save-TestModules.ps1`** (CI: Gallery 404s on main's run for 3d49c1c): run with a stand-in `Save-PSResource` whose Pester save fails the first *n* times. *n* = 0 saves all four modules; *n* = 2 warns "Saving Pester 5.9.1 failed on try 1 of 3; trying again in 10 seconds: Response status code does not indicate success: 404 (Not Found)." and the same for try 2, then saves all four; *n* = 3 warns for tries 1 and 2, then "failed on try 3 of 3, the last: …", and the script stops with that error.
+- `e2e.sh` wasn't rerun: the browser app didn't change.
 
 ## Consequences
 
