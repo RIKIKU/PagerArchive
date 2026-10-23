@@ -137,8 +137,9 @@ func TestPowerShellA56Templates(t *testing.T) {
 	t.Logf("A56: %q added with 0 aliases", name)
 
 	// Station 4 moves to it: its pages show the new agency at once.
+	renamed := name + " North"
 	t.Cleanup(func() {
-		w.do(`Set-PagerArchiveAlias -Name 'Station 4' -Template 'Example Fire'; Remove-PagerArchiveTemplate -Name '` + name + `' -Confirm:$false`)
+		w.do(`Set-PagerArchiveAlias -Name 'Station 4' -Template 'Example Fire'; Remove-PagerArchiveTemplate -Name '` + name + `', '` + renamed + `' -Confirm:$false`)
 	})
 	if out := w.do(`Set-PagerArchiveAlias -Name 'Station 4' -Template '` + name + `'`); len(out) != 0 {
 		t.Fatalf("move Station 4: %q", out)
@@ -150,10 +151,38 @@ func TestPowerShellA56Templates(t *testing.T) {
 		t.Errorf("%s has %d aliases", name, n)
 	}
 
+	// Renaming (R63): Station 4 keeps the template under its new name; a
+	// name another template has is refused; renaming back works.
+	type renamedTemplate struct {
+		Name       string
+		AliasCount int
+	}
+	if got := jsonLines[renamedTemplate](t, w.do(`Rename-PagerArchiveTemplate -Name '`+name+`' -NewName '`+renamed+`' -PassThru | Select-Object -Property Name, AliasCount`)); len(got) != 1 || got[0] != (renamedTemplate{renamed, 1}) {
+		t.Fatalf("rename: %+v", got)
+	}
+	if got := w.do(`(Get-PagerArchiveAlias -Pattern 0100004).Template`); len(got) != 1 || got[0] != renamed {
+		t.Errorf("Station 4's template after the rename: %q", got)
+	}
+	if agency, _ := owner.newestAgencyAndIcon("0100004"); agency != "Example Rescue Service" {
+		t.Errorf("0100004's page shows agency %q after the rename", agency)
+	}
+	out := w.do(`Rename-PaTemplate -Name '` + renamed + `' -NewName 'Example Fire'`)
+	want := `ERROR template_exists,Rename-PagerArchiveTemplate There's already a template called "Example Fire".`
+	if len(out) != 1 || !strings.HasPrefix(out[0], want) {
+		t.Errorf("rename to a taken name: %q, want %q", out, want)
+	}
+	if owner.template(renamed).Aliases != 1 {
+		t.Errorf("%s changed after the refused rename", renamed)
+	}
+	if out := w.do(`Rename-PagerArchiveTemplate -Name '` + renamed + `' -NewName '` + name + `'`); len(out) != 0 {
+		t.Fatalf("rename back: %q", out)
+	}
+	t.Logf("A56: renamed %q to %q and back, Station 4 kept it; a taken name: %q", name, renamed, out)
+
 	// Deleting "Example Fire" is refused, saying how many aliases use it.
 	count := strings.Join(w.do(`(Get-PagerArchiveTemplate -Name 'Example Fire').AliasCount`), "")
-	out := w.do(`Remove-PagerArchiveTemplate -Name 'Example Fire' -Confirm:$false`)
-	want := fmt.Sprintf(`ERROR template_in_use,Remove-PagerArchiveTemplate "Example Fire" can't be deleted: %s aliases use it.`, count)
+	out = w.do(`Remove-PagerArchiveTemplate -Name 'Example Fire' -Confirm:$false`)
+	want = fmt.Sprintf(`ERROR template_in_use,Remove-PagerArchiveTemplate "Example Fire" can't be deleted: %s aliases use it.`, count)
 	if len(out) != 1 || !strings.HasPrefix(out[0], want) {
 		t.Errorf("delete Example Fire: %q, want %q", out, want)
 	}

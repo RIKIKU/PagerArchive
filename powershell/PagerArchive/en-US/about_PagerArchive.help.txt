@@ -116,6 +116,10 @@ LONG DESCRIPTION
         Set-PagerArchiveTemplate -Name 'Example Fire' -Uri 'https://example.test/fire.png'
         Set-PagerArchiveTemplate -Name 'Example Fire' -RemoveIcon
 
+    Rename a template; its aliases keep it and show the new name:
+
+        Rename-PagerArchiveTemplate -Name 'Example Fire' -NewName 'Example Fire North'
+
     Move aliases to another template, checking first:
 
         Get-PagerArchiveAlias -Template 'Old Fire' |

@@ -6,7 +6,8 @@ function Set-PagerArchiveTemplate {
     .DESCRIPTION
     Changes a template's agency, colour, agency profile or icon. Only the
     settings given change. Every alias using the template changes at once
-    (R28). A new agency profile re-parses those aliases' pages (R23a).
+    (R28). A new agency profile re-parses those aliases' pages (R23a). To
+    rename a template, use Rename-PagerArchiveTemplate.
 
     The icon comes from a file (-Path or -LiteralPath) or a web address
     (-Uri), and replaces the template's icon; -RemoveIcon removes it. A web
@@ -43,6 +44,9 @@ function Set-PagerArchiveTemplate {
 
     .LINK
     New-PagerArchiveTemplate
+
+    .LINK
+    Rename-PagerArchiveTemplate
     #>
     [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Settings')]
     [OutputType('PagerArchive.Template')]
@@ -73,7 +77,6 @@ function Set-PagerArchiveTemplate {
         # Accepts wildcards, which must match one file. Default: the icon is
         # unchanged.
         [Parameter(Mandatory, ParameterSetName = 'Path')]
-        [Alias('PSPath')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
         [string] $Path,
@@ -81,6 +84,7 @@ function Set-PagerArchiveTemplate {
         # A new icon file, taken exactly as written: no wildcards. Default:
         # the icon is unchanged.
         [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
+        [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
         [string] $LiteralPath,
 

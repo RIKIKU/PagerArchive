@@ -273,6 +273,48 @@ Describe 'Errors (guidelines section 7)' {
     }
 }
 
+Describe 'Rename-PagerArchiveTemplate (R63)' {
+    BeforeEach {
+        $script:names = @('Example Fire', 'Spare')
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/templates' -and $Method -eq 'GET' } -MockWith {
+            @([pscustomobject]@{ id = 1; name = $script:names[0]; agency = 'Example Fire Service'; colour = $null; agency_profile = $null; icon = $null; aliases = 3 }
+                [pscustomobject]@{ id = 2; name = $script:names[1]; agency = 'Spare'; colour = $null; agency_profile = $null; icon = $null; aliases = 0 })
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/1' } -MockWith {
+            $script:names[0] = $Body.name
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/2' } -MockWith {
+            throw (& (Get-Module PagerArchive) { param($n) New-PaErrorRecord -ErrorId 'template_exists' -Status 409 -Message "There's already a template called `"$n`"." } $Body.name)
+        }
+    }
+
+    It 'sends only the new name, with PATCH, and outputs nothing by default' {
+        Rename-PagerArchiveTemplate -Name 'example fire' -NewName 'Example Fire North' | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter {
+            $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/1' -and @($Body.Keys) -join ',' -eq 'name' -and $Body.name -eq 'Example Fire North'
+        } -Times 1 -Exactly
+    }
+    It 'takes templates from the pipeline, and outputs the renamed template with -PassThru' {
+        $t = Get-PagerArchiveTemplate -Name 'Example Fire' | Rename-PaTemplate -NewName 'Example Fire North' -PassThru
+        $t.PSObject.TypeNames[0] | Should -Be 'PagerArchive.Template'
+        $t.Name | Should -Be 'Example Fire North'
+        $t.AliasCount | Should -Be 3
+    }
+    It 'reports a taken name with the API''s code, and an unknown template as no_template' {
+        $split = Split-Output -All (Rename-PagerArchiveTemplate -Name 'Spare' -NewName 'Example Fire' 2>&1)
+        $split.Errors.Count | Should -Be 1
+        $split.Errors[0].FullyQualifiedErrorId | Should -Be 'template_exists,Rename-PagerArchiveTemplate'
+        $split.Errors[0].CategoryInfo.Category | Should -Be 'ResourceExists'
+        $split.Errors[0].TargetObject.Name | Should -Be 'Spare'
+        { Rename-PagerArchiveTemplate -Name 'Example*' -NewName 'x' -ErrorAction Stop } | Should -Throw -ErrorId 'no_template,Rename-PagerArchiveTemplate'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/1' } -Times 0 -Exactly
+    }
+    It 'changes nothing under -WhatIf' {
+        Rename-PagerArchiveTemplate -Name 'Example Fire' -NewName 'Example Fire North' -WhatIf
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' } -Times 0 -Exactly
+    }
+}
+
 Describe 'Signing in over plain HTTP (guidelines section 9)' {
     It 'is refused without -AllowUnencryptedAuthentication, before anything is sent' {
         Mock -ModuleName PagerArchive Invoke-RestMethod { throw 'no request should be made' }

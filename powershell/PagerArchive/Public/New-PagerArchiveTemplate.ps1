@@ -70,7 +70,6 @@ function New-PagerArchiveTemplate {
         # The icon file: PNG, ICO, GIF, JPEG or WebP, at most 100 KB.
         # Accepts wildcards, which must match one file. Default: no icon.
         [Parameter(Mandatory, ParameterSetName = 'Path')]
-        [Alias('PSPath')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
         [string] $Path,
@@ -78,6 +77,7 @@ function New-PagerArchiveTemplate {
         # The icon file, taken exactly as written: no wildcards. Default: no
         # icon.
         [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
+        [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
         [string] $LiteralPath,
 

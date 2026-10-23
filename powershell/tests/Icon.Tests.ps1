@@ -149,6 +149,23 @@ Describe 'Icons for templates' {
         { Set-PagerArchiveTemplate -Name 'Example Fire' -Path $file -ErrorAction Stop } | Should -Throw -ErrorId 'icon_not_found,Set-PagerArchiveTemplate'
     }
 
+    It 'takes -PSPath, a provider path, literally (guidelines section 3)' {
+        $file = Join-Path -Path $TestDrive -ChildPath 'icon[1].png'
+        [System.IO.File]::WriteAllBytes($file, $script:iconBytes)
+        $item = Get-Item -LiteralPath $file
+        $item.PSPath | Should -BeLike '*::*icon`[1`].png'
+        foreach ($command in 'Set-PagerArchiveTemplate', 'New-PagerArchiveTemplate') {
+            (Get-Command -Name $command).Parameters['LiteralPath'].Aliases | Should -Be @('PSPath')
+            (Get-Command -Name $command).Parameters['Path'].Aliases | Should -Not -Contain 'PSPath'
+        }
+        Set-PagerArchiveTemplate -Name 'Example Fire' -PSPath $item.PSPath
+        New-PagerArchiveTemplate -Name 'Example Rescue' -Agency 'Example Rescue Service' -PSPath (Get-Item -LiteralPath $file).PSPath
+        $script:uploads.Path | Should -Be @('/api/v1/admin/templates/1/icon', '/api/v1/admin/templates/2/icon')
+        foreach ($upload in $script:uploads) {
+            [System.Linq.Enumerable]::SequenceEqual([byte[]]$upload.Bytes, [byte[]]$script:iconBytes) | Should -BeTrue
+        }
+    }
+
     It 'refuses a -Path matching several files, before changing anything' {
         { Set-PagerArchiveTemplate -Name 'Example Fire' -Colour red -Path (Join-Path -Path $script:icons -ChildPath '*.png') -ErrorAction Stop } |
             Should -Throw -ErrorId 'icon_path_ambiguous,Set-PagerArchiveTemplate'

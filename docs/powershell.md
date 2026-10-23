@@ -70,12 +70,13 @@ Connect-PagerArchive -Uri http://192.168.1.20:8095 -AllowUnencryptedAuthenticati
 Get-PagerArchiveTemplate
 New-PagerArchiveTemplate -Name 'Example Rescue' -Agency 'Example Rescue Service' -Colour '#1565c0'
 Set-PagerArchiveTemplate -Name 'Example Rescue' -AgencyProfile example-rescue
+Rename-PagerArchiveTemplate -Name 'Example Rescue' -NewName 'Example Rescue North'
 Remove-PagerArchiveTemplate -Name 'Example Rescue'
 ```
 
-A template that aliases still use can't be deleted; the error says how many use it. A new agency profile re-parses the template's pages.
+A template that aliases still use can't be deleted; the error says how many use it. A new agency profile re-parses the template's pages. A renamed template keeps its aliases; a name another template has is refused (`template_exists`).
 
-**Icons** (R65). `-Path` (wildcards, matching one file) or `-LiteralPath` sets a template's icon from a file, and `-Uri` from a web address. The module downloads the address on your computer, at most 100 KB and within 30 seconds, sending no credentials, and uploads the file: PagerArchive's server never fetches anything from another site. `-RemoveIcon` removes it. `HasIcon` says whether a template has one.
+**Icons** (R65). `-Path` (wildcards, matching one file) or `-LiteralPath` (alias `-PSPath`) sets a template's icon from a file, and `-Uri` from a web address. The module downloads the address on your computer, at most 100 KB and within 30 seconds, sending no credentials, and uploads the file: PagerArchive's server never fetches anything from another site. `-RemoveIcon` removes it. `HasIcon` says whether a template has one.
 
 ```powershell
 Set-PagerArchiveTemplate -Name 'Example Rescue' -Path ./rescue.png
