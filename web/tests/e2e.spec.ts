@@ -47,6 +47,14 @@ async function post(request: APIRequestContext, capcode: string, text: string) {
 	expect(res.status()).toBe(200);
 }
 
+/** Runs SQL on the test database: with psql at PA_E2E_DATABASE_URL when
+ * scripts/e2e.sh was given one (CI), else in the database's container. */
+function sql(input: string) {
+	const url = process.env.PA_E2E_DATABASE_URL;
+	if (url) execFileSync('psql', [url, '-q', '-v', 'ON_ERROR_STOP=1'], { input });
+	else execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], { input });
+}
+
 async function waitLive(page: Page) {
 	await expect(page.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
 }
@@ -148,12 +156,10 @@ test('a demoted admin\'s open list loses admin-only details without a reload', a
 	const marker = `DEMOTE-${n}-${Date.now()}`;
 	const email = `demoted-${marker.toLowerCase()}@example.test`;
 	const token = `e2e-demoted-${crypto.randomUUID()}`;
-	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
-		input: `INSERT INTO users (subject, email, email_key, name, role, invited_by)
+	sql(`INSERT INTO users (subject, email, email_key, name, role, invited_by)
   SELECT 'e2e-${marker}', '${email}', '${email}', 'Demoted ${n}', 'admin', id FROM users WHERE subject = 'e2e-admin';
 INSERT INTO sessions (token_hash, user_id, expires_at)
-  SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE email_key = '${email}';`
-	});
+  SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE email_key = '${email}';`);
 	await post(request, '0100004', `@@GARBLED ${marker} ONE`);
 	const ctx = await browser.newContext();
 	await ctx.addCookies([{ name: 'pa_session', value: token, url: URL }]);
@@ -1290,12 +1296,10 @@ test('A50 trusted, record and changes', async ({ browser, request }, info) => {
 	await admin.goto(`/admin/users/${a2}/deactivate-tree`);
 	await expect(admin.getByTestId('totals')).toHaveText('4 people will be deactivated and 1 unused invitation cancelled.');
 	// D's invitation is accepted while the preview is open.
-	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
-		input: `INSERT INTO users (email, email_key, name, role, invited_by, created_at)
+	sql(`INSERT INTO users (email, email_key, name, role, invited_by, created_at)
   SELECT '${tr2.x.email}', '${tr2.x.email}', '${tr2.x.name}', 'user', id, clock_timestamp() FROM users WHERE email_key = '${tr2.d.email}';
 UPDATE invitations SET status = 'used', used_at = now(), used_by = (SELECT id FROM users WHERE email_key = '${tr2.x.email}')
-  WHERE email_key = '${tr2.x.email}' AND status = 'pending';`
-	});
+  WHERE email_key = '${tr2.x.email}' AND status = 'pending';`);
 	await admin.getByRole('button', { name: 'Deactivate 4 people' }).click();
 	await expect(admin.getByRole('alert')).toContainText('The invite tree changed since this preview, so nothing was deactivated.');
 	await expect(admin.getByRole('checkbox', { name: tr2.x.label })).toBeChecked();
@@ -1897,9 +1901,7 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	await list.goto(`/?q=${ref}`);
 	await tickOf(list, kept).check();
 	await tickOf(list, deleted).check();
-	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
-		input: `DELETE FROM messages WHERE id = ${deleted};`
-	});
+	sql(`DELETE FROM messages WHERE id = ${deleted};`);
 	await list.goto('/sheet');
 	await expect(list.getByTestId('sheet-gone')).toHaveText('1 message was no longer available and has been removed from the sheet.');
 	await expect.poll(() => sheetIds(list)).toEqual([kept]);

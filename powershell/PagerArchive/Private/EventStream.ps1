@@ -132,7 +132,9 @@ function Open-PaEventStream {
             $state.Status = [int]$state.Response.StatusCode
             if ($state.Status -eq 200) {
                 $read = $state.Response.Content.ReadAsStreamAsync($state.Cancel.Token)
-                $null = Wait-PaTask -Task $read
+                if (-not (Wait-PaTask -Task $read -TimeoutMs ($TimeoutSec * 1000))) {
+                    throw [System.TimeoutException]::new("no answer within $TimeoutSec s")
+                }
                 $state.Stream = $read.Result
             }
         } catch {

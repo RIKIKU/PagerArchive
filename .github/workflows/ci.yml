@@ -9,10 +9,13 @@ on:
 permissions:
   contents: read
 
+# Every job has a time limit well above its usual time (ADR 0012), so a hang
+# fails in minutes rather than after GitHub's 6 hours.
 jobs:
   test:
     name: Tests, golden tables and acceptance checks
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     services:
       postgres:
         image: postgis/postgis:18-3.6
@@ -52,6 +55,28 @@ jobs:
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    # Microsoft's Playwright image, the exact version in web/package-lock.json
+    # (by digest): the browsers and their libraries are already installed.
+    # There's no Docker in it, so the database is a service container,
+    # started with the settings scripts/e2e.sh gives its own (ADR 0012).
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.0-noble@sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f
+      options: --ipc=host
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PA_E2E_DATABASE_URL: postgres://postgres:test@postgres:5432/postgres?sslmode=disable
+      # Firefox won't start as root with a home folder owned by someone else.
+      HOME: /root
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -62,15 +87,17 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+      - name: Install psql (the tests change the database directly)
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-client >/dev/null
       - name: Install dependencies
         working-directory: web
         run: npm ci --no-fund --no-audit
       - name: svelte-check
         working-directory: web
         run: npm run check
-      - name: Install browsers
+      - name: Playwright is the image's version
         working-directory: web
-        run: npx playwright install --with-deps chromium firefox webkit
+        run: test "$(npx playwright --version)" = "Version 1.64.0"
       - name: Browser tests against a real API and PostGIS
         run: sh scripts/e2e.sh
       - name: Upload Playwright report, screenshots and traces
@@ -96,6 +123,7 @@ jobs:
         os: [ubuntu-24.04, windows-2025]
         pwsh: ["7.6.0", newest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - name: Install PowerShell ${{ matrix.pwsh }} and the test modules
@@ -119,9 +147,45 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The account checks and the module's checks with each vault, as three
+  # parallel jobs, each on its own compose stack (scripts/stack-checks.sh,
+  # PA_STACK_PART); they used to run one after the other on one stack.
   stack:
-    name: Accounts and the PowerShell module against Authentik (A20, A21, A23-A28, A33, A50 join during a preview, A51-A55, A59, locked-accounts metric, section 11 steps 2 and 3)
+    name: Against Authentik (${{ matrix.title }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - part: accounts
+            title: A23-A28, A33, A50 join during a preview, the locked-accounts metric
+          - part: secretstore
+            title: the PowerShell module (A20, A21, A51-A56, A58, A59) with a SecretStore vault
+          - part: none
+            title: the PowerShell module (A20, A21, A51-A56, A58, A59) with no vault
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      PA_STACK_PART: ${{ matrix.part }}
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Install PowerShell 7.6.0 (the module's minimum) and the test modules
+        if: matrix.part != 'accounts'
+        shell: pwsh
+        run: |
+          $pwsh = ./scripts/ci/Install-PowerShell.ps1 -Version 7.6.0 -Destination (Join-Path $env:RUNNER_TEMP 'pwsh')
+          "PA_STACK_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "PA_STACK_PS_MODULES=$(Join-Path $env:RUNNER_TEMP 'psmodules')" | Out-File -FilePath $env:GITHUB_ENV -Append
+          ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
+      - name: The checks against the compose stack (API, PostgreSQL, Authentik, Mailpit)
+        run: sh scripts/stack-checks.sh
+
+  stack-e2e:
+    name: Section 11 steps 2 and 3 in a browser, on the compose stack
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -135,18 +199,21 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: npm ci --no-fund --no-audit
+      # Not in Playwright's container: this job runs the compose stack, which
+      # needs the runner's Docker and its ports. The browser download is
+      # cached instead, by Playwright's version; its system libraries are
+      # still installed with apt each time.
+      - name: Playwright's version
+        id: playwright
+        working-directory: web
+        run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install browser
         working-directory: web
         run: npx playwright install --with-deps chromium
-      - name: Install PowerShell 7.6.0 (the module's minimum) and the test modules
-        shell: pwsh
-        run: |
-          $pwsh = ./scripts/ci/Install-PowerShell.ps1 -Version 7.6.0 -Destination (Join-Path $env:RUNNER_TEMP 'pwsh')
-          "PA_STACK_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
-          "PA_STACK_PS_MODULES=$(Join-Path $env:RUNNER_TEMP 'psmodules')" | Out-File -FilePath $env:GITHUB_ENV -Append
-          ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
-      - name: A23-A28, A33, A50 join during a preview, the locked-accounts metric, and the PowerShell module (A20, A21, A51-A55, A59, with a SecretStore vault and with none) against the compose stack (API, PostgreSQL, Authentik, Mailpit)
-        run: sh scripts/stack-checks.sh
       - name: Section 11 steps 2 and 3 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium
       - name: Upload Playwright report, screenshots and traces
@@ -173,6 +240,7 @@ jobs:
             runner: ubuntu-24.04-arm
             server: false
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
       - name: Build client image (native ${{ matrix.arch }})
@@ -198,6 +266,7 @@ jobs:
   budget:
     name: Resource budget, short run (A15)
     runs-on: ubuntu-24.04
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
@@ -222,8 +291,9 @@ jobs:
   # pushes build the images without publishing them.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, web, stack, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, powershell]
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -263,7 +333,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, web, stack, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, powershell]
     strategy:
       matrix:
         include:
@@ -272,6 +342,7 @@ jobs:
           - arch: arm64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 20
     permissions:
       contents: read
       packages: write
@@ -320,6 +391,7 @@ jobs:
     needs: [publish-client]
     if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: read
       packages: write
@@ -358,9 +430,10 @@ jobs:
   # (the owner creates it).
   publish-powershell:
     name: Publish the PowerShell module to the PowerShell Gallery
-    needs: [test, web, stack, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, powershell]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     env:
       PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
     steps:
@@ -392,9 +465,10 @@ jobs:
   # attached to the release of a v* tag whose checks all passed.
   release-binaries:
     name: Attach client binaries to the release
-    needs: [test, web, stack, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, powershell]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       contents: write
     steps:

@@ -21,7 +21,8 @@ Write-Output -InputObject "PowerShell $($PSVersionTable.PSVersion) on $($PSVersi
 $configuration = New-PesterConfiguration
 $configuration.Run.Path = $Path
 $configuration.Run.PassThru = $true
-$configuration.Output.Verbosity = 'Normal'
+# Detailed: each test's name as it finishes, so a hang shows where it is.
+$configuration.Output.Verbosity = 'Detailed'
 if ($ResultPath) {
     $configuration.TestResult.Enabled = $true
     $configuration.TestResult.OutputPath = $ResultPath
