@@ -21,8 +21,13 @@ PIDS=""
 DB=""
 
 cleanup() {
+	rc=$?
 	for p in $PIDS; do kill "$p" 2>/dev/null || true; done
 	[ -z "$DB" ] || docker rm -f "$DB" >/dev/null 2>&1 || true
+	# The build goes; its API log stays only when the run failed (/tmp is
+	# often small, and mutation-checks.sh runs this once per mutation).
+	rm -f "$BIN"
+	[ "$rc" -ne 0 ] || rm -rf "${BIN%/*}"
 }
 trap cleanup EXIT
 

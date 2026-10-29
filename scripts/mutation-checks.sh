@@ -15,7 +15,7 @@ set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-(cd "$src" && tar -cf - --exclude=.git --exclude=web/node_modules .) | (cd "$work" && tar -xf -)
+(cd "$src" && tar -cf - --exclude=.git --exclude=web/node_modules --exclude=web/test-results --exclude=web/playwright-report .) | (cd "$work" && tar -xf -)
 cd "$work" || exit 1
 PA_PWSH=${PA_PWSH:-$(command -v pwsh || true)}
 survived=0
