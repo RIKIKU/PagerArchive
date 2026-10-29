@@ -122,9 +122,6 @@
 		</select>
 	</label>
 </header>
-<div class="sheet-notice" aria-live="polite">
-	{#if sheet.notice}<p class="ok">{sheet.notice} <a href="/sheet">Open the print sheet</a></p>{/if}
-</div>
 <main id="main">
 	{@render children()}
 </main>
@@ -212,10 +209,6 @@
 			order: 4;
 		}
 	}
-	.sheet-notice p {
-		max-width: 64rem;
-		margin: 0.5rem auto 0;
-	}
 	main {
 		max-width: 64rem;
 		margin: 0 auto;
@@ -238,7 +231,6 @@
 	@media print {
 		.skip,
 		.top,
-		.sheet-notice,
 		.bottom,
 		:global(#svelte-announcer) {
 			display: none;

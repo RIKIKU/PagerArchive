@@ -1548,7 +1548,26 @@ const rowOf = (page: Page, id: number) => page.locator(`article[data-message-id=
 const tickOf = (page: Page, id: number) => rowOf(page, id).getByRole('checkbox', { name: 'Add to print sheet' });
 const sheetIds = (page: Page) =>
 	page.getByTestId('sheet').locator('li').evaluateAll((els) => els.map((e) => Number((e as HTMLElement).dataset.messageId)));
+const listIds = (page: Page) =>
+	page.getByTestId('message-list').locator('article').evaluateAll((els) => els.map((e) => Number((e as HTMLElement).dataset.messageId)));
 const squash = (s: string) => s.replace(/\s+/g, '');
+
+/** Searches with the search form on this page (the print page's or the
+ * search page's), filling the fields given by label ('' empties one). */
+async function searchWith(page: Page, fields: Record<string, string>) {
+	const form = page.getByRole('search', { name: 'Search messages' });
+	if (!(await form.isVisible())) await page.locator('summary', { hasText: 'Search' }).click();
+	for (const [label, v] of Object.entries(fields)) await form.getByLabel(label, { exact: true }).fill(v);
+	await form.getByRole('button', { name: 'Search' }).click();
+}
+
+/** R67: messages are listed here, and none has a tick box. */
+async function noTicks(page: Page, label: string) {
+	await expect(page.locator('article').first(), label).toBeVisible();
+	await expect(page.getByRole('checkbox', { name: 'Add to print sheet' }), label).toHaveCount(0);
+	await expect(page.locator('article input[type=checkbox]'), label).toHaveCount(0);
+	await expect(page.locator('article').getByText('Print', { exact: true }), label).toHaveCount(0);
+}
 
 /** Each paper page's text, from a PDF of the page as Chromium prints it
  * (saved at save). */
@@ -1646,11 +1665,14 @@ async function checkPrinted(page: Page, texts: string[], label: string) {
 	}
 }
 
-// A60. B ticks 3 messages in search results and 1 in a job view; the sheet
-// shows them in that order, stores their IDs only, prints only their text,
-// and empties when cleared. One of them has a redacted phone number (P1).
+// A60. On the print page, B searches and ticks 3 messages in the results,
+// then searches for something else and ticks 1 more; the sheet below shows
+// them in that order, stores their IDs only, prints only their text, and
+// empties when cleared. The message list (with a row arriving live), search
+// results, the job view and the alias view have no tick boxes (owner,
+// 2026-10-30). One message has a redacted phone number (P1).
 test('A60 print sheet', async ({ browser, request }, info) => {
-	test.setTimeout(120_000);
+	test.setTimeout(150_000);
 	const ref = uniqueRef();
 	const job = uniqueJob();
 	const a = await postId(request, '0100001', `QDTRAINING DRILL ${ref} ALPHA CHECK THE PUMP AT 3 FICTION ST`);
@@ -1660,13 +1682,42 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	const userId = await meId(request, 'user');
 	const ctx = await signedIn(browser, 'user');
 	const page = await ctx.newPage();
-	const texts: Record<number, string> = {};
 
-	// Search results, newest first: c, b, a. Ticked b (a click), c (the
-	// keyboard), a (its visible label).
+	// No tick boxes outside the print page: the message list, with a row
+	// that arrives live; search results; the job view; the alias view. The
+	// texts the list shows, for comparing with the sheet.
+	await page.goto('/');
+	await waitLive(page);
+	const arrived = await postId(request, '0100004', `QDTRAINING DRILL ${ref} ARRIVED LIVE IN THE LIST`);
+	await expect(rowOf(page, arrived)).toBeVisible();
+	await noTicks(page, 'the message list, with a live row');
 	await page.goto(`/?q=${ref}`);
 	await waitLive(page);
-	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(3);
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(4);
+	await noTicks(page, 'search results');
+	const texts: Record<number, string> = {};
+	for (const id of [a, b, c]) texts[id] = await rowOf(page, id).locator('p.text').innerText();
+	expect(texts[b]).toContain('TEXT REDACTED WHEN DONE');
+	expect(texts[c]).not.toContain('@@');
+	await page.goto(`/jobs/${job}`);
+	texts[d] = await rowOf(page, d).locator('p.text').innerText();
+	await noTicks(page, 'the job view');
+	await rowOf(page, d).getByRole('link', { name: 'Station 1' }).click();
+	await expect(page).toHaveURL(/\/aliases\/\d+/);
+	await waitLive(page);
+	await noTicks(page, 'the alias view');
+	console.log(`A60: no tick boxes in the message list (live row ${arrived} included), search results, the job view or the alias view`);
+
+	// The print page: its own search, with a tick box on each result.
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	await page.getByTestId('sheet-link').click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
+	await waitLive(page);
+	await searchWith(page, { Text: ref });
+	await expect(page).toHaveURL(new RegExp(`/sheet\\?q=${ref}(&|$)`));
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(4);
+	expect(await listIds(page)).toEqual([arrived, c, b, a]);
+	// Ticked b (a click), c (the keyboard), a (its visible label).
 	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
 	await tickOf(page, b).click();
 	await expect(tickOf(page, b)).toBeChecked();
@@ -1675,35 +1726,22 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await expect(tickOf(page, c)).toBeChecked();
 	await rowOf(page, a).getByText('Print', { exact: true }).click();
 	await expect(tickOf(page, a)).toBeChecked();
-	await expect(page).toHaveURL(new RegExp(`/\\?q=${ref}$`)); // ticking opened nothing (R35d)
+	await expect(page).toHaveURL(new RegExp(`/sheet\\?q=${ref}(&|$)`)); // ticking opened nothing (R35d)
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
-	for (const id of [a, b, c]) texts[id] = await rowOf(page, id).locator('p.text').innerText();
-	expect(texts[b]).toContain('TEXT REDACTED WHEN DONE');
-	expect(texts[c]).not.toContain('@@');
+	await expect.poll(() => sheetIds(page)).toEqual([b, c, a]);
 
-	// The row still opens the detail view, and the alias link the alias view.
-	await rowOf(page, a).locator('p.text').click();
-	await expect(page).toHaveURL(new RegExp(`/messages/${a}$`));
-	await page.goBack();
-	await rowOf(page, a).getByRole('link', { name: 'Station 1' }).click();
-	await expect(page).toHaveURL(/\/aliases\/\d+/);
-	await waitLive(page);
-	await expect(tickOf(page, a)).toBeChecked();
-
-	// The job view: d.
-	await page.goto(`/jobs/${job}`);
+	// A second search, for the job: d.
+	await searchWith(page, { Text: '', 'Job number': job });
+	await expect(page).toHaveURL(new RegExp(`/sheet\\?.*job=${job}`));
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(1);
 	await tickOf(page, d).check();
-	texts[d] = await rowOf(page, d).locator('p.text').innerText();
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 4 messages');
 	await expect(page.getByTestId('sheet-link')).toContainText('4');
-
-	// Ticked wherever they're listed: the message list and the alias view.
-	await page.goto('/');
-	await waitLive(page);
-	for (const id of [a, b, c, d]) await expect(tickOf(page, id)).toBeChecked();
-	await rowOf(page, d).getByRole('link', { name: 'Station 1' }).click();
-	await waitLive(page);
-	for (const id of [a, d]) await expect(tickOf(page, id)).toBeChecked();
+	// Messages already on the sheet show as ticked when listed again.
+	await page.goBack();
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(4);
+	for (const id of [a, b, c]) await expect(tickOf(page, id)).toBeChecked();
+	await expect(tickOf(page, arrived)).not.toBeChecked();
 
 	// The browser's storage: the 4 IDs, in order, and none of their text.
 	const order = [b, c, a, d];
@@ -1714,12 +1752,17 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	for (const t of [...Object.values(texts), ref, job, 'TRAINING', 'DRILL', 'REDACTED', 'FICTION']) expect(all, 'storage').not.toContain(t);
 	console.log(`A60: storage holds ${JSON.stringify(stored)}`);
 
-	// The sheet: in the order added, each text exactly as the list shows it.
-	await page.getByTestId('sheet-link').click();
-	await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
+	// The sheet, below the results: in the order added, each text exactly as
+	// the message list shows it.
 	await expect.poll(() => sheetIds(page)).toEqual(order);
 	expect(await page.getByTestId('sheet').locator('p.text').allInnerTexts()).toEqual(order.map((id) => texts[id]));
 	await expect(page.getByTestId('sheet')).not.toContainText('0412');
+	const below = await page.evaluate(() => {
+		const results = document.querySelector('[data-testid="message-list"]')!.getBoundingClientRect();
+		const sheet = document.querySelector('[data-testid="sheet"]')!.getBoundingClientRect();
+		return sheet.top - results.bottom;
+	});
+	expect(below, 'the sheet is below the results').toBeGreaterThanOrEqual(0);
 	// On screen only (the print checks below find nothing but the texts).
 	await expect(page.getByTestId('print-hint')).toHaveText(`In the print dialog, untick "Headers and footers" to leave out the browser's own date, title and address.`);
 	for (const scheme of ['light', 'dark'] as const) {
@@ -1729,8 +1772,8 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 		await page.screenshot({ path: info.outputPath(`a60-sheet-${scheme}.png`), fullPage: true });
 	}
 
-	// Printed (still in dark mode): the texts alone, black on white.
-	// Chromium: the real printout first.
+	// Printed (still in dark mode): the texts alone, black on white; the
+	// search and its results don't print. Chromium: the real printout first.
 	if (info.project.name === 'chromium') {
 		const pages = await pdfPages(page, info.outputPath('a60.pdf'));
 		expect(squash(pages.join('')), 'the PDF holds the texts and nothing else').toBe(squash(order.map((id) => texts[id]).join('')));
@@ -1738,29 +1781,91 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 		console.log(`A60: PDF of ${pages.length} page(s) holds only the 4 texts, in order: ${JSON.stringify(pages)}`);
 	}
 	await checkPrinted(page, order.map((id) => texts[id]), 'A60');
-	console.log(`A60 (${info.project.name}): sheet ${JSON.stringify(order)}, as ticked; print media shows only the texts, black on white in dark mode; axe clean in both themes`);
+	console.log(`A60 (${info.project.name}): sheet ${JSON.stringify(order)}, as ticked in two searches; print media shows only the texts, black on white in dark mode; axe clean in both themes`);
 
-	// Removed on the sheet, then cleared (after confirming).
+	// Unticked in the results, then removed on the sheet, then cleared
+	// (after confirming).
+	await tickOf(page, b).uncheck();
+	await expect.poll(() => sheetIds(page)).toEqual([c, a, d]);
+	await tickOf(page, b).check();
+	await expect.poll(() => sheetIds(page)).toEqual([c, a, d, b]);
 	await page.getByRole('button', { name: /^Remove the message from Station 1 at / }).first().click();
-	await expect.poll(() => sheetIds(page)).toEqual([b, c, d]);
+	await expect.poll(() => sheetIds(page)).toEqual([c, d, b]);
+	await expect(tickOf(page, a)).not.toBeChecked();
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
 	page.once('dialog', (dlg) => dlg.dismiss());
-	await page.getByRole('button', { name: 'Clear' }).click();
-	await expect.poll(() => sheetIds(page)).toEqual([b, c, d]);
+	await page.getByRole('button', { name: 'Clear', exact: true }).click();
+	await expect.poll(() => sheetIds(page)).toEqual([c, d, b]);
 	let asked = '';
 	page.once('dialog', (dlg) => {
 		asked = dlg.message();
 		return dlg.accept();
 	});
-	await page.getByRole('button', { name: 'Clear' }).click();
+	await page.getByRole('button', { name: 'Clear', exact: true }).click();
 	await expect(page.getByTestId('sheet').locator('li')).toHaveCount(0);
 	expect(asked).toBe('Remove all 3 messages from the print sheet?');
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
 	expect(Object.keys(await storage(page))).toEqual(['theme']);
-	await page.goto(`/?q=${ref}`);
 	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
 	await ctx.close();
+});
+
+// R67: the print page's search is the search page's: for the same criteria,
+// the same results in the same order, with the same paging, for a user and
+// for an admin; the same form, with the flag filters for admins only. 55
+// messages make two pages of results.
+test('print page search matches the search page', async ({ browser, request }) => {
+	test.setTimeout(150_000);
+	const ref = uniqueRef();
+	for (let i = 1; i <= 52; i++) await postId(request, `010000${(i % 4) + 1}`, `QDTRAINING DRILL ${ref} ROUTINE ${i}`);
+	await postId(request, '0100002', `QETRAINING DRILL ${ref} AN EMERGENCY`);
+	await postId(request, '0100001', `@@GARBLED ${ref} TRAINING DRILL`);
+	await postId(request, '0999997', `QDTRAINING DRILL ${ref} TO A PAGER WITH NO ALIAS`);
+	const searches = [
+		`q=${ref}`,
+		`q=${ref}&priority=Emergency`,
+		`q=${ref}&alias=Station+2`,
+		`q=${ref}&unaliased=true`,
+		`q=${ref}&capcode=0100003&ignored=true`,
+		`q=${ref}&parse_failed=true`
+	];
+	const fieldsOf = (page: Page) =>
+		page.getByRole('search', { name: 'Search messages' }).locator('[name]').evaluateAll((els) => els.map((e) => (e as HTMLInputElement).name));
+	for (const role of ['user', 'admin'] as const) {
+		const ctx = await signedIn(browser, role);
+		const [list, print] = [await ctx.newPage(), await ctx.newPage()];
+		await list.goto('/');
+		await print.goto('/sheet');
+		await expect(print.locator('article').first()).toBeVisible();
+		const fields = await fieldsOf(list);
+		expect(await fieldsOf(print), `${role}: the same search form`).toEqual(fields);
+		expect(fields.includes('parse_failed'), `${role}: flag filters`).toBe(role === 'admin');
+		await expect(print.getByText('Flags (admins only)')).toHaveCount(role === 'admin' ? 1 : 0);
+		const seen: string[] = [];
+		for (const s of searches) {
+			await list.goto(`/?${s}`);
+			await print.goto(`/sheet?${s}`);
+			for (const p of [list, print]) await expect(p.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
+			await expect.poll(async () => (await listIds(print)).length, `${role} ${s}`).toBe((await listIds(list)).length);
+			let want = await listIds(list);
+			expect(await listIds(print), `${role} ${s}`).toEqual(want);
+			// The same paging: older results with the button.
+			const more = (p: Page) => p.getByRole('button', { name: 'Load older messages' });
+			while (await more(list).count()) {
+				await expect(more(print), `${role} ${s}: more`).toHaveCount(1);
+				await more(list).click();
+				await more(print).click();
+				await expect.poll(() => listIds(list)).not.toEqual(want);
+				want = await listIds(list);
+				await expect.poll(() => listIds(print), `${role} ${s}`).toEqual(want);
+			}
+			await expect(more(print)).toHaveCount(0);
+			seen.push(`${s}: ${want.length}`);
+		}
+		console.log(`print page search (${role}): the same results as the search page: ${seen.join(', ')}`);
+		await ctx.close();
+	}
 });
 
 // A60: 30 messages of mixed lengths, some long enough to straddle a page
@@ -1782,13 +1887,12 @@ test('A60 thirty messages print without splitting', async ({ browser, request },
 	}
 	const ctx = await signedIn(browser, 'user');
 	const page = await ctx.newPage();
-	await page.goto(`/?q=${ref}`);
+	await page.goto(`/sheet?q=${ref}`);
 	await waitLive(page);
 	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(30);
 	for (const id of ids) await tickOf(page, id).check(); // oldest first
 	const texts: string[] = [];
 	for (const id of ids) texts.push(await rowOf(page, id).locator('p.text').innerText());
-	await page.getByTestId('sheet-link').click();
 	await expect.poll(() => sheetIds(page)).toEqual(ids);
 
 	if (info.project.name !== 'chromium') {
@@ -1828,7 +1932,7 @@ test('print sheet is per user', async ({ browser, request }) => {
 	expect(bId).not.toBe(cId);
 	const ctx = await signedIn(browser, 'user');
 	const page = await ctx.newPage();
-	await page.goto(`/?q=${ref}`);
+	await page.goto(`/sheet?q=${ref}`);
 	await tickOf(page, x).check();
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
 
@@ -1838,7 +1942,7 @@ test('print sheet is per user', async ({ browser, request }) => {
 	await page.goto('/sheet');
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
-	await page.goto(`/?q=${ref}`);
+	await page.goto(`/sheet?q=${ref}`);
 	await expect(tickOf(page, x)).not.toBeChecked();
 	await tickOf(page, y).check();
 	await page.goto('/sheet');
@@ -1856,8 +1960,9 @@ test('print sheet is per user', async ({ browser, request }) => {
 	await ctx.close();
 });
 
-// R67: a tick on a row that arrived live; other tabs keep in step; a full
-// sheet refuses more; messages that are gone leave the sheet with a note.
+// R67: a tick on a print page result that arrived live; other tabs keep in
+// step; a full sheet refuses more, saying so on the print page; messages
+// that are gone leave the sheet with a note.
 test('print sheet: live rows, other tabs, a full sheet and gone messages', async ({ browser, request }) => {
 	const ref = uniqueRef();
 	const userId = await meId(request, 'user');
@@ -1866,7 +1971,7 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	const other = await ctx.newPage();
 	await other.goto('/sheet');
 	await expect(other.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
-	await list.goto(`/?q=${ref}`);
+	await list.goto(`/sheet?q=${ref}`);
 	await waitLive(list);
 	const live = await postId(request, '0100001', `QDTRAINING DRILL ${ref} ARRIVED LIVE`);
 	await expect(tickOf(list, live)).toBeVisible();
@@ -1882,25 +1987,28 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	await other.close();
 
 	// Full: 100 IDs (of messages that don't exist) fill it; another tick is
-	// refused and says why.
+	// refused and the print page says why. The sheet's own request fails
+	// meanwhile, so it keeps the made-up IDs (a failed request drops none).
 	const fake = Array.from({ length: 100 }, (_, i) => 2_000_000_000 + i);
+	await list.route('**/api/v1/messages/by-id?*', (r) => r.abort());
 	await list.evaluate(([k, v]) => localStorage.setItem(k, v), [sheetKey(userId), JSON.stringify(fake)]);
 	await list.reload();
 	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 100 messages');
 	await tickOf(list, live).click();
 	await expect(tickOf(list, live)).not.toBeChecked();
-	await expect(list.getByText('The print sheet is full: it holds 100 messages. Remove some before adding more.')).toBeVisible();
+	await expect(list.getByTestId('sheet-full')).toHaveText('The print sheet is full: it holds 100 messages. Remove some before adding more.');
 	expect(JSON.parse((await storage(list))[sheetKey(userId)])).toEqual(fake);
+	await list.unroute('**/api/v1/messages/by-id?*');
 
 	// Gone: none of the 100 exists, so they all leave, with a note.
-	await list.goto('/sheet');
+	await list.reload();
 	await expect(list.getByTestId('sheet-gone')).toHaveText('100 messages were no longer available and have been removed from the sheet.');
 	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
 
 	// A real message deleted (as retention would, R45): it leaves too.
 	const kept = await postId(request, '0100002', `QDTRAINING DRILL ${ref} KEPT`);
 	const deleted = await postId(request, '0100003', `QDTRAINING DRILL ${ref} DELETED`);
-	await list.goto(`/?q=${ref}`);
+	await list.goto(`/sheet?q=${ref}`);
 	await tickOf(list, kept).check();
 	await tickOf(list, deleted).check();
 	sql(`DELETE FROM messages WHERE id = ${deleted};`);
@@ -1927,10 +2035,9 @@ test('print sheet without storage', async ({ browser, request }) => {
 	const page = await ctx.newPage();
 	const errors: string[] = [];
 	page.on('pageerror', (e) => errors.push(e.message));
-	await page.goto(`/?q=${ref}`);
+	await page.goto(`/sheet?q=${ref}`);
 	await tickOf(page, id).check();
 	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
-	await page.getByTestId('sheet-link').click();
 	await expect.poll(() => sheetIds(page)).toEqual([id]);
 	await page.reload();
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');

@@ -123,9 +123,16 @@ mutate "admin-only details sent to a user from the print sheet's endpoint" inter
 	'found[m.ID] = s.toMessage(m, admin)' 'found[m.ID] = s.toMessage(m, true)'
 if [ -d "$src/web/node_modules" ] && command -v docker >/dev/null; then
 	ln -s "$src/web/node_modules" web/node_modules
-	mutate "message text stored in localStorage" web/src/lib/MessageRow.svelte 'e2e:A60 print sheet$' \
-		'		if (!tick(m.id, e.currentTarget.checked))' '		localStorage.setItem("pagerarchive:print-sheet-text:" + m.id, m.display_text);
-		if (!tick(m.id, e.currentTarget.checked))'
+	mutate "message text stored in localStorage" web/src/lib/PrintTick.svelte 'e2e:A60 print sheet$' \
+		'		if (!tick(id, e.currentTarget.checked))' '		localStorage.setItem("pagerarchive:print-sheet-text:" + id, e.currentTarget.closest("article")?.querySelector(".text")?.textContent ?? "");
+		if (!tick(id, e.currentTarget.checked))'
+	# Ticking only on the print page (owner, 2026-10-30).
+	mutate "a tick box back in the message list" web/src/routes/+page.svelte 'e2e:A60 print sheet$' \
+		'<MessageList {query} />' '<MessageList {query} pick />'
+	mutate "a tick box back in the job view" 'web/src/routes/jobs/[job]/+page.svelte' 'e2e:A60 print sheet$' \
+		"<MessageRow {m} tz={meta?.time_zone ?? 'UTC'} />" "<MessageRow {m} tz={meta?.time_zone ?? 'UTC'} pick />"
+	mutate "the print page's search offers flag filters to a non-admin" web/src/lib/Filters.svelte 'e2e:print page search matches' \
+		"{#if meta.role === 'admin'}" "{#if meta.role === 'admin' || page.url.pathname === '/sheet'}"
 	mutate "the storage key not per user" web/src/lib/sheet.svelte.ts 'e2e:print sheet is per user' \
 		'const storageKey = (userId: number) => `pagerarchive:print-sheet:${userId}`;' 'const storageKey = (userId: number) => "pagerarchive:print-sheet";'
 	mutate "the sheet sorted by time, newest first, not in the order added" web/src/routes/sheet/+page.svelte 'e2e:A60 print sheet$' \
@@ -192,6 +199,6 @@ fi
 
 echo "=== unmutated"
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11' ./internal/acceptance/ 2>&1 | tail -1
-[ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
+[ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1
 exit $survived

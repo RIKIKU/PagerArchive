@@ -4,7 +4,7 @@ Date: 2026-10-29
 
 ## Status
 
-Proposed. The owner answered the questions on 2026-10-29 (at the end).
+Proposed. The owner answered the questions on 2026-10-29 (at the end). After trying the live copy, the owner changed R67 and A60 on 2026-10-30: ticking happens only on the print page, which has its own search ("Ticking only on the print page", below). Where the decisions below say otherwise, that section wins.
 
 ## Context
 
@@ -27,6 +27,8 @@ What was there before M11:
 ## Decisions
 
 ### 1. Ticking (R67)
+
+*Replaced on 2026-10-30: tick boxes are on the print page's search results only ("Ticking only on the print page", below). Kept as it was decided.*
 
 - **A tick box in `MessageRow`**, so every place that lists messages has it: the list and rows that arrive live, search results, the job view, the alias view and the capcode view. The map's list of located messages isn't a message list in R67's sense and has no tick box.
 - **At the far end of the row's header**, with the visible label "Print" and the accessible name "Add to print sheet" (which contains the visible word, WCAG 2.5.3). It's a native checkbox, so Space toggles it and its state is announced. Like the alias and job links it's raised above the row's stretched link (`--layer-content`), so a tap on it never opens the detail view, and every R35d target is unchanged (A22 still passes). It's disabled for the moment before the signed-in user is known.
@@ -258,6 +260,28 @@ Checked first, on 2026-10-29: #24679 (a stopped job interrupts `clean{}`) and #2
 > ### Environment
 >
 > PowerShell 7.6.9 on Windows 11, and 7.6.0 on Ubuntu 24.04, through `PowerShell.BeginStop()` and `PowerShell.Stop()`. Ctrl+C in the console stops a pipeline the same way, but we haven't checked that by hand.
+
+## Ticking only on the print page (owner, 2026-10-30)
+
+The owner tried the tick boxes in the message list on the live copy and didn't want them there. Main 485e676 changed R67 and A60: the print page has its own search (R33's criteria, under the same rules), ticking happens only in its results, and the message list, search results, the job view and the alias view have no tick boxes. Merged into this branch before the change.
+
+### What changed
+
+- **No tick boxes outside the print page.** `MessageRow` is back to its pre-M11 markup and styles. The tick box is its own component, `PrintTick`, which a row shows only when given `pick`; only the print page passes it. So the message list (live rows too), search results, the job view, the alias view and the capcode view are as they were before M11. **Print sheet** in the header, with its count, stays.
+- **The print page's search is the search page's.** `/sheet` uses the same `MessageList`, with the same `Filters` form, criteria in the URL (`/sheet?q=…`, so a search survives a reload), `GET /api/v1/messages` and its cursor paging, and live rows. Nothing about searching is written twice, so its results are the search page's for the same person, and the flag filters (R33, R35c) are offered to admins only, by the same check, and ignored by the API for anyone else.
+- **One difference in paging:** on the print page, older results load with the **Load older messages** button only, not by scrolling to the end. The sheet sits below the results, so scrolling down to it would otherwise keep loading results and push it away. The pages are the API's same pages; the button was already there as the keyboard's way.
+- **Ticking:** each result has the tick box as before (visible "Print", accessible name "Add to print sheet", a native checkbox for the keyboard, above the row's stretched link). Ticking adds, unticking removes, and a message on the sheet shows as ticked, in any search.
+- **A full sheet** says so on the print page, above the results ("The print sheet is full: it holds 100 messages. Remove some before adding more."); the layout's notice under the header is gone, since nothing else can tick.
+- **The page, top to bottom:** the heading, a line saying how to add messages, the search and its results ("Search results"), then "Your sheet" with its count, Print, Clear, the hint and the R68 note, and the messages in the order added. It's one column at every width, so on a phone too the sheet comes after the results. The M12 redesign decides the final layout.
+- **Printing** is unchanged: the search and its results are screen-only, like the rest of the page's controls, so the printout is still each message's text alone.
+- **Unchanged:** IDs-only storage per user, `GET /api/v1/messages/by-id` and its limit, the 100-message maximum, the print styles, and the PDF proof. `docs/print-sheet.md` now says where you tick.
+
+### Tests
+
+- **A60 print sheet**, as now written, in Chromium, Firefox and WebKit: B first sees no tick boxes in the message list (after a page arrives live), in search results, in a job view or in an alias view (no "Add to print sheet" checkbox, no checkbox in any row, no "Print" label), and takes each message's text from the list. Then, on the print page, B searches with its form for a word, gets 4 results, ticks 3 (a click, the keyboard, the visible label), searches for a job number and ticks 1 more; going back, the first 3 show as ticked. The sheet below the results lists the 4 in the order ticked, each text equal to the list's; storage holds only the 4 IDs; axe passes on the print page in light and dark; the printout (Chromium's PDF, and print media in every engine) holds only the texts. Then a tick removed and added again in the results, Remove, Clear dismissed and confirmed.
+- **print page search matches the search page**, for a user and for an admin: the two forms have the same fields (the flag filters for the admin only; "Flags (admins only)" not shown to the user), and for six searches over 55 made-up messages (a word; with Emergency; an alias; capcodes with no alias; a capcode with ignored aliases; a flag filter, which the user's API ignores) both pages list the same messages in the same order, and the same second page with **Load older messages**.
+- The other print tests tick on the print page now: 30 messages, per user, a row arriving live in its results with other tabs following, a full sheet (the sheet's own request is made to fail meanwhile, so the made-up IDs stay), messages gone, and no storage.
+- **Mutations** (new): a tick box back in the message list (`<MessageList {query} pick />`) and in the job view, each caught by A60; flag filters offered to a non-admin on the print page only (`… || page.url.pathname === '/sheet'` in `Filters`), caught by the new search test. "Message text stored in `localStorage`" moved to `PrintTick`.
 
 ## Consequences
 

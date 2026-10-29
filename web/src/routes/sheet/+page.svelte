@@ -1,12 +1,19 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
+	import { criteria } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import MessageList from '#lib/MessageList.svelte';
 	import { MAX_SHEET, clearSheet, drop, sheet, tick } from '#lib/sheet.svelte.ts';
 
-	// R67: the print sheet, in the order its messages were added; R68: it
-	// prints as each message's text alone, as a pager shows it (R31), each in
-	// a heavy border and never split across paper pages. The messages come
-	// from the API as the signed-in user sees them; storage holds IDs only.
+	// R67: the print page. Its search is the search page's (R33: the same
+	// form, API and paging), with a tick box on each result; ticking happens
+	// nowhere else. The print sheet below it keeps messages in the order they
+	// were added; R68: it prints as each message's text alone, as a pager
+	// shows it (R31), each in a heavy border and never split across paper
+	// pages. The messages come from the API as the signed-in user sees them;
+	// storage holds IDs only.
+	const query = $derived(criteria(page.url));
 	let meta: Meta | undefined = $state();
 	let fetched: Record<number, Message> = $state({});
 	let gone = $state(0);
@@ -58,9 +65,17 @@
 
 <div class="screen">
 	<h1>Print sheet</h1>
+	<p class="status">Search for messages, then tick "Print" on the ones to add to your sheet below.</p>
+	<div class="notice" aria-live="polite">
+		{#if sheet.notice}<p class="ok" data-testid="sheet-full">{sheet.notice}</p>{/if}
+	</div>
+	<section aria-label="Search for messages to print" data-testid="sheet-search">
+		<MessageList {query} level={2} title="Search results" pick scroll={false} />
+	</section>
+	<h2 class="sheet-heading">Your sheet</h2>
 	<p class="status" data-testid="sheet-count">
 		{#if !sheet.ready}Loading…
-		{:else if count === 0}The print sheet is empty. Tick "Print" on messages in the message list, search results, a job or an alias to add them.
+		{:else if count === 0}The print sheet is empty. Tick "Print" on messages in the search results above to add them.
 		{:else}{count} message{count === 1 ? '' : 's'}, in the order you added them (at most {MAX_SHEET}). Printing shows only each message's text,
 			as a pager shows it.{/if}
 	</p>
@@ -98,6 +113,17 @@
 </ol>
 
 <style>
+	.notice p {
+		margin: 0 0.75rem;
+	}
+	/* Below the results, on every screen width; the M12 redesign decides the
+	   final layout. */
+	.sheet-heading {
+		font-size: var(--text-xl);
+		margin: 1.5rem 0 0;
+		padding: 1rem 0.75rem 0;
+		border-top: 1px solid var(--border);
+	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
