@@ -87,6 +87,10 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: web/package-lock.json
+      # The container runs as root and the checkout is the runner's: git (and
+      # so go build's version stamp) refuses a folder someone else owns.
+      - name: Let git read the checkout
+        run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install psql (the tests change the database directly)
         run: apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-client >/dev/null
       - name: Install dependencies
