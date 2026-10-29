@@ -24,6 +24,7 @@
     "@sveltejs/kit": "^3.0.1",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.6.5",
+    "pdfjs-dist": "^6.4.299",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",

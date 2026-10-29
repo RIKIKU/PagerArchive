@@ -5,11 +5,16 @@
 import { test, expect, type Browser, type BrowserContextOptions, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
-const SESSIONS = { user: process.env.PA_USER_SESSION ?? '', admin: process.env.PA_ADMIN_SESSION ?? '' };
+// userC: a second user, for the print sheet kept per user (M11).
+const SESSIONS = {
+	user: process.env.PA_USER_SESSION ?? '',
+	admin: process.env.PA_ADMIN_SESSION ?? '',
+	userC: process.env.PA_USER_C_SESSION ?? ''
+};
 type Role = keyof typeof SESSIONS;
 
 const sessionCookie = (role: Role) => ({ name: 'pa_session', value: SESSIONS[role], url: URL });
@@ -285,11 +290,11 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(270_000); // 29 views
+			test.setTimeout(280_000); // 30 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
@@ -1499,4 +1504,432 @@ test('A57 icons shown', async ({ browser, request }, info) => {
 		proxy.closeAllConnections();
 		proxy.close();
 	}
+});
+
+// M11 (R67, R68, A60): the print sheet.
+const sheetKey = (userId: number) => `pagerarchive:print-sheet:${userId}`;
+
+async function meId(request: APIRequestContext, role: Role): Promise<number> {
+	return (await (await request.get(`${URL}/api/v1/me`, { headers: asRole(role) })).json()).id;
+}
+
+/** Posts a page as the client and returns its message ID. */
+async function postId(request: APIRequestContext, capcode: string, text: string): Promise<number> {
+	const res = await request.post(`${URL}/api/v1/pages`, {
+		headers: { Authorization: `Bearer ${KEY}` },
+		data: { capcode, text, received_at: new Date().toISOString(), baud: 512 }
+	});
+	expect(res.status()).toBe(200);
+	const id = (await res.json()).message_id;
+	expect(id, text).toBeGreaterThan(0);
+	return id;
+}
+
+/** A word no other test or browser project uses, for searching. */
+const uniqueRef = () => `SHEET${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${uniqueJob().slice(2)}`;
+
+/** Everything in this page's localStorage. */
+function storage(page: Page): Promise<Record<string, string>> {
+	return page.evaluate(() => {
+		const out: Record<string, string> = {};
+		for (let i = 0; i < localStorage.length; i++) {
+			const k = localStorage.key(i)!;
+			out[k] = localStorage.getItem(k)!;
+		}
+		return out;
+	});
+}
+
+const rowOf = (page: Page, id: number) => page.locator(`article[data-message-id="${id}"]`);
+const tickOf = (page: Page, id: number) => rowOf(page, id).getByRole('checkbox', { name: 'Add to print sheet' });
+const sheetIds = (page: Page) =>
+	page.getByTestId('sheet').locator('li').evaluateAll((els) => els.map((e) => Number((e as HTMLElement).dataset.messageId)));
+const squash = (s: string) => s.replace(/\s+/g, '');
+
+/** Each paper page's text, from a PDF of the page as Chromium prints it
+ * (saved at save). */
+async function pdfPages(page: Page, save: string): Promise<string[]> {
+	const pdf = await page.pdf({ format: 'A4', margin: { top: '1cm', right: '1cm', bottom: '1cm', left: '1cm' } });
+	writeFileSync(save, pdf);
+	const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+	const task = getDocument({ data: new Uint8Array(pdf) });
+	const doc = await task.promise;
+	const pages: string[] = [];
+	for (let i = 1; i <= doc.numPages; i++) {
+		const content = await (await doc.getPage(i)).getTextContent();
+		pages.push(content.items.map((it) => ('str' in it ? it.str : '')).join(''));
+	}
+	await task.destroy();
+	return pages;
+}
+
+/**
+ * R68 with print media, in any engine: only the texts, in order, each in a
+ * heavy black border with space between, black on white, wrapped and never
+ * cut off, and kept whole across paper pages.
+ */
+async function checkPrinted(page: Page, texts: string[], label: string) {
+	await page.emulateMedia({ media: 'print' });
+	try {
+		// Nothing but the texts: no header, navigation, heading, buttons,
+		// times, aliases or badges.
+		await expect(page.getByRole('navigation', { name: 'Main' }), label).toBeHidden();
+		await expect(page.locator('header.top'), label).toBeHidden();
+		await expect(page.getByRole('heading', { name: 'Print sheet' }), label).toBeHidden();
+		for (const b of await page.getByRole('button').all()) await expect(b, label).toBeHidden();
+		const shown = await page.evaluate(() => document.body.innerText);
+		expect(squash(shown), `${label}: everything printed`).toBe(squash(texts.join('')));
+
+		const looks = await page.getByTestId('sheet').locator('li').evaluateAll((els) =>
+			els.map((el) => {
+				const s = getComputedStyle(el);
+				const t = getComputedStyle(el.querySelector('.text')!);
+				const chain: string[] = [];
+				for (let p = el.parentElement; p; p = p.parentElement) chain.push(`${p.tagName.toLowerCase()}:${getComputedStyle(p).display}`);
+				return {
+					display: s.display,
+					breakInside: s.breakInside,
+					pageBreakInside: s.getPropertyValue('page-break-inside'),
+					borders: ['top', 'right', 'bottom', 'left'].map(
+						(side) =>
+							`${s.getPropertyValue(`border-${side}-width`)} ${s.getPropertyValue(`border-${side}-style`)} ${s.getPropertyValue(`border-${side}-color`)}`
+					),
+					background: s.backgroundColor,
+					colour: t.color,
+					whiteSpace: t.whiteSpace,
+					overflowWrap: t.overflowWrap,
+					overflow: `${t.overflowX} ${t.overflowY} ${s.overflowX} ${s.overflowY}`,
+					maxHeight: `${t.maxHeight} ${s.maxHeight}`,
+					cut: Math.max(el.scrollWidth - el.clientWidth, el.scrollHeight - el.clientHeight),
+					top: el.getBoundingClientRect().top,
+					bottom: el.getBoundingClientRect().bottom,
+					chain: chain.join(' ')
+				};
+			})
+		);
+		expect(looks.length, label).toBe(texts.length);
+		const { display, breakInside, pageBreakInside, borders, background, colour, chain } = looks[0];
+		console.log(`${label}: message 1 printed with ${JSON.stringify({ display, breakInside, pageBreakInside, border: borders[0], background, colour, chain })}`);
+		looks.forEach((l, i) => {
+			const what = `${label}: message ${i + 1}`;
+			expect(l.display, what).toBe('block');
+			expect([l.breakInside, l.pageBreakInside], what).toContain('avoid');
+			for (const b of l.borders) {
+				const [width, style, ...colour] = b.split(' ');
+				expect(parseFloat(width), `${what}: border width`).toBeGreaterThanOrEqual(3);
+				expect(style, what).toBe('solid');
+				expect(colour.join(' '), what).toBe('rgb(0, 0, 0)');
+			}
+			expect(l.background, what).toBe('rgb(255, 255, 255)');
+			expect(l.colour, what).toBe('rgb(0, 0, 0)');
+			expect(l.whiteSpace, what).toBe('pre-wrap');
+			expect(l.overflowWrap, what).toBe('anywhere');
+			expect(l.overflow, what).toBe('visible visible visible visible');
+			expect(l.maxHeight, what).toBe('none none');
+			expect(l.cut, `${what}: nothing cut off`).toBeLessThanOrEqual(0);
+			// Page breaks are only avoided reliably inside block layout.
+			expect(l.chain, what).toMatch(/^(\w+:(block|list-item|contents) ?)+$/);
+			if (i > 0) expect(l.top - looks[i - 1].bottom, `${what}: space above`).toBeGreaterThanOrEqual(16);
+		});
+		const whole = await page.evaluate(() => {
+			const b = getComputedStyle(document.body);
+			return { background: b.backgroundColor, colour: b.color, wide: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+		});
+		expect(whole, label).toEqual({ background: 'rgb(255, 255, 255)', colour: 'rgb(0, 0, 0)', wide: 0 });
+	} finally {
+		// null, not 'screen': page.pdf() prints with print media unless told otherwise.
+		await page.emulateMedia({ media: null });
+	}
+}
+
+// A60. B ticks 3 messages in search results and 1 in a job view; the sheet
+// shows them in that order, stores their IDs only, prints only their text,
+// and empties when cleared. One of them has a redacted phone number (P1).
+test('A60 print sheet', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const ref = uniqueRef();
+	const job = uniqueJob();
+	const a = await postId(request, '0100001', `QDTRAINING DRILL ${ref} ALPHA CHECK THE PUMP AT 3 FICTION ST`);
+	const b = await postId(request, '0100002', `QDTRAINING DRILL ${ref} BRAVO TEXT 0412 345 678 WHEN DONE`);
+	const c = await postId(request, '0100003', `@@${uniqueJob()} HSF1 TRAINING DRILL ${ref} SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN3`);
+	const d = await postId(request, '0100001', `@@${job} HSF1 TRAINING DRILL SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
+	const userId = await meId(request, 'user');
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	const texts: Record<number, string> = {};
+
+	// Search results, newest first: c, b, a. Ticked b (a click), c (the
+	// keyboard), a (its visible label).
+	await page.goto(`/?q=${ref}`);
+	await waitLive(page);
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(3);
+	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
+	await tickOf(page, b).click();
+	await expect(tickOf(page, b)).toBeChecked();
+	await tickOf(page, c).focus();
+	await page.keyboard.press('Space');
+	await expect(tickOf(page, c)).toBeChecked();
+	await rowOf(page, a).getByText('Print', { exact: true }).click();
+	await expect(tickOf(page, a)).toBeChecked();
+	await expect(page).toHaveURL(new RegExp(`/\\?q=${ref}$`)); // ticking opened nothing (R35d)
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
+	for (const id of [a, b, c]) texts[id] = await rowOf(page, id).locator('p.text').innerText();
+	expect(texts[b]).toContain('TEXT REDACTED WHEN DONE');
+	expect(texts[c]).not.toContain('@@');
+
+	// The row still opens the detail view, and the alias link the alias view.
+	await rowOf(page, a).locator('p.text').click();
+	await expect(page).toHaveURL(new RegExp(`/messages/${a}$`));
+	await page.goBack();
+	await rowOf(page, a).getByRole('link', { name: 'Station 1' }).click();
+	await expect(page).toHaveURL(/\/aliases\/\d+/);
+	await waitLive(page);
+	await expect(tickOf(page, a)).toBeChecked();
+
+	// The job view: d.
+	await page.goto(`/jobs/${job}`);
+	await tickOf(page, d).check();
+	texts[d] = await rowOf(page, d).locator('p.text').innerText();
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 4 messages');
+	await expect(page.getByTestId('sheet-link')).toContainText('4');
+
+	// Ticked wherever they're listed: the message list and the alias view.
+	await page.goto('/');
+	await waitLive(page);
+	for (const id of [a, b, c, d]) await expect(tickOf(page, id)).toBeChecked();
+	await rowOf(page, d).getByRole('link', { name: 'Station 1' }).click();
+	await waitLive(page);
+	for (const id of [a, d]) await expect(tickOf(page, id)).toBeChecked();
+
+	// The browser's storage: the 4 IDs, in order, and none of their text.
+	const order = [b, c, a, d];
+	const stored = await storage(page);
+	expect(Object.keys(stored).sort()).toEqual([sheetKey(userId), 'theme'].sort());
+	expect(JSON.parse(stored[sheetKey(userId)])).toEqual(order);
+	const all = JSON.stringify(stored) + (await page.evaluate(() => JSON.stringify({ ...sessionStorage })));
+	for (const t of [...Object.values(texts), ref, job, 'TRAINING', 'DRILL', 'REDACTED', 'FICTION']) expect(all, 'storage').not.toContain(t);
+	console.log(`A60: storage holds ${JSON.stringify(stored)}`);
+
+	// The sheet: in the order added, each text exactly as the list shows it.
+	await page.getByTestId('sheet-link').click();
+	await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
+	await expect.poll(() => sheetIds(page)).toEqual(order);
+	expect(await page.getByTestId('sheet').locator('p.text').allInnerTexts()).toEqual(order.map((id) => texts[id]));
+	await expect(page.getByTestId('sheet')).not.toContainText('0412');
+	for (const scheme of ['light', 'dark'] as const) {
+		await page.getByLabel('Colour theme').selectOption(scheme);
+		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+		expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), scheme).toEqual([]);
+		await page.screenshot({ path: info.outputPath(`a60-sheet-${scheme}.png`), fullPage: true });
+	}
+
+	// Printed (still in dark mode): the texts alone, black on white.
+	// Chromium: the real printout first.
+	if (info.project.name === 'chromium') {
+		const pages = await pdfPages(page, info.outputPath('a60.pdf'));
+		expect(squash(pages.join('')), 'the PDF holds the texts and nothing else').toBe(squash(order.map((id) => texts[id]).join('')));
+		expect(pages.join(''), 'the PDF').not.toContain('0412');
+		console.log(`A60: PDF of ${pages.length} page(s) holds only the 4 texts, in order: ${JSON.stringify(pages)}`);
+	}
+	await checkPrinted(page, order.map((id) => texts[id]), 'A60');
+	console.log(`A60 (${info.project.name}): sheet ${JSON.stringify(order)}, as ticked; print media shows only the texts, black on white in dark mode; axe clean in both themes`);
+
+	// Removed on the sheet, then cleared (after confirming).
+	await page.getByRole('button', { name: /^Remove the message from Station 1 at / }).first().click();
+	await expect.poll(() => sheetIds(page)).toEqual([b, c, d]);
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
+	page.once('dialog', (dlg) => dlg.dismiss());
+	await page.getByRole('button', { name: 'Clear' }).click();
+	await expect.poll(() => sheetIds(page)).toEqual([b, c, d]);
+	let asked = '';
+	page.once('dialog', (dlg) => {
+		asked = dlg.message();
+		return dlg.accept();
+	});
+	await page.getByRole('button', { name: 'Clear' }).click();
+	await expect(page.getByTestId('sheet').locator('li')).toHaveCount(0);
+	expect(asked).toBe('Remove all 3 messages from the print sheet?');
+	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	expect(Object.keys(await storage(page))).toEqual(['theme']);
+	await page.goto(`/?q=${ref}`);
+	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
+	await ctx.close();
+});
+
+// A60: 30 messages of mixed lengths, some long enough to straddle a page
+// break if laid out naively, and one with a long unbroken word. Chromium:
+// the real printed PDF, each text whole on one page, and, as a control, the
+// same sheet without break-inside splits one. Firefox and WebKit: print
+// media emulation and the computed styles.
+test('A60 thirty messages print without splitting', async ({ browser, request }, info) => {
+	test.setTimeout(150_000);
+	const ref = uniqueRef();
+	const words = ['SMOKE', 'FROM', 'SHED', 'FICTION', 'ST', 'MADEUPTON', 'PUMP', 'CHECK', 'UNIT', 'T1', 'HOSE', 'LADDER', 'TANKER', 'NORTH', 'GATE'];
+	const lengths = [40, 400, 1500, 90, 2200, 250, 700, 60, 1800, 120, 900, 2400, 300, 50, 1200, 600, 2000, 150, 80, 1000, 1600, 200, 450, 70, 2300, 350, 130, 1400, 500, 100];
+	const ids: number[] = [];
+	for (const [i, len] of lengths.entries()) {
+		let body = `TRAINING DRILL ${ref} M${i + 1}`;
+		if (i === 4) body += ' ' + 'UNBROKEN'.repeat(20);
+		for (let w = 0; body.length < len; w++) body += ' ' + words[(i + w) % words.length];
+		ids.push(await postId(request, '0100004', `QD${body} END${i + 1}`));
+	}
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	await page.goto(`/?q=${ref}`);
+	await waitLive(page);
+	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(30);
+	for (const id of ids) await tickOf(page, id).check(); // oldest first
+	const texts: string[] = [];
+	for (const id of ids) texts.push(await rowOf(page, id).locator('p.text').innerText());
+	await page.getByTestId('sheet-link').click();
+	await expect.poll(() => sheetIds(page)).toEqual(ids);
+
+	if (info.project.name !== 'chromium') {
+		await checkPrinted(page, texts, 'A60 (30)');
+		console.log(`A60 (30, ${info.project.name}): print media: 30 messages in heavy black borders, break-inside avoid, block layout, black on white, nothing cut off`);
+		await ctx.close();
+		return;
+	}
+	// Chromium: the real printout, then the computed styles.
+	const whole = (pages: string[]) => texts.map((t) => pages.flatMap((p, n) => (squash(p).includes(squash(t)) ? [n + 1] : [])));
+	const pages = await pdfPages(page, info.outputPath('a60-30.pdf'));
+	const on = whole(pages);
+	expect(
+		on.flatMap((p, i) => (p.length === 1 ? [] : [`M${i + 1} on pages ${JSON.stringify(p)}`])),
+		'messages not whole on exactly one page'
+	).toEqual([]);
+	expect(squash(pages.join('')), 'the PDF holds the texts and nothing else').toBe(squash(texts.join('')));
+	console.log(`A60 (30): ${pages.length} PDF pages; the page each message is on: ${on.map((p, i) => `M${i + 1}:${p[0]}`).join(' ')}`);
+	await checkPrinted(page, texts, 'A60 (30)');
+
+	// The control: without break-inside, the same sheet splits a message.
+	await page.addStyleTag({ content: '[data-testid="sheet"] li { break-inside: auto !important; page-break-inside: auto !important; }' });
+	const naive = whole(await pdfPages(page, info.outputPath('a60-30-naive.pdf')));
+	const split = naive.flatMap((p, i) => (p.length === 0 ? [`M${i + 1} (${lengths[i]} characters)`] : []));
+	expect(split.length, 'messages split without break-inside').toBeGreaterThan(0);
+	console.log(`A60 (30): without break-inside, split across pages: ${split.join(', ')}`);
+	await ctx.close();
+});
+
+// R67: the sheet is kept per user. B's isn't shown to C in the same browser,
+// and C's own doesn't touch B's.
+test('print sheet is per user', async ({ browser, request }) => {
+	const ref = uniqueRef();
+	const x = await postId(request, '0100002', `QDTRAINING DRILL ${ref} FOR USER B`);
+	const y = await postId(request, '0100003', `QDTRAINING DRILL ${ref} FOR USER C`);
+	const [bId, cId] = [await meId(request, 'user'), await meId(request, 'userC')];
+	expect(bId).not.toBe(cId);
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	await page.goto(`/?q=${ref}`);
+	await tickOf(page, x).check();
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+
+	// C signs in in the same browser.
+	await ctx.clearCookies();
+	await ctx.addCookies([sessionCookie('userC')]);
+	await page.goto('/sheet');
+	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	await page.goto(`/?q=${ref}`);
+	await expect(tickOf(page, x)).not.toBeChecked();
+	await tickOf(page, y).check();
+	await page.goto('/sheet');
+	await expect.poll(() => sheetIds(page)).toEqual([y]);
+
+	// And B again.
+	await ctx.clearCookies();
+	await ctx.addCookies([sessionCookie('user')]);
+	await page.goto('/sheet');
+	await expect.poll(() => sheetIds(page)).toEqual([x]);
+	const stored = await storage(page);
+	expect(JSON.parse(stored[sheetKey(bId)])).toEqual([x]);
+	expect(JSON.parse(stored[sheetKey(cId)])).toEqual([y]);
+	console.log(`print sheet per user: ${JSON.stringify(stored)}`);
+	await ctx.close();
+});
+
+// R67: a tick on a row that arrived live; other tabs keep in step; a full
+// sheet refuses more; messages that are gone leave the sheet with a note.
+test('print sheet: live rows, other tabs, a full sheet and gone messages', async ({ browser, request }) => {
+	const ref = uniqueRef();
+	const userId = await meId(request, 'user');
+	const ctx = await signedIn(browser, 'user');
+	const list = await ctx.newPage();
+	const other = await ctx.newPage();
+	await other.goto('/sheet');
+	await expect(other.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
+	await list.goto(`/?q=${ref}`);
+	await waitLive(list);
+	const live = await postId(request, '0100001', `QDTRAINING DRILL ${ref} ARRIVED LIVE`);
+	await expect(tickOf(list, live)).toBeVisible();
+	await tickOf(list, live).focus();
+	await list.keyboard.press('Space');
+	await expect(tickOf(list, live)).toBeChecked();
+	// The other tab follows: its link and its sheet.
+	await expect(other.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+	await expect.poll(() => sheetIds(other)).toEqual([live]);
+	await other.getByRole('button', { name: /^Remove the message from Station 1/ }).click();
+	await expect(tickOf(list, live)).not.toBeChecked();
+	// Closed now: an open sheet would drop the made-up IDs below at once.
+	await other.close();
+
+	// Full: 100 IDs (of messages that don't exist) fill it; another tick is
+	// refused and says why.
+	const fake = Array.from({ length: 100 }, (_, i) => 2_000_000_000 + i);
+	await list.evaluate(([k, v]) => localStorage.setItem(k, v), [sheetKey(userId), JSON.stringify(fake)]);
+	await list.reload();
+	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 100 messages');
+	await tickOf(list, live).click();
+	await expect(tickOf(list, live)).not.toBeChecked();
+	await expect(list.getByText('The print sheet is full: it holds 100 messages. Remove some before adding more.')).toBeVisible();
+	expect(JSON.parse((await storage(list))[sheetKey(userId)])).toEqual(fake);
+
+	// Gone: none of the 100 exists, so they all leave, with a note.
+	await list.goto('/sheet');
+	await expect(list.getByTestId('sheet-gone')).toHaveText('100 messages were no longer available and have been removed from the sheet.');
+	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+
+	// A real message deleted (as retention would, R45): it leaves too.
+	const kept = await postId(request, '0100002', `QDTRAINING DRILL ${ref} KEPT`);
+	const deleted = await postId(request, '0100003', `QDTRAINING DRILL ${ref} DELETED`);
+	await list.goto(`/?q=${ref}`);
+	await tickOf(list, kept).check();
+	await tickOf(list, deleted).check();
+	execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres'], {
+		input: `DELETE FROM messages WHERE id = ${deleted};`
+	});
+	await list.goto('/sheet');
+	await expect(list.getByTestId('sheet-gone')).toHaveText('1 message was no longer available and has been removed from the sheet.');
+	await expect.poll(() => sheetIds(list)).toEqual([kept]);
+	expect(JSON.parse((await storage(list))[sheetKey(userId)])).toEqual([kept]);
+	await ctx.close();
+});
+
+// R67: with storage unavailable, the sheet still works, empty, for the
+// page's life.
+test('print sheet without storage', async ({ browser, request }) => {
+	const ref = uniqueRef();
+	const id = await postId(request, '0100001', `QDTRAINING DRILL ${ref} NO STORAGE`);
+	const ctx = await signedIn(browser, 'user');
+	await ctx.addInitScript(() => {
+		for (const m of ['getItem', 'setItem', 'removeItem', 'key', 'clear'] as const) {
+			Storage.prototype[m] = () => {
+				throw new DOMException('Storage is off', 'SecurityError');
+			};
+		}
+	});
+	const page = await ctx.newPage();
+	const errors: string[] = [];
+	page.on('pageerror', (e) => errors.push(e.message));
+	await page.goto(`/?q=${ref}`);
+	await tickOf(page, id).check();
+	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+	await page.getByTestId('sheet-link').click();
+	await expect.poll(() => sheetIds(page)).toEqual([id]);
+	await page.reload();
+	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
+	expect(errors).toEqual([]);
+	await ctx.close();
 });

@@ -321,6 +321,60 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, msg)
 }
 
+// MaxSheet is how many messages a print sheet holds, and so how many
+// GET /api/v1/messages/by-id returns at once (R67, ADR 0012).
+const MaxSheet = 100
+
+// Messages is the reply to GET /api/v1/messages/by-id: the messages in the
+// order asked, and the IDs of those that no longer exist.
+type Messages struct {
+	Messages []Message `json:"messages"`
+	Missing  []int64   `json:"missing"`
+}
+
+// messagesByID returns messages by ID, for the print sheet (R67), with the
+// detail view's rules: the list's text and redaction, ignored aliases'
+// pages included (the alias view lists them), and flags for admins only.
+func (s *Server) messagesByID(w http.ResponseWriter, r *http.Request) {
+	var ids []int64
+	seen := map[int64]bool{}
+	for _, v := range r.URL.Query()["id"] {
+		id, err := strconv.ParseInt(v, 10, 64)
+		if err != nil || id < 1 {
+			problem(w, http.StatusBadRequest, "id must be a message ID")
+			return
+		}
+		if !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 || len(ids) > MaxSheet {
+		problem(w, http.StatusBadRequest, fmt.Sprintf("give 1 to %d message IDs", MaxSheet))
+		return
+	}
+	admin := s.isAdmin(r)
+	rows, err := s.search(r.Context(), search.Filter{Ignored: true}, nil, len(ids), ids)
+	if err != nil {
+		s.Log.Error("messages by id", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	found := map[int64]Message{}
+	for _, m := range rows {
+		found[m.ID] = s.toMessage(m, admin)
+	}
+	out := Messages{Messages: []Message{}, Missing: []int64{}}
+	for _, id := range ids {
+		if m, ok := found[id]; ok {
+			out.Messages = append(out.Messages, m)
+		} else {
+			out.Missing = append(out.Missing, id)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // Job is every message with one job number (R34).
 type Job struct {
 	JobNumber string    `json:"job_number"`

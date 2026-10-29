@@ -4,6 +4,7 @@
 	import { onMount } from 'svelte';
 	import { api, type Meta } from '#lib/api.ts';
 	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
+	import { loadSheet, sheet } from '#lib/sheet.svelte.ts';
 
 	let { children } = $props();
 	let meta: Meta | undefined = $state();
@@ -19,13 +20,22 @@
 		// change (ADR 0010 §4).
 		const update = (e: Event) => (meta = (e as CustomEvent<Meta>).detail);
 		window.addEventListener('pagerarchive:meta', update);
+		// R67: the print sheet is kept per user (their ID is in its key).
+		let unfollow = () => {};
+		if (!page.url.pathname.startsWith('/signin')) api
+				.me()
+				.then((me) => (unfollow = loadSheet(me.id)))
+				.catch(() => {});
 		try {
 			const saved = localStorage.getItem('theme');
 			if (saved === 'light' || saved === 'dark') theme = saved;
 		} catch {
 			// storage unavailable: follow the system
 		}
-		return () => window.removeEventListener('pagerarchive:meta', update);
+		return () => {
+			window.removeEventListener('pagerarchive:meta', update);
+			unfollow();
+		};
 	});
 
 	$effect(() => {
@@ -64,6 +74,7 @@
 		{ href: '/capcodes', label: 'Unknown capcodes' },
 		...(meta ? [{ href: '/integrations', label: 'Integrations' }] : []),
 		...(meta ? [{ href: '/requests', label: 'Requests' }] : []),
+		...(meta ? [{ href: '/sheet', label: 'Print sheet' }] : []),
 		// R44b: one Admin link, for admins only.
 		...(meta?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
 		...(meta ? [{ href: '/account', label: 'Account' }] : [])
@@ -82,6 +93,15 @@
 					data-testid="admin-link"
 					aria-label="{item.label}, {waiting.count} alias request{waiting.count === 1 ? '' : 's'} waiting"
 					>{item.label}<span class="count">{waiting.count}</span></a
+				>
+			{:else if item.href === '/sheet'}
+				<!-- R67: the sheet's link shows how many messages it holds. -->
+				<a
+					href={item.href}
+					aria-current={current(item.href) ? 'page' : undefined}
+					data-testid="sheet-link"
+					aria-label="{item.label}, {sheet.ids.length} message{sheet.ids.length === 1 ? '' : 's'}"
+					>{item.label}<span class="count">{sheet.ids.length}</span></a
 				>
 			{:else}
 				<a href={item.href} aria-current={current(item.href) ? 'page' : undefined} data-testid={item.href === '/admin' ? 'admin-link' : undefined}>{item.label}</a>
@@ -102,6 +122,9 @@
 		</select>
 	</label>
 </header>
+<div class="sheet-notice" aria-live="polite">
+	{#if sheet.notice}<p class="ok">{sheet.notice} <a href="/sheet">Open the print sheet</a></p>{/if}
+</div>
 <main id="main">
 	{@render children()}
 </main>
@@ -189,6 +212,10 @@
 			order: 4;
 		}
 	}
+	.sheet-notice p {
+		max-width: 64rem;
+		margin: 0.5rem auto 0;
+	}
 	main {
 		max-width: 64rem;
 		margin: 0 auto;
@@ -205,6 +232,20 @@
 	.skip {
 		position: absolute;
 		left: -9999px;
+	}
+	/* A printout has no header, navigation or footer (R68), nor SvelteKit's
+	   hidden announcement of the page's title. */
+	@media print {
+		.skip,
+		.top,
+		.sheet-notice,
+		.bottom,
+		:global(#svelte-announcer) {
+			display: none;
+		}
+		main {
+			max-width: none;
+		}
 	}
 	.skip:focus {
 		left: 0.5rem;

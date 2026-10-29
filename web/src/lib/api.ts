@@ -581,6 +581,12 @@ export const api = {
 		return get<MessagePage>(`/api/v1/messages?${q}`);
 	},
 	message: (id: string | number) => get<Message>(`/api/v1/messages/${encodeURIComponent(id)}`),
+	/** The print sheet's messages (R67): in the order asked, and the IDs of
+	 * those that no longer exist. At most MAX_SHEET IDs. */
+	messagesById: (ids: number[]) =>
+		get<{ messages: Message[]; missing: number[] }>(
+			`/api/v1/messages/by-id?${new URLSearchParams(ids.map((id) => ['id', String(id)]))}`
+		),
 	job: (job: string) =>
 		get<{ job_number: string; messages: Message[] }>(`/api/v1/jobs/${encodeURIComponent(job)}`),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),

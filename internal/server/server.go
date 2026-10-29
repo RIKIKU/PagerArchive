@@ -81,6 +81,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/meta":                         s.getMeta,
 		"GET /api/v1/messages":                     s.listMessages,
 		"GET /api/v1/messages/{id}":                s.getMessage,
+		"GET /api/v1/messages/by-id":               s.messagesByID,
 		"GET /api/v1/jobs/{job}":                   s.getJob,
 		"GET /api/v1/capcodes/unaliased":           s.unaliased,
 		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,

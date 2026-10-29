@@ -50,7 +50,7 @@ jobs:
           grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
-    name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, R31, a role change in an open list, WCAG)
+    name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5

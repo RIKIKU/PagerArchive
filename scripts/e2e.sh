@@ -63,10 +63,12 @@ SQL
 "$BIN" client add quiet "Quiet receiver" >/dev/null
 
 # A user and an admin, each with a session (the cookie holds the token; the
-# database holds its SHA-256).
+# database holds its SHA-256), and a second user, C, for the print sheet
+# kept per user (M11).
 PA_USER_SESSION=e2e-user-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 PA_ADMIN_SESSION=e2e-admin-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-export PA_USER_SESSION PA_ADMIN_SESSION
+PA_USER_C_SESSION=e2e-user-c-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+export PA_USER_SESSION PA_ADMIN_SESSION PA_USER_C_SESSION
 docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <<SQL
 INSERT INTO users (subject, email, email_key, name, role) VALUES
   ('e2e-admin', 'admin@example.test', 'admin@example.test', 'Test Admin', 'admin');
@@ -76,6 +78,10 @@ INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_USER_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';
 INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_ADMIN_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-admin';
+INSERT INTO users (subject, email, email_key, name, role, invited_by)
+  SELECT 'e2e-user-c', 'user-c@example.test', 'user-c@example.test', 'Test User C', 'user', id FROM users WHERE subject = 'e2e-admin';
+INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('$PA_USER_C_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user-c';
 UPDATE clients SET last_seen_at = now() - interval '31 minutes' WHERE id = 'quiet';
 SQL
 
@@ -117,7 +123,7 @@ status=0
 
 # P1: no page text in the API log, and no alias request notes, feedback or
 # names (ADR 0007 §8), or tree deactivation reasons (ADR 0008 §10).
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER' "$BIN.log"; then
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER|TRAINING DRILL' "$BIN.log"; then
 	echo "page text, a note, feedback or a name found in the API log" >&2
 	status=1
 else

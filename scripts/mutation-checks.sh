@@ -1,13 +1,16 @@
 #!/bin/sh
-# Mutation proof for the security checks (M8, M9, M10): break one check at a time in
-# a throwaway copy of the repository, run the test that guards it, and show
-# the test failing. Every mutation must fail its test; the unmutated copy
-# must pass.
+# Mutation proof for the security checks (M8, M9, M10) and the print sheet
+# (M11): break one check at a time in a throwaway copy of the repository, run
+# the test that guards it, and show the test failing. Every mutation must
+# fail its test; the unmutated copy must pass.
 #
 # usage: scripts/mutation-checks.sh
-# needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test), and for the
-# module's checks pwsh (PA_PWSH, default: pwsh on PATH) with Pester 5.9.1 on
-# PSModulePath. Linux only: the module's checks are the off-Windows ones.
+# needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test); for the
+# print sheet's browser checks, what scripts/e2e.sh needs (Docker, Node with
+# web/ dependencies installed, Playwright's Chromium), and no other e2e.sh
+# running; for the module's checks pwsh (PA_PWSH, default: pwsh on PATH)
+# with Pester 5.9.1 on PSModulePath. Linux only: the module's checks are the
+# off-Windows ones.
 set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -38,8 +41,12 @@ mutate() {
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
 		printf '%s\n' "$out" | grep -E '\[-\]|Expected|Timed out' | head -4
 		;;
+	e2e:*)
+		out=$(sh scripts/e2e.sh --project=chromium -g "${test#e2e:}" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+Error: |^\s+(Expected|Received)|^\s+[0-9]+ (passed|failed)' | head -5
+		;;
 	esac
-	if printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]'; then
+	if printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]|^\s+[0-9]+ failed$'; then
 		echo "    -> the test fails: the check is guarded"
 	else
 		echo "    -> SURVIVED: no test failed"
@@ -109,6 +116,33 @@ mutate "the server fetches an icon sent as a URL" $I go:TestA58StoredNotLinked \
 	png, err := icon.Convert(data)
 '
 
+# M11 (ADR 0012): the print sheet. The API's admin-only details, then the
+# browser's checks, through scripts/e2e.sh in Chromium (each run starts its
+# own database and API).
+mutate "admin-only details sent to a user from the print sheet's endpoint" internal/server/browse.go go:TestM11MessagesByID \
+	'found[m.ID] = s.toMessage(m, admin)' 'found[m.ID] = s.toMessage(m, true)'
+if [ -d "$src/web/node_modules" ] && command -v docker >/dev/null; then
+	ln -s "$src/web/node_modules" web/node_modules
+	mutate "message text stored in localStorage" web/src/lib/MessageRow.svelte 'e2e:A60 print sheet$' \
+		'		if (!tick(m.id, e.currentTarget.checked))' '		localStorage.setItem("pagerarchive:print-sheet-text:" + m.id, m.display_text);
+		if (!tick(m.id, e.currentTarget.checked))'
+	mutate "the storage key not per user" web/src/lib/sheet.svelte.ts 'e2e:print sheet is per user' \
+		'const storageKey = (userId: number) => `pagerarchive:print-sheet:${userId}`;' 'const storageKey = (userId: number) => "pagerarchive:print-sheet";'
+	mutate "the sheet sorted by time, newest first, not in the order added" web/src/routes/sheet/+page.svelte 'e2e:A60 print sheet$' \
+		'(id in fetched ? [fetched[id]] : [])));' '(id in fetched ? [fetched[id]] : [])).toSorted((x, y) => y.sent_at.localeCompare(x.sent_at)));'
+	mutate "break-inside removed, so a message splits" web/src/routes/sheet/+page.svelte 'e2e:A60 thirty messages' \
+		'			break-inside: avoid;
+			page-break-inside: avoid;
+' ''
+	mutate "the header and navigation shown in the printout" web/src/routes/+layout.svelte 'e2e:A60 print sheet$' \
+		'		.skip,
+		.top,
+' '		.skip,
+'
+else
+	echo "=== the print sheet's browser mutations skipped: no web/node_modules or no Docker"
+fi
+
 if [ -n "$PA_PWSH" ]; then
 	P=powershell/PagerArchive/Private
 	mutate "DPAPI save allowed off Windows" $P/SignInStore.ps1 pester:powershell/tests/SignIn.Tests.ps1 \
@@ -136,6 +170,7 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize' ./internal/acceptance/ 2>&1 | tail -1
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11' ./internal/acceptance/ 2>&1 | tail -1
+[ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1
 exit $survived

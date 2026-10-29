@@ -3,8 +3,15 @@
 	import { date, time, isoAttr } from './format.ts';
 	import AgencyIcon from './AgencyIcon.svelte';
 	import PriorityBadge from './PriorityBadge.svelte';
+	import { onSheet, sheet, tick } from './sheet.svelte.ts';
 
 	let { m, tz, fresh = false }: { m: Message; tz: string; fresh?: boolean } = $props();
+
+	// R67: ticking adds the message to the print sheet. A refused tick (the
+	// sheet is full) is undone; the header says why.
+	function ticked(e: Event & { currentTarget: HTMLInputElement }) {
+		if (!tick(m.id, e.currentTarget.checked)) e.currentTarget.checked = onSheet(m.id);
+	}
 
 	// R35d: the alias opens the alias view; a capcode with no alias opens its own.
 	const whoHref = $derived(m.alias_id != null ? `/aliases/${m.alias_id}` : `/capcodes/${m.capcode}`);
@@ -22,6 +29,10 @@
 		{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 		<a id="m{m.id}-who" class="who" href={whoHref} style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a>
 		{#if m.group}<span class="group">{m.group}</span>{/if}
+		<label class="tick">
+			<input type="checkbox" aria-label="Add to print sheet" checked={onSheet(m.id)} disabled={!sheet.ready} onchange={ticked} />
+			<span aria-hidden="true">Print</span>
+		</label>
 	</header>
 	<p class="text"><a class="open" href="/messages/{m.id}">{m.display_text || '(no text)'}</a></p>
 	{#if m.job_number || m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
@@ -71,9 +82,24 @@
 		white-space: nowrap;
 	}
 	.who,
-	.job {
+	.job,
+	.tick {
 		position: relative;
 		z-index: var(--layer-content);
+	}
+	/* At the row's far end, away from the date that a tap on the row's
+	   corner lands on (A22). */
+	.tick {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3rem;
+		color: var(--muted);
+		font-size: var(--text-xs);
+		cursor: pointer;
+		/* A bigger target than the box alone. */
+		padding: 0.2rem 0 0.2rem 0.4rem;
+		margin-block: -0.2rem;
 	}
 	.who {
 		font-weight: 600;
