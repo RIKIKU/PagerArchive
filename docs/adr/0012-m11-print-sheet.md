@@ -4,7 +4,7 @@ Date: 2026-10-29
 
 ## Status
 
-Proposed. Waiting for the owner, with four questions (at the end).
+Proposed. The owner answered the questions on 2026-10-29 (at the end).
 
 ## Context
 
@@ -197,6 +197,61 @@ Run on cld01 on 2026-10-29 at c0a31cd, one after another:
 - **`scripts/stack-e2e.sh --project=chromium`:** `1 passed`.
 - **CI:** 40824675900 (c0a31cd) passed every job, in the times above.
 
+## Follow-up after the review (owner, 2026-10-29)
+
+### The watch must hand its stop token on
+
+The reviewer removed `-Stop $stop` from both calls in `Watch-PagerArchiveMessage` (to `Open-PaEventStream` and `Wait-PaRetry`): all 24 watch tests still passed. Each part was tested alone, but nothing checked that the watch passes its token to its waits, which is what ends it after a lost Ctrl+C. A new test, "hands its stop token to each wait: connecting and waiting to reconnect", runs a real watch whose stream, connect and reconnect-wait are replaced in the module's scope (ready, then lost), and each replacement notes whether it was given a token a stop can cancel (`-Stop` bound and `CanBeCanceled`). Without `-Stop` on either call, or both, it fails naming the call ("Expected $true, because Watch-PagerArchiveMessage passes its stop token to Wait-PaRetry (-Stop $stop), but got $false."). `mutation-checks.sh` has the three mutations: each call alone, and both.
+
+### PSScriptAnalyzer's NullReferenceException
+
+CI's run 40834608695 on 60cbe74 failed first time in "PowerShell module (windows-2025, PowerShell 7.6.0)": `Meta.Tests.ps1:314`, a `NullReferenceException`, after the test's three tries. The file was `SignInStore.ps1` (the log's "Describing PSScriptAnalyzer: SignInStore.ps1"; `Errors.ps1`, just before it, passed in 70 ms).
+
+- **Reproduced** on this PC (PowerShell 7.6.9, PSScriptAnalyzer 1.25.0): 14 of 40 fresh processes, each analysing every module file as `Meta.Tests.ps1` does, hit it, on `Icon.ps1` or `SignInStore.ps1`. Its .NET stack: `System.Management.Automation.CommandInfo.get_Parameters()` < `UseCorrectCasing.AnalyzeScript` < `ScriptAnalyzer.AnalyzeSyntaxTree`.
+- **Why:** `PSUseCorrectCasing` checks each parameter name's casing against the command's `Parameters`. PSScriptAnalyzer looks commands up in its own runspace pool, caches the `CommandInfo` for the whole process, and runs rules on other threads. For a cmdlet with dynamic parameters (both files call provider cmdlets: `Test-Path`, `Join-Path`, `Get-Item`, `New-Item`), `CommandInfo.Parameters` has to ask the runspace that made the `CommandInfo`. When PowerShell can't run that on the runspace at that moment, it gets nothing back and dereferences it.
+- **Why retrying in the same process doesn't help reliably:** a retry analyses the same file with the same cached `CommandInfo` objects, tied to the same pool runspace, so the tries aren't independent. Here the second try usually passed (once it took the third), but in CI all three failed within 411 ms. The retry has been there since M8 and couldn't make the check dependable.
+- **The fix:** `PSScriptAnalyzerSettings.psd1` keeps `PSUseCorrectCasing` for keywords and operators but sets `CheckCommands = $false`. `Meta.Tests.ps1` checks command and parameter casing itself ("writes commands and parameters with their declared casing", one per file), as the rule does: a command written as its name or module-qualified name, each parameter as declared (aliases not checked). It looks commands up on the test's own thread, in the module's scope, so private functions are found too, and nothing races. The retry is gone. Guidelines section 11 is unchanged: every default rule, zero findings, and casing still checked. A command and a parameter written in the wrong case fail it with "line 25: join-path is Join-Path" and "line 170: Test-Path -literalPath is -LiteralPath" (shown by hand, and a mutation in `mutation-checks.sh`).
+- **Evidence** (this PC, PowerShell 7.6.9, PSScriptAnalyzer 1.25.0): `Meta.Tests.ps1` run 40 times, each in a fresh process as CI runs it: 40 passed, every time `Tests Passed: 279, Failed: 0`. The reproduction above, with the new settings: 0 of 40 processes hit the exception (14 of 40 before).
+
+## A draft PowerShell issue (for the owner to post)
+
+Checked first, on 2026-10-29: #24679 (a stopped job interrupts `clean{}`) and #24241 (`clean` doesn't run, or runs partly, on Ctrl+C) are about cleanup being cut short, and so are the issues #24679 lists (#23786, #19988, #19987). #10457 (closed) is the reverse of this: Ctrl+C cutting a `finally` block short, which `SuspendStoppingPipeline` and `RestoreStoppingPipeline` were added to prevent (#11870 later fixed null references in them). None reports a stop being lost. The code is unchanged on master (`MiscOps.cs`, lines 1667-1697) and in v7.6.9, so this is a new issue.
+
+> **Title:** A stop that arrives while a command runs its own `finally` block is lost
+>
+> ### Steps to reproduce
+>
+> ```powershell
+> $ps = [powershell]::Create()
+> $null = $ps.AddScript({
+>     # Spends most of its time in a finally block, in normal flow.
+>     while ($true) { try { $null = 1 } finally { [System.Threading.Thread]::Sleep(30) } }
+> })
+> $null = $ps.BeginInvoke()
+> Start-Sleep -Milliseconds 200
+> $stop = $ps.BeginStop($null, $null)
+> $stop.AsyncWaitHandle.WaitOne(3000)   # False: the script is still running
+> $ps.InvocationStateInfo.State         # Stopping, and stays so
+> ```
+>
+> ### Expected behavior
+>
+> The stop takes effect when the `finally` block ends (or at the loop's next interrupt check), and the state becomes `Stopped`.
+>
+> ### Actual behavior
+>
+> The script carries on for good and the state stays `Stopping`. A second `BeginStop()` changes nothing, and `Stop()` (from another thread) doesn't return: neither had finished after 3 s. In a loop of 60 tries on 7.6.9 (Windows), all 60 stops were lost; on 7.6.0 (Linux), 20 of 20. The same loop with the sleep outside the `finally` block loses none, and so does a `finally` block that calls a function to do the sleeping.
+>
+> ### Cause
+>
+> To let a `finally` block run while the pipeline is stopping, `SuspendStoppingPipeline` saves `Stopper.IsStopping` and sets it to `false`, and `RestoreStoppingPipeline` sets it back to the saved value (`src/System.Management.Automation/engine/runtime/Operations/MiscOps.cs`). When the block runs in normal flow, the saved value is `false`; a stop that arrives during the block sets `IsStopping` to `true`, and the restore overwrites it with `false`. Unless a command called from the block is running at that moment (its pipeline processor keeps its own stop mark), nothing remembers the stop. Restoring `oldIsStopping || IsStopping` instead would keep a stop that arrived meanwhile.
+>
+> A command that checks `$PSCmdlet.PipelineStopToken` still sees these stops: the token is cancelled and nothing un-cancels it.
+>
+> ### Environment
+>
+> PowerShell 7.6.9 on Windows 11, and 7.6.0 on Ubuntu 24.04, through `PowerShell.BeginStop()` and `PowerShell.Stop()`. Ctrl+C in the console stops a pipeline the same way, but we haven't checked that by hand.
+
 ## Consequences
 
 - Any signed-in user can collect up to 100 pages and print them as a pager shows them, or save them as a PDF.
@@ -205,9 +260,13 @@ Run on cld01 on 2026-10-29 at c0a31cd, one after another:
 - The print colours are the one place in the browser app with fixed colours (R68).
 - `pdfjs-dist` is a new dev dependency.
 
-## Questions for the owner
+## Questions for the owner, and the answers (2026-10-29)
 
 1. **A message taller than a paper page** (over about 3,000 characters at the print size, up to the 4,096-byte limit) is split across pages, because P2 says it's shown in full. Keep that, or print such a message in smaller type so it fits one page?
+   **Answer:** keep it split across pages, in full (P2). Pager messages are short, so this should almost never happen. No change.
 2. **The browser's own headers and footers** (date, title, address, page numbers) appear if the print dialog's "Headers and footers" is ticked; the documentation says to untick it. CSS can't reliably turn them off in all three engines. Is the documentation enough?
+   **Answer:** telling users is enough. Done: a screen-only hint beside Print ("In the print dialog, untick "Headers and footers" to leave out the browser's own date, title and address."), and the same line in `docs/print-sheet.md`; A60 checks the hint shows on screen, and the print checks that nothing but the texts prints.
 3. **The lost Ctrl+C is PowerShell's bug** (section A): a stop that arrives while a command runs its own `finally` block is dropped, in 7.6.0 and 7.6.9. The watch now works around it. Should I write it up for PowerShell's issue tracker (with the reproduction, no PagerArchive details), for you to post?
+   **Answer:** yes, as a comment on an existing issue if one describes it, else a new issue; plain reproduction only; for the owner to post. Done: no existing issue describes it (see "A draft PowerShell issue" below), so it's a new issue.
 4. **Three stack jobs, not two.** You asked for the two vault settings as two parallel jobs; I made the account checks a third, so nothing runs twice and the three take about the same time (section B). Keep three, or fold the account checks into one vault's job?
+   **Answer:** keep three. No change.

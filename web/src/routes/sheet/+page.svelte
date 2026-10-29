@@ -74,6 +74,10 @@
 		<div class="actions">
 			<button type="button" onclick={() => window.print()} disabled={loading}>Print</button>
 			<button type="button" class="secondary" onclick={clear}>Clear</button>
+			<!-- R68: the browser's own headers and footers are the print dialog's (ADR 0012). -->
+			<p class="hint" data-testid="print-hint">
+				In the print dialog, untick "Headers and footers" to leave out the browser's own date, title and address.
+			</p>
 		</div>
 		<p class="note">Printed pages are outside PagerArchive's control: retention and deactivation don't reach paper.</p>
 	{/if}
@@ -99,6 +103,12 @@
 		flex-wrap: wrap;
 		gap: 0.5rem;
 		padding: 0 0.75rem;
+	}
+	.hint {
+		align-self: center;
+		margin: 0;
+		color: var(--muted);
+		font-size: var(--text-sm);
 	}
 	.note {
 		padding: 0 0.75rem;

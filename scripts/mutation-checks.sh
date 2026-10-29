@@ -172,6 +172,16 @@ if [ -n "$PA_PWSH" ]; then
 		'        if ($Stop.IsCancellationRequested) {' '        if ($false) {'
 	mutate "the wait before reconnecting ignores the stop token" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
 		'    if (-not $Stop.CanBeCanceled) {' '    if ($true) {'
+	W=powershell/PagerArchive/Public/Watch-PagerArchiveMessage.ps1
+	mutate "the watch doesn't pass its stop token when connecting" $W pester:powershell/tests/Watch.Tests.ps1 \
+		'(ConvertTo-PaQueryString -Query $query)) -Stop $stop' '(ConvertTo-PaQueryString -Query $query))'
+	mutate "the watch doesn't pass its stop token when waiting to reconnect" $W pester:powershell/tests/Watch.Tests.ps1 \
+		'Wait-PaRetry -Seconds $delay -Stop $stop' 'Wait-PaRetry -Seconds $delay'
+	mutate "the watch passes its stop token to no wait (both calls)" $W pester:powershell/tests/Watch.Tests.ps1 \
+		' -Stop $stop' ''
+	# The casing check that replaces PSUseCorrectCasing's command check.
+	mutate "a command and a parameter written in the wrong case" $P/SignInStore.ps1 pester:powershell/tests/Meta.Tests.ps1 \
+		'Test-Path -LiteralPath' 'test-path -literalPath'
 	mutate "an icon download has no size limit while downloading" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \
 		'            if ($bytes.Length -gt $script:PaIconMaxBytes) {' '            if ($false) {'
 	mutate "an icon download has no time limit" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \

@@ -1720,6 +1720,8 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await expect.poll(() => sheetIds(page)).toEqual(order);
 	expect(await page.getByTestId('sheet').locator('p.text').allInnerTexts()).toEqual(order.map((id) => texts[id]));
 	await expect(page.getByTestId('sheet')).not.toContainText('0412');
+	// On screen only (the print checks below find nothing but the texts).
+	await expect(page.getByTestId('print-hint')).toHaveText(`In the print dialog, untick "Headers and footers" to leave out the browser's own date, title and address.`);
 	for (const scheme of ['light', 'dark'] as const) {
 		await page.getByLabel('Colour theme').selectOption(scheme);
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();

@@ -57,8 +57,16 @@
             Enable         = $true
             CheckHashtable = $true
         }
+        # Keywords and operators. Command and parameter names are checked by
+        # Meta.Tests.ps1 instead: this rule's command check reads a provider
+        # cmdlet's dynamic parameters from another thread, which sometimes
+        # throws a NullReferenceException in PSScriptAnalyzer 1.25.0
+        # (ADR 0012).
         PSUseCorrectCasing               = @{
-            Enable = $true
+            Enable        = $true
+            CheckCommands = $false
+            CheckKeyword  = $true
+            CheckOperator = $true
         }
     }
 }

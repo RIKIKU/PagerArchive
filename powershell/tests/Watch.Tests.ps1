@@ -597,6 +597,52 @@ Describe 'Watch-PagerArchiveMessage and a lost Ctrl+C' {
         Close-TestRunspace $ps
     }
 
+    It 'hands its stop token to each wait: connecting and waiting to reconnect' {
+        # A real watch whose stream is replaced: ready, then lost, so it
+        # connects and then waits to reconnect. Each replacement notes
+        # whether it was given a token a stop can cancel; without -Stop it
+        # gets none, and nothing a stop could cancel.
+        $seen = [System.Collections.Concurrent.ConcurrentDictionary[string, bool]]::new()
+        $ps = [powershell]::Create()
+        $null = $ps.AddScript({
+                param($Manifest, $Seen)
+                Import-Module -Name $Manifest -Force
+                & (Get-Module -Name PagerArchive) {
+                    param($Seen)
+                    $secure = [securestring]::new()
+                    foreach ($c in 'test-token'.ToCharArray()) { $secure.AppendChar($c) }
+                    $script:Connection = @{ Uri = 'http://127.0.0.1:9'; AccessToken = $secure; ExpiresAt = [datetimeoffset]::UtcNow.AddHours(1); Store = 'session'; AllowUnencrypted = $true }
+                    $script:TestSeen = $Seen
+                    function script:Open-PaEventStream {
+                        param([hashtable] $Connection, [string] $PathAndQuery, [int] $TimeoutSec, [System.Threading.CancellationToken] $Stop)
+                        $script:TestSeen['Open-PaEventStream'] = $PSBoundParameters.ContainsKey('Stop') -and $Stop.CanBeCanceled
+                        @{ Status = 200; Read = $false }
+                    }
+                    function script:Read-PaStreamEvent {
+                        param([hashtable] $State, [double] $SilenceSec)
+                        if (-not $State.Read) {
+                            $State.Read = $true
+                            return @{ Type = 'ready'; Id = ''; Data = '{"caught_up":0,"last_id":1}' }
+                        }
+                        throw (New-PaErrorRecord -ErrorId 'connection_lost' -Category ConnectionError -Message 'the server closed the connection')
+                    }
+                    function script:Close-PaEventStream { param([hashtable] $State) }
+                    function script:Wait-PaRetry {
+                        param([int] $Seconds, [System.Threading.CancellationToken] $Stop)
+                        $script:TestSeen['Wait-PaRetry'] = $PSBoundParameters.ContainsKey('Stop') -and $Stop.CanBeCanceled
+                        throw (New-PaErrorRecord -ErrorId 'test_done' -Message 'The test ends the watch here.')
+                    }
+                } $Seen
+                Watch-PagerArchiveMessage -WarningAction SilentlyContinue
+            }).AddParameters(@{ Manifest = $script:manifest; Seen = $seen })
+        $handle = $ps.BeginInvoke()
+        $handle.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue -Because 'the watch ends at the test''s Wait-PaRetry'
+        $seen.Keys | Sort-Object | Should -Be @('Open-PaEventStream', 'Wait-PaRetry') -Because 'it connected, lost the stream and waited to reconnect'
+        $seen['Open-PaEventStream'] | Should -BeTrue -Because 'Watch-PagerArchiveMessage passes its stop token to Open-PaEventStream (-Stop $stop)'
+        $seen['Wait-PaRetry'] | Should -BeTrue -Because 'Watch-PagerArchiveMessage passes its stop token to Wait-PaRetry (-Stop $stop)'
+        Close-TestRunspace $ps
+    }
+
     It 'relies on a stop always cancelling PipelineStopToken, even one PowerShell loses' {
         # A command that spends its time in its own finally block, ending on the token alone.
         $result = Invoke-TestStop -Script {
