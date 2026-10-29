@@ -140,8 +140,18 @@ jobs:
         shell: pwsh
         run: |
           $env:PSModulePath = Join-Path $env:RUNNER_TEMP 'psmodules'
+          # A watch that won't stop is dumped here, with its stack (ADR 0012).
+          $env:PA_TEST_DUMP_DIR = Join-Path $env:RUNNER_TEMP 'dumps'
           & $env:PA_PWSH -NoProfile -NonInteractive -File ./powershell/tests/Invoke-Tests.ps1 -ResultPath pester-results.xml
           exit $LASTEXITCODE
+      - name: Upload a dump of a stuck test
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pester-dump-${{ matrix.os }}-${{ matrix.pwsh }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/dumps/
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v7

@@ -83,9 +83,29 @@ BeforeAll {
             $last = foreach ($stream in $PS.Streams.Verbose, $PS.Streams.Debug) {
                 for ($i = [math]::Max(0, $stream.Count - 3); $i -lt $stream.Count; $i++) { $stream[$i].Message }
             }
+            Save-TestDump
             throw "The watch didn't stop within $TimeoutMs ms of Ctrl+C; state $($PS.InvocationStateInfo.State); last lines: $($last -join ' | ')"
         }
         $PS.EndStop($stopping)
+    }
+
+    # With PA_TEST_DUMP_DIR set (CI), a dump of this process, with the stuck
+    # watch's thread in it, for dotnet-dump; once per run. Linux lets a
+    # process be read only by its parent or root (Yama), hence sudo.
+    function Save-TestDump {
+        if ($script:dumped -or -not $env:PA_TEST_DUMP_DIR) {
+            return
+        }
+        $script:dumped = $true
+        $tool = Join-Path -Path $PSHOME -ChildPath $(if ($IsWindows) { 'createdump.exe' } else { 'createdump' })
+        $null = New-Item -ItemType Directory -Force -Path $env:PA_TEST_DUMP_DIR
+        $file = Join-Path -Path $env:PA_TEST_DUMP_DIR -ChildPath "pwsh-$PID.dmp"
+        if (-not $IsWindows -and (Get-Command -Name sudo -ErrorAction Ignore)) {
+            & sudo -n $tool --withheap -f $file $PID | Out-Host
+        } else {
+            & $tool --withheap -f $file $PID | Out-Host
+        }
+        Write-Host "A dump of the test process, with the stuck watch: $file"
     }
 
     # Closes a runspace whose command has ended, waiting at most TimeoutMs.
