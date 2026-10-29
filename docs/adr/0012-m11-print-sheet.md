@@ -283,6 +283,19 @@ The owner tried the tick boxes in the message list on the live copy and didn't w
 - The other print tests tick on the print page now: 30 messages, per user, a row arriving live in its results with other tabs following, a full sheet (the sheet's own request is made to fail meanwhile, so the made-up IDs stay), messages gone, and no storage.
 - **Mutations** (new): a tick box back in the message list (`<MessageList {query} pick />`) and in the job view, each caught by A60; flag filters offered to a non-admin on the print page only (`… || page.url.pathname === '/sheet'` in `Filters`), caught by the new search test. "Message text stored in `localStorage`" moved to `PrintTick`.
 
+### Two script fixes found on the way
+
+- **`scripts/e2e.sh` left its build behind.** Each run's `mktemp -d` folder (the API binary, 25 MB, and its log) was never removed. cld01's `/tmp` is a 2.7 GB tmpfs; 35 such folders and a mutation run's copy of a Playwright report filled it, and every mutation then failed to apply ("Disk quota exceeded"). `e2e.sh` now removes the build when it ends, and the folder with the log after a passing run (a failing run keeps its log). `mutation-checks.sh` no longer copies `web/test-results` or `web/playwright-report`.
+- **`scripts/stack-lib.sh` hid why a stack didn't start.** In CI 40892147246, the account checks' stack failed at `docker compose up -d`, before any test ran, while the other stack jobs' identical stacks started. Its output went to `/dev/null`, so nothing says why. `stack_up` now prints the last 30 lines of that output when it fails.
+
+### Evidence (cb9f453)
+
+On cld01 from an exact `git archive` export:
+
+- **`scripts/e2e.sh`** (Chromium, Firefox and WebKit): `141 passed (15.1m)`, "API log lines checked: 695, page texts found: 0". In each engine: "A60: no tick boxes in the message list (live row 84 included), search results, the job view or the alias view"; "A60 (chromium): sheet [81,82,80,83], as ticked in two searches; print media shows only the texts, black on white in dark mode; axe clean in both themes" (the same in Firefox and WebKit); "print page search (user): the same results as the search page: q=…: 55, …&priority=Emergency: 1, …&alias=Station+2: 14, …&unaliased=true: 1, …&capcode=0100003&ignored=true: 13, …&parse_failed=true: 55", and for the admin the same except `parse_failed=true: 2`; the 30-message PDF in Chromium, 9 pages, each message whole on one page, and the control without `break-inside` splitting 6.
+- The first full run (15629a9) failed the new search test in Firefox and WebKit, in CI too: on the search page, clicking **Load older messages** scrolls it into view, the list's own infinite scroll then loads the next page and removes the button, and the click waits for it until the test's time runs out. The test now presses the search page's button without scrolling (the print page's with a real click).
+- **`scripts/mutation-checks.sh`:** 44 mutations, 44 guarded, none survived or failed to apply; the unmutated copy passed (`internal/acceptance` ok, the 6 print tests in Chromium "6 passed", Pester `Passed 372, failed 0`). The new ones: a tick box in the message list, "the message list, with a live row … Expected: 0, Received: 5"; in the job view, "the job view … Expected: 0, Received: 1"; flag filters on the print page for a non-admin, "user: the same search form"; text in `localStorage` from `PrintTick`, A60's storage check.
+
 ## Consequences
 
 - Any signed-in user can collect up to 100 pages and print them as a pager shows them, or save them as a PDF.
