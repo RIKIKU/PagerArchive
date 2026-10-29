@@ -4,7 +4,7 @@ Date: 2026-10-29
 
 ## Status
 
-Proposed. The owner answered the questions on 2026-10-29 (at the end). After trying the live copy, the owner changed R67 and A60 on 2026-10-30: ticking happens only on the print page, which has its own search ("Ticking only on the print page", below). Where the decisions below say otherwise, that section wins.
+Accepted (owner, 2026-10-30). The owner answered the questions on 2026-10-29 (at the end). After trying the live copy, the owner changed R67 and A60 on 2026-10-30: ticking happens only on the print page, which has its own search ("Ticking only on the print page", below). Where the decisions below say otherwise, that section wins. The owner then tested the print page on the live copy and found it works as expected.
 
 ## Context
 
