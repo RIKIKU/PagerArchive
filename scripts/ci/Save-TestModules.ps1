@@ -8,6 +8,11 @@ and Microsoft.PowerShell.SecretManagement 1.1.2 and
 Microsoft.PowerShell.SecretStore 1.0.6 for the vault tests. They go into
 Path, which the tests put on PSModulePath; nothing is installed for the
 user.
+
+The Gallery sometimes answers a request with a 404 that works when tried
+again, so each module gets up to 3 tries, 10 seconds apart. Each failed
+try is a warning naming the module and the try; a module that fails all 3
+stops the script with the last error.
 #>
 [CmdletBinding()]
 param(
@@ -24,6 +29,22 @@ foreach ($module in @(
         @{ Name = 'Microsoft.PowerShell.SecretManagement'; Version = '1.1.2' }
         @{ Name = 'Microsoft.PowerShell.SecretStore'; Version = '1.0.6' }
     )) {
-    Save-PSResource -Name $module.Name -Version $module.Version -Path $Path -Repository PSGallery -TrustRepository
+    $tries = 3
+    for ($try = 1; $try -le $tries; $try++) {
+        try {
+            Save-PSResource -Name $module.Name -Version $module.Version -Path $Path -Repository PSGallery -TrustRepository -ErrorAction Stop
+            if (-not (Test-Path -LiteralPath (Join-Path -Path $Path -ChildPath $module.Name -AdditionalChildPath $module.Version) -PathType Container)) {
+                throw "Save-PSResource reported no error, but $($module.Name) $($module.Version) isn't in $Path."
+            }
+            break
+        } catch {
+            if ($try -eq $tries) {
+                Write-Warning -Message "Saving $($module.Name) $($module.Version) failed on try $try of ${tries}, the last: $($_.Exception.Message)"
+                throw
+            }
+            Write-Warning -Message "Saving $($module.Name) $($module.Version) failed on try $try of ${tries}; trying again in 10 seconds: $($_.Exception.Message)"
+            Start-Sleep -Seconds 10
+        }
+    }
 }
 Get-ChildItem -Path $Path -Directory | ForEach-Object -Process { "$($_.Name) $((Get-ChildItem -Path $_.FullName -Directory).Name)" }

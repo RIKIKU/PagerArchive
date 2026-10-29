@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr, isoDate } from '#lib/format.ts';
+	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
 
@@ -56,7 +57,10 @@
 {#if m}
 	<article class="detail" class:located={!!m.location}>
 		<header>
-			<h1>{m.alias ?? m.capcode}</h1>
+			<div class="title">
+				{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} large />{/if}
+				<h1>{m.alias ?? m.capcode}</h1>
+			</div>
 			<p class="meta">
 				<time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time>
 				<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
@@ -158,8 +162,14 @@
 			margin-top: 1rem;
 		}
 	}
-	.detail h1 {
+	.title {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 		margin: 0.75rem 0 0.25rem;
+	}
+	.detail h1 {
+		margin: 0;
 	}
 	h2 {
 		font-size: var(--text-base);

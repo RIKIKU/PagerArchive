@@ -4,11 +4,15 @@
 // and the test user enrols with a code sent to an allowed test domain,
 // caught by Mailpit. Authentik's own pages are used, as a person would.
 import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
+import { join } from 'node:path';
 
 const MAILPIT = process.env.PA_MAILPIT_URL ?? 'http://localhost:8025';
 const DOMAIN = process.env.PA_TEST_DOMAIN ?? 'example.test';
 const OWNER = process.env.PA_OWNER_EMAIL ?? `owner@${DOMAIN}`;
+// The made-up test icons (ADR 0011).
+const testIcon = (name: string) => join(process.cwd(), '..', 'testdata', 'icons', name);
 
 /** The text of the newest email to address after since whose subject has subject. */
 async function mail(request: APIRequestContext, address: string, subject: string, since: Date): Promise<string> {
@@ -37,7 +41,7 @@ async function enrol(page: Page, request: APIRequestContext, email: string, name
 	await page.locator('button[type="submit"]').click();
 }
 
-test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a client feeds pages they see live, parsed and on the map', async ({ browser, request, baseURL }) => {
+test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a client feeds pages they see live, parsed and on the map; A57 icons', async ({ browser, request, baseURL }) => {
 	test.setTimeout(180_000);
 	const app = new URL(baseURL!).origin;
 
@@ -135,4 +139,48 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	await user.waitForTimeout(1500); // let the map finish drawing for the screenshot
 	await user.screenshot({ path: test.info().outputPath('3-map.png') });
 	console.log('§11 step 3: parsed fields, job grouping and 6 map points checked');
+
+	// A57 on the full stack (R65, R66): the admin uploads the made-up test
+	// icon to "Example Fire" in the browser; an SVG, a 200 KB PNG and a text
+	// file renamed .png are refused with the reason. The test user's list
+	// shows the icon beside "Station 1" with "Example Fire Service" as its
+	// text alternative, in light and dark mode (axe passes), and the page
+	// requests nothing from anywhere but PagerArchive.
+	await admin.goto('/admin/templates');
+	await admin.getByTestId('template-table').getByRole('link', { name: 'Example Fire' }).click();
+	await admin.getByLabel('Add an icon').setInputFiles(testIcon('example-icon.png'));
+	await admin.getByRole('button', { name: 'Upload icon' }).click();
+	const current = admin.getByTestId('current-icon').getByRole('img', { name: 'Example Fire Service' });
+	await expect(current).toBeVisible();
+	const src = (await current.getAttribute('src'))!;
+	for (const [file, reason] of [
+		['example.svg', "SVG icons aren't accepted"],
+		['large-200kb.png', 'An icon file can be at most 100 KB'],
+		['not-an-image.png', 'Icons must be PNG, ICO, GIF, JPEG or WebP images']
+	]) {
+		await admin.getByLabel('Replace it with').setInputFiles(testIcon(file));
+		await admin.getByRole('button', { name: 'Replace icon' }).click();
+		await expect(admin.getByTestId('icon-error'), file).toContainText(reason);
+		await expect(current, file).toHaveAttribute('src', src);
+	}
+	const origins = new Set<string>();
+	user.on('request', (r) => {
+		if (!r.url().startsWith('data:')) origins.add(new URL(r.url()).origin);
+	});
+	for (const scheme of ['light', 'dark'] as const) {
+		await user.emulateMedia({ colorScheme: scheme });
+		await user.goto('/');
+		await expect(user.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
+		const row = list.locator('article').filter({ hasText: 'SMOKE FROM ROOF' });
+		const img = row.getByRole('img', { name: 'Example Fire Service' });
+		await expect(img).toHaveAttribute('src', src);
+		await expect.poll(() => img.evaluate((i: HTMLImageElement) => i.complete && i.naturalWidth)).toBe(64);
+		await expect(img.locator('xpath=../following-sibling::a[1]')).toHaveText('Station 1');
+		expect(await img.locator('..').evaluate((t) => getComputedStyle(t).backgroundColor)).toBe('rgb(255, 255, 255)');
+		const results = await new AxeBuilder({ page: user }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+		expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), scheme).toEqual([]);
+		await user.screenshot({ path: test.info().outputPath(`4-icons-${scheme}.png`) });
+	}
+	expect([...origins], 'origins the page requested').toEqual([app]);
+	console.log(`A57: icon ${src} shown beside Station 1 in light and dark mode; 3 files refused; origins requested: ${[...origins].join(' ')}`);
 });

@@ -20,8 +20,8 @@ SET last_seen_at = GREATEST(COALESCE(last_seen_at, sqlc.arg(seen_at)::timestampt
 WHERE id = sqlc.arg(id);
 
 -- name: CreateTemplate :one
-INSERT INTO templates (name, agency, icon, colour, agency_profile)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO templates (name, agency, colour, agency_profile)
+VALUES ($1, $2, $3, $4)
 RETURNING id;
 
 -- name: CreateAlias :one
@@ -65,16 +65,23 @@ VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING;
 
 -- name: ListTemplates :many
-SELECT t.id, t.name, t.agency, t.icon, t.colour, t.agency_profile,
+SELECT t.id, t.name, t.agency, t.icon_sha256, t.colour, t.agency_profile,
        (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
 FROM templates t
 ORDER BY t.name;
 
 -- name: TemplateByName :one
-SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE name = $1;
+SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE name = $1;
 
 -- name: UpdateTemplate :exec
-UPDATE templates SET agency = $2, icon = $3, colour = $4, agency_profile = $5 WHERE id = $1;
+UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5 WHERE id = $1;
+
+-- name: SetTemplateIcon :execrows
+-- R65: a 64×64 PNG the API encoded and its SHA-256, or NULL for none.
+UPDATE templates SET icon_png = sqlc.narg(png), icon_sha256 = sqlc.narg(sha256) WHERE id = sqlc.arg(id);
+
+-- name: IconBySHA256 :one
+SELECT icon_png FROM templates WHERE icon_sha256 = $1 LIMIT 1;
 
 -- name: DeleteTemplate :execrows
 DELETE FROM templates WHERE id = $1;
@@ -177,7 +184,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
        m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
-       t.agency, t.icon, t.colour, t.agency_profile,
+       t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
@@ -258,7 +265,7 @@ WHERE a.pattern_key = sqlc.arg(pattern_key)::text;
 
 -- name: AliasView :one
 -- R35e: an alias with its template's presentation.
-SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon, t.colour
+SELECT a.id, a.pattern, a.pattern_key, a.name, a.ignored, a.template_id, t.name AS template_name, t.agency, t.icon_sha256, t.colour
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE a.id = $1;
@@ -718,7 +725,7 @@ SELECT id FROM aliases WHERE pattern_key = sqlc.arg(pattern_key)::text;
 UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5 WHERE id = $1;
 
 -- name: TemplateByID :one
-SELECT id, name, agency, icon, colour, agency_profile FROM templates WHERE id = $1;
+SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE id = $1;
 
 -- name: InsertAliasChange :one
 INSERT INTO alias_changes (alias_id, pattern_key, alias_name, action, changes, source, made_by, requested_by, request_id)

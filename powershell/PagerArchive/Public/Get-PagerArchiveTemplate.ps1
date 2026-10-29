@@ -4,16 +4,17 @@ function Get-PagerArchiveTemplate {
     Lists templates.
 
     .DESCRIPTION
-    A template holds an agency's name, colour and agency profile (R28).
-    Aliases use templates, and editing a template changes every alias that
-    uses it. AliasCount says how many do.
+    A template holds an agency's name, icon, colour and agency profile
+    (R28). Aliases use templates, and editing a template changes every
+    alias that uses it. AliasCount says how many do, and HasIcon whether it
+    has an icon (R65).
 
     .EXAMPLE
     Get-PagerArchiveTemplate
 
-    Name         Agency                Colour  AgencyProfile AliasCount
-    ----         ------                ------  ------------- ----------
-    Example Fire Example Fire Service  #b3261e example-fire           4
+    Name         Agency               Colour  AgencyProfile HasIcon AliasCount
+    ----         ------               ------  ------------- ------- ----------
+    Example Fire Example Fire Service #b3261e example-fire     True          4
 
     .EXAMPLE
     Get-PagerArchiveTemplate -Name 'Example*'
@@ -23,7 +24,8 @@ function Get-PagerArchiveTemplate {
 
     .OUTPUTS
     PagerArchive.Template. Name, Agency, Colour, AgencyProfile (the parser
-    used for its pages, or empty for text only), AliasCount and Id.
+    used for its pages, or empty for text only), HasIcon (whether it has
+    an icon), AliasCount and Id.
 
     .LINK
     New-PagerArchiveTemplate

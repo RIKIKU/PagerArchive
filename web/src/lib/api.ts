@@ -24,6 +24,7 @@ export interface Message {
 	alias_id: number | null;
 	alias: string | null;
 	agency: string | null;
+	/** Its template's icon URL (R66). */
 	icon: string | null;
 	colour: string | null;
 	ignored: boolean;
@@ -169,6 +170,24 @@ export interface TemplateChoice {
 	agency: string;
 	icon: string | null;
 	colour: string | null;
+}
+
+/** A template as admins manage it (R64). */
+export interface AdminTemplate {
+	id: number;
+	name: string;
+	agency: string;
+	colour: string | null;
+	agency_profile: string | null;
+	icon: string | null;
+	aliases: number;
+}
+
+export interface TemplateInput {
+	name: string;
+	agency: string;
+	colour: string;
+	agency_profile: string;
 }
 
 export type RequestKind = 'add' | 'change' | 'delete';
@@ -517,11 +536,16 @@ async function goSignIn() {
 	else location.assign(`/auth/login?return=${encodeURIComponent(location.pathname + location.search)}`);
 }
 
+// A Blob (a file) is sent as it is; anything else as JSON.
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const file = body instanceof Blob;
 	const res = await fetch(path, {
 		method,
-		headers: body === undefined ? { Accept: 'application/json' } : { Accept: 'application/json', 'Content-Type': 'application/json' },
-		body: body === undefined ? undefined : JSON.stringify(body)
+		headers:
+			body === undefined
+				? { Accept: 'application/json' }
+				: { Accept: 'application/json', 'Content-Type': file ? 'application/octet-stream' : 'application/json' },
+		body: body === undefined ? undefined : file ? body : JSON.stringify(body)
 	});
 	if (res.status === 401 && path.startsWith('/api/')) signIn();
 	if (!res.ok) {
@@ -629,6 +653,15 @@ export const api = {
 	createAlias: (a: AliasInput) => request<{ id: number }>('POST', '/api/v1/admin/aliases', a),
 	editAlias: (id: number, a: AliasInput) => request<void>('PUT', `/api/v1/admin/aliases/${id}`, a),
 	deleteAlias: (id: number) => request<AliasDeleted>('DELETE', `/api/v1/admin/aliases/${id}`),
+	// Templates and their icons (R64-R66).
+	adminTemplates: () => get<AdminTemplate[]>('/api/v1/admin/templates'),
+	agencyProfiles: () => get<string[]>('/api/v1/admin/agency-profiles'),
+	createTemplate: (t: TemplateInput) => request<{ id: number }>('POST', '/api/v1/admin/templates', t),
+	editTemplate: (id: number, t: TemplateInput) => request<void>('PATCH', `/api/v1/admin/templates/${id}`, t),
+	deleteTemplate: (id: number) => request<void>('DELETE', `/api/v1/admin/templates/${id}`),
+	/** Uploads an icon file; the server checks and converts it (R65). */
+	setIcon: (id: number, file: File) => request<{ icon: string }>('PUT', `/api/v1/admin/templates/${id}/icon`, file),
+	removeIcon: (id: number) => request<void>('DELETE', `/api/v1/admin/templates/${id}/icon`),
 	authStatus: () => get<{ first_admin_setup: boolean }>('/auth/status'),
 	firstAdmin: async () => {
 		const r = await request<{ redirect: string }>('POST', '/auth/first-admin');

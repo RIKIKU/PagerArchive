@@ -205,9 +205,10 @@ type Template struct {
 	ID            int64
 	Name          string
 	Agency        string
-	Icon          *string
 	Colour        *string
 	AgencyProfile *string
+	IconPng       []byte
+	IconSha256    *string
 }
 
 type TreeDeactivation struct {

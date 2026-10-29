@@ -54,7 +54,8 @@ LONG DESCRIPTION
     sign-in is sent unencrypted.
 
   OBJECTS
-    PagerArchive.Template     Name, Agency, Colour, AgencyProfile, AliasCount
+    PagerArchive.Template     Name, Agency, Colour, AgencyProfile, HasIcon,
+                              AliasCount
     PagerArchive.Alias        Pattern, Name, Template, Colour, Ignored
     PagerArchive.ImportResult Index, Result, Pattern, Name, Changes,
                               SquashedInto, Applied
@@ -106,6 +107,18 @@ LONG DESCRIPTION
 
         Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-30) |
             Group-Object -Property Capcode | Sort-Object -Property Count -Descending
+
+    Give a template an icon from a file or a web address. A web address
+    is downloaded on this computer (at most 100 KB, within 30 seconds)
+    and the file uploaded; PagerArchive never fetches it itself:
+
+        Set-PagerArchiveTemplate -Name 'Example Fire' -Path ./fire.png
+        Set-PagerArchiveTemplate -Name 'Example Fire' -Uri 'https://example.test/fire.png'
+        Set-PagerArchiveTemplate -Name 'Example Fire' -RemoveIcon
+
+    Rename a template; its aliases keep it and show the new name:
+
+        Rename-PagerArchiveTemplate -Name 'Example Fire' -NewName 'Example Fire North'
 
     Move aliases to another template, checking first:
 

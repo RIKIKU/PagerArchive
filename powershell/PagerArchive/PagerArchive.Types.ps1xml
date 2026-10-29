@@ -33,6 +33,7 @@
               <Name>Agency</Name>
               <Name>Colour</Name>
               <Name>AgencyProfile</Name>
+              <Name>HasIcon</Name>
               <Name>AliasCount</Name>
             </ReferencedProperties>
           </PropertySet>

@@ -39,6 +39,7 @@
           <TableColumnHeader />
           <TableColumnHeader />
           <TableColumnHeader />
+          <TableColumnHeader />
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -47,6 +48,7 @@
               <TableColumnItem><PropertyName>Agency</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>Colour</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>AgencyProfile</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>HasIcon</PropertyName></TableColumnItem>
               <TableColumnItem><PropertyName>AliasCount</PropertyName></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

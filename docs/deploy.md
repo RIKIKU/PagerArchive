@@ -38,7 +38,13 @@ The first start takes a minute or two while Authentik sets up its database and a
    docker compose exec api pagerarchive client add shed "Shed receiver"
    ```
 
-Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once. Templates are managed with the [PowerShell module](powershell.md) until the browser has template screens (M10).
+Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once.
+
+### Templates and icons
+
+Admins manage templates on **Admin → Templates** (or with the [PowerShell module](powershell.md)): name, agency, icon, colour and agency profile. Changes take effect at once for every alias using the template. Choosing another agency profile re-parses the template's pages in the background. A template that aliases still use can't be deleted. Users choose from the templates when they ask for an alias, and can't change them.
+
+A template's **icon** is an image stored in PagerArchive's database, never a link to another site, so browsers fetch icons only from PagerArchive. Upload a PNG, ICO, GIF, JPEG or WebP file of at most 100 KB on the template's page; SVG files aren't accepted. PagerArchive checks the file by its contents and stores it as a 64×64 PNG, keeping nothing else from the file. The icon shows beside the alias name on every message, on a light tile so dark artwork shows in dark mode too, with the agency's name as its text alternative. With the module, `Set-PagerArchiveTemplate -Uri` downloads an image on your computer and uploads it; the server never fetches anything itself.
 
 ### Aliases
 
@@ -49,7 +55,7 @@ From M6 the database is the source of truth for aliases (ADR 0007).
 - **Admin → Alias requests** lists the waiting requests, with a count on the Admin link. Each shows the current value beside the proposed one, and is marked when the alias has changed since it was requested. **Approve** applies the request exactly as it was made. **Reject** needs feedback for the person who asked.
 - Deleting an alias closes its waiting requests ("alias deleted"). Integrations that selected an alias for one capcode keep that capcode. Deactivating or deleting someone withdraws their waiting requests.
 - **Import** with the [PowerShell module](powershell.md): `Import-Csv aliases.csv | Import-PagerArchiveAlias`. It only adds aliases for capcodes and patterns that have none, and lists how existing ones differ from the file. `-Update` applies those differences, recorded in each alias's history as made by the admin who ran it. Rows for one capcode that differ stop the whole import; leave rows out in the pipeline and run it again. `-WhatIf` is the dry run. Unknown agency profile names in `-AgencyProfile` refuse the import.
-- **Export** with **Admin → Aliases → Export CSV**, or `Get-PagerArchiveAlias | Export-Csv aliases.csv`. Both are in the import format, with the template's name in the `agency` column (or `Template`), so importing it back reports no differences. In the browser's export, values that a spreadsheet would run as a formula are written with a leading `'`, which the import removes, and the `icon` column is empty: icons will be images added to templates.
+- **Export** with **Admin → Aliases → Export CSV**, or `Get-PagerArchiveAlias | Export-Csv aliases.csv`. Both are in the import format, with the template's name in the `agency` column (or `Template`), so importing it back reports no differences. In the browser's export, values that a spreadsheet would run as a formula are written with a leading `'`, which the import removes, and the `icon` column is empty: icons are images, added to templates (R30).
 
 ### Authentik's administrator
 
@@ -238,3 +244,5 @@ docker compose exec db sh /docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh
 ```
 
 It's safe to run again, for example after changing the role's password.
+
+**From a version before template icons (M10)**: the migration drops the old `icon` text column of templates, which held icon names from CSV imports that nothing used. Back up the database first if you want to keep them (`docker compose exec db pg_dump -U postgres -Fc postgres > before-m10.dump`). Add each template's icon afterwards on **Admin → Templates**.

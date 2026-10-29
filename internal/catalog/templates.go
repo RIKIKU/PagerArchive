@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"slices"
@@ -14,8 +16,9 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
-// Templates for admins (R28, R64; ADR 0009 §8). The PowerShell module uses
-// these now, and M10's template screens later. Templates have no history.
+// Templates for admins (R28, R64; ADR 0009 §8, ADR 0011): the PowerShell
+// module and the template screens in Administration. Templates have no
+// history.
 
 // TemplateInput is a template as an admin creates it.
 type TemplateInput struct {
@@ -28,6 +31,7 @@ type TemplateInput struct {
 // TemplateChange changes a template's settings; a field left null stays as
 // it is, and "" clears the colour or the profile.
 type TemplateChange struct {
+	Name          *string `json:"name"`
 	Agency        *string `json:"agency"`
 	Colour        *string `json:"colour"`
 	AgencyProfile *string `json:"agency_profile"`
@@ -134,7 +138,17 @@ func (c *Catalog) EditTemplate(ctx context.Context, id int64, in TemplateChange,
 		if err != nil {
 			return dbErr("template", err)
 		}
-		next := db.UpdateTemplateParams{ID: id, Agency: cur.Agency, Icon: cur.Icon, Colour: cur.Colour, AgencyProfile: cur.AgencyProfile}
+		next := db.UpdateTemplateParams{ID: id, Name: cur.Name, Agency: cur.Agency, Colour: cur.Colour, AgencyProfile: cur.AgencyProfile}
+		if in.Name != nil {
+			if next.Name, err = checkText("name", *in.Name); err != nil {
+				return err
+			}
+			if other, err := q.TemplateByName(ctx, next.Name); err == nil && other.ID != id {
+				return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", next.Name)
+			} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return dbErr("template", err)
+			}
+		}
 		if in.Agency != nil {
 			if next.Agency, err = checkText("agency", *in.Agency); err != nil {
 				return err
@@ -150,7 +164,9 @@ func (c *Catalog) EditTemplate(ctx context.Context, id int64, in TemplateChange,
 				return err
 			}
 		}
-		if err := q.UpdateTemplate(ctx, next); err != nil {
+		if err := q.UpdateTemplate(ctx, next); isUniqueViolation(err) {
+			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", next.Name)
+		} else if err != nil {
 			return dbErr("update template", err)
 		}
 		if deref(next.AgencyProfile) == deref(cur.AgencyProfile) {
@@ -199,6 +215,26 @@ func (c *Catalog) RemoveTemplate(ctx context.Context, id int64) error {
 		}
 		return nil
 	})
+}
+
+// SetTemplateIcon stores a template's icon, a PNG that package icon made
+// (R65), or removes it when png is nil. It returns the icon's SHA-256 in hex,
+// which names it in its URL, or "" for none.
+func (c *Catalog) SetTemplateIcon(ctx context.Context, id int64, png []byte) (string, error) {
+	var sum *string
+	if png != nil {
+		h := sha256.Sum256(png)
+		s := hex.EncodeToString(h[:])
+		sum = &s
+	}
+	n, err := c.Store.SetTemplateIcon(ctx, db.SetTemplateIconParams{ID: id, Png: png, Sha256: sum})
+	if err != nil {
+		return "", dbErr("set template icon", err)
+	}
+	if n == 0 {
+		return "", refuse(http.StatusNotFound, "no_template", "That template doesn't exist any more.")
+	}
+	return deref(sum), nil
 }
 
 func plural(n int, one, many string) string {

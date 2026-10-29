@@ -47,8 +47,8 @@
 
 <h1>Aliases</h1>
 <p class="status">
-	Changes here take effect at once. Users ask for changes in <a href="/admin/requests">Alias requests</a>. Templates, and
-	importing aliases, are managed with the PagerArchive PowerShell module.
+	Changes here take effect at once. Users ask for changes in <a href="/admin/requests">Alias requests</a>. Templates are in
+	<a href="/admin/templates">Templates</a>. Aliases are imported with the PagerArchive PowerShell module.
 </p>
 {#if done}<p class="ok" role="status">{done}</p>{/if}
 <div class="tools">

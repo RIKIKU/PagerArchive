@@ -13,6 +13,7 @@
 	const screens = [
 		{ href: '/admin/users', title: 'Users', text: 'Users and their integrations, roles, deactivation and unused invitations.' },
 		{ href: '/admin/aliases', title: 'Aliases', text: 'Add, edit and delete aliases, see their history, and export them as a CSV.' },
+		{ href: '/admin/templates', title: 'Templates', text: 'Add, edit and delete templates: agency, icon, colour and agency profile.' },
 		{ href: '/admin/requests', title: 'Alias requests', text: 'Requests from users for new aliases, changes and deletions, to approve or reject.' },
 		{ href: '/admin/clients', title: 'Receiving clients', text: 'Which receivers are sending pages, and which have gone quiet.' },
 		{ href: '/admin/retention', title: 'Retention', text: 'How long messages are kept, and the nightly clean-up.' },

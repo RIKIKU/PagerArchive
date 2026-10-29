@@ -2,6 +2,7 @@
 	import { page } from '$app/state';
 	import { api, type AliasView, type Meta } from '#lib/api.ts';
 	import { criteria } from '#lib/filters.ts';
+	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import AliasHistory from '#lib/AliasHistory.svelte';
 	import AliasRequestForm from '#lib/AliasRequestForm.svelte';
 	import MessageList from '#lib/MessageList.svelte';
@@ -45,14 +46,15 @@
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if alias}
 	<section class="about" aria-labelledby="alias-name">
-		<h1 id="alias-name" style:--agency={alias.colour ?? 'transparent'}>{alias.name}</h1>
+		<div class="title">
+			{#if alias.icon}<AgencyIcon src={alias.icon} alt={alias.agency ?? ''} large />{/if}
+			<h1 id="alias-name" style:--agency={alias.colour ?? 'transparent'}>{alias.name}</h1>
+		</div>
 		<dl>
 			<dt>{alias.pattern.includes('%') || alias.pattern.includes('_') ? 'Pattern' : 'Capcode'}</dt>
 			<dd class="mono">{alias.pattern}</dd>
 			<dt>Agency</dt>
 			<dd>{alias.agency ?? 'None (text only)'}</dd>
-			<dt>Icon</dt>
-			<dd>{alias.icon ?? 'None'}</dd>
 			<dt>Colour</dt>
 			<dd>
 				{#if alias.colour}<span class="swatch" style:background={alias.colour} aria-hidden="true"></span>{alias.colour}
@@ -92,6 +94,11 @@
 	.about {
 		padding: 0 0.75rem 0.5rem;
 		border-bottom: 1px solid var(--border);
+	}
+	.title {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
 	}
 	h1 {
 		margin: 0.75rem 0 0.5rem;

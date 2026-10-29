@@ -55,7 +55,7 @@ type Message struct {
 	AliasID     *int64    `json:"alias_id"` // for the alias view (R35d)
 	Alias       *string   `json:"alias"`
 	Agency      *string   `json:"agency"`
-	Icon        *string   `json:"icon"`
+	Icon        *string   `json:"icon"` // its template's icon URL, or null (R66)
 	Colour      *string   `json:"colour"`
 	Ignored     bool      `json:"ignored"`
 	Category    *string   `json:"category"` // report category of event_type (R38)
@@ -106,7 +106,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 	out := Message{
 		ID: m.ID, Capcode: m.Capcode, Text: m.Text, DisplayText: m.Text, Priority: m.Priority,
 		Heartbeat: m.Heartbeat, SentAt: m.SentAt.UTC(), AliasID: m.AliasID, Alias: m.AliasName, Agency: m.Agency,
-		Icon: m.Icon, Colour: m.Colour, Ignored: m.AliasIgnored,
+		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
 		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, Group: m.PagingGroup,
 		Units: m.Units, Extra: map[string]any{}, Labels: map[string]string{},
@@ -586,7 +586,7 @@ type AliasView struct {
 	TemplateID *int64                 `json:"template_id"`
 	Template   *string                `json:"template"`
 	Agency     *string                `json:"agency"`
-	Icon       *string                `json:"icon"`
+	Icon       *string                `json:"icon"` // URL, or null (R66)
 	Colour     *string                `json:"colour"`
 	Ignored    bool                   `json:"ignored"`
 	History    []catalog.HistoryEntry `json:"history,omitempty"`
@@ -603,7 +603,7 @@ func (s *Server) aliasView(r *http.Request, id int64, admin bool) (AliasView, bo
 		return AliasView{}, false, fmt.Errorf("alias: %s", store.SafeError(err))
 	}
 	v := AliasView{ID: a.ID, Pattern: a.Pattern, Name: a.Name, TemplateID: a.TemplateID, Template: a.TemplateName,
-		Agency: a.Agency, Icon: a.Icon, Colour: a.Colour, Ignored: a.Ignored}
+		Agency: a.Agency, Icon: iconURL(a.IconSha256), Colour: a.Colour, Ignored: a.Ignored}
 	if admin {
 		if v.History, err = s.Catalog.History(r.Context(), &a.ID, a.Pattern); err != nil {
 			return v, true, err
