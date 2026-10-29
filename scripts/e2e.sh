@@ -9,27 +9,48 @@
 # and scripts/stack-e2e.sh.
 #
 # usage: scripts/e2e.sh [playwright arguments]
-# needs: Docker, Go, Node with web/ dependencies installed, Playwright browsers
+# needs: Docker, Go, Node with web/ dependencies installed, Playwright browsers.
+# Or, instead of Docker, a fresh postgis/postgis:18-3.6 database as the
+# postgres superuser in PA_E2E_DATABASE_URL, and psql: CI runs this in
+# Playwright's container image, with the database as a service container.
 set -eu
 cd "$(dirname "$0")/.."
 
-PORT_DB=${PA_E2E_DB_PORT:-55433}
-DB=pa-e2e-db-$$
 BIN=$(mktemp -d)/pagerarchive
-export DATABASE_URL="postgres://postgres:test@127.0.0.1:$PORT_DB/postgres?sslmode=disable"
 PIDS=""
+DB=""
 
 cleanup() {
+	rc=$?
 	for p in $PIDS; do kill "$p" 2>/dev/null || true; done
-	docker rm -f "$DB" >/dev/null 2>&1 || true
+	[ -z "$DB" ] || docker rm -f "$DB" >/dev/null 2>&1 || true
+	# The build goes; its API log stays only when the run failed (/tmp is
+	# often small, and mutation-checks.sh runs this once per mutation).
+	rm -f "$BIN"
+	[ "$rc" -ne 0 ] || rm -rf "${BIN%/*}"
 }
 trap cleanup EXIT
 
-docker run -d --platform linux/amd64 --name "$DB" -e POSTGRES_PASSWORD=test -p "127.0.0.1:$PORT_DB:5432" postgis/postgis:18-3.6 \
-	postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse >/dev/null
-until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
-sleep 3 # the image restarts PostgreSQL once after its init scripts
-until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
+if [ -n "${PA_E2E_DATABASE_URL:-}" ]; then
+	export DATABASE_URL="$PA_E2E_DATABASE_URL"
+	psql_db() { psql "$DATABASE_URL" "$@"; }
+	until pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; do sleep 1; done
+	# The settings the container below is started with, applied to this one.
+	for s in "log_statement = 'none'" "log_min_error_statement = panic" "log_error_verbosity = terse"; do
+		psql_db -q -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET $s"
+	done
+	psql_db -q -v ON_ERROR_STOP=1 -c 'SELECT pg_reload_conf()' >/dev/null
+else
+	PORT_DB=${PA_E2E_DB_PORT:-55433}
+	DB=pa-e2e-db-$$
+	export DATABASE_URL="postgres://postgres:test@127.0.0.1:$PORT_DB/postgres?sslmode=disable"
+	psql_db() { docker exec -i "$DB" psql -U postgres "$@"; }
+	docker run -d --platform linux/amd64 --name "$DB" -e POSTGRES_PASSWORD=test -p "127.0.0.1:$PORT_DB:5432" postgis/postgis:18-3.6 \
+		postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse >/dev/null
+	until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
+	sleep 3 # the image restarts PostgreSQL once after its init scripts
+	until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
+fi
 
 (cd web && npm run build >/dev/null)
 go build -o "$BIN" ./cmd/pagerarchive
@@ -58,16 +79,18 @@ FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k
 UNION ALL
 SELECT '05000' || n || '1', 'Rescue test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n;
 SQL
-} | docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
+} | psql_db -q -v ON_ERROR_STOP=1 >/dev/null
 # R39: a receiver last heard 31 minutes ago (set below).
 "$BIN" client add quiet "Quiet receiver" >/dev/null
 
 # A user and an admin, each with a session (the cookie holds the token; the
-# database holds its SHA-256).
+# database holds its SHA-256), and a second user, C, for the print sheet
+# kept per user (M11).
 PA_USER_SESSION=e2e-user-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 PA_ADMIN_SESSION=e2e-admin-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
-export PA_USER_SESSION PA_ADMIN_SESSION
-docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <<SQL
+PA_USER_C_SESSION=e2e-user-c-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
+export PA_USER_SESSION PA_ADMIN_SESSION PA_USER_C_SESSION
+psql_db -q -v ON_ERROR_STOP=1 >/dev/null <<SQL
 INSERT INTO users (subject, email, email_key, name, role) VALUES
   ('e2e-admin', 'admin@example.test', 'admin@example.test', 'Test Admin', 'admin');
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
@@ -76,6 +99,10 @@ INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_USER_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';
 INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('$PA_ADMIN_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-admin';
+INSERT INTO users (subject, email, email_key, name, role, invited_by)
+  SELECT 'e2e-user-c', 'user-c@example.test', 'user-c@example.test', 'Test User C', 'user', id FROM users WHERE subject = 'e2e-admin';
+INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('$PA_USER_C_SESSION', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user-c';
 UPDATE clients SET last_seen_at = now() - interval '31 minutes' WHERE id = 'quiet';
 SQL
 
@@ -99,8 +126,9 @@ INSERT INTO invitations (email, email_key, invited_by, expires_at)
   SELECT 'x-$k@example.test', 'x-$k@example.test', id, now() + interval '7 days' FROM users WHERE email_key = 'd-$k@example.test';
 SQL
 	done
-done | docker exec -i "$DB" psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null
-# A50 adds someone to a tree while its preview is open.
+done | psql_db -q -v ON_ERROR_STOP=1 >/dev/null
+# Some tests change the database directly (A50 adds someone to a tree while
+# its preview is open): in this container, or at PA_E2E_DATABASE_URL.
 export PA_E2E_DB="$DB"
 
 # Authentik isn't running: sign-in reports it unavailable, which one test checks.
@@ -117,7 +145,7 @@ status=0
 
 # P1: no page text in the API log, and no alias request notes, feedback or
 # names (ADR 0007 §8), or tree deactivation reasons (ADR 0008 §10).
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER' "$BIN.log"; then
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER|TRAINING DRILL' "$BIN.log"; then
 	echo "page text, a note, feedback or a name found in the API log" >&2
 	status=1
 else

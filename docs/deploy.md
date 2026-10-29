@@ -157,6 +157,8 @@ It also deletes integrations' delivery records older than 30 days.
 
 Shortening the period asks for the cut-off date to be confirmed. A run missed while the server was down is made up when it starts. The Retention page shows the last run's result.
 
+Pages printed from [the print sheet](print-sheet.md) are outside PagerArchive's control: retention and deactivation don't reach paper.
+
 ## Integrations
 
 Users forward new pages to their own systems from **Integrations**: a webhook, MQTT (with Home Assistant discovery), Discord, Telegram, Pushover or ntfy. See [integrations](integrations.md) for what each needs and what is sent.

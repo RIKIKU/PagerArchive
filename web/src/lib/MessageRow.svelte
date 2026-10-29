@@ -3,8 +3,10 @@
 	import { date, time, isoAttr } from './format.ts';
 	import AgencyIcon from './AgencyIcon.svelte';
 	import PriorityBadge from './PriorityBadge.svelte';
+	import PrintTick from './PrintTick.svelte';
 
-	let { m, tz, fresh = false }: { m: Message; tz: string; fresh?: boolean } = $props();
+	// pick: a tick box for the print sheet, on the print page only (R67).
+	let { m, tz, fresh = false, pick = false }: { m: Message; tz: string; fresh?: boolean; pick?: boolean } = $props();
 
 	// R35d: the alias opens the alias view; a capcode with no alias opens its own.
 	const whoHref = $derived(m.alias_id != null ? `/aliases/${m.alias_id}` : `/capcodes/${m.capcode}`);
@@ -22,6 +24,7 @@
 		{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 		<a id="m{m.id}-who" class="who" href={whoHref} style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a>
 		{#if m.group}<span class="group">{m.group}</span>{/if}
+		{#if pick}<PrintTick id={m.id} />{/if}
 	</header>
 	<p class="text"><a class="open" href="/messages/{m.id}">{m.display_text || '(no text)'}</a></p>
 	{#if m.job_number || m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}

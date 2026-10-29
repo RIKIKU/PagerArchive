@@ -6,6 +6,14 @@
 # HttpClient follows the system's proxy settings and checks certificates as
 # Invoke-RestMethod does. Every wait is a slice of 200 ms, so Ctrl+C can stop
 # the command between slices.
+#
+# PowerShell can lose a Ctrl+C: while a command's own finally block runs, it
+# clears the pipeline's stopping flag and restores the old value afterwards,
+# so a stop that arrives meanwhile is undone unless a command called from
+# that block is running (ADR 0012). Watch-PagerArchiveMessage has no finally
+# block for that reason, and its waits also end when its
+# PSCmdlet.PipelineStopToken is cancelled, which every stop does and nothing
+# undoes.
 
 function Wait-PaTask {
     <#
@@ -14,7 +22,8 @@ function Wait-PaTask {
 
     .DESCRIPTION
     Returns $true when the task finished, or $false when TimeoutMs passed
-    first (it's still running). A failed task throws its own error.
+    first (it's still running). A failed task throws its own error. A
+    cancelled Stop token stops the pipeline.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
@@ -24,10 +33,21 @@ function Wait-PaTask {
         [System.Threading.Tasks.Task] $Task,
 
         # How long to wait, in milliseconds; -1 waits for as long as it takes.
-        [int] $TimeoutMs = -1
+        [int] $TimeoutMs = -1,
+
+        # The calling command's PSCmdlet.PipelineStopToken.
+        [System.Threading.CancellationToken] $Stop = [System.Threading.CancellationToken]::None
     )
     $watch = [System.Diagnostics.Stopwatch]::StartNew()
-    while (-not $Task.IsCompleted) {
+    while ($true) {
+        # Before the task's state, so a stream that's always ready can't
+        # skip it.
+        if ($Stop.IsCancellationRequested) {
+            throw [System.Management.Automation.PipelineStoppedException]::new()
+        }
+        if ($Task.IsCompleted) {
+            break
+        }
         if ($TimeoutMs -ge 0 -and $watch.ElapsedMilliseconds -ge $TimeoutMs) {
             return $false
         }
@@ -92,7 +112,11 @@ function Open-PaEventStream {
         [string] $PathAndQuery,
 
         # How long connecting and the reply's headers may take.
-        [int] $TimeoutSec = 30
+        [int] $TimeoutSec = 30,
+
+        # The calling command's PSCmdlet.PipelineStopToken, for every wait
+        # on this stream (Wait-PaTask).
+        [System.Threading.CancellationToken] $Stop = [System.Threading.CancellationToken]::None
     )
     $uri = [uri]($Connection.Uri + $PathAndQuery)
     $origin = Get-PaOrigin -Uri $uri -AllowUnencryptedAuthentication:([bool]$Connection.AllowUnencrypted)
@@ -110,6 +134,7 @@ function Open-PaEventStream {
         Status   = 0
         Code     = $null
         Message  = $null
+        Stop     = $Stop
     }
     $request = [System.Net.Http.HttpRequestMessage]::new([System.Net.Http.HttpMethod]::Get, $uri)
     $opened = $false
@@ -125,14 +150,16 @@ function Open-PaEventStream {
             $request.Headers.UserAgent.ParseAdd('PagerArchive-PowerShell')
             Add-PaBearerHeader -Request $request -Token $Connection.AccessToken
             $send = $state.Client.SendAsync($request, [System.Net.Http.HttpCompletionOption]::ResponseHeadersRead, $state.Cancel.Token)
-            if (-not (Wait-PaTask -Task $send -TimeoutMs ($TimeoutSec * 1000))) {
+            if (-not (Wait-PaTask -Task $send -TimeoutMs ($TimeoutSec * 1000) -Stop $Stop)) {
                 throw [System.TimeoutException]::new("no answer within $TimeoutSec s")
             }
             $state.Response = $send.Result
             $state.Status = [int]$state.Response.StatusCode
             if ($state.Status -eq 200) {
                 $read = $state.Response.Content.ReadAsStreamAsync($state.Cancel.Token)
-                $null = Wait-PaTask -Task $read
+                if (-not (Wait-PaTask -Task $read -TimeoutMs ($TimeoutSec * 1000) -Stop $Stop)) {
+                    throw [System.TimeoutException]::new("no answer within $TimeoutSec s")
+                }
                 $state.Stream = $read.Result
             }
         } catch {
@@ -142,7 +169,7 @@ function Open-PaEventStream {
             # A refusal: read its JSON for the API's code and message.
             try {
                 $read = $state.Response.Content.ReadAsByteArrayAsync($state.Cancel.Token)
-                if (Wait-PaTask -Task $read -TimeoutMs ($TimeoutSec * 1000)) {
+                if (Wait-PaTask -Task $read -TimeoutMs ($TimeoutSec * 1000) -Stop $Stop) {
                     $text = [System.Text.Encoding]::UTF8.GetString($read.Result)
                     if ($text -and $text.TrimStart().StartsWith('{')) {
                         $reply = $text | ConvertFrom-Json -AsHashtable
@@ -184,7 +211,7 @@ function Receive-PaStreamData {
     if ($null -eq $State.Pending) {
         $State.Pending = $State.Stream.ReadAsync($State.Buffer, 0, $State.Buffer.Length)
     }
-    if (Wait-PaTask -Task $State.Pending -TimeoutMs 200) {
+    if (Wait-PaTask -Task $State.Pending -TimeoutMs 200 -Stop $State.Stop) {
         $n = $State.Pending.Result
         $State.Pending = $null
         if ($n -eq 0) {
@@ -322,9 +349,17 @@ function Wait-PaRetry {
     param(
         # How long, in seconds.
         [Parameter(Mandatory)]
-        [int] $Seconds
+        [int] $Seconds,
+
+        # The calling command's PSCmdlet.PipelineStopToken: a stop ends the
+        # wait at once.
+        [System.Threading.CancellationToken] $Stop = [System.Threading.CancellationToken]::None
     )
-    Start-Sleep -Seconds $Seconds
+    if (-not $Stop.CanBeCanceled) {
+        Start-Sleep -Seconds $Seconds
+    } elseif ($Stop.WaitHandle.WaitOne($Seconds * 1000)) {
+        throw [System.Management.Automation.PipelineStoppedException]::new()
+    }
 }
 
 function Format-PaDuration {

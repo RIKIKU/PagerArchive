@@ -25,7 +25,12 @@ stack_wait_api() {
 stack_up() {
 	echo "--- building the API image and starting the stack ($COMPOSE_PROJECT_NAME)"
 	stack_compose build -q api
-	stack_compose up -d >/dev/null 2>&1 || { stack_compose ps; return 1; }
+	# Quiet unless it fails; then its output says why (a pull, a port).
+	if ! out=$(stack_compose up -d 2>&1); then
+		printf '%s\n' "$out" | tail -n 30 >&2
+		stack_compose ps
+		return 1
+	fi
 	start=$(date +%s)
 	# Authentik is ready, and has applied the PagerArchive blueprint, when the
 	# app's API token can see the enrolment flow.

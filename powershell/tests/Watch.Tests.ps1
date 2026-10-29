@@ -50,7 +50,7 @@ BeforeAll {
                     $script:TestWaits = $Waits
                     $script:TestRenewals = $Renewals
                     function script:Wait-PaRetry {
-                        param([int] $Seconds)
+                        param([int] $Seconds, [System.Threading.CancellationToken] $Stop)
                         $script:TestWaits.Enqueue($Seconds)
                         Start-Sleep -Milliseconds 20
                     }
@@ -70,18 +70,76 @@ BeforeAll {
         @{ PS = $ps; Output = $output; Handle = $handle; Waits = $waits; Renewals = $renewals; Connection = $connection }
     }
 
+    # Stops a runspace's command as Ctrl+C does, waiting at most TimeoutMs:
+    # PowerShell.Stop() waits for as long as the command takes to stop, so
+    # a command that never stops would hang the tests instead of failing one.
+    function Stop-TestRunspace([powershell] $PS, [int] $TimeoutMs = 10000) {
+        if ($PS.InvocationStateInfo.State -notin 'Running', 'Stopping') {
+            return
+        }
+        $stopping = $PS.BeginStop($null, $null)
+        if (-not $stopping.AsyncWaitHandle.WaitOne($TimeoutMs)) {
+            # What it was last doing, from its -Verbose and -Debug lines.
+            $last = foreach ($stream in $PS.Streams.Verbose, $PS.Streams.Debug) {
+                for ($i = [math]::Max(0, $stream.Count - 3); $i -lt $stream.Count; $i++) { $stream[$i].Message }
+            }
+            # And where it is: its script call stack, innermost first.
+            $where = try {
+                @($PS.Runspace.Debugger.GetCallStack() | ForEach-Object -Process { "$($_.FunctionName):$($_.ScriptLineNumber)" }) -join ' < '
+            } catch {
+                "unknown ($($_.Exception.Message))"
+            }
+            Save-TestDump
+            throw "The watch didn't stop within $TimeoutMs ms of Ctrl+C; state $($PS.InvocationStateInfo.State); at $where; last lines: $($last -join ' | ')"
+        }
+        $PS.EndStop($stopping)
+    }
+
+    # With PA_TEST_DUMP_DIR set (CI), a dump of this process, with the stuck
+    # watch's thread in it, for dotnet-dump; once per run. Linux lets a
+    # process be read only by its parent or root (Yama), hence sudo.
+    function Save-TestDump {
+        if ($script:dumped -or -not $env:PA_TEST_DUMP_DIR) {
+            return
+        }
+        $script:dumped = $true
+        $tool = Join-Path -Path $PSHOME -ChildPath $(if ($IsWindows) { 'createdump.exe' } else { 'createdump' })
+        $null = New-Item -ItemType Directory -Force -Path $env:PA_TEST_DUMP_DIR
+        $file = Join-Path -Path $env:PA_TEST_DUMP_DIR -ChildPath "pwsh-$PID.dmp"
+        if (-not $IsWindows -and (Get-Command -Name sudo -ErrorAction Ignore)) {
+            & sudo -n $tool --withheap -f $file $PID | Out-Host
+        } else {
+            & $tool --withheap -f $file $PID | Out-Host
+        }
+        Write-Host "A dump of the test process, with the stuck watch: $file"
+    }
+
+    # Closes a runspace whose command has ended, waiting at most TimeoutMs.
+    function Close-TestRunspace([powershell] $PS, [int] $TimeoutMs = 10000) {
+        $PS.Runspace.CloseAsync()
+        $timer = [System.Diagnostics.Stopwatch]::StartNew()
+        while ($PS.Runspace.RunspaceStateInfo.State -notin 'Closed', 'Broken') {
+            if ($timer.ElapsedMilliseconds -ge $TimeoutMs) {
+                throw "The watch's runspace didn't close within $TimeoutMs ms; state $($PS.Runspace.RunspaceStateInfo.State)."
+            }
+            Start-Sleep -Milliseconds 20
+        }
+        $PS.Dispose()
+    }
+
     # Ends a watch and keeps its streams' text for the secrets check.
     function Stop-TestWatch($Watch) {
-        if ($Watch.PS.InvocationStateInfo.State -eq 'Running') {
-            $Watch.PS.Stop()
+        try {
+            Stop-TestRunspace $Watch.PS
+        } finally {
+            foreach ($record in $Watch.PS.Streams.Verbose, $Watch.PS.Streams.Debug, $Watch.PS.Streams.Warning, $Watch.PS.Streams.Information, $Watch.PS.Streams.Error | ForEach-Object -Process { Get-TestItem $_ }) {
+                $script:allStreams.Add([string]$record)
+            }
+            if ($Watch.PS.InvocationStateInfo.Reason) {
+                $script:allStreams.Add([string]$Watch.PS.InvocationStateInfo.Reason)
+            }
         }
-        foreach ($record in $Watch.PS.Streams.Verbose, $Watch.PS.Streams.Debug, $Watch.PS.Streams.Warning, $Watch.PS.Streams.Information, $Watch.PS.Streams.Error | ForEach-Object -Process { Get-TestItem $_ }) {
-            $script:allStreams.Add([string]$record)
-        }
-        if ($Watch.PS.InvocationStateInfo.Reason) {
-            $script:allStreams.Add([string]$Watch.PS.InvocationStateInfo.Reason)
-        }
-        $Watch.PS.Dispose()
+        Close-TestRunspace $Watch.PS
     }
 
     # The items of a runspace's stream or output, by index: enumerating one
@@ -114,6 +172,7 @@ BeforeAll {
         $client = $task.Result
         $stream = $client.GetStream()
         $stream.ReadTimeout = $TimeoutMs
+        $stream.WriteTimeout = $TimeoutMs
         $bytes = [System.Collections.Generic.List[byte]]::new()
         $buffer = [byte[]]::new(4096)
         while (-not [System.Text.Encoding]::ASCII.GetString($bytes.ToArray()).Contains("`r`n`r`n")) {
@@ -196,7 +255,7 @@ Describe 'Watch-PagerArchiveMessage' {
         Send-TestHead $conn
         Send-TestReady $conn -LastId 40
         Send-TestEvent $conn 'message' (New-StreamMessage 41) '41'
-        Wait-Until { $watch.Output.Count -eq 1 } -TimeoutMs 2000 -Because 'the first message'
+        Wait-Until { $watch.Output.Count -eq 1 } -Because 'the first message'
         $watch.Output[0].PSObject.TypeNames[0] | Should -Be 'PagerArchive.Message'
         $watch.Output[0].Id | Should -Be 41
         $watch.Output[0].Text | Should -Be 'SHED FIRE 41 @ 3 FICTION ST, MADEUPTON'
@@ -207,7 +266,7 @@ Describe 'Watch-PagerArchiveMessage' {
         Send-TestChunk $conn $text.Substring(0, $half)
         Start-Sleep -Milliseconds 100
         Send-TestChunk $conn ($text.Substring($half) + "`n`n")
-        Wait-Until { $watch.Output.Count -eq 2 } -TimeoutMs 2000 -Because 'the second message'
+        Wait-Until { $watch.Output.Count -eq 2 } -Because 'the second message'
         $watch.Output[1].Text | Should -Be 'GRASS FIRE → É'
         $watch.PS.InvocationStateInfo.State | Should -Be 'Running'
         $conn.Client.Dispose()
@@ -456,7 +515,7 @@ Describe 'Watch-PagerArchiveMessage' {
         Send-TestReady $conn -LastId 1
         Send-TestEvent $conn 'message' (New-StreamMessage 2) '2'
         Wait-Until { $watch.Output.Count -eq 1 } -Because 'a message'
-        $watch.PS.Stop()  # what Ctrl+C calls
+        Stop-TestRunspace $watch.PS  # what Ctrl+C calls
         $watch.PS.InvocationStateInfo.State | Should -Be 'Stopped'
         @(Get-TestItem $watch.PS.Streams.Error).Count | Should -Be 0
         $conn.Stream.ReadTimeout = 3000
@@ -482,13 +541,124 @@ Describe 'Watch-PagerArchiveMessage' {
         Send-TestHead $conn
         Send-TestReady $conn -LastId 1
         foreach ($id in 2, 3) { Send-TestEvent $conn 'message' (New-StreamMessage $id) "$id" }
-        $out = $ps.EndInvoke($handle)
-        $out.Id | Should -Be @(2, 3)
-        @(Get-TestItem $ps.Streams.Error).Count | Should -Be 0
-        $conn.Stream.ReadTimeout = 3000
-        $conn.Stream.Read([byte[]]::new(16), 0, 16) | Should -Be 0 -Because 'the watch closed its socket'
-        $conn.Client.Dispose()
-        $ps.Dispose()
+        try {
+            $handle.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue -Because 'Select-Object -First 2 stops the watch after two messages'
+            $out = $ps.EndInvoke($handle)
+            $out.Id | Should -Be @(2, 3)
+            @(Get-TestItem $ps.Streams.Error).Count | Should -Be 0
+            $conn.Stream.ReadTimeout = 3000
+            $conn.Stream.Read([byte[]]::new(16), 0, 16) | Should -Be 0 -Because 'the watch closed its socket'
+        } finally {
+            $conn.Client.Dispose()
+            Stop-TestRunspace $ps
+            Close-TestRunspace $ps
+        }
+    }
+}
+
+# PowerShell loses a Ctrl+C that arrives while a command runs its own finally
+# block (ADR 0012): it clears the pipeline's stopping flag for the block and
+# restores the old value afterwards. The watch never ends by itself, so it
+# has no finally block, and its waits also check PSCmdlet.PipelineStopToken.
+Describe 'Watch-PagerArchiveMessage and a lost Ctrl+C' {
+    BeforeAll {
+        # Runs Script in its own runspace with the module loaded, stops it
+        # after DelayMs if it's still running, and says how it ended.
+        function Invoke-TestStop([scriptblock] $Script, [int] $DelayMs = 300) {
+            $ps = [powershell]::Create()
+            $null = $ps.AddScript("Import-Module -Name '$script:manifest' -Force").AddScript($Script)
+            $handle = $ps.BeginInvoke()
+            Start-Sleep -Milliseconds $DelayMs
+            $timer = [System.Diagnostics.Stopwatch]::StartNew()
+            Stop-TestRunspace $ps -TimeoutMs 5000
+            $null = $handle.AsyncWaitHandle.WaitOne(5000)
+            $out = @{ State = [string]$ps.InvocationStateInfo.State; Ms = $timer.ElapsedMilliseconds; Errors = @(Get-TestItem $ps.Streams.Error).Count }
+            Close-TestRunspace $ps
+            $out
+        }
+    }
+
+    It 'has no finally block, where PowerShell would lose a Ctrl+C' {
+        $ast = (Get-Command -Name Watch-PagerArchiveMessage -Module (Import-Module -Name $script:manifest -Force -PassThru)).ScriptBlock.Ast
+        $finally = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally }, $true)
+        @($finally).Count | Should -Be 0 -Because 'a stop that arrives while the command runs its own finally block is lost, and the watch would never end'
+    }
+
+    It 'ends its waits as soon as the stop token is cancelled: <Name>' -ForEach @(
+        @{ Name = 'Wait-PaTask'; Script = { & (Get-Module -Name PagerArchive) { $c = [System.Threading.CancellationTokenSource]::new(); $c.CancelAfter(100); Wait-PaTask -Task ([System.Threading.Tasks.Task]::Delay(60000)) -Stop $c.Token } } }
+        @{ Name = 'Wait-PaRetry'; Script = { & (Get-Module -Name PagerArchive) { $c = [System.Threading.CancellationTokenSource]::new(); $c.CancelAfter(100); Wait-PaRetry -Seconds 30 -Stop $c.Token } } }
+    ) {
+        # No Stop() here: only the token, as when PowerShell has lost the stop.
+        $ps = [powershell]::Create()
+        $null = $ps.AddScript("Import-Module -Name '$script:manifest' -Force").AddScript($Script)
+        $handle = $ps.BeginInvoke()
+        $handle.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue -Because 'the wait ends when the token is cancelled'
+        $ps.InvocationStateInfo.State | Should -Be 'Stopped'
+        Close-TestRunspace $ps
+    }
+
+    It 'hands its stop token to each wait: connecting and waiting to reconnect' {
+        # A real watch whose stream is replaced: ready, then lost, so it
+        # connects and then waits to reconnect. Each replacement notes
+        # whether it was given a token a stop can cancel; without -Stop it
+        # gets none, and nothing a stop could cancel.
+        $seen = [System.Collections.Concurrent.ConcurrentDictionary[string, bool]]::new()
+        $ps = [powershell]::Create()
+        $null = $ps.AddScript({
+                param($Manifest, $Seen)
+                Import-Module -Name $Manifest -Force
+                & (Get-Module -Name PagerArchive) {
+                    param($Seen)
+                    $secure = [securestring]::new()
+                    foreach ($c in 'test-token'.ToCharArray()) { $secure.AppendChar($c) }
+                    $script:Connection = @{ Uri = 'http://127.0.0.1:9'; AccessToken = $secure; ExpiresAt = [datetimeoffset]::UtcNow.AddHours(1); Store = 'session'; AllowUnencrypted = $true }
+                    $script:TestSeen = $Seen
+                    function script:Open-PaEventStream {
+                        param([hashtable] $Connection, [string] $PathAndQuery, [int] $TimeoutSec, [System.Threading.CancellationToken] $Stop)
+                        $script:TestSeen['Open-PaEventStream'] = $PSBoundParameters.ContainsKey('Stop') -and $Stop.CanBeCanceled
+                        @{ Status = 200; Read = $false }
+                    }
+                    function script:Read-PaStreamEvent {
+                        param([hashtable] $State, [double] $SilenceSec)
+                        if (-not $State.Read) {
+                            $State.Read = $true
+                            return @{ Type = 'ready'; Id = ''; Data = '{"caught_up":0,"last_id":1}' }
+                        }
+                        throw (New-PaErrorRecord -ErrorId 'connection_lost' -Category ConnectionError -Message 'the server closed the connection')
+                    }
+                    function script:Close-PaEventStream { param([hashtable] $State) }
+                    function script:Wait-PaRetry {
+                        param([int] $Seconds, [System.Threading.CancellationToken] $Stop)
+                        $script:TestSeen['Wait-PaRetry'] = $PSBoundParameters.ContainsKey('Stop') -and $Stop.CanBeCanceled
+                        throw (New-PaErrorRecord -ErrorId 'test_done' -Message 'The test ends the watch here.')
+                    }
+                } $Seen
+                Watch-PagerArchiveMessage -WarningAction SilentlyContinue
+            }).AddParameters(@{ Manifest = $script:manifest; Seen = $seen })
+        $handle = $ps.BeginInvoke()
+        $handle.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue -Because 'the watch ends at the test''s Wait-PaRetry'
+        $seen.Keys | Sort-Object | Should -Be @('Open-PaEventStream', 'Wait-PaRetry') -Because 'it connected, lost the stream and waited to reconnect'
+        $seen['Open-PaEventStream'] | Should -BeTrue -Because 'Watch-PagerArchiveMessage passes its stop token to Open-PaEventStream (-Stop $stop)'
+        $seen['Wait-PaRetry'] | Should -BeTrue -Because 'Watch-PagerArchiveMessage passes its stop token to Wait-PaRetry (-Stop $stop)'
+        Close-TestRunspace $ps
+    }
+
+    It 'relies on a stop always cancelling PipelineStopToken, even one PowerShell loses' {
+        # A command that spends its time in its own finally block, ending on the token alone.
+        $result = Invoke-TestStop -Script {
+            function Test-Loop {
+                [CmdletBinding()]
+                param()
+                end {
+                    while (-not $PSCmdlet.PipelineStopToken.IsCancellationRequested) {
+                        try { $null = 1 } finally { [System.Threading.Thread]::Sleep(50) }
+                    }
+                }
+            }
+            Test-Loop
+        }
+        $result.State | Should -BeIn 'Stopped', 'Completed'
+        $result.Ms | Should -BeLessThan 3000
     }
 }
 

@@ -307,17 +307,44 @@ Describe 'Objects and parameters line up (guidelines section 3)' {
 Describe 'PSScriptAnalyzer: <Name> (guidelines section 11)' -ForEach $files {
     It 'has no findings' {
         $settings = Join-Path -Path $PSScriptRoot -ChildPath '../PSScriptAnalyzerSettings.psd1'
-        # PSUseCorrectCasing sometimes throws a NullReferenceException inside
-        # PSScriptAnalyzer 1.25.0 while looking up commands; a retry passes.
-        for ($attempt = 1; $attempt -le 3; $attempt++) {
-            try {
-                $findings = @(Invoke-ScriptAnalyzer -Path $Path -Settings $settings -ErrorAction Stop)
-                break
-            } catch [System.NullReferenceException] {
-                if ($attempt -eq 3) { throw }
-            }
-        }
+        $findings = @(Invoke-ScriptAnalyzer -Path $Path -Settings $settings -ErrorAction Stop)
         $findings | ForEach-Object -Process { Write-Warning -Message ('{0}:{1} {2} {3}' -f $_.ScriptName, $_.Line, $_.RuleName, $_.Message) }
         $findings.Count | Should -Be 0
+    }
+
+    # PSUseCorrectCasing's command check, done here (ADR 0012): in
+    # PSScriptAnalyzer 1.25.0 it reads a provider cmdlet's dynamic parameters
+    # from a thread that isn't its runspace's, which sometimes throws a
+    # NullReferenceException, and retrying in the same process doesn't
+    # reliably help. Here each command is looked up on this thread, in the
+    # module's own scope, so private functions are found too. As the rule
+    # does: a command's name as written must be its name or its
+    # module-qualified name, and each parameter name written must match its
+    # declared casing (aliases aren't checked).
+    It 'writes commands and parameters with their declared casing' {
+        $tokens = $errors = $null
+        $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$errors)
+        $module = Get-Module -Name PagerArchive
+        $wrong = foreach ($command in $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true)) {
+            $written = $command.GetCommandName()
+            if (-not $written) {
+                continue
+            }
+            $info = & $module { param($n) Get-Command -Name $n -ErrorAction Ignore | Select-Object -First 1 } $written
+            if (-not $info -or $info.CommandType -in 'ExternalScript', 'Application') {
+                continue
+            }
+            if ($written -cne $info.Name -and $written -cne "$($info.ModuleName)\$($info.Name)") {
+                "line $($command.Extent.StartLineNumber): $written is $($info.Name)"
+            }
+            $parameters = $info.Parameters
+            foreach ($p in $command.CommandElements | Where-Object -FilterScript { $_ -is [System.Management.Automation.Language.CommandParameterAst] }) {
+                $declared = $parameters.Keys | Where-Object -FilterScript { $_ -eq $p.ParameterName } | Select-Object -First 1
+                if ($declared -and $p.ParameterName -cne $declared) {
+                    "line $($p.Extent.StartLineNumber): $written -$($p.ParameterName) is -$declared"
+                }
+            }
+        }
+        @($wrong) | Should -BeNullOrEmpty
     }
 }

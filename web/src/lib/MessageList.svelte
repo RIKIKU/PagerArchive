@@ -5,12 +5,24 @@
 	import MessageRow from './MessageRow.svelte';
 
 	// base: criteria fixed by the view (the alias view's alias, say), added to
-	// the viewer's own search criteria from the URL.
+	// the viewer's own search criteria from the URL. The print page (R67)
+	// sets pick, for a tick box on each row, and scroll false: its sheet sits
+	// below the results, so older ones load only with the button.
 	let {
 		query,
 		base = {},
-		level = 1
-	}: { query: URLSearchParams; base?: Record<string, string>; level?: 1 | 2 } = $props();
+		level = 1,
+		title = 'Messages',
+		pick = false,
+		scroll = true
+	}: {
+		query: URLSearchParams;
+		base?: Record<string, string>;
+		level?: 1 | 2;
+		title?: string;
+		pick?: boolean;
+		scroll?: boolean;
+	} = $props();
 
 	let meta: Meta | undefined = $state();
 	let messages: Message[] = $state([]);
@@ -131,7 +143,7 @@
 
 	// Infinite scroll, with a button as a keyboard-friendly fallback.
 	$effect(() => {
-		if (!sentinel) return;
+		if (!sentinel || !scroll) return;
 		const io = new IntersectionObserver((entries) => {
 			if (entries.some((e) => e.isIntersecting)) loadMore();
 		});
@@ -144,7 +156,7 @@
 	<Filters {query} {meta} />
 {/if}
 <div class="bar">
-	<svelte:element this={level === 1 ? 'h1' : 'h2'}>Messages</svelte:element>
+	<svelte:element this={level === 1 ? 'h1' : 'h2'}>{title}</svelte:element>
 	<span class="live {live}" role="status">{live === 'live' ? 'Live' : live === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>
 </div>
 <div class="visually-hidden" aria-live="polite">{announce}</div>
@@ -153,7 +165,7 @@
 
 <div class="list" data-testid="message-list">
 	{#each messages as m (m.id)}
-		<MessageRow {m} tz={meta?.time_zone ?? 'UTC'} fresh={fresh.has(m.id)} />
+		<MessageRow {m} tz={meta?.time_zone ?? 'UTC'} fresh={fresh.has(m.id)} {pick} />
 	{/each}
 </div>
 
