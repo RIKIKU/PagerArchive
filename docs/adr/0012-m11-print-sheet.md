@@ -108,7 +108,30 @@ Print styles only (`@media print`):
 
 ## Evidence
 
-To be added after the runs.
+Run on cld01 on 2026-10-29 (Go 1.27.2, Node 24.21.0 with Playwright's Chromium, Firefox and WebKit, pwsh 7.6.7) at f208d1b, from a snapshot (`scripts` run one after another by `~/m11-run.sh`).
+
+- **CI's checks:** `gofmt -l .` empty; `go vet ./...` exit 0; `sqlc diff` exit 0 (no query changed); `validate-profile -v profiles/example` "7 passed, 0 failed" (and the agency rows); `npm run check` "0 errors and 0 warnings".
+- **`PAGERARCHIVE_REQUIRE_DB=1 go test -count=1 -v ./...`:** every package `ok` (`internal/acceptance` 142.4 s); 226 passed, 0 failed, 21 skipped (the stack tests, which need the compose stack). `TestM11MessagesByID`: "user@example.com got [2 3 1] in the order asked, as the list shows them, flags false", the same for the admin with flags true, "deleted message 3 and unknown 999999999 reported missing: [3 999999999]".
+- **Pester:** `Passed 341, failed 0, skipped 4` (the module didn't change).
+- **`scripts/e2e.sh`** (all three browsers): `138 passed (14.9m)`, "API log lines checked: 527, page texts found: 0". From A60 in each engine:
+  - storage: `{"theme":"system","pagerarchive:print-sheet:2":"[81,82,80,83]"}`, the 4 IDs in the order ticked (b, c, a, d; time order would be a, b, c, d or d, c, b, a);
+  - Chromium's PDF of the 4: one page holding exactly the 4 texts and nothing else, the redacted one as "… BRAVO TEXT REDACTED WHEN DONE";
+  - print media, in dark mode, in all three: `{"display":"block","breakInside":"avoid","pageBreakInside":"avoid","border":"4px solid rgb(0, 0, 0)","background":"rgb(255, 255, 255)","colour":"rgb(0, 0, 0)","chain":"ol:block main:block div:contents body:block html:block"}`; axe clean on the sheet in light and dark;
+  - 30 messages, Chromium: "9 PDF pages; the page each message is on: M1:1 M2:1 M3:1 M4:1 M5:2 … M30:9", each whole on one page; the control without `break-inside`: "split across pages: M5 (2200 characters), M9 (1800 characters), M12 (2400 characters), M15 (1200 characters), M18 (150 characters), M25 (2300 characters)". Firefox and WebKit: "print media: 30 messages in heavy black borders, break-inside avoid, block layout, black on white, nothing cut off";
+  - per user: `{"theme":"system","pagerarchive:print-sheet:3":"[115]","pagerarchive:print-sheet:2":"[114]"}`.
+  - The PDFs, rendered, show each message in its border, whole; the naive one shows M5 running from page 1 onto page 2.
+- **`scripts/stack-checks.sh`** (the API gained an endpoint): every phase `ok` (`internal/stacktest` 6.2 s, 444.4 s, 424.1 s, 411.3 s), 34 passed, no `FAIL`; "API log lines checked: 559, page texts or email addresses found: 0".
+- **`scripts/stack-e2e.sh --project=chromium`:** `1 passed`; "API log lines checked: 23, page texts or email addresses found: 0".
+- **`scripts/mutation-checks.sh`:** 34 mutations, 34 guarded, none survived or failed to apply; the unmutated copy passed (`internal/acceptance` ok, the 5 print sheet tests in Chromium "5 passed", Pester `Passed 341, failed 0`). The 6 new ones:
+
+  | Mutation | Failing check |
+  |---|---|
+  | `toMessage(m, true)` in `by-id` | `TestM11MessagesByID`: flags in the user's reply |
+  | `localStorage.setItem("pagerarchive:print-sheet-text:" + m.id, m.display_text)` on ticking | A60: the storage check (`toEqual`) |
+  | The key `"pagerarchive:print-sheet"` for everyone | per user: C's sheet "The print sheet is empty." not shown |
+  | `.toSorted(…sent_at…)` on the sheet | A60: the sheet's order (`toEqual`) |
+  | `break-inside` and `page-break-inside` removed | 30 messages: "messages not whole on exactly one page" (the PDF) |
+  | `.top` not hidden in print | A60: "the PDF holds the texts and nothing else", received "…#STN1PagerArchiveMessagesMapReports…" |
 
 ## Consequences
 
