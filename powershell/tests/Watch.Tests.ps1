@@ -83,8 +83,14 @@ BeforeAll {
             $last = foreach ($stream in $PS.Streams.Verbose, $PS.Streams.Debug) {
                 for ($i = [math]::Max(0, $stream.Count - 3); $i -lt $stream.Count; $i++) { $stream[$i].Message }
             }
+            # And where it is: its script call stack, innermost first.
+            $where = try {
+                @($PS.Runspace.Debugger.GetCallStack() | ForEach-Object -Process { "$($_.FunctionName):$($_.ScriptLineNumber)" }) -join ' < '
+            } catch {
+                "unknown ($($_.Exception.Message))"
+            }
             Save-TestDump
-            throw "The watch didn't stop within $TimeoutMs ms of Ctrl+C; state $($PS.InvocationStateInfo.State); last lines: $($last -join ' | ')"
+            throw "The watch didn't stop within $TimeoutMs ms of Ctrl+C; state $($PS.InvocationStateInfo.State); at $where; last lines: $($last -join ' | ')"
         }
         $PS.EndStop($stopping)
     }
