@@ -49,6 +49,8 @@ if ($IsWindows) {
 } else {
     tar -xzf $archive -C $Destination
     $pwsh = Join-Path -Path $Destination -ChildPath 'pwsh'
-    chmod +x $pwsh
+    # Some releases' archives leave createdump without its execute bit; the
+    # watch tests use it for a dump of a stuck test (ADR 0012).
+    chmod +x $pwsh (Join-Path -Path $Destination -ChildPath 'createdump')
 }
 Write-Output -InputObject $pwsh

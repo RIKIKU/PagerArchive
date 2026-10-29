@@ -185,7 +185,13 @@ function Watch-PagerArchiveMessage {
         $lost = $null        # how long the connection has been lost, while it is
         $attempt = 0         # tries since it was lost
         $renewed = $false    # renewed once after invalid_token, for this try
+        # Every stop cancels this, even one PowerShell loses (EventStream.ps1,
+        # ADR 0012), so the waits and each try check it too.
+        $stop = $PSCmdlet.PipelineStopToken
         while ($true) {
+            if ($stop.IsCancellationRequested) {
+                throw [System.Management.Automation.PipelineStoppedException]::new()
+            }
             $failure = $null
             try {
                 $connection = Get-PaConnection
@@ -195,7 +201,7 @@ function Watch-PagerArchiveMessage {
                 $query.after_id = $last
                 $names = @($query.Keys | Where-Object -FilterScript { $null -ne $query[$_] -and "$($query[$_])" -ne '' })
                 Write-Verbose -Message "GET /api/v1/stream ($($names -join ', '))"
-                $stream = Open-PaEventStream -Connection $connection -PathAndQuery ('/api/v1/stream' + (ConvertTo-PaQueryString -Query $query))
+                $stream = Open-PaEventStream -Connection $connection -PathAndQuery ('/api/v1/stream' + (ConvertTo-PaQueryString -Query $query)) -Stop $stop
                 Write-Debug -Message "GET /api/v1/stream answered $($stream.Status)"
                 if ($stream.Status -eq 401 -and $stream.Code -eq 'invalid_token' -and -not $renewed) {
                     # A token Authentik has since refused, or one that expired
@@ -271,10 +277,13 @@ function Watch-PagerArchiveMessage {
                     }
                 } catch {
                     $failure = $_
-                } finally {
-                    Close-PaEventStream -State $stream
-                    $stream = $null
                 }
+                # Not in a finally block: PowerShell loses a Ctrl+C that
+                # arrives while this command runs one of its own, and the
+                # watch would never end (ADR 0012). A stop skips this, and
+                # clean closes the stream.
+                Close-PaEventStream -State $stream
+                $stream = $null
                 if (-not $failure) {
                     continue
                 }
@@ -294,7 +303,7 @@ function Watch-PagerArchiveMessage {
             $attempt++
             $delay = [int][math]::Min(30, [math]::Pow(2, $attempt - 1))
             Write-Verbose -Message "Reconnecting to PagerArchive in $delay s (attempt $attempt)."
-            Wait-PaRetry -Seconds $delay
+            Wait-PaRetry -Seconds $delay -Stop $stop
         }
     }
     clean {

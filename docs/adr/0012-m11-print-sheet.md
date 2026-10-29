@@ -4,7 +4,7 @@ Date: 2026-10-29
 
 ## Status
 
-Proposed. Waiting for the owner, with two questions (at the end).
+Proposed. Waiting for the owner, with four questions (at the end).
 
 ## Context
 
@@ -133,6 +133,60 @@ Run on cld01 on 2026-10-29 (Go 1.27.2, Node 24.21.0 with Playwright's Chromium, 
   | `break-inside` and `page-break-inside` removed | 30 messages: "messages not whole on exactly one page" (the PDF) |
   | `.top` not hidden in print | A60: "the PDF holds the texts and nothing else", received "…#STN1PagerArchiveMessagesMapReports…" |
 
+## CI: the watch tests' hang, and faster runs (owner, 2026-10-29)
+
+Two requests on this branch, separate from the print sheet.
+
+### A. The hang in Watch.Tests.ps1
+
+**What was seen.** Main's run 40795721403 (the M10 merge, 07ba39e), attempt 1: in "PowerShell module (ubuntu-24.04, PowerShell 7.6.0)", Icon, Meta, Module and SignIn passed, then Watch.Tests.ps1 printed nothing for 50 minutes until it was cancelled. The rerun passed. The reviewer once saw the same on Windows.
+
+**Looking for it.** With the old tests: Watch.Tests.ps1 654 times (cld01: 163 under 7.6.0, 182 under 7.6.0 pinned to one CPU with two more cores kept busy, 159 under 7.6.7, 50 times inside the whole suite as CI runs it; this PC: 100 under 7.6.9), each run killed after 300 s, plus 300 stops timed at random moments just after a dropped connection. No hang. One timing failure: under load the first message took over 2 s, the limit of that one wait (now the file's usual 10 s; the check that output arrives while the stream is open is unchanged).
+
+**Every wait got a time limit** (requirement 2). In the old tests, the test thread could only hang in `PowerShell.Stop()` (in every `AfterEach` and the Ctrl+C test), `EndInvoke` (the `Select-Object -First` test), closing a runspace, or a socket write; everything else in the file already had a limit. Now `Stop-TestRunspace` stops with `BeginStop` and waits at most 10 s, `Close-TestRunspace` closes in at most 10 s, `EndInvoke` waits at most 10 s, and writes time out like reads. In the module, the one wait in the watch without a limit (the reply's stream after its headers) now has the connect limit. A watch that won't stop fails its test with what it was doing: its last `-Verbose` and `-Debug` lines and its script call stack (`Runspace.Debugger.GetCallStack()`); with `PA_TEST_DUMP_DIR` set (CI) the test also writes a dump of the process with `createdump` (CI uploads it when the job fails; `Install-PowerShell.ps1` now marks `createdump` executable, which 7.6.0's archive doesn't). Proved on a copy whose waits can't be interrupted: the file failed in 53 s naming three tests ("The watch didn't stop within 10000 ms of Ctrl+C; … at Wait-PaTask:34 < …"), where it used to hang.
+
+**Caught.** The first CI run with the limits (40815368401) failed 3 tests in 2 of the 4 PowerShell jobs (Windows 7.6.0, Ubuntu newest): "The watch didn't stop within 10000 ms of Ctrl+C; state Stopping". The test process then stayed alive for 14 minutes, until a PowerShell timer crashed it (`NullReferenceException` in `RunspacePoolInternal.CleanupCallback`). On cld01 the same happened 4 times in about 390 runs. In every case the watch had just lost its connection (each test ends by dropping it) and was then stopped. Sampling the stuck watch every 10 s for 70 s showed it **still running normally**: reconnecting again and again with growing backoff (attempts 3 and 4; 217 attempts in one case), its warnings giving the dropped connection as the reason, no error, and its state "Stopping" throughout. The stop request had been lost, not blocked.
+
+**The cause: PowerShell loses a stop that arrives while a command runs its own `finally` block.** To let `finally` blocks run commands while a pipeline is stopping, PowerShell clears the pipeline's stopping flag for the block and afterwards restores the value it had on entry. A stop that arrives meanwhile is overwritten, unless a command called from the block is running at that moment (that command keeps its own mark and throws when it returns). Further stops are ignored, because the pipeline is already "Stopping". Reproduced on its own, without the module: a command that spends its time in its own `finally` block lost 60 of 60 stops on Windows (7.6.9) and 20 of 20 on Linux (7.6.0); the same work outside a `finally` lost 0, and so did a `finally` calling a function. The watch closed its stream in a `finally` block of its own after every dropped connection, so a Ctrl+C at that moment was ignored for good: the old tests' `Stop()` then waited forever (main's hang), and a user's Ctrl+C would do nothing, and nor would the next, until the window was closed. It's rare because the window is short, which is why 654 local runs missed it.
+
+**The fix** (in the module, not only the tests):
+
+- `Watch-PagerArchiveMessage` has no `finally` block: the stream is closed in normal flow after the read loop, and a stop or error that skips that is covered by its `clean` block, which closes `$stream`.
+- As a second line, the watch takes `$PSCmdlet.PipelineStopToken` (PowerShell 7.6, the module's minimum), which every stop cancels and nothing restores, and passes it to its waits: `Wait-PaTask` (every 200 ms slice, through `Open-PaEventStream` and the stream's state) and `Wait-PaRetry` (which now waits on the token instead of `Start-Sleep`, so Ctrl+C ends a 30 s backoff at once). Each reconnect also checks it. A cancelled token ends the command with `PipelineStoppedException`, as Ctrl+C does. With the token, the reproduction above lost 0 of 60 (Windows) and 0 of 20 (Linux 7.6.0).
+- The other commands' `finally` blocks stay: they run once at the end of a command that ends anyway, so a lost stop there costs nothing.
+- **Tests** (`Watch-PagerArchiveMessage and a lost Ctrl+C`): the watch has no `finally` block (from its syntax tree, with the reason); `Wait-PaTask` and `Wait-PaRetry` end as soon as the token is cancelled, with no `Stop()` at all, as when PowerShell has lost the stop; and a command ending on the token alone stops even while PowerShell loses the stop, the PowerShell behaviour the fix relies on. Mutation proof (`mutation-checks.sh`): a `finally` put back around the close, `Wait-PaTask` ignoring the token, and `Wait-PaRetry` ignoring it, each make a test fail.
+
+**After the fix:** EVIDENCE-A.
+
+**Requirements 3 and 4.** Every CI job has `timeout-minutes`, set well above its usual time: tests 20 (usually 2), browser 45 (14), PowerShell 20 (1), each stack part 40 (8 to 11), stack-e2e 30 (5), images 30 (1.5 and 7.5), A15 40 (11), publishing 20, the client manifest and the Gallery 10, release binaries 15. `Invoke-Tests.ps1` uses Pester's Detailed output, so each test's name is printed as it finishes.
+
+### B. Faster CI
+
+**Browser tests in Playwright's image.** The browser job runs in `mcr.microsoft.com/playwright:v1.64.0-noble`, pinned by its index digest `sha256:06a9939e57531807f8d5fd76ce44b53165ffb7d7501d87ab10e285c20b1e971f`, the exact version in `web/package-lock.json`, checked by a step (`npx playwright --version`). It has the browsers and their libraries, and Node 24.21.0. It has no Docker, which `scripts/e2e.sh` used for PostGIS and the tests used for `psql`, so:
+
+- PostGIS (`postgis/postgis:18-3.6`, as before) is a service container, `postgres` on the job's network. `e2e.sh` takes its URL in `PA_E2E_DATABASE_URL` and applies the three logging settings it otherwise starts its container with (`ALTER SYSTEM`, then a reload). Without the variable, `e2e.sh` runs its own container as before.
+- `psql` comes from Ubuntu's `postgresql-client` (16.15), installed in the job; the tests' direct database changes (A50's join, A60's deleted message, the demoted admin) go through one helper, `sql()`, using `psql` with the URL or `docker exec` as before.
+- The job runs as root, so `HOME` is `/root` (Firefox won't start with someone else's home folder), and git is told to trust the runner's checkout, or `go build` can't stamp its version (the first attempt failed on exactly that).
+
+**The stack checks as three parallel jobs.** `scripts/stack-checks.sh` takes `PA_STACK_PART`: `accounts` (A23-A28, A33, A50's join, the locked-accounts metric), `secretstore` or `none` (the module's checks with that vault). Each part starts its own compose stack and sets up the first admin and the restart, as the whole run does; without the variable it runs everything, as before. CI runs the three as a matrix. I made the account checks a third job rather than adding them to one vault's job, so each check runs once and the three take about the same time. Each part ran on cld01 on its own: `none` and `secretstore` the same 8 module tests as the whole run, `accounts` the same 13 (427 s; a first try failed only on Go's 10-minute test limit while cld01 was at load 10 from the hang loops). Only the module parts install PowerShell; none of them needs Node or a browser.
+
+**stack-e2e as its own job, with the browser cached.** Section 11 in a browser runs the compose stack, which needs the runner's Docker and its ports on localhost, so it can't run in Playwright's container. It caches `~/.cache/ms-playwright` by Playwright's version (`actions/cache@v6`); the browser's system libraries are still installed with apt each time.
+
+**Unchanged:** the tests themselves, the browsers (Chromium, Firefox and WebKit, Playwright 1.64.0), Go, Node 24, PostGIS 18-3.6, PowerShell 7.6.0 for the stack. Publishing still needs every check: `needs` lists `test`, `web`, `stack` (all three parts), `stack-e2e`, `images`, `budget` and `powershell`. The container setup was first tried on cld01 the way CI runs it: `138 passed (15.9m)`.
+
+**Times** (GitHub's job timings, minutes):
+
+| Job | Before (39881826098) | Before (40805279958, this morning) | After (EVIDENCE-RUN) |
+|---|---|---|---|
+| Browser tests | 29.6 (installing browsers 18.4) | 14.9 (installing browsers 1.4) | EVIDENCE-WEB |
+| Against Authentik | 30.6, one job | 25.7, one job | EVIDENCE-STACK |
+| Section 11 in a browser | in the job above (2.5) | in the job above (2.9) | EVIDENCE-SE2E |
+| A15 short run | 10.5 | 10.5 | EVIDENCE-A15 |
+| Images (arm64) | 7.6 | 7.5 | EVIDENCE-ARM |
+| **Whole run** | **31.7** | **26.7** | **EVIDENCE-TOTAL** |
+
+Installing the browsers took 18 minutes in the run named in the request but 81 seconds this morning: apt's speed varies. The container removes that variation; most of the time saved comes from running the stack's parts in parallel. The longest job now is the browser tests themselves (about 12 minutes of tests).
+
 ## Consequences
 
 - Any signed-in user can collect up to 100 pages and print them as a pager shows them, or save them as a PDF.
@@ -145,3 +199,5 @@ Run on cld01 on 2026-10-29 (Go 1.27.2, Node 24.21.0 with Playwright's Chromium, 
 
 1. **A message taller than a paper page** (over about 3,000 characters at the print size, up to the 4,096-byte limit) is split across pages, because P2 says it's shown in full. Keep that, or print such a message in smaller type so it fits one page?
 2. **The browser's own headers and footers** (date, title, address, page numbers) appear if the print dialog's "Headers and footers" is ticked; the documentation says to untick it. CSS can't reliably turn them off in all three engines. Is the documentation enough?
+3. **The lost Ctrl+C is PowerShell's bug** (section A): a stop that arrives while a command runs its own `finally` block is dropped, in 7.6.0 and 7.6.9. The watch now works around it. Should I write it up for PowerShell's issue tracker (with the reproduction, no PagerArchive details), for you to post?
+4. **Three stack jobs, not two.** You asked for the two vault settings as two parallel jobs; I made the account checks a third, so nothing runs twice and the three take about the same time (section B). Keep three, or fold the account checks into one vault's job?

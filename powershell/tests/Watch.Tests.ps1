@@ -50,7 +50,7 @@ BeforeAll {
                     $script:TestWaits = $Waits
                     $script:TestRenewals = $Renewals
                     function script:Wait-PaRetry {
-                        param([int] $Seconds)
+                        param([int] $Seconds, [System.Threading.CancellationToken] $Stop)
                         $script:TestWaits.Enqueue($Seconds)
                         Start-Sleep -Milliseconds 20
                     }
@@ -553,6 +553,66 @@ Describe 'Watch-PagerArchiveMessage' {
             Stop-TestRunspace $ps
             Close-TestRunspace $ps
         }
+    }
+}
+
+# PowerShell loses a Ctrl+C that arrives while a command runs its own finally
+# block (ADR 0012): it clears the pipeline's stopping flag for the block and
+# restores the old value afterwards. The watch never ends by itself, so it
+# has no finally block, and its waits also check PSCmdlet.PipelineStopToken.
+Describe 'Watch-PagerArchiveMessage and a lost Ctrl+C' {
+    BeforeAll {
+        # Runs Script in its own runspace with the module loaded, stops it
+        # after DelayMs if it's still running, and says how it ended.
+        function Invoke-TestStop([scriptblock] $Script, [int] $DelayMs = 300) {
+            $ps = [powershell]::Create()
+            $null = $ps.AddScript("Import-Module -Name '$script:manifest' -Force").AddScript($Script)
+            $handle = $ps.BeginInvoke()
+            Start-Sleep -Milliseconds $DelayMs
+            $timer = [System.Diagnostics.Stopwatch]::StartNew()
+            Stop-TestRunspace $ps -TimeoutMs 5000
+            $null = $handle.AsyncWaitHandle.WaitOne(5000)
+            $out = @{ State = [string]$ps.InvocationStateInfo.State; Ms = $timer.ElapsedMilliseconds; Errors = @(Get-TestItem $ps.Streams.Error).Count }
+            Close-TestRunspace $ps
+            $out
+        }
+    }
+
+    It 'has no finally block, where PowerShell would lose a Ctrl+C' {
+        $ast = (Get-Command -Name Watch-PagerArchiveMessage -Module (Import-Module -Name $script:manifest -Force -PassThru)).ScriptBlock.Ast
+        $finally = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally }, $true)
+        @($finally).Count | Should -Be 0 -Because 'a stop that arrives while the command runs its own finally block is lost, and the watch would never end'
+    }
+
+    It 'ends its waits as soon as the stop token is cancelled: <Name>' -ForEach @(
+        @{ Name = 'Wait-PaTask'; Script = { & (Get-Module -Name PagerArchive) { $c = [System.Threading.CancellationTokenSource]::new(); $c.CancelAfter(100); Wait-PaTask -Task ([System.Threading.Tasks.Task]::Delay(60000)) -Stop $c.Token } } }
+        @{ Name = 'Wait-PaRetry'; Script = { & (Get-Module -Name PagerArchive) { $c = [System.Threading.CancellationTokenSource]::new(); $c.CancelAfter(100); Wait-PaRetry -Seconds 30 -Stop $c.Token } } }
+    ) {
+        # No Stop() here: only the token, as when PowerShell has lost the stop.
+        $ps = [powershell]::Create()
+        $null = $ps.AddScript("Import-Module -Name '$script:manifest' -Force").AddScript($Script)
+        $handle = $ps.BeginInvoke()
+        $handle.AsyncWaitHandle.WaitOne(10000) | Should -BeTrue -Because 'the wait ends when the token is cancelled'
+        $ps.InvocationStateInfo.State | Should -Be 'Stopped'
+        Close-TestRunspace $ps
+    }
+
+    It 'relies on a stop always cancelling PipelineStopToken, even one PowerShell loses' {
+        # A command that spends its time in its own finally block, ending on the token alone.
+        $result = Invoke-TestStop -Script {
+            function Test-Loop {
+                [CmdletBinding()]
+                param()
+                end {
+                    while (-not $PSCmdlet.PipelineStopToken.IsCancellationRequested) {
+                        try { $null = 1 } finally { [System.Threading.Thread]::Sleep(50) }
+                    }
+                }
+            }
+            Test-Loop
+        }
+        $result.State | Should -BeIn 'Stopped', 'Completed'
+        $result.Ms | Should -BeLessThan 3000
     }
 }
 

@@ -161,6 +161,17 @@ if [ -n "$PA_PWSH" ]; then
 		'-AllowUnencryptedAuthentication:([bool]$Connection.AllowUnencrypted)' '-AllowUnencryptedAuthentication'
 	mutate "the watch accepts any certificate" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
 		'$state.Client = [System.Net.Http.HttpClient]::new()' '$state.Client = [System.Net.Http.HttpClient]::new([System.Net.Http.HttpClientHandler]@{ ServerCertificateCustomValidationCallback = [System.Net.Http.HttpClientHandler]::DangerousAcceptAnyServerCertificateValidator })'
+	# M11 (ADR 0012): a Ctrl+C that PowerShell loses still ends the watch.
+	mutate "the watch closes its stream in a finally block, where PowerShell loses a Ctrl+C" powershell/PagerArchive/Public/Watch-PagerArchiveMessage.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		'                Close-PaEventStream -State $stream
+                $stream = $null
+                if (-not $failure) {' '                try { $null = $failure } finally { Close-PaEventStream -State $stream }
+                $stream = $null
+                if (-not $failure) {'
+	mutate "the watch's waits ignore its stop token" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		'        if ($Stop.IsCancellationRequested) {' '        if ($false) {'
+	mutate "the wait before reconnecting ignores the stop token" $P/EventStream.ps1 pester:powershell/tests/Watch.Tests.ps1 \
+		'    if (-not $Stop.CanBeCanceled) {' '    if ($true) {'
 	mutate "an icon download has no size limit while downloading" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \
 		'            if ($bytes.Length -gt $script:PaIconMaxBytes) {' '            if ($false) {'
 	mutate "an icon download has no time limit" $P/Icon.ps1 pester:powershell/tests/Icon.Tests.ps1 \
