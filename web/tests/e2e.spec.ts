@@ -1850,11 +1850,14 @@ test('print page search matches the search page', async ({ browser, request }) =
 			await expect.poll(async () => (await listIds(print)).length, `${role} ${s}`).toBe((await listIds(list)).length);
 			let want = await listIds(list);
 			expect(await listIds(print), `${role} ${s}`).toEqual(want);
-			// The same paging: older results with the button.
+			// The same paging: older results with the button. On the search
+			// page, scrolling to the button also loads them and removes it, so
+			// it's pressed there without scrolling (a click scrolls first, and
+			// in Firefox and WebKit then waits for a button that's gone).
 			const more = (p: Page) => p.getByRole('button', { name: 'Load older messages' });
 			while (await more(list).count()) {
 				await expect(more(print), `${role} ${s}: more`).toHaveCount(1);
-				await more(list).click();
+				await more(list).dispatchEvent('click');
 				await more(print).click();
 				await expect.poll(() => listIds(list)).not.toEqual(want);
 				want = await listIds(list);
