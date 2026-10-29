@@ -156,7 +156,7 @@ Two requests on this branch, separate from the print sheet.
 - The other commands' `finally` blocks stay: they run once at the end of a command that ends anyway, so a lost stop there costs nothing.
 - **Tests** (`Watch-PagerArchiveMessage and a lost Ctrl+C`): the watch has no `finally` block (from its syntax tree, with the reason); `Wait-PaTask` and `Wait-PaRetry` end as soon as the token is cancelled, with no `Stop()` at all, as when PowerShell has lost the stop; and a command ending on the token alone stops even while PowerShell loses the stop, the PowerShell behaviour the fix relies on. Mutation proof (`mutation-checks.sh`): a `finally` put back around the close, `Wait-PaTask` ignoring the token, and `Wait-PaRetry` ignoring it, each make a test fail.
 
-**After the fix:** EVIDENCE-A.
+**After the fix** (c0a31cd): Watch.Tests.ps1 900 times, every run passed, none stuck: on cld01 600 under 7.6.0 and 150 under 7.6.7 (five loops at once on four cores), on this PC 150 under 7.6.9. The same harness with the old module had stuck watches in 4 of about 390 runs. The whole Pester suite: `Passed 345, failed 0, skipped 4`. CI on c0a31cd (40824675900): all four PowerShell jobs passed.
 
 **Requirements 3 and 4.** Every CI job has `timeout-minutes`, set well above its usual time: tests 20 (usually 2), browser 45 (14), PowerShell 20 (1), each stack part 40 (8 to 11), stack-e2e 30 (5), images 30 (1.5 and 7.5), A15 40 (11), publishing 20, the client manifest and the Gallery 10, release binaries 15. `Invoke-Tests.ps1` uses Pester's Detailed output, so each test's name is printed as it finishes.
 
@@ -176,16 +176,26 @@ Two requests on this branch, separate from the print sheet.
 
 **Times** (GitHub's job timings, minutes):
 
-| Job | Before (39881826098) | Before (40805279958, this morning) | After (EVIDENCE-RUN) |
+| Job | Before (39881826098) | Before (40805279958, this morning) | After (40824675900, c0a31cd) |
 |---|---|---|---|
-| Browser tests | 29.6 (installing browsers 18.4) | 14.9 (installing browsers 1.4) | EVIDENCE-WEB |
-| Against Authentik | 30.6, one job | 25.7, one job | EVIDENCE-STACK |
-| Section 11 in a browser | in the job above (2.5) | in the job above (2.9) | EVIDENCE-SE2E |
-| A15 short run | 10.5 | 10.5 | EVIDENCE-A15 |
-| Images (arm64) | 7.6 | 7.5 | EVIDENCE-ARM |
-| **Whole run** | **31.7** | **26.7** | **EVIDENCE-TOTAL** |
+| Browser tests | 29.6 (installing browsers 18.4) | 14.9 (installing browsers 1.4) | 15.4 (starting the container 0.7, the tests 14.1) |
+| Against Authentik | 30.6, one job | 25.7, one job | 8.7, 11.3 and 9.1, three jobs at once (accounts, SecretStore, no vault) |
+| Section 11 in a browser | in the job above (2.5) | in the job above (2.9) | 4.1, its own job (the cached browser installed in 11 s) |
+| A15 short run | 10.5 | 10.5 | 10.1 |
+| Images (arm64) | 7.6 | 7.5 | 7.1 |
+| **Whole run** | **31.7** | **26.7** | **16.5** (15.4 in 40817394010, on 9ede8bd) |
 
 Installing the browsers took 18 minutes in the run named in the request but 81 seconds this morning: apt's speed varies. The container removes that variation; most of the time saved comes from running the stack's parts in parallel. The longest job now is the browser tests themselves (about 12 minutes of tests).
+
+### Evidence for A and B
+
+Run on cld01 on 2026-10-29 at c0a31cd, one after another:
+
+- **`scripts/mutation-checks.sh`:** 37 mutations, 37 guarded, none survived or failed to apply; the unmutated copy passed (`internal/acceptance` ok, the print sheet's browser tests "5 passed", Pester `Passed 345, failed 0`). The three new ones: a `finally` around the close fails "has no finally block, where PowerShell would lose a Ctrl+C" ("Expected 0 … but got 1"); `Wait-PaTask` and `Wait-PaRetry` ignoring the token each fail "ends its waits as soon as the stop token is cancelled" after 10 s.
+- **`scripts/e2e.sh`** (with Docker, as before): `138 passed (15.0m)`, "API log lines checked: 527, page texts found: 0".
+- **`scripts/stack-checks.sh`** (every part, as before): every phase `ok`, 34 passed, no `FAIL`; "API log lines checked: 563, page texts or email addresses found: 0".
+- **`scripts/stack-e2e.sh --project=chromium`:** `1 passed`.
+- **CI:** 40824675900 (c0a31cd) passed every job, in the times above.
 
 ## Consequences
 
