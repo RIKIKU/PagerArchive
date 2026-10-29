@@ -4,7 +4,7 @@ Date: 2026-10-23
 
 ## Status
 
-Proposed. The owner answered the questions on 2026-10-23 (at the end) and recorded the answers in SPEC.md (R63, R65, R66) and the guidelines (§3). It stays Proposed until the branch is merged.
+Accepted (owner, 2026-10-29). The owner answered the questions on 2026-10-23 (at the end), recorded in SPEC.md (R63, R65, R66) and the guidelines (§3), and tested adding an icon on the live copy.
 
 ## Context
 
