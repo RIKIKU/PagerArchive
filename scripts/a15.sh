@@ -141,7 +141,7 @@ if [ -n "$COLLECTOR" ]; then
 	# Telemetry was really on: the collector got spans.
 	grep -q 'received [1-9][0-9]* spans' "$OUT/a15-telemetry.txt" || { echo "A15 with telemetry: the collector got no spans" >&2; budget_status=1; }
 fi
-awk -F,-v warm=$((LOAD_START + WARMUP * 60)) -v idle0=$IDLE_START '
+awk -F, -v warm=$((LOAD_START + WARMUP * 60)) -v idle0=$IDLE_START '
 	NR == 1 { next }
 	$2 == "load" && $1 >= warm { if ($4 > peak[$3]) peak[$3] = $4 }
 	{ if ($4 > all[$3]) all[$3] = $4 }
