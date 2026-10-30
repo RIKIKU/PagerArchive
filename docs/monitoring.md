@@ -188,7 +188,7 @@ Measured on the test machine (`scripts/monitoring-checks.sh`, two runs on 2026-1
 | Prometheus | 40–44 MiB | 42–46 MiB | 85–94 MiB |
 | **All five** (sum of each one's peak) | **618–752 MiB** | **638–832 MiB** | **960–1,334 MiB** |
 
-Grafana is most of it, and varies most between runs. Plan on about 1 GB, more while someone has dashboards open.
+Grafana is most of it, and varies most between runs. Plan on about 1 GB, more while someone has dashboards open. (These runs used Tempo 2.10.10. Tempo 3.1.1, now in `compose.yaml`, used about a quarter as much idle: 34 MiB against 127 MiB, measured side by side with nothing else running.)
 
 The stack isn't counted in PagerArchive's resource budget (like Authentik). On disk, traces and logs are kept 7 days (`tempo/tempo.yaml`'s `block_retention`, `loki/loki.yaml`'s `retention_period`) and metrics 30 days (`METRICS_RETENTION` in `.env`). At hobby scale (about a page a minute) that's well under a gigabyte.
 
@@ -220,8 +220,10 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 - **Metrics but no traces or logs:** `OTEL_EXPORTER_OTLP_ENDPOINT` isn't set on the API (after adding it, `docker compose up -d api` recreates the API with it). The API's log says `telemetry on` when it's set.
 - **The API's log says "dropping telemetry":** it can't reach Alloy. Is the monitoring stack running? `docker compose ps` in `deploy/monitoring`.
 - **No client metrics:** the client needs `OTEL_EXPORTER_OTLP_ENDPOINT`, and a client on another machine needs `compose.clients.yaml` and a reachable `ALLOY_OTLP_BIND`. It sends metrics every `OTEL_METRIC_EXPORT_INTERVAL` (default a minute).
+- **Tempo logs `error calling scheduler` … `no jobs found`** about once a minute: its background worker asking for compaction or retention work when there is none. It's harmless.
+- **A trace from the last 30 seconds isn't found yet:** Tempo 3 leaves the newest 30 s out of searches (`query_end_cutoff`) while it's still being written. Wait a moment and search again.
 - **A span named `unnamed`:** the app saw a span name that isn't on its allowlist. Report it: it's a bug, and nothing private left with it.
 
 ## Upgrading the stack
 
-Each image is pinned by version and digest in `compose.yaml` (`grafana/grafana:13.2.5@sha256:...`), so `docker compose pull` never changes anything by surprise. To upgrade, change both the version and the digest (`docker buildx imagetools inspect grafana/grafana:<version>` shows the digest), read the release notes, and run `scripts/monitoring-checks.sh`, which checks the alerts end to end. Tempo is on its 2.10 line, which is still maintained; Tempo 3 changes how it stores data, and moving to it is a separate step.
+Each image is pinned by version and digest in `compose.yaml` (`grafana/grafana:13.2.5@sha256:...`), so `docker compose pull` never changes anything by surprise. To upgrade, change both the version and the digest (`docker buildx imagetools inspect grafana/grafana:<version>` shows the digest), read the release notes, and run `scripts/monitoring-checks.sh`, which checks the alerts end to end.

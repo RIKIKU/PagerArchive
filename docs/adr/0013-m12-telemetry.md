@@ -186,12 +186,12 @@ Metrics are sent every `OTEL_METRIC_EXPORT_INTERVAL` (the standard 60 s; the doc
 | Service | Image (pinned by digest in the file) | Role |
 |---|---|---|
 | Alloy | `grafana/alloy:v1.21.3` | OTLP receiver on 4318, scrapes `/metrics` every 15 s with the metrics token (OpenMetrics, for exemplars), the second-line allowlist, then to the stores |
-| Tempo | `grafana/tempo:2.10.10` | traces, 7 days; TraceQL metrics (`local-blocks`) for "by user ID" and "time in each step" |
+| Tempo | `grafana/tempo:3.1.1` | traces, 7 days, in one process with no Kafka; TraceQL metrics for "by user ID" and "time in each step" read the stored traces |
 | Loki | `grafana/loki:3.7.9` | logs over OTLP (trace and span IDs as structured metadata), 7 days |
 | Prometheus | `prom/prometheus:v3.15.1` | metrics by remote write from Alloy, with exemplar storage, 30 days |
 | Grafana | `grafana/grafana:13.2.5` | the only published port; admin password from `.env` (`.env.example` shipped), anonymous access and sign-up off |
 
-- **Versions**: the newest stable release of each on 2026-10-30, except Tempo: 2.10.10 rather than 3.1.1. Tempo 3 changes its storage architecture; the 2.10 line is still maintained (2.10.10 was released the same day as 3.1.1), and the config here is the well-known single-binary one. Moving to 3 is a separate step (Question 3).
+- **Versions**: the newest stable release of each on 2026-10-30. Tempo was first 2.10.10 and moved to 3.1.1 at the owner's request ("Tempo 3.1.1", below).
 - **LAN only**: Tempo, Loki and Prometheus are on an `internal` network with no way out. Grafana also joins an ordinary network, because Docker can't publish a port from an internal one. Nothing calls home: Grafana's usage reports, update checks, news and plugin downloads, Loki's and Tempo's usage reports, and Alloy's reporting are off.
 - **Clients on other machines** need Alloy's OTLP port. It isn't published by default (the brief: only Grafana's port); `compose.clients.yaml` publishes it on `ALLOY_OTLP_BIND` for those who want client telemetry from other machines (Question 1).
 - **Provisioned from files**: the three data sources, linked both ways (a Loki line's `trace_id` opens Tempo; a span's logs open Loki; a Prometheus exemplar opens Tempo); the three dashboards (`grafana/dashboards/*.json`: a page's path, requests and load, clients; read-only in Grafana); and the two alert rules (`rules.yaml`).
@@ -317,6 +317,20 @@ Unmutated, the same run: `ok internal/acceptance 229.191s`, `--- PASS: TestA65To
 
 **CI**: run 41003775728 (b66d984), every job passed, publishing after all of them (nothing published from a branch). The last commit's run is in the report.
 
+## Tempo 3.1.1 (owner, 2026-10-31)
+
+The first version of this branch used Tempo 2.10.10, on the grounds that Tempo 3 "changes its storage design". That was from memory, not checked. The owner asked for the check, not wanting to hold back a major release this early in the project.
+
+**What changed in 3** (the 3.0 release notes and "Migrate to 3.0"): the ingester is gone, and writes go through a live store and block builder ("Project Rhythm"). In microservices mode those are joined by Kafka; **in monolithic mode, which is how this stack runs Tempo, everything runs in one process without Kafka**. For our config that means:
+
+- the `ingester` and `compactor` sections are gone: 3.1.1 refuses the 2.10 file (`field ingester not found in type app.Config`). Retention moves to the backend scheduler, which plans it, and the backend worker, which carries it out. Each has its own `block_retention` (the effective config showed the scheduler's still at its default, 336 h, with only the worker's set), so `tempo.yaml` sets both to 168 h;
+- the metrics-generator's `local_blocks` processor is gone: TraceQL metrics (the dashboards' "requests by user ID", "time in each step" and "slowest queries") are answered from the stored traces themselves;
+- `tempo-cli migrate config --mode=monolithic` (3.1.1) stopped on our file (`field traces_storage not found in type generator.Config`), so the new `tempo.yaml` is written by hand, from the effective config 3.1.1 printed (`/status/config`);
+- new defaults that show: searches leave out the newest 30 s (`query_end_cutoff`), and the idle backend worker logs `error calling scheduler … no jobs found` about once a minute. Both are in `docs/monitoring.md`'s troubleshooting;
+- stored traces: nobody runs this stack yet, so there's no 2.10 data to carry over. (3.0 reads 2.x blocks, per the release notes; traces are kept a week anyway.)
+
+**Checked** (cld01, `scripts/monitoring-checks.sh -s`, Tempo 3.1.1): A65 passed (`"Client not receiving" fired … 31s`, `resolved 24s`, `"API unreachable" fired 58s`, `resolved 29s`), and the screenshots, which open a page's trace and the three dashboards with their TraceQL metrics panels, were taken from it. Memory: the monitoring stack alone, idle for a minute, nothing else changed: Tempo 3.1.1 34 MiB against 2.10.10's 127 MiB (Alloy 58 and 48 MiB). In the full run Tempo peaked at 58 MiB idle, 94 MiB during A65 and 224 MiB while dashboards were open, as with 2.10.
+
 ## Consequences
 
 - An operator who runs the example stack can follow one page from the receiver's decoder to each delivery attempt, see where time goes, see which routes and which user numbers made the load, and is told when a receiver goes quiet or the API is unreachable, without any page text, query, secret or address leaving PagerArchive.
@@ -328,7 +342,7 @@ Unmutated, the same run: `ok internal/acceptance 229.191s`, `--- PASS: TestA65To
 
 1. **Clients on other machines and Alloy's OTLP port.** The brief says only Grafana's port is published. R74's client telemetry needs a receiver elsewhere on the LAN to reach Alloy. I left the port unpublished and added `compose.clients.yaml` to publish it on a LAN address when wanted. Anyone who can reach it can send telemetry (Alloy's receiver has no authentication here). Keep it opt-in like this, or publish it by default on the LAN, or add a bearer token on Alloy's receiver (`OTEL_EXPORTER_OTLP_HEADERS` on the clients)?
 2. **The alert threshold lives in `rules.yaml`**, not `.env`, because Grafana doesn't fill settings into alert rules (§9). Fine, or would you rather `.env` drove it (Grafana's container would then write `rules.yaml` from a template at start)?
-3. **Tempo 2.10 rather than 3.1** (§9). Keep 2.10 for now?
+3. ~~Tempo 2.10 rather than 3.1?~~ Answered (owner, 2026-10-31): don't hold back a major release this early. Moved to 3.1.1 ("Tempo 3.1.1", below).
 4. **Resource attributes**: only standard keys are kept from `OTEL_RESOURCE_ATTRIBUTES` (§3). A deployment wanting its own (`site=north`) would see them dropped. Keep it strict?
 5. **Integration IDs in telemetry**: delivery spans and exported log lines don't carry the integration's ID (R70 names message, alias and job IDs; I treated integrations the same, as things users own). Troubleshooting one failing integration then means the app's own delivery list. Keep them out?
 6. **A33 failed once on cld01** (Evidence) and passed on the immediate rerun and in every CI run. Shall I look into making that check (or the lock it tests) robust to slow recording of failed codes, as a separate piece of work?

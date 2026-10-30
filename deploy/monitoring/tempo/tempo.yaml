@@ -1,4 +1,7 @@
-# Tempo, single process, traces on the local disk (the tempo volume).
+# Tempo 3, single process (all of Tempo in one program, no Kafka), traces
+# on the local disk (the tempo volume). The dashboards' TraceQL metrics
+# ("requests by user ID", "time in each step") are answered from the
+# stored traces themselves; Tempo 3 needs no metrics-generator for them.
 server:
   http_listen_port: 3200
   log_level: warn
@@ -11,25 +14,17 @@ distributor:
         http:
           endpoint: 0.0.0.0:4318
 
-ingester:
-  max_block_duration: 5m
-
-# Traces are kept 7 days (R76).
-compactor:
+# Traces are kept 7 days (R76). The backend scheduler plans the deletions
+# and the backend worker carries them out; both read a retention, so both
+# are set.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        block_retention: 168h
+backend_worker:
   compaction:
     block_retention: 168h
-
-# Metrics from traces, kept in Tempo itself, so the dashboards can ask
-# "requests by user ID" and "time in each step" with TraceQL (local-blocks).
-metrics_generator:
-  storage:
-    path: /var/tempo/generator/wal
-  traces_storage:
-    path: /var/tempo/generator/traces
-  processor:
-    local_blocks:
-      filter_server_spans: false
-      flush_to_storage: true
 
 storage:
   trace:
@@ -38,11 +33,6 @@ storage:
       path: /var/tempo/wal
     local:
       path: /var/tempo/blocks
-
-overrides:
-  defaults:
-    metrics_generator:
-      processors: [local-blocks]
 
 usage_report:
   reporting_enabled: false
