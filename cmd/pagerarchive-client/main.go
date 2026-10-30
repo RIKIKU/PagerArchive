@@ -14,6 +14,11 @@
 //	RADIO_PPM        rtl_fm frequency correction (default 0)
 //	POCSAG_BAUDS     comma-separated baud rates to decode (default 512,1200,2400)
 //	MULTIMON_MODE    multimon-ng -f mode: alpha, numeric or auto (default alpha)
+//
+// Telemetry (R69-R74, docs/monitoring.md) is off unless the standard
+// OTEL_EXPORTER_OTLP_ENDPOINT is set; the other OTEL_* settings apply as
+// usual. Its service.name is pagerarchive-client and its
+// service.instance.id the client's ID.
 package main
 
 import (
@@ -33,6 +38,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/client"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 var version = "dev"
@@ -44,12 +50,13 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
-		log.Error(err.Error())
+		log.Error("client stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(plain *slog.Logger) error {
+	log := plain
 	serverURL, id := os.Getenv("SERVER_URL"), os.Getenv("CLIENT_ID")
 	key := os.Getenv("CLIENT_KEY")
 	if f := os.Getenv("CLIENT_KEY_FILE"); key == "" && f != "" {
@@ -74,10 +81,27 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Telemetry: log lines go to stderr as before and, when it's on, over
+	// OTLP too (R73); the console's page text never does (R13a).
+	tel := telemetry.Start(ctx, telemetry.Settings{ServiceName: "pagerarchive-client", Version: version, InstanceID: id, Metrics: true, Log: plain})
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tel.Shutdown(flush)
+	}()
+	log = slog.New(tel.LogHandler(plain.Handler(), "pagerarchive-client"))
+	tracer := tel.Tracer("pagerarchive-client")
+	radio := os.Getenv("RADIO_FREQUENCY") != ""
+
 	buf := client.NewBuffer(bufSize)
+	metrics, err := client.NewMetrics(tel.Meter("pagerarchive-client"), buf, radio)
+	if err != nil {
+		log.Error("telemetry: client metrics are off", "error", err.Error())
+	}
+	buf.Metrics = metrics
 	sender := &client.Sender{
 		URL: serverURL, Key: key, HTTP: &http.Client{}, Buffer: buf, Log: log,
-		MinBackoff: time.Second, MaxBackoff: time.Minute,
+		MinBackoff: time.Second, MaxBackoff: time.Minute, Tracer: tracer, Metrics: metrics,
 	}
 	sendDone := make(chan struct{})
 	sendCtx, stopSend := context.WithCancel(context.Background())
@@ -87,22 +111,27 @@ func run(log *slog.Logger) error {
 	reader := &client.Reader{
 		ClientID: id, Adapter: decoder.Multimon{}, Buffer: buf, Now: time.Now,
 		PrintPages: os.Getenv("PRINT_PAGES") == "true", Stdout: os.Stdout, Log: log,
+		Tracer: tracer, Metrics: metrics,
 	}
 	var input io.Reader = os.Stdin
 	var wait func() error
-	if freq := os.Getenv("RADIO_FREQUENCY"); freq != "" {
+	if radio {
+		freq := os.Getenv("RADIO_FREQUENCY")
 		out, w, err := startRadio(ctx, freq)
 		if err != nil {
 			return err
 		}
 		input, wait = out, w
+		metrics.Radio(true)
 		log.Info("receiving", "frequency", freq, "client", id, "version", version)
 	} else {
 		log.Info("reading decoder output on stdin", "client", id, "version", version)
 	}
 	readErr := reader.Run(input)
 	if wait != nil {
-		if err := wait(); err != nil && ctx.Err() == nil {
+		err := wait()
+		metrics.Radio(false)
+		if err != nil && ctx.Err() == nil {
 			readErr = errors.Join(readErr, fmt.Errorf("radio pipeline stopped: %w", err))
 		}
 	}

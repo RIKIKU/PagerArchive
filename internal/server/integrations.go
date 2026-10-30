@@ -13,13 +13,13 @@ import (
 // integrationsError answers a failed integrations operation: a refusal
 // with its message, anything else as a server error. Neither holds page
 // text or secrets.
-func (s *Server) integrationsError(w http.ResponseWriter, op string, err error) {
+func (s *Server) integrationsError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	var refusal *integrations.Error
 	if errors.As(err, &refusal) {
 		problem(w, refusal.Status, refusal.Msg)
 		return
 	}
-	s.Log.Error(op, "error", err.Error())
+	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong")
 }
 
@@ -44,7 +44,7 @@ func (s *Server) listIntegrations(w http.ResponseWriter, r *http.Request) {
 	if s.Integrations != nil {
 		views, err := s.Integrations.List(r.Context(), currentUser(r))
 		if err != nil {
-			s.integrationsError(w, "integrations", err)
+			s.integrationsError(w, r, "integrations", err)
 			return
 		}
 		out.Integrations = views
@@ -67,7 +67,7 @@ func (s *Server) createIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.Integrations.Create(r.Context(), currentUser(r), req)
 	if err != nil {
-		s.integrationsError(w, "create integration", err)
+		s.integrationsError(w, r, "create integration", err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, v)
@@ -80,7 +80,7 @@ func (s *Server) getIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.Integrations.Get(r.Context(), currentUser(r), id)
 	if err != nil {
-		s.integrationsError(w, "integration", err)
+		s.integrationsError(w, r, "integration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
@@ -94,7 +94,7 @@ func (s *Server) updateIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	v, err := s.Integrations.Update(r.Context(), currentUser(r), id, req)
 	if err != nil {
-		s.integrationsError(w, "update integration", err)
+		s.integrationsError(w, r, "update integration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
@@ -106,7 +106,7 @@ func (s *Server) deleteIntegration(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Integrations.Delete(r.Context(), currentUser(r), id); err != nil {
-		s.integrationsError(w, "delete integration", err)
+		s.integrationsError(w, r, "delete integration", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -119,7 +119,7 @@ func (s *Server) testIntegration(w http.ResponseWriter, r *http.Request) {
 	}
 	res, err := s.Integrations.Test(r.Context(), currentUser(r), id)
 	if err != nil {
-		s.integrationsError(w, "test integration", err)
+		s.integrationsError(w, r, "test integration", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -132,7 +132,7 @@ func (s *Server) pauseIntegration(admin bool) http.HandlerFunc {
 			return
 		}
 		if err := s.Integrations.Pause(r.Context(), currentUser(r), id, admin); err != nil {
-			s.integrationsError(w, "pause integration", err)
+			s.integrationsError(w, r, "pause integration", err)
 			return
 		}
 		w.WriteHeader(http.StatusNoContent)
@@ -146,7 +146,7 @@ func (s *Server) resumeIntegration(admin bool) http.HandlerFunc {
 			return
 		}
 		if err := s.Integrations.Resume(r.Context(), currentUser(r), id, admin); err != nil {
-			s.integrationsError(w, "resume integration", err)
+			s.integrationsError(w, r, "resume integration", err)
 			return
 		}
 		s.Integrations.Wake()
@@ -161,7 +161,7 @@ func (s *Server) integrationDeliveries(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Integrations.Deliveries(r.Context(), currentUser(r), id)
 	if err != nil {
-		s.integrationsError(w, "deliveries", err)
+		s.integrationsError(w, r, "deliveries", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -174,7 +174,7 @@ func (s *Server) suggestSelection(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Integrations.Suggest(r.Context(), r.URL.Query().Get("q"))
 	if err != nil {
-		s.integrationsError(w, "selection", err)
+		s.integrationsError(w, r, "selection", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -208,12 +208,12 @@ func (s *Server) adminUser(w http.ResponseWriter, r *http.Request) {
 	}
 	out := AdminUser{User: users[i], Integrations: []integrations.AdminView{}}
 	if out.Tree, out.Deactivations, err = s.treeAndRecords(r.Context(), id); err != nil {
-		s.accountsError(w, "invite tree", err)
+		s.accountsError(w, r, "invite tree", err)
 		return
 	}
 	if s.Integrations != nil {
 		if out.Integrations, err = s.Integrations.AdminList(r.Context(), id); err != nil {
-			s.integrationsError(w, "admin integrations", err)
+			s.integrationsError(w, r, "admin integrations", err)
 			return
 		}
 	}
@@ -232,7 +232,7 @@ func (s *Server) getAllowList(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.Integrations.AllowList(r.Context())
 	if err != nil {
-		s.integrationsError(w, "allow list", err)
+		s.integrationsError(w, r, "allow list", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, AllowListBody{Entries: a.Entries()})
@@ -245,7 +245,7 @@ func (s *Server) putAllowList(w http.ResponseWriter, r *http.Request) {
 	}
 	a, err := s.Integrations.SetAllowList(r.Context(), currentUser(r), body.Entries)
 	if err != nil {
-		s.integrationsError(w, "allow list", err)
+		s.integrationsError(w, r, "allow list", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, AllowListBody{Entries: a.Entries()})

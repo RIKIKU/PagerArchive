@@ -188,6 +188,12 @@ scrape_configs:
 
 An alert for a quiet receiver, for example: `pagerarchive_client_receiving == 0`.
 
+Since M12, `/metrics` also has requests by route and status with their durations (and, for a scraper that asks for OpenMetrics, exemplars linking them to traces), the database pool, open live-update connections, and the Go runtime's memory and CPU. The names above are unchanged.
+
+## Monitoring and telemetry
+
+The API and the receiving clients can also send traces and logs (and the clients metrics) over OTLP, and `deploy/monitoring` is a ready-made Grafana stack (Alloy, Tempo, Loki, Prometheus, Grafana) with dashboards and alerts for a client that stops and an API that's unreachable. It's off until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Monitoring](monitoring.md).
+
 ## When the database restarts
 
 Authentik's workers can hang on database connections that went stale when the `db` container restarted. Sign-in pages may still load, but invitation and code emails stop going out. So whenever `db` restarts (an upgrade, a crash, or the host rebooting and starting containers in a different order), restart Authentik afterwards, from the directory with `compose.yaml`:

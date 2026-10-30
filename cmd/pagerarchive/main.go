@@ -27,6 +27,7 @@ import (
 	"time"
 	_ "time/tzdata" // the server image has no zoneinfo (R35a)
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
@@ -42,6 +43,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 	"github.com/RIKIKU/PagerArchive/web"
 )
 
@@ -107,6 +109,9 @@ serve reads its settings from the environment:
   METRICS_TOKEN                bearer token for GET /metrics (default: metrics off)
   AUTHENTIK_METRICS_DB_PASSWORD  the pagerarchive_metrics role's password, for the
                                locked-accounts metric (or AUTHENTIK_METRICS_DATABASE_URL)
+  OTEL_EXPORTER_OTLP_ENDPOINT  where to send traces and logs over OTLP/HTTP, e.g.
+                               http://alloy:4318 (default: telemetry off); the other
+                               standard OTEL_* settings apply (docs/monitoring.md)
 `
 
 func main() {
@@ -152,7 +157,18 @@ func getenv(name, def string) string {
 }
 
 func serve(stderr io.Writer) error {
-	log := slog.New(slog.NewJSONHandler(stderr, nil))
+	plain := slog.New(slog.NewJSONHandler(stderr, nil))
+	// Telemetry (R69-R75, docs/monitoring.md): off unless OTEL_* says where
+	// to send it. Log lines go to stderr as before and, when it's on, over
+	// OTLP too (R73). Metrics stay on /metrics (R75).
+	tel := telemetry.Start(context.Background(), telemetry.Settings{ServiceName: "pagerarchive", Version: version, Log: plain})
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tel.Shutdown(flush)
+	}()
+	log := slog.New(tel.LogHandler(plain.Handler(), "pagerarchive"))
+	tracer := tel.Tracer("pagerarchive")
 
 	// Profiles first: an invalid profile stops the server before anything
 	// else happens (R1, A14).
@@ -178,7 +194,11 @@ func serve(stderr io.Writer) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	st, err := store.Open(ctx, dbURL)
+	var dbTracer []pgx.QueryTracer
+	if tel.On() {
+		dbTracer = append(dbTracer, store.Tracer{T: tracer})
+	}
+	st, err := store.Open(ctx, dbURL, dbTracer...)
 	if err != nil {
 		return err
 	}
@@ -222,7 +242,7 @@ func serve(stderr io.Writer) error {
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
 	worker := &reparse.Worker{
 		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
-		ProfileHash: hash, Log: log, Poll: time.Minute,
+		ProfileHash: hash, Log: log, Poll: time.Minute, Tracer: tracer,
 	}
 	if err := worker.CheckProfiles(ctx); err != nil {
 		return fmt.Errorf("profile change check: %s", store.SafeError(err))
@@ -241,7 +261,7 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log}
+	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer}
 	go job.Run(ctx)
 
 	// Integrations (R47-R51c, ADR 0006). Without a key they're off, and the
@@ -256,7 +276,7 @@ func serve(stderr io.Writer) error {
 	}
 	integ := &integrations.Service{
 		Store: st, Network: net, Agencies: set.Agencies, Box: box, Presets: integrations.DefaultPresets(),
-		AppURL: auth.appURL, Location: loc, Version: version, Log: log, Now: time.Now,
+		AppURL: auth.appURL, Location: loc, Version: version, Log: log, Now: time.Now, Tracer: tracer,
 	}
 	integ.Guard = &integrations.Guard{Allow: integ.AllowList}
 	if n, err := integ.RotateKeys(ctx); err != nil {
@@ -301,7 +321,9 @@ func serve(stderr io.Writer) error {
 			Streets:  ix,
 			Geo:      geocoder,
 			OnStored: integ.Enqueue,
+			Tracer:   tracer,
 		},
+		Tracer:   tracer,
 		Log:      log,
 		Now:      time.Now,
 		Hub:      hub,

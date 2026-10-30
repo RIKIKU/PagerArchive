@@ -1,0 +1,116 @@
+# Example monitoring stack for PagerArchive (SPEC.md R76, docs/monitoring.md):
+# Grafana Alloy collects, Tempo keeps traces, Loki logs, Prometheus metrics,
+# and Grafana shows them, with dashboards and alert rules provisioned from
+# the files here.
+#
+# It runs next to PagerArchive's own compose project and joins its network,
+# so Alloy can scrape the API's /metrics and the API can send it OTLP:
+#
+#   cd deploy/monitoring
+#   cp .env.example .env        # set GRAFANA_ADMIN_PASSWORD and PA_METRICS_TOKEN
+#   docker compose up -d
+#
+# LAN only: Grafana's port is the only one published. Everything else
+# talks on the internal network. Receiving clients on other machines need
+# Alloy's OTLP port too: add compose.clients.yaml (docs/monitoring.md).
+name: pagerarchive-monitoring
+
+services:
+  alloy:
+    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    restart: unless-stopped
+    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
+    environment:
+      # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
+      PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
+      # Where the API is, on PagerArchive's network.
+      PA_API_ADDRESS: ${PA_API_ADDRESS:-api:8080}
+    volumes:
+      - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - alloy:/var/lib/alloy
+    networks: [monitoring, pagerarchive]
+    depends_on: [tempo, loki, prometheus]
+
+  tempo:
+    image: grafana/tempo:2.10.10@sha256:12b0820f13ffa10ce956b6e9acc3b03f3cffded99109be6cc09d106fe56e5d38
+    restart: unless-stopped
+    command: [-config.file=/etc/tempo/tempo.yaml]
+    volumes:
+      - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo:/var/tempo
+    networks: [monitoring]
+
+  loki:
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    restart: unless-stopped
+    command: [-config.file=/etc/loki/loki.yaml]
+    volumes:
+      - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki:/loki
+    networks: [monitoring]
+
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=${METRICS_RETENTION:-30d}
+      # Alloy pushes what it scrapes and receives (remote write), with
+      # exemplars: the trace IDs of sample requests.
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus:/prometheus
+    networks: [monitoring]
+
+  grafana:
+    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      # Grafana shows client and user IDs: admins only, no anonymous access,
+      # no sign-up (R76).
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000}
+      # Nothing leaves the LAN: no usage reports, update checks, news or
+      # plugin downloads.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES: "false"
+      GF_NEWS_NEWS_FEED_ENABLED: "false"
+      GF_PLUGINS_PREINSTALL_DISABLED: "true"
+    volumes:
+      - ./grafana/provisioning/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./grafana/provisioning/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # A file, not the folder, so an overlay can add its own (test/compose.yaml).
+      - ./grafana/provisioning/alerting/rules.yaml:/etc/grafana/provisioning/alerting/rules.yaml:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana:/var/lib/grafana
+    ports:
+      - "${GRAFANA_BIND:-127.0.0.1:3000}:3000"
+    # An internal network can't publish a port, so Grafana alone also joins
+    # an ordinary one.
+    networks: [monitoring, grafana]
+    depends_on: [tempo, loki, prometheus]
+
+networks:
+  # No way out: Tempo, Loki and Prometheus reach nothing but each other.
+  monitoring:
+    internal: true
+  grafana:
+  # PagerArchive's own network: "pagerarchive_default" for the compose
+  # file at the top of the repository.
+  pagerarchive:
+    external: true
+    name: ${PAGERARCHIVE_NETWORK:-pagerarchive_default}
+
+volumes:
+  alloy:
+  tempo:
+  loki:
+  prometheus:
+  grafana:

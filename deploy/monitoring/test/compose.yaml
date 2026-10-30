@@ -1,0 +1,18 @@
+# Test overlay for the monitoring stack (scripts/monitoring-checks.sh, A65),
+# never for a deployment:
+#   - a webhook contact point that receives every alert (PA_ALERT_WEBHOOK_URL,
+#     a receiver the test runs on the host), and a fast notification policy;
+#   - Alloy's OTLP port on 127.0.0.1, for a client run on the host.
+services:
+  grafana:
+    volumes:
+      - ./test/alerting-test.yaml:/etc/grafana/provisioning/alerting/test.yaml:ro
+    environment:
+      PA_ALERT_WEBHOOK_URL: ${PA_ALERT_WEBHOOK_URL:?set PA_ALERT_WEBHOOK_URL}
+    extra_hosts:
+      - host.docker.internal:host-gateway
+    # The test's webhook receiver is on the host: Grafana needs a way out of
+    # the internal network, which the grafana network gives it.
+  alloy:
+    ports:
+      - "${ALLOY_OTLP_BIND:-127.0.0.1:14318}:4318"

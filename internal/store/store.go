@@ -29,9 +29,17 @@ type Store struct {
 	*db.Queries
 }
 
-// Open connects and applies pending migrations.
-func Open(ctx context.Context, url string) (*Store, error) {
-	pool, err := pgxpool.New(ctx, url)
+// Open connects and applies pending migrations. A tracer, if given, traces
+// database calls (Tracer).
+func Open(ctx context.Context, url string, tracer ...pgx.QueryTracer) (*Store, error) {
+	cfg, err := pgxpool.ParseConfig(url)
+	if err != nil {
+		return nil, fmt.Errorf("database: %s", SafeError(err))
+	}
+	if len(tracer) > 0 {
+		cfg.ConnConfig.Tracer = tracer[0]
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("database: %s", SafeError(err))
 	}

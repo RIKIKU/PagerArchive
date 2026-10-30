@@ -23,6 +23,8 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -593,6 +595,10 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if err := rc.Flush(); err != nil {
 		return
 	}
+	// The stream is set up: its span ends here, not hours later when it
+	// closes; open streams are a gauge on /metrics (R72, ADR 0013 §6).
+	trace.SpanFromContext(ctx).SetAttributes(attribute.Int("pagerarchive.stream.caught_up", count))
+	s.http.EndRequest(r, http.StatusOK)
 
 	keepalive := time.NewTicker(25 * time.Second)
 	defer keepalive.Stop()

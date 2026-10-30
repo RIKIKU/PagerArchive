@@ -54,7 +54,7 @@ func (s *Server) createTemplate(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.Catalog.CreateTemplate(r.Context(), in, s.profileNames())
 	if err != nil {
-		s.catalogError(w, "add template", err)
+		s.catalogError(w, r, "add template", err)
 		return
 	}
 	s.Log.Info("template added", "template", id, "by", currentUser(r).ID)
@@ -71,7 +71,7 @@ func (s *Server) editTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Catalog.EditTemplate(r.Context(), id, in, s.profileNames()); err != nil {
-		s.catalogError(w, "edit template", err)
+		s.catalogError(w, r, "edit template", err)
 		return
 	}
 	s.Log.Info("template changed", "template", id, "by", currentUser(r).ID)
@@ -84,7 +84,7 @@ func (s *Server) deleteTemplate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Catalog.RemoveTemplate(r.Context(), id); err != nil {
-		s.catalogError(w, "delete template", err)
+		s.catalogError(w, r, "delete template", err)
 		return
 	}
 	s.Log.Info("template deleted", "template", id, "by", currentUser(r).ID)
@@ -136,7 +136,7 @@ func (s *Server) importAliases(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.catalogError(w, "import aliases", err)
+		s.catalogError(w, r, "import aliases", err)
 		return
 	}
 	counts := map[string]int{}

@@ -1,0 +1,87 @@
+# Alert rules (R76). They go to the default notification policy, so they
+# reach whatever contact point you choose for it in Grafana (email,
+# Pushover, ...: docs/monitoring.md). Both resolve on their own when the
+# problem is fixed.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: PagerArchive
+    folder: PagerArchive
+    interval: 30s
+    rules:
+      # R39: a client is "not receiving" after 30 minutes with no page of
+      # any kind. One alert per client; it clears when the client is heard
+      # again.
+      - uid: pa-client-not-receiving
+        title: Client not receiving
+        condition: quiet
+        data:
+          - refId: seconds
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: seconds
+              instant: true
+              range: false
+              expr: time() - max by (client) (pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})
+          - refId: quiet
+            datasourceUid: __expr__
+            model:
+              refId: quiet
+              type: threshold
+              expression: seconds
+              conditions:
+                - evaluator:
+                    type: gt
+                    # THE THRESHOLD SETTING: seconds without a page from a
+                    # client before it alerts (R39: 30 minutes). Change it
+                    # here and restart Grafana (docs/monitoring.md).
+                    params: [1800]
+        # While the API itself is down there are no last-seen times: that's
+        # the other alert's job.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client {{ $labels.client }} has sent nothing for {{ humanizeDuration $values.seconds.Value }}"
+          description: >-
+            No page of any kind (heartbeats included) from this receiving
+            client for longer than the threshold. Check its radio and its
+            connection: the "PagerArchive: clients" dashboard shows whether
+            it still reads lines and whether its sends fail.
+
+      # R76: the API can't be scraped: it's down, or unreachable from Alloy.
+      - uid: pa-api-unreachable
+        title: API unreachable
+        condition: down
+        data:
+          - refId: up
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: up
+              instant: true
+              range: false
+              expr: max(up{job="pagerarchive"})
+          - refId: down
+            datasourceUid: __expr__
+            model:
+              refId: down
+              type: threshold
+              expression: up
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        # No "up" at all means Alloy itself isn't sending: alert too.
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 30s
+        labels:
+          severity: critical
+        annotations:
+          summary: PagerArchive's API can't be scraped
+          description: >-
+            Alloy's scrape of /metrics is failing: the API is down, or
+            unreachable from the monitoring stack, or METRICS_TOKEN changed.

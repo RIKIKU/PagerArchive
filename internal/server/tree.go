@@ -168,7 +168,7 @@ func (s *Server) deactivationPreview(w http.ResponseWriter, r *http.Request) {
 	}
 	p, err := s.preview(r.Context(), currentUser(r), id)
 	if err != nil {
-		s.accountsError(w, "deactivation preview", err)
+		s.accountsError(w, r, "deactivation preview", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
@@ -192,7 +192,7 @@ func (s *Server) deactivateTree(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, accounts.ErrTreeChanged) {
 		p, perr := s.preview(r.Context(), currentUser(r), id)
 		if perr != nil {
-			s.accountsError(w, "deactivation preview", perr)
+			s.accountsError(w, r, "deactivation preview", perr)
 			return
 		}
 		writeJSON(w, http.StatusConflict, TreeChanged{Problem: Problem{Error: accounts.ErrTreeChanged.Msg, Code: accounts.ErrTreeChanged.Code}, Preview: p})
@@ -209,7 +209,7 @@ func (s *Server) deactivateTree(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		s.accountsError(w, "deactivate tree", err)
+		s.accountsError(w, r, "deactivate tree", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -225,7 +225,7 @@ func (s *Server) setTrusted(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Accounts.SetTrusted(r.Context(), currentUser(r), id, req.Trusted); err != nil {
-		s.accountsError(w, "set trusted", err)
+		s.accountsError(w, r, "set trusted", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

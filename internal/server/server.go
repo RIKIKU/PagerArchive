@@ -15,6 +15,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
@@ -24,6 +27,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/store"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 // MaxFuture is how far ahead of the server's clock a receive time may be.
@@ -65,8 +69,13 @@ type Server struct {
 	MetricsToken string
 	Locks        LockCounter
 	Version      string
+	// Tracer traces requests, ingest and live updates (R71, R72); nil
+	// traces nothing. Requests counts them for /metrics.
+	Tracer   trace.Tracer
+	Requests *telemetry.RequestMetrics
 
 	pages pageCounts
+	http  *telemetry.HTTP
 	// ingest stores one page at a time and announces it before the next, so
 	// message IDs reach live connections in increasing order (ADR 0010 §3).
 	ingest sync.Mutex
@@ -75,6 +84,8 @@ type Server struct {
 // Handler returns the API's routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	patterns := []string{"POST /api/v1/pages", "/api/", "GET /auth/login", "GET /auth/callback", "POST /auth/logout",
+		"GET /auth/status", "GET /auth/powershell", "POST /auth/first-admin", "GET /metrics", "GET /healthz", "/"}
 	mux.HandleFunc("POST /api/v1/pages", s.postPage)
 	// Everything else under /api/v1 needs a signed-in user (A29).
 	for pattern, h := range map[string]http.HandlerFunc{
@@ -150,6 +161,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/icons/{file}":                 s.getIcon,
 	} {
 		mux.HandleFunc(pattern, s.signedIn(h))
+		patterns = append(patterns, pattern)
 	}
 	// Any other /api/v1 path: 401 without a session, 404 with one.
 	mux.HandleFunc("/api/", s.signedIn(func(w http.ResponseWriter, r *http.Request) { problem(w, http.StatusNotFound, "not found") }))
@@ -166,9 +178,19 @@ func (s *Server) Handler() http.Handler {
 	if s.UI != nil {
 		mux.Handle("/", s.UI)
 	}
+	// Spans are named by these patterns, and nothing else (R70).
+	telemetry.AllowSpanNames(telemetry.RouteNames(patterns)...)
+	if s.Requests == nil {
+		s.Requests = &telemetry.RequestMetrics{}
+	}
+	// A client's page post starts its span once the key is checked, so only
+	// a client's trace context is continued (R70).
+	s.http = &telemetry.HTTP{Tracer: s.Tracer, Metrics: s.Requests, Deferred: func(r *http.Request) bool {
+		return r.Method == http.MethodPost && r.URL.Path == "/api/v1/pages"
+	}}
 	// Browsers may only change things from this site; API clients (no
 	// Origin or Sec-Fetch-Site header) are unaffected.
-	return securityHeaders(http.NewCrossOriginProtection().Handler(mux))
+	return s.http.Handler(securityHeaders(http.NewCrossOriginProtection().Handler(mux)))
 }
 
 // securityHeaders sets headers every response gets.
@@ -200,37 +222,52 @@ type PageResponse struct {
 var capcodeRe = regexp.MustCompile(`^[0-9]{1,7}$`)
 
 func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.authenticate(r.Context(), w, r)
+	// The trace a request carries is continued only once its key says it's
+	// a receiving client's; anything else starts its own (R70, R71).
+	r = telemetry.ContinueRequest(s.Tracer, r, ok)
 	ctx := r.Context()
-	clientID, ok := s.authenticate(ctx, w, r)
 	if !ok {
 		return
+	}
+	// The ingest span: its outcome, and the stored message's ID (R71).
+	ctx, span := telemetry.Or(s.Tracer).Start(ctx, "ingest", trace.WithAttributes(attribute.String("pagerarchive.client.id", clientID)))
+	defer span.End()
+	refused := func(kind string) {
+		span.SetAttributes(attribute.String("pagerarchive.ingest.outcome", "refused"), attribute.String("error.type", kind))
 	}
 	var req PageRequest
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
 		// Decoder errors can quote the body, so they're never echoed or logged.
+		refused("invalid_json")
 		problem(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
 	switch {
 	case req.ClientID != "" && req.ClientID != clientID:
+		refused("wrong_client")
 		problem(w, http.StatusForbidden, "client_id doesn't match the API key")
 		return
 	case !capcodeRe.MatchString(req.Capcode):
+		refused("invalid_capcode")
 		problem(w, http.StatusUnprocessableEntity, "capcode must be 1 to 7 digits")
 		return
 	case req.Text == "" || len(req.Text) > MaxTextBytes || !utf8.ValidString(req.Text):
+		refused("invalid_text")
 		problem(w, http.StatusUnprocessableEntity, "text must be 1 to 4096 bytes of UTF-8")
 		return
 	case req.ReceivedAt.IsZero():
+		refused("no_receive_time")
 		problem(w, http.StatusUnprocessableEntity, "received_at is required")
 		return
 	case req.ReceivedAt.After(s.Now().Add(MaxFuture)):
+		refused(CodeClockAhead)
 		s.pages.add("clock_ahead")
-		s.Log.Warn("page rejected: client clock ahead", "client", clientID)
+		s.Log.WarnContext(ctx, "page rejected: client clock ahead", "client", clientID)
 		if err := s.Store.MarkClockAhead(ctx, clientID); err != nil {
-			s.Log.Error("mark clock ahead", "client", clientID, "error", store.SafeError(err))
+			s.Log.ErrorContext(ctx, "mark clock ahead", "client", clientID, "error", store.SafeError(err))
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, Problem{
 			Error: "received_at is more than 60 s ahead of the server's clock",
@@ -247,15 +284,25 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		Baud:       req.Baud,
 	})
 	if err == nil && outcome == ingest.Stored && s.Hub != nil {
-		s.Hub.Publish(id)
+		// The live update: the open lists and watches it reached (R71). No
+		// span per viewer, so no trace ties a user to a message (R70).
+		_, span := telemetry.Or(s.Tracer).Start(ctx, "live.publish")
+		span.SetAttributes(attribute.Int("pagerarchive.live.connections", s.Hub.Publish(id)))
+		span.End()
 	}
 	s.ingest.Unlock()
 	if err != nil {
-		s.Log.Error("ingest failed", "client", clientID, "error", err.Error())
+		span.SetAttributes(attribute.String("error.type", "store_failed"))
+		span.SetStatus(codes.Error, "")
+		s.Log.ErrorContext(ctx, "ingest failed", "client", clientID, "error", err.Error())
 		problem(w, http.StatusInternalServerError, "couldn't store the page")
 		return
 	}
-	s.Log.Info("page", "client", clientID, "outcome", string(outcome), "message_id", id)
+	span.SetAttributes(attribute.String("pagerarchive.ingest.outcome", string(outcome)))
+	if id != 0 {
+		span.SetAttributes(attribute.Int64("pagerarchive.message.id", id))
+	}
+	s.Log.InfoContext(ctx, "page", "client", clientID, "outcome", string(outcome), "message_id", id)
 	s.pages.add(string(outcome))
 	if outcome == ingest.Stored {
 		// Its deliveries were queued with it; send them now (R51a: within 5 s).
@@ -276,7 +323,7 @@ func (s *Server) authenticate(ctx context.Context, w http.ResponseWriter, r *htt
 		return "", false
 	}
 	if err != nil {
-		s.Log.Error("authenticate", "error", store.SafeError(err))
+		s.Log.ErrorContext(ctx, "authenticate", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't check the API key")
 		return "", false
 	}

@@ -1,0 +1,61 @@
+{
+  "uid": "pa-page-path",
+  "title": "PagerArchive: a page's path",
+  "description": "From the receiver's decoder to the database, the live update and integrations (R71). Open a page in the table to see its whole trace.",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt. The table lists recent pages: click a trace ID to open it. The top chart is the slowest 10 % of each step."}
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Time in each step (90th percentile)",
+      "gridPos": {"h": 10, "w": 16, "x": 0, "y": 4},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{
+        "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
+        "query": "{name=~\"decode|buffer|send|ingest|ingest.redact|ingest.parse|ingest.dedup|ingest.locate|ingest.store|live.publish|integration.deliver\"} | quantile_over_time(duration, .9) by (name)"
+      }],
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "showPoints": "auto"}}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Pages by outcome (per minute)",
+      "gridPos": {"h": 10, "w": 8, "x": 16, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (outcome) (rate(pagerarchive_pages_received_total{job=\"pagerarchive\"}[$__rate_interval])) * 60", "legendFormat": "{{outcome}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 4, "type": "table", "title": "Recent pages (the API's ingest span)",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 14},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{
+        "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "tableType": "spans", "limit": 50, "spss": 1,
+        "query": "{resource.service.name=\"pagerarchive\" && name=\"ingest\"} | select(span.pagerarchive.ingest.outcome, span.pagerarchive.client.id, span.pagerarchive.message.id, span.error.type)"
+      }],
+      "options": {"showHeader": true, "cellHeight": "sm"}
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Integration deliveries (per hour)",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (result) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\"}[1h]))", "legendFormat": "{{result}}"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 6, "type": "logs", "title": "Ingest log lines (click one to open its trace)",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"}"}],
+      "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
+    }
+  ]
+}

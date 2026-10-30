@@ -1,0 +1,105 @@
+{
+  "uid": "pa-requests",
+  "title": "PagerArchive: requests and load",
+  "description": "API requests by route, status and user ID, and what they cost: the database pool, live connections, memory and CPU (R72).",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "30s",
+  "time": {"from": "now-1h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "timeseries", "title": "Requests per second, by route and status",
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route, status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\"}[$__rate_interval]))", "legendFormat": "{{route}} {{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 2, "type": "timeseries", "title": "Slowest 10 % of requests, by route (dots are sample requests: click one for its trace)",
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "exemplar": true, "expr": "histogram_quantile(0.9, sum by (le, route) (rate(pagerarchive_http_request_duration_seconds_bucket{job=\"pagerarchive\"}[$__rate_interval])))", "legendFormat": "{{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 3, "type": "timeseries", "title": "Requests per second, by user ID (from traces)",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 9},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range", "query": "{span.user.id != nil && kind=server} | rate() by (span.user.id)"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 4, "type": "table", "title": "Recent requests by signed-in users (user ID and role only, R70)",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 18},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "tableType": "spans", "limit": 50, "spss": 1, "query": "{span.user.id != nil && kind=server} | select(span.user.id, span.user.role, span.http.route, span.http.response.status_code)"}],
+      "options": {"showHeader": true, "cellHeight": "sm"}
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Errors (5xx) per second, by route",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", status=~\"5..\"}[$__rate_interval]))", "legendFormat": "{{route}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Database: slowest 10 % by query (from traces)",
+      "gridPos": {"h": 8, "w": 16, "x": 8, "y": 27},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range", "query": "{span.db.system.name=\"postgresql\"} | quantile_over_time(duration, .9) by (name)"}],
+      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Database pool",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_db_pool_connections{job=\"pagerarchive\"}", "legendFormat": "{{state}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_db_pool_max_connections{job=\"pagerarchive\"}", "legendFormat": "max"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Open live-update connections (browsers and watches)",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_live_connections{job=\"pagerarchive\"}", "legendFormat": "connections"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "API memory (budget 256 MiB)",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "process_resident_memory_bytes{job=\"pagerarchive\"}", "legendFormat": "resident"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "go_memstats_heap_inuse_bytes{job=\"pagerarchive\"}", "legendFormat": "Go heap in use"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "bytes", "max": 268435456, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 268435456}]}, "custom": {"thresholdsStyle": {"mode": "line"}}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "API CPU (share of one core)",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(process_cpu_seconds_total{job=\"pagerarchive\"}[$__rate_interval])", "legendFormat": "CPU"}],
+      "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Goroutines",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "go_goroutines{job=\"pagerarchive\"}", "legendFormat": "goroutines"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    }
+  ]
+}

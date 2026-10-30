@@ -9,8 +9,9 @@ while IFS= read -r line; do
 	[ -n "$set_already" ] || export "$line"
 done <deploy/test/stack.vars
 
+# STACK_OVERLAYS adds compose files: "-f deploy/test/telemetry.yaml".
 stack_compose() {
-	docker compose -f compose.yaml -f deploy/test/compose.yaml "$@"
+	docker compose -f compose.yaml -f deploy/test/compose.yaml ${STACK_OVERLAYS:-} "$@"
 }
 
 stack_wait_api() {

@@ -9,6 +9,9 @@ import (
 	"log/slog"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
@@ -16,6 +19,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 const (
@@ -35,6 +39,8 @@ type Worker struct {
 	ProfileHash string // hash of the profiles and address dataset in use
 	Log         *slog.Logger
 	Poll        time.Duration
+	// Tracer traces each re-parse that has work (R72); nil traces nothing.
+	Tracer trace.Tracer
 }
 
 // CheckProfiles queues a full re-parse if the profiles or address dataset
@@ -97,6 +103,9 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	if err != nil || len(reqs) == 0 {
 		return 0, err
 	}
+	// Traced only when there's work, so the minute's poll makes no spans (R72).
+	ctx, span := telemetry.Or(w.Tracer).Start(ctx, "reparse", trace.WithNewRoot())
+	defer span.End()
 	patterns := map[string]bool{}
 	for _, r := range reqs {
 		patterns[r.CapcodePattern] = true
@@ -131,7 +140,8 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 			}
 		}
 	}
-	w.Log.Info("re-parsed messages", "count", n, "requests", len(reqs))
+	span.SetAttributes(attribute.Int("pagerarchive.reparse.messages", n))
+	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", len(reqs))
 	return n, nil
 }
 

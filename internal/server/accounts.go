@@ -14,13 +14,13 @@ import (
 
 // accountsError answers a failed account operation: a refusal with its
 // message, anything else as a server error.
-func (s *Server) accountsError(w http.ResponseWriter, op string, err error) {
+func (s *Server) accountsError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	var refusal *accounts.Error
 	if errors.As(err, &refusal) {
 		writeJSON(w, refusal.Status, Problem{Error: refusal.Msg, Code: refusal.Code})
 		return
 	}
-	s.Log.Error(op, "error", err.Error())
+	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 }
 
@@ -79,7 +79,7 @@ func (s *Server) deleteMe(w http.ResponseWriter, r *http.Request) {
 	// entities are removed afterwards, best effort.
 	cleanup := s.Integrations.DiscoveryCleanup(r.Context(), currentUser(r).ID)
 	if err := s.Accounts.DeleteAccount(r.Context(), currentUser(r)); err != nil {
-		s.accountsError(w, "delete account", err)
+		s.accountsError(w, r, "delete account", err)
 		return
 	}
 	go cleanup()
@@ -157,7 +157,7 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request) {
 	}
 	inv, err := s.Accounts.Invite(r.Context(), currentUser(r), req.Email)
 	if err != nil {
-		s.accountsError(w, "invite", err)
+		s.accountsError(w, r, "invite", err)
 		return
 	}
 	s.Log.Info("invitation sent", "by", currentUser(r).ID, "invitation", inv.ID)
@@ -171,7 +171,7 @@ func (s *Server) cancelInvitation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Accounts.CancelInvitation(r.Context(), currentUser(r), id); err != nil {
-		s.accountsError(w, "cancel invitation", err)
+		s.accountsError(w, r, "cancel invitation", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -263,7 +263,7 @@ func (s *Server) deactivate(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.Accounts.Deactivate(r.Context(), currentUser(r), id)
 	if err != nil {
-		s.accountsError(w, "deactivate", err)
+		s.accountsError(w, r, "deactivate", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, DeactivateResult{Deactivated: n})
@@ -275,7 +275,7 @@ func (s *Server) reactivate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Accounts.Reactivate(r.Context(), currentUser(r), id); err != nil {
-		s.accountsError(w, "reactivate", err)
+		s.accountsError(w, r, "reactivate", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -296,7 +296,7 @@ func (s *Server) setRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Accounts.SetRole(r.Context(), currentUser(r), id, req.Role); err != nil {
-		s.accountsError(w, "set role", err)
+		s.accountsError(w, r, "set role", err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)

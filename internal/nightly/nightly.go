@@ -15,12 +15,16 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 // Retention limits, in days (R45).
@@ -49,6 +53,8 @@ type Job struct {
 	At       time.Duration // since local midnight
 	Now      func() time.Time
 	Log      *slog.Logger
+	// Tracer traces each run and its steps (R72); nil traces nothing.
+	Tracer trace.Tracer
 }
 
 // ParseAt reads a "HH:MM" time of day.
@@ -173,18 +179,25 @@ func (j *Job) Run(ctx context.Context) {
 }
 
 func (j *Job) runLogged(ctx context.Context, now time.Time) {
-	res, err := j.RunOnce(ctx, now)
-	if err != nil {
-		j.Log.Error("nightly job", "error", err.Error(), "deleted", res.Deleted, "redacted", res.Redacted)
-		return
-	}
-	j.Log.Info("nightly job", "deleted", res.Deleted, "redacted", res.Redacted, "cutoff", res.Cutoff.Format(time.DateOnly))
+	_, _ = j.RunOnce(ctx, now) // it logs the result, in its trace
 }
 
 // RunOnce does one run as if at now. Tests call it with a controllable
 // clock (section 14). The result is recorded whether or not it failed.
-func (j *Job) RunOnce(ctx context.Context, now time.Time) (Result, error) {
-	res := Result{At: now.UTC()}
+func (j *Job) RunOnce(ctx context.Context, now time.Time) (res Result, err error) {
+	ctx, span := telemetry.Or(j.Tracer).Start(ctx, "nightly", trace.WithNewRoot())
+	defer func() {
+		span.SetAttributes(attribute.Int64("pagerarchive.nightly.deleted", res.Deleted), attribute.Int64("pagerarchive.nightly.redacted", res.Redacted))
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", "failed"))
+			span.SetStatus(codes.Error, "")
+			j.Log.ErrorContext(ctx, "nightly job", "error", err.Error(), "deleted", res.Deleted, "redacted", res.Redacted)
+		} else {
+			j.Log.InfoContext(ctx, "nightly job", "deleted", res.Deleted, "redacted", res.Redacted, "cutoff", res.Cutoff.Format(time.DateOnly))
+		}
+		span.End()
+	}()
+	res = Result{At: now.UTC()}
 	conn, err := j.Store.Pool.Acquire(ctx)
 	if err != nil {
 		return res, errors.New(store.SafeError(err))
@@ -216,10 +229,13 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 	if err != nil {
 		return fmt.Errorf("retention setting: %s", store.SafeError(err))
 	}
+	tr := telemetry.Or(j.Tracer)
 	// 1. Retention (R45): everything sent before the cut-off date.
 	res.Cutoff = j.Cutoff(now, days)
+	sctx, span := tr.Start(ctx, "nightly.retention")
+	defer span.End() // already ended, unless it failed
 	for {
-		n, err := j.Store.DeleteMessagesBefore(ctx, db.DeleteMessagesBeforeParams{Cutoff: res.Cutoff, Batch: batch})
+		n, err := j.Store.DeleteMessagesBefore(sctx, db.DeleteMessagesBeforeParams{Cutoff: res.Cutoff, Batch: batch})
 		if err != nil {
 			return fmt.Errorf("retention: %s", store.SafeError(err))
 		}
@@ -229,9 +245,10 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		}
 	}
 	// Integrations' delivery records are kept for 30 days (ADR 0006 §1).
-	if _, err := j.Store.PruneDeliveries(ctx, now.Add(-deliveryDays*24*time.Hour)); err != nil {
+	if _, err := j.Store.PruneDeliveries(sctx, now.Add(-deliveryDays*24*time.Hour)); err != nil {
 		return fmt.Errorf("delivery records: %s", store.SafeError(err))
 	}
+	span.End()
 	// 2. Retroactive redaction (P1), when the rules changed since the last
 	// time they were applied to every stored message.
 	hash := RedactionHash(j.Network)
@@ -239,7 +256,9 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("redaction setting: %s", store.SafeError(err))
 		}
-		n, err := j.redactAll(ctx)
+		rctx, rspan := tr.Start(ctx, "nightly.redaction")
+		n, err := j.redactAll(rctx)
+		rspan.End()
 		res.Redacted = n
 		if err != nil {
 			return err
@@ -250,8 +269,10 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 	}
 	// 3. Vacuum, so deleted and replaced text doesn't linger in table pages
 	// (P1). Write-ahead logs and backups are out of scope.
+	vctx, vspan := tr.Start(ctx, "nightly.vacuum")
+	defer vspan.End()
 	for _, t := range []string{"messages", "receptions"} {
-		if _, err := j.Store.Pool.Exec(ctx, "VACUUM (ANALYZE) "+t); err != nil {
+		if _, err := j.Store.Pool.Exec(vctx, "VACUUM (ANALYZE) "+t); err != nil {
 			return fmt.Errorf("vacuum %s: %s", t, store.SafeError(err))
 		}
 	}

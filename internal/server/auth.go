@@ -17,6 +17,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 const (
@@ -108,6 +109,7 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			ctx := context.WithValue(context.WithValue(r.Context(), userKey{}, u), tokenExpiryKey{}, expires)
+			telemetry.SetUser(ctx, u.ID, u.Role)
 			h(w, r.WithContext(ctx))
 			return
 		}
@@ -120,10 +122,11 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if err != nil {
-			s.Log.Error("session", "error", err.Error())
+			s.Log.ErrorContext(r.Context(), "session", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "couldn't check the session")
 			return
 		}
+		telemetry.SetUser(r.Context(), u.ID, u.Role)
 		h(w, r.WithContext(context.WithValue(r.Context(), userKey{}, u)))
 	}
 }

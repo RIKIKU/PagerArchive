@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
@@ -52,8 +53,11 @@ type Service struct {
 	Version  string
 	Log      *slog.Logger
 	Now      func() time.Time
+	// Tracer traces each delivery attempt (R71); nil traces nothing.
+	Tracer trace.Tracer
 
-	Stats Stats
+	Stats   Stats
+	parents parents
 
 	clientOnce sync.Once
 	client     *http.Client

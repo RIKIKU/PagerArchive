@@ -1,0 +1,112 @@
+{
+  "uid": "pa-clients",
+  "title": "PagerArchive: clients",
+  "description": "Receiving clients: when the server last heard each one (R39), and each client's own numbers (R74), which tell a stuck radio from a network problem.",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The panels below come from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server."}
+    },
+    {
+      "id": 2, "type": "table", "title": "Clients, as the server sees them",
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (client) (pagerarchive_client_last_seen_timestamp_seconds{job=\"pagerarchive\"})"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (client) (pagerarchive_client_receiving{job=\"pagerarchive\"})"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (client) (pagerarchive_client_clock_ahead{job=\"pagerarchive\"})"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"client": "Client", "Value #A": "Last heard", "Value #B": "Receiving", "Value #C": "Clock ahead"}}}
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Last heard"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byName", "options": "Receiving"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "NOT RECEIVING", "color": "red"}, "1": {"text": "receiving", "color": "green"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]},
+          {"matcher": {"id": "byName", "options": "Clock ahead"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "no"}, "1": {"text": "AHEAD", "color": "orange"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
+        ]
+      },
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 3, "type": "stat", "title": "Clients not receiving",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(pagerarchive_client_receiving{job=\"pagerarchive\"} == 0) or vector(0)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_lines_read_total[$__rate_interval])) * 60", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Pages decoded and sent, per minute",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_decoded_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} decoded"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_sent_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} sent"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Failed sends and retries, per minute",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_retries_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} retries"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Pages buffered in memory, and dropped (R15)",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_pages_buffered)", "legendFormat": "{{instance}} buffered"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, reason) (increase(pagerarchive_client_pages_dropped_total[1h]))", "legendFormat": "{{instance}} dropped ({{reason}}) per hour"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 8, "type": "table", "title": "Each client's own view",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (pagerarchive_client_last_decoded_timestamp_seconds)"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (pagerarchive_client_last_sent_timestamp_seconds)"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (pagerarchive_client_radio_running)"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value #A": "Last page decoded", "Value #B": "Last send that worked", "Value #C": "Radio running"}}}
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Last page decoded"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byName", "options": "Last send that worked"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
+        ]
+      },
+      "options": {"showHeader": true}
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+// Grafana Alloy: what comes in, what's kept, where it goes.
+//
+//   API /metrics ──scrape──┐
+//   OTLP (API, clients) ───┼─► allowlist ─► Tempo (traces), Loki (logs),
+//                          │                 Prometheus (metrics)
+//
+// The app itself only ever exports allowed attributes (ADR 0013 §3). The
+// allowlist here is a second line of defence, not the rule: if a future
+// version of the app or a library slipped, this still drops attributes it
+// doesn't know. Keep it in step with internal/telemetry/filter.go.
+
+// ── The API's metrics (R52, R72, R75) ────────────────────────────────────
+// Scraped with the metrics token, so a dead API shows as a failed scrape
+// (up == 0), which the "API unreachable" alert watches. OpenMetrics brings
+// exemplars: trace IDs of sample requests.
+prometheus.scrape "pagerarchive" {
+  job_name        = "pagerarchive"
+  targets         = [{"__address__" = sys.env("PA_API_ADDRESS")}]
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  scrape_protocols = ["OpenMetricsText1.0.0", "PrometheusText0.0.4"]
+  authorization {
+    type        = "Bearer"
+    credentials = sys.env("PA_METRICS_TOKEN")
+  }
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
+prometheus.remote_write "prometheus" {
+  endpoint {
+    url            = "http://prometheus:9090/api/v1/write"
+    send_exemplars = true
+  }
+}
+
+// ── OTLP from the API and the receiving clients (R69-R74) ────────────────
+otelcol.receiver.otlp "default" {
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+  output {
+    traces  = [otelcol.processor.filter.no_events.input]
+    logs    = [otelcol.processor.transform.allowlist.input]
+    metrics = [otelcol.processor.transform.allowlist.input]
+  }
+}
+
+// Span events can carry exception messages; the app sends none, so any
+// that arrive are dropped.
+otelcol.processor.filter "no_events" {
+  error_mode = "ignore"
+  traces {
+    spanevent = ["true"]
+  }
+  output {
+    traces = [otelcol.processor.transform.allowlist.input]
+  }
+}
+
+// The second line of defence: keep only the attribute keys the app is
+// allowed to send (span, log, metric and resource attributes).
+otelcol.processor.transform "allowlist" {
+  error_mode = "ignore"
+
+  trace_statements {
+    context    = "resource"
+    statements = [
+      `keep_keys(resource.attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "deployment.environment", "host.name", "host.arch", "telemetry.sdk.name", "telemetry.sdk.language", "telemetry.sdk.version"])`,
+    ]
+  }
+  trace_statements {
+    context    = "span"
+    statements = [
+      `keep_keys(span.attributes, ["http.request.method", "http.route", "http.response.status_code", "error.type", "user.id", "user.role", "db.system.name", "db.operation.name", "pagerarchive.client.id", "pagerarchive.ingest.outcome", "pagerarchive.message.id", "pagerarchive.send.attempt", "pagerarchive.buffer.pages", "pagerarchive.live.connections", "pagerarchive.delivery.kind", "pagerarchive.delivery.attempt", "pagerarchive.delivery.result", "pagerarchive.stream.caught_up", "pagerarchive.nightly.deleted", "pagerarchive.nightly.redacted", "pagerarchive.reparse.messages"])`,
+      `set(span.status.message, "")`,
+    ]
+  }
+
+  log_statements {
+    context    = "resource"
+    statements = [
+      `keep_keys(resource.attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "deployment.environment", "host.name", "host.arch", "telemetry.sdk.name", "telemetry.sdk.language", "telemetry.sdk.version"])`,
+    ]
+  }
+  log_statements {
+    context    = "log"
+    statements = [
+      `keep_keys(log.attributes, ["client", "outcome", "message_id", "user", "by", "owner", "users", "role", "code", "reason", "error", "op", "kind", "status", "result", "count", "deleted", "redacted", "rows", "requests", "requests_closed", "integrations", "aliases", "entries", "conflicts", "streets", "localities", "addresses", "seconds", "heap_mib", "uploaded_bytes", "stored_bytes", "buffered", "dropped", "days", "agencies", "ok", "dry_run", "update", "trusted", "version", "traces", "logs", "metrics"])`,
+    ]
+  }
+
+  metric_statements {
+    context    = "resource"
+    statements = [
+      `keep_keys(resource.attributes, ["service.name", "service.namespace", "service.version", "service.instance.id", "deployment.environment.name", "deployment.environment", "host.name", "host.arch", "telemetry.sdk.name", "telemetry.sdk.language", "telemetry.sdk.version"])`,
+    ]
+  }
+  metric_statements {
+    context    = "datapoint"
+    statements = [
+      `keep_keys(datapoint.attributes, ["reason"])`,
+    ]
+  }
+
+  output {
+    traces  = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+    metrics = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  output {
+    traces  = [otelcol.exporter.otlphttp.tempo.input]
+    logs    = [otelcol.exporter.otlphttp.loki.input]
+    metrics = [otelcol.exporter.prometheus.default.input]
+  }
+}
+
+otelcol.exporter.otlphttp "tempo" {
+  client {
+    endpoint = "http://tempo:4318"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// Loki takes OTLP itself: service.name becomes the service_name label, and
+// the trace and span IDs structured metadata, which Grafana links to Tempo.
+otelcol.exporter.otlphttp "loki" {
+  client {
+    endpoint = "http://loki:3100/otlp"
+    tls {
+      insecure = true
+    }
+  }
+}
+
+// The clients' metrics (R74) into Prometheus: service.instance.id (the
+// client's ID) becomes the instance label.
+otelcol.exporter.prometheus "default" {
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}

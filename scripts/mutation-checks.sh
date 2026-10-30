@@ -1,16 +1,17 @@
 #!/bin/sh
-# Mutation proof for the security checks (M8, M9, M10) and the print sheet
-# (M11): break one check at a time in a throwaway copy of the repository, run
-# the test that guards it, and show the test failing. Every mutation must
-# fail its test; the unmutated copy must pass.
+# Mutation proof for the security checks (M8, M9, M10), the print sheet
+# (M11) and telemetry (M12): break one check at a time in a throwaway copy
+# of the repository, run the test that guards it, and show the test
+# failing. Every mutation must fail its test; the unmutated copy must pass.
 #
 # usage: scripts/mutation-checks.sh
 # needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test); for the
 # print sheet's browser checks, what scripts/e2e.sh needs (Docker, Node with
 # web/ dependencies installed, Playwright's Chromium), and no other e2e.sh
 # running; for the module's checks pwsh (PA_PWSH, default: pwsh on PATH)
-# with Pester 5.9.1 on PSModulePath. Linux only: the module's checks are the
-# off-Windows ones.
+# with Pester 5.9.1 on PSModulePath; for the alert rule's, what
+# scripts/monitoring-checks.sh needs. Linux only: the module's checks are
+# the off-Windows ones.
 set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -22,20 +23,32 @@ survived=0
 
 # mutate <name> <file> <test> <old> <new>: replace exact text, run the test,
 # and restore. <test> is "go:<regexp>" or "pester:<file>".
+#
+# mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
+# replacements, in two files, as one mutation (M12).
 mutate() {
-	name=$1 file=$2 test=$3 old=$4 new=$5
+	name=$1 file=$2 test=$3 old=$4 new=$5 file2=${6:-} old2=${7:-} new2=${8:-}
 	cp "$file" "$work/.orig"
-	OLD=$old NEW=$new perl -0pi -e '$n = s/\Q$ENV{OLD}\E/$ENV{NEW}/g; END { exit($n ? 0 : 1) }' "$file" || {
+	[ -z "$file2" ] || cp "$file2" "$work/.orig2"
+	OLD=$old NEW=$new perl -0pi -e '$n = s/\Q$ENV{OLD}\E/$ENV{NEW}/g; END { exit($n ? 0 : 1) }' "$file" &&
+		{ [ -z "$file2" ] || OLD=$old2 NEW=$new2 perl -0pi -e '$n = s/\Q$ENV{OLD}\E/$ENV{NEW}/g; END { exit($n ? 0 : 1) }' "$file2"; } || {
 		echo "=== NOT APPLIED: $name"
 		survived=1
+		cp "$work/.orig" "$file"
+		[ -z "$file2" ] || cp "$work/.orig2" "$file2"
 		return
 	}
-	echo "=== mutation: $name ($file)"
+	echo "=== mutation: $name ($file${file2:+, $file2})"
 	diff "$work/.orig" "$file" | sed 's/^/    /'
+	[ -z "$file2" ] || diff "$work/.orig2" "$file2" | sed 's/^/    /'
 	case $test in
 	go:*)
-		out=$(go test -p 1 -count=1 -v -run "${test#go:}" ./internal/acceptance/ 2>&1)
+		out=$(go test -p 1 -count=1 -timeout 10m -v -run "${test#go:}" ./internal/acceptance/ 2>&1)
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | grep -vE ': 401 invalid_token$|^\s+[a-z0-9_]+_test.go:[0-9]+: (A53: user B|ADR 0010)' | head -4
+		;;
+	mon:*)
+		out=$(sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+a65_test.go:[0-9]+: ' | head -4
 		;;
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
@@ -53,6 +66,7 @@ mutate() {
 		survived=1
 	fi
 	cp "$work/.orig" "$file"
+	[ -z "$file2" ] || cp "$work/.orig2" "$file2"
 }
 
 S=internal/server/powershell.go
@@ -197,8 +211,54 @@ else
 	echo "=== the module's mutations skipped: no pwsh (set PA_PWSH)"
 fi
 
+# M12 (ADR 0013): telemetry holds nothing private, never blocks a page, and
+# the example stack tells when a client stops. Each is checked where it's
+# made (TestM12SourceSpans, before the export allowlist), as exported (A63)
+# or end to end (A62, A64, A65).
+T=internal/telemetry
+mutate "the real path and query as a request span's name" $T/http.go go:'TestA63NothingPrivate|TestM12SourceSpans' \
+	'span.SetName(route)' 'span.SetName(method(r) + " " + r.URL.RequestURI())'
+mutate "SQL arguments recorded on database spans" internal/store/trace.go go:TestM12SourceSpans \
+	'attribute.String("db.operation.name", name)))' \
+	'attribute.String("db.operation.name", name), attribute.StringSlice("db.query.parameters", func() (out []string) {
+			for _, a := range data.Args {
+				if s, ok := a.(string); ok {
+					out = append(out, s)
+				}
+			}
+			return out
+		}())))'
+mutate "an email address on a signed-in request's span" internal/server/auth.go go:TestM12SourceSpans \
+	'telemetry.SetUser(r.Context(), u.ID, u.Role)' 'telemetry.SetUser(r.Context(), u.ID, u.Role+" "+*u.Email)'
+mutate "the allowlist removed, and a new attribute carrying page text" $T/filter.go go:TestA63NothingPrivate \
+	'		if kv, ok := keep(keys, kv); ok {
+			out = append(out, kv)' '		if true {
+			out = append(out, kv)' \
+	internal/server/server.go \
+	'span.SetAttributes(attribute.String("pagerarchive.ingest.outcome", string(outcome)))' \
+	'span.SetAttributes(attribute.String("pagerarchive.ingest.outcome", string(outcome)), attribute.String("page.text", req.Text))'
+mutate "a browser request's traceparent continued" $T/http.go go:TestM12SourceSpans \
+	'ctx, st.span = tracer.Start(ctx, "HTTP "+method(r), trace.WithNewRoot(), trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(st.start))' \
+	'ctx, st.span = tracer.Start(TraceContext.Extract(ctx, propagation.HeaderCarrier(r.Header)), "HTTP "+method(r), trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(st.start))'
+mutate "the span exporter made synchronous, so a hung collector blocks ingest" $T/telemetry.go go:'TestA64CollectorDown/hung' \
+	'sdktrace.WithBatcher(&spanExporter{' 'sdktrace.WithSyncer(&spanExporter{'
+mutate "PRINT_PAGES output sent to OTLP" internal/client/client.go go:TestA63NothingPrivate \
+	'			fmt.Fprintf(rd.Stdout, "%s %s %s\n", now.Format(time.RFC3339), rec.Capcode, rec.Text)' \
+	'			fmt.Fprintf(rd.Stdout, "%s %s %s\n", now.Format(time.RFC3339), rec.Capcode, rec.Text)
+			rd.Log.InfoContext(ctx, rec.Text)'
+mutate "the client doesn't send traceparent" internal/client/client.go go:TestA62PageTrace \
+	'	telemetry.TraceContext.Inject(ctx, propagation.HeaderCarrier(req.Header))' \
+	'	_ = propagation.HeaderCarrier(req.Header)'
+if command -v docker >/dev/null; then
+	mutate "the \"client not receiving\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon: \
+		'(pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})' '(pagerarchive_client_last_seen_seconds{job="pagerarchive"})'
+else
+	echo "=== the alert rule's mutation skipped: no Docker"
+fi
+
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11' ./internal/acceptance/ 2>&1 | tail -1
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12' ./internal/acceptance/ 2>&1 | tail -1
+! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 [ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1
 exit $survived
