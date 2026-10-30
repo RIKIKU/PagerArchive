@@ -84,9 +84,13 @@ type Server struct {
 // Handler returns the API's routes.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
-	patterns := []string{"POST /api/v1/pages", "/api/", "GET /auth/login", "GET /auth/callback", "POST /auth/logout",
-		"GET /auth/status", "GET /auth/powershell", "POST /auth/first-admin", "GET /metrics", "GET /healthz", "/"}
-	mux.HandleFunc("POST /api/v1/pages", s.postPage)
+	// Spans are named by these patterns, and nothing else (R70).
+	var patterns []string
+	handle := func(pattern string, h http.Handler) {
+		mux.Handle(pattern, h)
+		patterns = append(patterns, pattern)
+	}
+	handle("POST /api/v1/pages", http.HandlerFunc(s.postPage))
 	// Everything else under /api/v1 needs a signed-in user (A29).
 	for pattern, h := range map[string]http.HandlerFunc{
 		"GET /api/v1/meta":                         s.getMeta,
@@ -160,25 +164,23 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/agency-profiles":        s.adminOnly(s.agencyProfiles),
 		"GET /api/v1/icons/{file}":                 s.getIcon,
 	} {
-		mux.HandleFunc(pattern, s.signedIn(h))
-		patterns = append(patterns, pattern)
+		handle(pattern, s.signedIn(h))
 	}
 	// Any other /api/v1 path: 401 without a session, 404 with one.
-	mux.HandleFunc("/api/", s.signedIn(func(w http.ResponseWriter, r *http.Request) { problem(w, http.StatusNotFound, "not found") }))
-	mux.HandleFunc("GET /auth/login", s.login)
-	mux.HandleFunc("GET /auth/callback", s.callback)
-	mux.HandleFunc("POST /auth/logout", s.logout)
-	mux.HandleFunc("GET /auth/status", s.authStatus)
-	mux.HandleFunc("GET /auth/powershell", s.powershellSettings)
-	mux.HandleFunc("POST /auth/first-admin", s.firstAdmin)
-	mux.HandleFunc("GET /metrics", s.metrics)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
+	handle("/api/", s.signedIn(func(w http.ResponseWriter, r *http.Request) { problem(w, http.StatusNotFound, "not found") }))
+	handle("GET /auth/login", http.HandlerFunc(s.login))
+	handle("GET /auth/callback", http.HandlerFunc(s.callback))
+	handle("POST /auth/logout", http.HandlerFunc(s.logout))
+	handle("GET /auth/status", http.HandlerFunc(s.authStatus))
+	handle("GET /auth/powershell", http.HandlerFunc(s.powershellSettings))
+	handle("POST /auth/first-admin", http.HandlerFunc(s.firstAdmin))
+	handle("GET /metrics", http.HandlerFunc(s.metrics))
+	handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-	})
+	}))
 	if s.UI != nil {
-		mux.Handle("/", s.UI)
+		handle("/", s.UI)
 	}
-	// Spans are named by these patterns, and nothing else (R70).
 	telemetry.AllowSpanNames(telemetry.RouteNames(patterns)...)
 	if s.Requests == nil {
 		s.Requests = &telemetry.RequestMetrics{}
