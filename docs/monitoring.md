@@ -217,7 +217,7 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 ## When something doesn't show up
 
 - **No data at all in the client panels or "up" alerts firing:** Alloy can't scrape the API. Check `PA_METRICS_TOKEN` matches the API's `METRICS_TOKEN`, and `docker compose logs alloy`. `PAGERARCHIVE_NETWORK` must be PagerArchive's network.
-- **Metrics but no traces or logs:** `OTEL_EXPORTER_OTLP_ENDPOINT` isn't set on the API, or the API was started before the monitoring stack joined its network: recreate it (`docker compose up -d --force-recreate api`). The API's log says `telemetry on` when it's set.
+- **Metrics but no traces or logs:** `OTEL_EXPORTER_OTLP_ENDPOINT` isn't set on the API (after adding it, `docker compose up -d api` recreates the API with it). The API's log says `telemetry on` when it's set.
 - **The API's log says "dropping telemetry":** it can't reach Alloy. Is the monitoring stack running? `docker compose ps` in `deploy/monitoring`.
 - **No client metrics:** the client needs `OTEL_EXPORTER_OTLP_ENDPOINT`, and a client on another machine needs `compose.clients.yaml` and a reachable `ALLOY_OTLP_BIND`. It sends metrics every `OTEL_METRIC_EXPORT_INTERVAL` (default a minute).
 - **A span named `unnamed`:** the app saw a span name that isn't on its allowlist. Report it: it's a bug, and nothing private left with it.

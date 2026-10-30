@@ -43,7 +43,6 @@ var SpanKeys = map[string]kind{
 	"pagerarchive.ingest.outcome":   codeKind,
 	"pagerarchive.message.id":       intKind, // the ingest span only (R71)
 	"pagerarchive.send.attempt":     intKind,
-	"pagerarchive.buffer.pages":     intKind,
 	"pagerarchive.live.connections": intKind,
 	"pagerarchive.delivery.kind":    codeKind,
 	"pagerarchive.delivery.attempt": intKind,

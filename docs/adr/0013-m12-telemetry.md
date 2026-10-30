@@ -89,7 +89,6 @@ Everything exported passes `internal/telemetry/filter.go`. It isn't a list of th
   | `pagerarchive.delivery.attempt` | number | integration.deliver |
   | `pagerarchive.stream.caught_up` | number | the stream's span |
   | `pagerarchive.nightly.deleted`, `.redacted`, `pagerarchive.reparse.messages` | number | nightly, reparse |
-  | `pagerarchive.buffer.pages` | number | (reserved for the client's buffer) |
 
 - **Codes** pass only as a kind: a snake_case code (`clock_ahead`), a SQLSTATE, a Go type name (`*url.Error`), an HTTP status (`HTTP 503`) or one of a few fixed messages the code makes ("connection refused"); anything else becomes `other`, so an error's text can't carry a request's values.
 - **Span events are dropped** (they're where libraries put exception messages) and **status descriptions are emptied**; the status code stays.
@@ -216,7 +215,107 @@ Metrics are sent every `OTEL_METRIC_EXPORT_INTERVAL` (the standard 60 s; the doc
 
 ## Evidence
 
-EVIDENCE
+Local runs are on cld01 (4 vCPU, 5 GB, a spinning disk) against PostGIS 18-3.6; CI on GitHub's `ubuntu-24.04` runners.
+
+**Off means off** (R69, `go test -v ./internal/telemetry/`):
+
+```
+TestOffUnlessConfigured: R69: telemetry off: no span recorded, 0 connections to 127.0.0.1:4318
+  OTEL_SDK_DISABLED=true: traces off; said: ""
+  OTEL_TRACES_EXPORTER=none: traces off; said: "... msg=\"telemetry on\" traces=false logs=true metrics=false"
+  OTEL_EXPORTER_OTLP_PROTOCOL=grpc: traces off; said: "... level=ERROR msg=\"telemetry: PagerArchive exports OTLP over HTTP only (http/protobuf); this signal is off\" signal=traces ..."
+BenchmarkRequestOff/bare-4              3106730    378.0 ns/op    224 B/op    5 allocs/op
+BenchmarkRequestOff/telemetry-off-4      947106   1060 ns/op     1040 B/op   17 allocs/op
+```
+
+With telemetry off a request costs about 0.7 µs more, most of it the route and status counting that `/metrics` needs anyway (R72); no tracer is installed on the database.
+
+**The allowlist** (same package): a span with `url.full`, `page.text`, an email as `user.id` and an error quoting page text, an exception event, a span named by its path, a log line with page text and an email, and `owner.email` in `OTEL_RESOURCE_ATTRIBUTES` → exported: `["GET /api/v1/messages/{id}" "unnamed"]`, status code kept, `error.type` `other`, no `user.id`, the log record with `client`, `user` 7 and `error` `other`, `deployment.environment.name` kept, and none of the strings. `TestRequestSpans`: spans `GET /api/v1/messages/{id}`, `POST /api/v1/pages` (a browser's), `POST /api/v1/pages` (a client's), `GET unmatched`; only the client's continued the sent trace. `TestLogMessagesAreConstant`: 146 log calls, every message a constant.
+
+**Dropping** (A64, R69): `TestDroppedOnceAMinute`: collector down, 2,000 spans in 610 ms, 1 line. `TestDropLogOnceAMinute` (a clock moved by hand): 60 failed exports over 5 minutes, 5 lines, the second saying `dropped=120`.
+
+**A62** (`TestA62PageTrace`, 75 s):
+
+```
+A62: message 1's trace has 36 spans: client page, decode, buffer, send; API POST /api/v1/pages, ingest,
+     ingest.redact, ingest.parse, ingest.store, ingest.dedup, ingest.locate, InsertMessage, live.publish,
+     integration.deliver and the other queries
+A62: client decode 25µs, buffer 204µs, send 50.3ms
+A62: API POST /api/v1/pages 49.5ms, ingest 48.7ms, ingest.redact 29µs, ingest.parse 1.04ms, ingest.dedup 1.24ms,
+     ingest.locate 1.67ms, ingest.store 32.2ms, InsertMessage 13.5ms, live.publish 3µs,
+     integration.deliver 32.7ms retry, 19.9ms delivered
+A62: client B's copy: trace 6865ad15…, outcome duplicate, message 1
+A62: the held page buffered for 31.004s, over 6 send attempts
+```
+
+The API's request span's parent is the client's `send`; the delivery attempts are `1:retry` and `2:delivered` in the page's trace.
+
+**A63** (`TestA63NothingPrivate`; the client is the real program with `PRINT_PAGES=true`):
+
+```
+A63: checked 256 spans, 17 log records and 30 metric points (134495 bytes) for 40 private strings: none found
+A63: HTTP spans: [GET /api/ GET /api/v1/admin/templates GET /api/v1/messages GET /api/v1/messages/{id}
+     GET /api/v1/stream POST /api/v1/integrations POST /api/v1/pages PUT /api/v1/admin/integration-hosts]
+A63: 6 spans carry B's user ID 2, all with role user; the client's console printed 8 lines of page text, none exported
+```
+
+The 40 strings: the 8 pages' texts with and without their markers (16), 9 distinctive parts of them, the search term as typed, as a query and in a path, 4 redacted values, B's and the admin's cookies, the module's token, both client keys, the integration's secret URL path and auth header value, and `@example.com`.
+
+**At the source** (`TestM12SourceSpans`, before the allowlist): `224 spans and 406 attributes as the code made them: allowed names and keys only, nothing private, no browser trace continued; 6 carry B's user ID`.
+
+**A64** (`TestA64CollectorDown`, 100 pages at 10 a second, two users browsing, a stream open, a webhook):
+
+```
+A64 (off collector):     100 pages stored and delivered 10.028s after posting, slowest delivery 125ms after receipt; ... said 0 and 0 times
+A64 (stopped collector): 100 pages stored and delivered 10.036s after posting, slowest delivery 142ms after receipt; in 11s the API said 1 time(s) and the client 1 time(s)
+A64 (hung collector):    100 pages stored and delivered 10.036s after posting, slowest delivery 140ms after receipt; in 16s the API said 1 time(s) and the client 1 time(s)
+```
+
+**A66** (`TestA66ClientTelemetry`): `lines read 8, decoded 7, sent 5, buffered 2, failed sends 2 then 3, retries 2, last decoded 03:29:49, last sent 03:29:49` (one line wasn't a page; the last send was before the API stopped), then 7 sent once it was back.
+
+**`/metrics`** (`TestM12Metrics`): R52's names unchanged; requests by route and status, the pool, live connections, Go and process metrics present; no query, ID or user; OpenMetrics ends `# EOF` and has exemplars, e.g. `pagerarchive_http_request_duration_seconds_bucket{le="0.005",route="GET /api/v1/messages",status="200"} 1 # {trace_id="7a6b5172…"} 0.001710629 1793331018.307`.
+
+**A65** (`scripts/monitoring-checks.sh`):
+
+| | cld01, run 2 | CI, run 41002463837 |
+|---|---|---|
+| "Client not receiving" fired for the moved client only | 18 s after the move | 45 s |
+| it resolved after the client posted | 23 s | 24 s |
+| "API unreachable" fired after the API stopped | 59 s | 60 s |
+| it resolved after the API started | 30 s | 30 s |
+
+**The stack's memory** (sum of each container's peak): cld01 run 1 idle 618 MiB, during A65 638 MiB, while viewing dashboards 1,334 MiB; run 2 idle 752, A65 832, dashboards 960; CI idle 398, A65 458. Per container in `docs/monitoring.md`.
+
+**A15 with telemetry on** (`scripts/a15.sh -m 5 -w 1 -i 2 -r 30000 -t`, the CI short run, cld01): 105 pages posted, 20 viewers, 2,080 live events; the test collector received 2,190 spans and 111 log records. API peak 67.3 MiB under load after warm-up (limit 256), api + db 476.0 MiB (limit 1,024), idle CPU api + db 1.25 % of one core (limit 5). (That run's own summary line failed on a missing space in `a15.sh`, fixed in ebc30a1; the figures are its samples through the same calculation.) In CI (run 41003658801, ebc30a1), the same short run on both sides:
+
+```
+telemetry on:  test collector received 2190 spans, 111 log records and 0 metric points (975363 bytes as JSON)
+               API peak: 92.2 MiB (limit 256) PASS   api + db peaks: 388.1 MiB (limit 1024) PASS   idle CPU api + db: 1.56 % PASS
+telemetry off: API peak: 101.3 MiB (limit 256) PASS  api + db peaks: 393.2 MiB (limit 1024) PASS   idle CPU api + db: 0.51 % PASS
+```
+
+**Mutation proof** (`scripts/mutation-checks.sh` on b66d984, cld01, 2026-10-30: `mutation exit 0`, 53 mutations, every one failing its test; the nine M12 ones below, each with the first lines its test printed):
+
+| Broken | Test | It fails with |
+|---|---|---|
+| the real path and query as a request span's name (`http.go`) | A63, `TestM12SourceSpans` | `span named "unnamed"`, `HTTP span named "unnamed", not a route` |
+| SQL arguments on database spans (`store/trace.go`) | `TestM12SourceSpans` | `span "SessionUser" has attribute db.query.parameters, not on the allowlist` |
+| an email address on a signed-in request's span (`auth.go`) | `TestM12SourceSpans` | `span "GET /api/v1/messages" carries an email address in user.role` |
+| the allowlist removed (`filter.go`) and a `page.text` attribute added (`server.go`) | A63 | `exported telemetry contains page text … {"key":"page.text","value":{"string_value":"@@EX0000001 HSF1 SMOKE FROM ROOF …` |
+| a browser request's `traceparent` continued (`http.go`) | `TestM12SourceSpans` | `span "GET /api/v1/messages" continues the trace a browser sent` |
+| the span exporter synchronous (`WithSyncer`), with a hung collector | A64 | `0 of 100 pages delivered`, `0 of 100 pages stored`, `the client didn't exit` |
+| `PRINT_PAGES` output sent to OTLP (`client.go` logs the text) | A63 | `exported telemetry contains page text … "body":{"string_value":"QDTraining Tuesday 7pm at the station"}` |
+| the client not sending `traceparent` (`client.go`) | A62 | `the trace has no pagerarchive-client span "page"` (and `decode`, `buffer`) |
+| the "client not receiving" rule's query broken (`rules.yaml`, a wrong metric name) | A65 on the stack | `no "Client not receiving" alert for mon-a-155816 within 2 minutes; got 0 notifications` |
+
+Unmutated, the same run: `ok internal/acceptance 229.191s`, `--- PASS: TestA65ToldWhenAClientStops (190.36s)`, the print sheet's browser tests `6 passed`, Pester `Passed 372, failed 0`.
+
+**The other suites on cld01** (snapshot of b66d984, 2026-10-30):
+
+- `scripts/e2e.sh` (three browsers): `141 passed (15.9m)`, `API log lines checked: 695, page texts found: 0`, exit 0.
+- `scripts/stack-checks.sh`: the module's checks passed with both vaults (`ok … 425.174s`, `ok … 419.147s`) and `API log lines checked: 565, page texts or email addresses found: 0`; the accounts part failed one check once: `TestA33WithinOneFlow`, `right reset code not refused in the same flow after 5 wrong ones` (the five wrong codes were each refused as invalid; the sixth, right one wasn't refused). It's the first failure of that check in any stack run kept on cld01 (M5 to M11, eight runs) and in CI on this branch (three runs). Rerun at once on the same snapshot (`PA_STACK_PART=accounts`): every check passed, A33's sixth code `ak-stage-access-denied Too many wrong attempts for this account`, exit 0. M12 changes nothing Authentik reads or runs (the lock counts Authentik's own failure records; the API only gained two empty `OTEL_*` variables), so I take it as a timing flake in Authentik's recording of failed codes on a loaded machine. Question 6.
+
+**CI**: run 41003775728 (b66d984), every job passed, publishing after all of them (nothing published from a branch). The last commit's run is in the report.
 
 ## Consequences
 
@@ -232,3 +331,4 @@ EVIDENCE
 3. **Tempo 2.10 rather than 3.1** (§9). Keep 2.10 for now?
 4. **Resource attributes**: only standard keys are kept from `OTEL_RESOURCE_ATTRIBUTES` (§3). A deployment wanting its own (`site=north`) would see them dropped. Keep it strict?
 5. **Integration IDs in telemetry**: delivery spans and exported log lines don't carry the integration's ID (R70 names message, alias and job IDs; I treated integrations the same, as things users own). Troubleshooting one failing integration then means the app's own delivery list. Keep them out?
+6. **A33 failed once on cld01** (Evidence) and passed on the immediate rerun and in every CI run. Shall I look into making that check (or the lock it tests) robust to slow recording of failed codes, as a separate piece of work?
