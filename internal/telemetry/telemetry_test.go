@@ -3,6 +3,7 @@ package telemetry_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -152,8 +153,10 @@ func TestAllowlist(t *testing.T) {
 	flush(t, tel)
 
 	dump := col.Dump()
+	var leaked []string
 	for _, bad := range []string{"SHED", "someone@example.com", "url.full", "page.text", "exception", "unexpected EOF"} {
 		if strings.Contains(dump, bad) {
+			leaked = append(leaked, bad)
 			t.Errorf("exported telemetry contains %q", bad)
 		}
 	}
@@ -181,7 +184,11 @@ func TestAllowlist(t *testing.T) {
 	if len(logs) != 1 || logs[0].Attr("client") != "hill-receiver.2" || logs[0].Attr("user") != "7" || logs[0].Attr("error") != "other" {
 		t.Errorf("log record: %v", dump)
 	}
-	t.Logf("R70: exported %d spans and %d log records; names %q; nothing outside the allowlist", len(spans), len(logs), names)
+	result := "nothing outside the allowlist"
+	if len(leaked) > 0 || t.Failed() {
+		result = fmt.Sprintf("OUTSIDE THE ALLOWLIST: %q and the errors above", leaked)
+	}
+	t.Logf("R70: exported %d spans and %d log records; names %q; %s", len(spans), len(logs), names, result)
 }
 
 func TestErrorKind(t *testing.T) {
@@ -289,7 +296,11 @@ func TestRequestSpans(t *testing.T) {
 	if d := col.Dump(); strings.Contains(d, "SHED") || strings.Contains(d, "123") {
 		t.Error("a span carries the path or query")
 	}
-	t.Logf("R70: spans %q; only the client's post continued the sent trace", want)
+	if t.Failed() {
+		t.Logf("R70: spans %q; NOT only the client's post continued the sent trace, or a span carried the path: see the errors above", want)
+	} else {
+		t.Logf("R70: spans %q; only the client's post continued the sent trace", want)
+	}
 }
 
 // R73, R70: every slog call's message is a constant, so a log record's
@@ -350,7 +361,11 @@ func TestLogMessagesAreConstant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("R73: %d log calls, every message a constant", n)
+	if t.Failed() {
+		t.Logf("R73: %d log calls, NOT every message a constant: see the errors above", n)
+	} else {
+		t.Logf("R73: %d log calls, every message a constant", n)
+	}
 }
 
 func exprText(e ast.Expr) string {

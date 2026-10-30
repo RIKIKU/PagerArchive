@@ -481,12 +481,15 @@ func TestA63NothingPrivate(t *testing.T) {
 
 	secrets := e.privateStrings(a63Pages, map[string]string{"the module's token": token, "the hook's secret URL": hookSecret, "the auth header's secret": headerSecret})
 	dump := col.Dump()
+	var found []string
 	for what, s := range secrets {
 		if strings.Contains(dump, s) {
+			found = append(found, what)
 			i := strings.Index(dump, s)
 			t.Errorf("exported telemetry contains %s: …%s…", what, dump[max(0, i-120):min(len(dump), i+len(s)+40)])
 		}
 	}
+	slices.Sort(found)
 	// The client's console did print them (R13a).
 	if !strings.Contains(rc.stdout.String(), "SHED FIRE") {
 		t.Error("PRINT_PAGES=true printed no page text: the check proves nothing")
@@ -499,27 +502,36 @@ func TestA63NothingPrivate(t *testing.T) {
 	for _, n := range telemetry.AllowedSpanNames() {
 		routes[n] = true
 	}
-	var userSpans int
+	var userSpans, wrongRole, badSpans int
 	for _, s := range spansAll {
+		bad := false
 		if s.Name == telemetry.Unnamed || !routes[s.Name] {
+			bad = true
 			t.Errorf("span named %q", s.Name)
 		}
 		if s.Kind.String() == "SPAN_KIND_SERVER" && !regexp.MustCompile(`^[A-Z_]+ (/[^ ]*|unmatched)$`).MatchString(s.Name) {
+			bad = true
 			t.Errorf("HTTP span named %q, not a route", s.Name)
 		}
 		if s.Attr("user.id") == strconv.FormatInt(e.user.id, 10) {
 			userSpans++
 			if s.Attr("user.role") != "user" {
+				wrongRole++
 				t.Errorf("B's span %q has role %q", s.Name, s.Attr("user.role"))
 			}
 		}
 		for _, k := range []string{"pagerarchive.message.id"} {
 			if s.HasAttr(k) && s.Name != "ingest" {
+				bad = true
 				t.Errorf("span %q carries %s", s.Name, k)
 			}
 		}
 		if s.Attr("user.id") != "" && (s.HasAttr("pagerarchive.message.id") || strings.Contains(s.Name, "{id}") && s.HasAttr("http.target")) {
+			bad = true
 			t.Errorf("a user's span %q carries an ID of what they looked at", s.Name)
+		}
+		if bad {
+			badSpans++
 		}
 	}
 	if userSpans < 4 {
@@ -532,11 +544,26 @@ func TestA63NothingPrivate(t *testing.T) {
 		}
 	}
 	slices.Sort(serverNames)
-	t.Logf("A63: checked %d spans, %d log records and %d metric points (%d bytes) for %d private strings: none found",
-		len(spansAll), len(logs), len(points), len(dump), len(secrets))
+	result := "none found"
+	if len(found) > 0 {
+		result = fmt.Sprintf("FOUND %d: %s", len(found), strings.Join(found, ", "))
+	}
+	t.Logf("A63: checked %d spans, %d log records and %d metric points (%d bytes) for %d private strings: %s",
+		len(spansAll), len(logs), len(points), len(dump), len(secrets), result)
+	if badSpans > 0 {
+		t.Logf("A63: %d spans with a name or attribute that isn't allowed (above)", badSpans)
+	}
 	t.Logf("A63: HTTP spans: %v", slices.Compact(serverNames))
-	t.Logf("A63: %d spans carry B's user ID %d, all with role user; the client's console printed %d lines of page text, none exported",
-		userSpans, e.user.id, strings.Count(rc.stdout.String(), "\n"))
+	roles := "all with role user"
+	if wrongRole > 0 {
+		roles = fmt.Sprintf("%d with another role", wrongRole)
+	}
+	exported := "none exported"
+	if len(found) > 0 {
+		exported = "some exported (above)"
+	}
+	t.Logf("A63: %d spans carry B's user ID %d, %s; the client's console printed %d lines of page text, %s",
+		userSpans, e.user.id, roles, strings.Count(rc.stdout.String(), "\n"), exported)
 	if len(logs) == 0 || len(points) == 0 {
 		t.Errorf("no log records (%d) or metric points (%d) reached the collector: the check proves less than it says", len(logs), len(points))
 	}
@@ -902,6 +929,10 @@ func TestM12SourceSpans(t *testing.T) {
 	if userSpans < 4 {
 		t.Errorf("%d spans carry B's user ID, want B's requests", userSpans)
 	}
-	t.Logf("R70: %d spans and %d attributes as the code made them: allowed names and keys only, nothing private, no browser trace continued; %d carry B's user ID",
-		len(spans), attrs, userSpans)
+	result := "allowed names and keys only, nothing private, no browser trace continued"
+	if t.Failed() {
+		result = "NOT all allowed or private: see the errors above"
+	}
+	t.Logf("R70: %d spans and %d attributes as the code made them: %s; %d carry B's user ID",
+		len(spans), attrs, result, userSpans)
 }

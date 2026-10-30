@@ -103,7 +103,7 @@
         "overrides": [
           {"matcher": {"id": "byName", "options": "Last page decoded"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
           {"matcher": {"id": "byName", "options": "Last send that worked"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
-          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
+          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}, {"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
         ]
       },
       "options": {"showHeader": true}

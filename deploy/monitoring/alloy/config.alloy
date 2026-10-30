@@ -7,7 +7,8 @@
 // The app itself only ever exports allowed attributes (ADR 0013 §3). The
 // allowlist here is a second line of defence, not the rule: if a future
 // version of the app or a library slipped, this still drops attributes it
-// doesn't know. Keep it in step with internal/telemetry/filter.go.
+// doesn't know. Keep it in step with internal/telemetry/filter.go:
+// TestAlloyAllowlistMatches fails when the key lists differ.
 
 // ── The API's metrics (R52, R72, R75) ────────────────────────────────────
 // Scraped with the metrics token, so a dead API shows as a failed scrape

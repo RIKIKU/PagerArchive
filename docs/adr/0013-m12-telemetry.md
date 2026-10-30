@@ -4,7 +4,7 @@ Date: 2026-10-30
 
 ## Status
 
-Proposed. Waiting for the owner (questions at the end).
+Proposed. The owner answered the questions on 2026-10-31 ("The owner's answers", at the end); question 6, the A33 flake, stays open as separate work after M12.
 
 ## Context
 
@@ -335,7 +335,7 @@ The first version of this branch used Tempo 2.10.10, on the grounds that Tempo 3
 
 - An operator who runs the example stack can follow one page from the receiver's decoder to each delivery attempt, see where time goes, see which routes and which user numbers made the load, and is told when a receiver goes quiet or the API is unreachable, without any page text, query, secret or address leaving PagerArchive.
 - With telemetry off nothing changes but the request middleware (about 0.7 µs a request, which `/metrics` needs anyway) and bigger binaries.
-- A new attribute, span name or log key has to be added to the allowlist on purpose, and to Alloy's copy; until then it doesn't leave. `TestM12SourceSpans` makes the omission visible.
+- A new attribute, span name or log key has to be added to the allowlist on purpose, and to Alloy's copy; until then it doesn't leave. `TestM12SourceSpans` makes the omission visible, and `TestAlloyAllowlistMatches` fails until Alloy's copy matches.
 - Telemetry is best-effort: a collector that's down for a while loses that while's telemetry.
 
 ## Questions for the owner
@@ -346,3 +346,29 @@ The first version of this branch used Tempo 2.10.10, on the grounds that Tempo 3
 4. **Resource attributes**: only standard keys are kept from `OTEL_RESOURCE_ATTRIBUTES` (§3). A deployment wanting its own (`site=north`) would see them dropped. Keep it strict?
 5. **Integration IDs in telemetry**: delivery spans and exported log lines don't carry the integration's ID (R70 names message, alias and job IDs; I treated integrations the same, as things users own). Troubleshooting one failing integration then means the app's own delivery list. Keep them out?
 6. **A33 failed once on cld01** (Evidence) and passed on the immediate rerun and in every CI run. Shall I look into making that check (or the lock it tests) robust to slow recording of failed codes, as a separate piece of work?
+
+## The owner's answers (2026-10-31)
+
+1. **Alloy's OTLP port stays opt-in** (`compose.clients.yaml`), bound to the server's LAN address (`ALLOY_OTLP_BIND`). No token for now: the "Client not receiving" alert reads the API's `/metrics`, not anything sent to Alloy, so nothing sent to Alloy can hide a stopped client.
+2. **The alert threshold stays in `rules.yaml`.**
+3. **Tempo 3.1.1**, done in 8fd6d60 ("Tempo 3.1.1", above).
+4. **`OTEL_RESOURCE_ATTRIBUTES` stays strict**: only the standard keys in `ResourceKeys` are kept.
+5. **Integration IDs stay out of telemetry.** If finding a broken webhook turns out to be awkward, the owner will reopen it.
+6. **Open.** The A33 flake is its own piece of work after M12. Nothing about it changes in M12.
+
+## Follow-up from the review (2026-10-31)
+
+- **A page's trace in the screenshots.** `trace.png` from 8fd6d60 showed Explore with the trace ID typed in and the query still loading, so it didn't show that a page's trace opens. `scripts/monitoring-screenshots.cjs` now checks, before it takes that screenshot, that the trace (from Tempo's API) holds the client's steps, the API's steps and at least one query, and then waits up to 90 s until the trace view has drawn every one of the trace's span names. If the view doesn't draw them, the script fails and takes no screenshot.
+- **Summaries that agree with the result.** A63's summary said "none found", and `TestAllowlist`'s "nothing outside the allowlist", even when the test had just found a leak. Each now says what it found when the test fails: A63 gives `FOUND n:` and what was found, and `TestAllowlist` gives `OUTSIDE THE ALLOWLIST:` and the strings. `TestM12SourceSpans`, `TestRequestSpans` and `TestLogMessagesAreConstant` changed the same way.
+- **Alloy's copy of the allowlist is checked.** `TestAlloyAllowlistMatches` reads `deploy/monitoring/alloy/config.alloy` and fails when a span, log, resource (all three statements) or metric key list differs from `SpanKeys`, `LogKeys`, `ResourceKeys` or `MetricKeys`. `mutation-checks.sh` adds a key to `SpanKeys` only and shows the test failing.
+- **Dashboards, from looking at every screenshot.**
+  - "Ingest log lines" showed every API line, including the test stack's `metrics: locked accounts unavailable` warnings. It now shows only lines that carry a trace ID, and is titled "Log lines from pages and requests".
+  - "Recent pages" said to click a trace ID. Its table links span IDs, so it now says to click a span ID to open that page's trace.
+  - "Radio running" was blank for a client that reads a decoder's output, because only a client that runs the radio itself reports it. Such a client now shows "not run by the client".
+
+**Evidence** (cld01):
+
+- `scripts/monitoring-checks.sh -s` from a fresh snapshot: exit 0. A65 passed (`fired … 39s`, `resolved 23s`, `"API unreachable" fired 59s`, `resolved 28s`). The screenshot script printed `trace c4a33db2b37dd7c7aaac37023ad82bdc: 24 spans: page, buffer, send, decode, POST /api/v1/pages, ingest, TouchClient, ingest.redact, ingest.parse, AliasesMatching, ingest.store, SQL BEGIN, ingest.dedup, LockDedupKey, FindDuplicate, InsertMessage, ingest.locate, StreetPoint, SetLocation, InsertReception, SearchMessages, MatchingIntegrations, SQL COMMIT, live.publish` and `the trace view drew all 24 span names 3.3 s after opening`. Every image in `docs/monitoring/` is from that run, and each was looked at.
+- The same script against a running stack with `TRACE_WAIT_MS=1000`: `Error: the trace view didn't draw page, decode, buffer, send, … within 1 s; no screenshot taken`, exit status 1, and the `trace.png` already in the folder was removed.
+- `TestAlloyAllowlistMatches`, unmutated: `config.alloy keeps the same keys as filter.go (SpanKeys 20, LogKeys 44, ResourceKeys 11, MetricKeys 1)`. Through `mutation-checks.sh`'s own `mutate`: `alloy_test.go:56: config.alloy's span list 1 lacks SpanKeys keys ["pagerarchive.reparse.batches"]` … `-> the test fails: the check is guarded`.
+- With the allowlist taken out of `filter.go` and page text added to the ingest span, A63's summary: `checked 256 spans, 17 log records and 12 metric points (118731 bytes) for 40 private strings: FOUND 29: page text @@EX0000001 …`, then `the client's console printed 8 lines of page text, some exported (above)`. Unmutated: `… for 40 private strings: none found` and `none exported`. `TestAllowlist` with the allowlist removed: `OUTSIDE THE ALLOWLIST: ["SHED" "someone@example.com" "url.full" "page.text"] and the errors above`.

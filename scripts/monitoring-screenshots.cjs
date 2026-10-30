@@ -3,12 +3,26 @@
 // scripts/monitoring-screenshots.sh.
 //
 // usage: GRAFANA_URL=... GRAFANA_PASSWORD=... node scripts/monitoring-screenshots.cjs DIR
+// TRACE_WAIT_MS (default 90000) is how long the trace view may take to draw.
+const fs = require('node:fs');
 const path = require('node:path');
 const { chromium } = require(require.resolve('playwright', { paths: [path.join(__dirname, '..', 'web')] }));
 
 const dir = process.argv[2];
 const grafana = process.env.GRAFANA_URL;
+const traceWait = Number(process.env.TRACE_WAIT_MS || 90000);
 const auth = 'Basic ' + Buffer.from('admin:' + process.env.GRAFANA_PASSWORD).toString('base64');
+
+// The distinct span names in a trace from Tempo's API (OTLP JSON).
+function spanNames(t) {
+	const names = new Set();
+	for (const b of t.batches || t.resourceSpans || []) {
+		for (const s of b.scopeSpans || b.instrumentationLibrarySpans || []) {
+			for (const sp of s.spans || []) names.add(sp.name);
+		}
+	}
+	return [...names];
+}
 
 async function api(p) {
 	const res = await fetch(grafana + p, { headers: { Authorization: auth } });
@@ -25,10 +39,21 @@ async function api(p) {
 	if (!traces.length) throw new Error('no page traces in Tempo');
 	// The page held while the API was down, if it's there: its trace shows the buffering.
 	let trace = traces[0].traceID;
+	let names = spanNames(await api(`/api/datasources/proxy/uid/tempo/api/traces/${trace}`));
 	for (const t of traces) {
 		const full = await api(`/api/datasources/proxy/uid/tempo/api/traces/${t.traceID}`);
-		if (JSON.stringify(full).includes('"buffer"') && Number(t.durationMs) > 10000) { trace = t.traceID; break; }
+		if (spanNames(full).includes('buffer') && Number(t.durationMs) > 10000) {
+			trace = t.traceID;
+			names = spanNames(full);
+			break;
+		}
 	}
+	// The trace must hold the whole path: the client's steps, the API's and
+	// at least one query (sqlc names: InsertMessage, FindDuplicate ...).
+	const lacking = ['page', 'decode', 'send', 'ingest', 'ingest.redact', 'ingest.parse', 'ingest.store'].filter((n) => !names.includes(n));
+	if (!names.some((n) => /^[A-Z][A-Za-z0-9]+$/.test(n))) lacking.push('a database query');
+	if (lacking.length) throw new Error(`trace ${trace} has no ${lacking.join(', ')}: its spans are ${names.join(', ')}`);
+	console.log(`trace ${trace}: ${names.length} spans: ${names.join(', ')}`);
 
 	const browser = await chromium.launch();
 	const page = await browser.newPage({ viewport: { width: 1600, height: 2000 }, extraHTTPHeaders: { Authorization: auth } });
@@ -39,8 +64,31 @@ async function api(p) {
 		await page.screenshot({ path: path.join(dir, name), fullPage: true });
 		console.log('screenshot', name);
 	};
+	// The trace view must have drawn every one of the trace's spans before
+	// the screenshot: no picture of an empty or loading page. Each span's
+	// row in Grafana 13's trace view names it in an "endpointName" span.
 	const pane = { datasource: 'tempo', queries: [{ refId: 'A', datasource: { type: 'tempo', uid: 'tempo' }, queryType: 'traceql', query: trace }], range: { from: 'now-1h', to: 'now' } };
-	await shot('trace.png', `/explore?schemaVersion=1&orgId=1&panes=${encodeURIComponent(JSON.stringify({ a: pane }))}`, 6000);
+	fs.rmSync(path.join(dir, 'trace.png'), { force: true });
+	const opened = Date.now();
+	await page.goto(grafana + `/explore?schemaVersion=1&orgId=1&panes=${encodeURIComponent(JSON.stringify({ a: pane }))}`);
+	const rows = { sel: '[data-testid="TimelineRowCell"] [class*="endpointName"]', want: names };
+	const notDrawn = ({ sel, want }) => {
+		const shown = new Set([...document.querySelectorAll(sel)].map((e) => e.textContent.trim()));
+		return want.filter((n) => !shown.has(n));
+	};
+	try {
+		await page.waitForFunction(({ sel, want }) => {
+			const shown = new Set([...document.querySelectorAll(sel)].map((e) => e.textContent.trim()));
+			return want.every((n) => shown.has(n));
+		}, rows, { timeout: traceWait, polling: 500 });
+	} catch (e) {
+		const missing = await page.evaluate(notDrawn, rows);
+		throw new Error(`the trace view didn't draw ${missing.join(', ')} within ${traceWait / 1000} s; no screenshot taken`);
+	}
+	console.log(`the trace view drew all ${names.length} span names ${((Date.now() - opened) / 1000).toFixed(1)} s after opening`);
+	await page.waitForTimeout(1000);
+	await page.screenshot({ path: path.join(dir, 'trace.png'), fullPage: true });
+	console.log('screenshot trace.png');
 	await shot('dashboard-page-path.png', '/d/pa-page-path?orgId=1&from=now-30m&to=now');
 	await shot('dashboard-requests.png', '/d/pa-requests?orgId=1&from=now-30m&to=now');
 	await shot('dashboard-clients.png', '/d/pa-clients?orgId=1&from=now-30m&to=now');

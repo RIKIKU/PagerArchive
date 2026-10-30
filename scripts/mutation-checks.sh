@@ -22,7 +22,9 @@ PA_PWSH=${PA_PWSH:-$(command -v pwsh || true)}
 survived=0
 
 # mutate <name> <file> <test> <old> <new>: replace exact text, run the test,
-# and restore. <test> is "go:<regexp>" or "pester:<file>".
+# and restore. <test> is "go:<regexp>" (the acceptance checks),
+# "telemetry:<regexp>" (internal/telemetry's tests), "pester:<file>",
+# "e2e:<grep>" or "mon:" (the example stack's checks).
 #
 # mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
 # replacements, in two files, as one mutation (M12).
@@ -45,6 +47,10 @@ mutate() {
 	go:*)
 		out=$(go test -p 1 -count=1 -timeout 10m -v -run "${test#go:}" ./internal/acceptance/ 2>&1)
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | grep -vE ': 401 invalid_token$|^\s+[a-z0-9_]+_test.go:[0-9]+: (A53: user B|ADR 0010)' | head -4
+		;;
+	telemetry:*)
+		out=$(go test -count=1 -v -run "${test#telemetry:}" ./internal/telemetry/ 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -4
 		;;
 	mon:*)
 		out=$(sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
@@ -249,6 +255,10 @@ mutate "PRINT_PAGES output sent to OTLP" internal/client/client.go go:TestA63Not
 mutate "the client doesn't send traceparent" internal/client/client.go go:TestA62PageTrace \
 	'	telemetry.TraceContext.Inject(ctx, propagation.HeaderCarrier(req.Header))' \
 	'	_ = propagation.HeaderCarrier(req.Header)'
+mutate "a span key added to the app's allowlist but not to Alloy's" $T/filter.go telemetry:TestAlloyAllowlistMatches \
+	'	"pagerarchive.reparse.messages": intKind,' \
+	'	"pagerarchive.reparse.messages": intKind,
+	"pagerarchive.reparse.batches":  intKind,'
 if command -v docker >/dev/null; then
 	mutate "the \"client not receiving\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon: \
 		'(pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})' '(pagerarchive_client_last_seen_seconds{job="pagerarchive"})'
@@ -258,6 +268,7 @@ fi
 
 echo "=== unmutated"
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12' ./internal/acceptance/ 2>&1 | tail -1
+go test -count=1 ./internal/telemetry/ 2>&1 | tail -1
 ! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 [ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1

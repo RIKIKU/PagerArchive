@@ -11,7 +11,7 @@
     {
       "id": 1, "type": "text", "title": "How to read this",
       "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt. The table lists recent pages: click a trace ID to open it. The top chart is the slowest 10 % of each step."}
+      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt. The table lists recent pages: click a span ID to open that page's trace. The top chart is the slowest 10 % of each step."}
     },
     {
       "id": 2, "type": "timeseries", "title": "Time in each step (90th percentile)",
@@ -51,10 +51,10 @@
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
-      "id": 6, "type": "logs", "title": "Ingest log lines (click one to open its trace)",
+      "id": 6, "type": "logs", "title": "Log lines from pages and requests (click one to open its trace)",
       "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
       "datasource": {"type": "loki", "uid": "loki"},
-      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"}"}],
+      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"} | trace_id != \"\""}],
       "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
     }
   ]

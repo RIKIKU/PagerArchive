@@ -127,7 +127,7 @@ The client sends its traces (each page from decode to the server's answer), its 
 
 All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick; change the files, or save a copy under another name.
 
-**A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click one to open its trace) and the log lines.
+**A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), and the log lines from pages and requests (click one for its trace).
 
 ![A page's path](monitoring/dashboard-page-path.png)
 
@@ -169,7 +169,7 @@ The shed receiver's antenna cable has worked loose. Here's how the stack tells y
 
 1. **The alert.** Pushover says: *Client not receiving — Client shed-receiver has sent nothing for 31m*. The server hasn't heard anything from that client, heartbeats included, for over 30 minutes.
 2. **Is it the radio or the network?** Open **PagerArchive: clients**. In "Each client's own view", the shed receiver's **Last page decoded** is 31 minutes ago, but **Last send that worked** is too, and **Radio running** says *running*. In "Lines read from the decoder", its line stops at the same time. The client is up and talking to the monitoring stack, so the network is fine; the decoder has stopped producing pages. That points at the radio: the antenna, the dongle or interference. (If instead lines were still being read and decoded, with **failed sends** climbing and pages **buffered**, the problem would be between the client and the server.)
-3. **What happened just before?** Open **PagerArchive: a page's path**, and in "Recent pages" find the last page from `shed-receiver` (the `pagerarchive.client.id` column). Click its trace ID. The trace shows the client's decode, buffer and send, then the API's steps. All normal: the last page arrived fine.
+3. **What happened just before?** Open **PagerArchive: a page's path**, and in "Recent pages" find the last page from `shed-receiver` (the `pagerarchive.client.id` column). Click its span ID to open its trace, which shows the client's decode, buffer and send, then the API's steps. All normal: the last page arrived fine.
 4. **The logs around it.** In the trace view, a span's **Logs for this span** button opens Loki with that trace's log lines; or in **Explore**, choose **Loki** and run `{service_name="pagerarchive-client", service_instance_id="shed-receiver"}`. Nothing but "page" lines, then silence: no errors from the client itself.
 5. **Fix and confirm.** You reseat the cable. Within a minute the client decodes a heartbeat, the server hears it, and the alert sends *Resolved*.
 
