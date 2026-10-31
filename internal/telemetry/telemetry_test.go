@@ -270,7 +270,7 @@ func TestRequestSpans(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
-	do(http.MethodGet, "/api/v1/messages/123?q=SHED+FIRE", "")
+	do(http.MethodGet, "/api/v1/messages/987654321?q=SHED+FIRE", "")
 	do(http.MethodPost, "/api/v1/pages", "Bearer browser")
 	do(http.MethodPost, "/api/v1/pages", "Bearer client")
 	do(http.MethodGet, "/nowhere/SHED-FIRE", "")
@@ -293,8 +293,13 @@ func TestRequestSpans(t *testing.T) {
 	if spans[0].Attr("user.id") != "42" || spans[0].Attr("user.role") != "user" {
 		t.Errorf("user attributes: %q %q", spans[0].Attr("user.id"), spans[0].Attr("user.role"))
 	}
-	if d := col.Dump(); strings.Contains(d, "SHED") || strings.Contains(d, "123") {
-		t.Error("a span carries the path or query")
+	// The message ID is one that random trace and span IDs or nanosecond
+	// timestamps in the dump won't contain by chance ("123" once did).
+	d := col.Dump()
+	for _, bad := range []string{"SHED", "987654321"} {
+		if strings.Contains(d, bad) {
+			t.Errorf("a span carries the path or query: %q", bad)
+		}
 	}
 	if t.Failed() {
 		t.Logf("R70: spans %q; NOT only the client's post continued the sent trace, or a span carried the path: see the errors above", want)
