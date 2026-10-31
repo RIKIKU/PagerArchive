@@ -60,7 +60,8 @@ mutate() {
 		;;
 	mon:*)
 		out=$(PA_MON_RUN="${test#mon:}" sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
-		printf '%s\n' "$out" | grep -E '^\s+a6[57]_test.go:[0-9]+: ' | head -4
+		# What failed, not the steps that passed before it (their lines say "A65:" or "A67:").
+		printf '%s\n' "$out" | grep -E '^\s+a6[57]_test.go:[0-9]+: ' | grep -vE ': A6[57]: ' | head -4
 		;;
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
