@@ -1,8 +1,25 @@
 name: CI
 
+# A push or pull request that changes only documentation (SPEC.md, docs/**,
+# other Markdown) runs nothing (owner, 2026-11-01; ADR 0014). Any other file
+# changed runs everything. The map sprites' LICENSE.md is built into the
+# server (web/web.go embeds web/build), so web/static/** counts as code. Tag
+# pushes ignore path filters, so releases always run.
 on:
   push:
+    paths:
+      - "**"
+      - "!SPEC.md"
+      - "!docs/**"
+      - "!**.md"
+      - "web/static/**"
   pull_request:
+    paths:
+      - "**"
+      - "!SPEC.md"
+      - "!docs/**"
+      - "!**.md"
+      - "web/static/**"
   # Publishes the current branch's images tagged sha-<commit> only (owner, 2026-10-13).
   workflow_dispatch:
 
@@ -322,6 +339,13 @@ jobs:
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+      # Loki refuses every write above 90% disk use, and the runner's disk
+      # was at 90.55% once (ADR 0014): remove toolchains this job never uses.
+      - name: Free disk space for Loki
+        run: |
+          df -h /
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
+          df -h /
       - name: A65 and A67 on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs

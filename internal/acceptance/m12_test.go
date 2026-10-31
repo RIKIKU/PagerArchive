@@ -749,6 +749,71 @@ func TestA66ClientTelemetry(t *testing.T) {
 	rc.stop()
 }
 
+// slogLine is the level and message of one of the client's own log lines
+// (slog's text form); rtl_fm's lines and the console aren't.
+var slogLine = regexp.MustCompile(`(?m)^time=\S+ level=(\S+) msg=("(?:[^"\\]|\\.)*"|\S+)`)
+
+// R73 (ADR 0014): with telemetry on, every line the client logs after
+// telemetry starts is exported too, up to its last, which says why it
+// stopped. Two clients: one that can't reach the API and then runs out of
+// input, and one whose radio can't start. Only the telemetry package's own
+// lines, about the export itself ("telemetry on", a signal being off,
+// dropping data), stay on stdout (ADR 0013).
+func TestR73EveryClientLineExported(t *testing.T) {
+	col := telemetrytest.New()
+	defer col.Close()
+	otelTestEnv(t, col.URL)
+	e := setup(t)
+	proxy := newTCPProxy(t, strings.TrimPrefix(e.url, "http://"))
+	proxy.down()
+	ra := e.startReceiver("a", proxy.URL())
+	ra.decode("0100001", "QDR73 page 1")
+	if !eventually(10*time.Second, func() bool { return strings.Count(ra.stderr.String(), "server unreachable") >= 2 }) {
+		t.Fatalf("the client didn't log failed sends:\n%s", ra.stderr.String())
+	}
+	ra.stop()
+	noPath := t.TempDir() // no rtl_fm here: the radio can't start
+	rb := e.startReceiver("b", proxy.URL(), "RADIO_FREQUENCY=148.8125M", "PATH="+noPath)
+	select {
+	case <-rb.done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the client without rtl_fm didn't stop")
+	}
+
+	exported := map[string]int{}
+	for _, l := range col.Logs() {
+		if l.Service == "pagerarchive-client" {
+			exported[l.Body.GetStringValue()]++
+		}
+	}
+	var lines, missing []string
+	for _, out := range []string{ra.stderr.String(), rb.stderr.String()} {
+		for _, m := range slogLine.FindAllStringSubmatch(out, -1) {
+			msg := m[2]
+			if s, err := strconv.Unquote(msg); err == nil {
+				msg = s
+			}
+			if strings.HasPrefix(msg, "telemetry") {
+				continue
+			}
+			lines = append(lines, m[1]+" "+msg)
+			if exported[msg] == 0 {
+				missing = append(missing, m[1]+" "+msg)
+				continue
+			}
+			exported[msg]--
+		}
+	}
+	if !slices.Contains(lines, "ERROR client stopped") || !slices.Contains(lines, "WARN exiting with unsent pages") {
+		t.Fatalf("the clients didn't log what this check is about: %q", lines)
+	}
+	if len(missing) > 0 {
+		t.Errorf("logged by the client but not exported: %q (of %d lines)", missing, len(lines))
+	} else {
+		t.Logf("R73: all %d of the clients' lines after telemetry started were exported: %q", len(lines), lines)
+	}
+}
+
 // R72, R75: /metrics keeps its names and adds requests by route and status,
 // the database pool, live connections and the Go runtime; label values are
 // routes and statuses, never users; OpenMetrics adds exemplars.

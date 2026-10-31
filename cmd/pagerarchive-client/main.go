@@ -52,12 +52,18 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
-		log.Error("client stopped", "error", err.Error())
+		if !errors.As(err, new(stopped)) {
+			log.Error("client stopped", "error", err.Error())
+		}
 		os.Exit(1)
 	}
 }
 
-func run(plain *slog.Logger) error {
+// stopped is an error run has logged already, through the logger that
+// exports it (R73), before telemetry shut down.
+type stopped struct{ error }
+
+func run(plain *slog.Logger) (err error) {
 	log := plain
 	serverURL, id := os.Getenv("SERVER_URL"), os.Getenv("CLIENT_ID")
 	key := os.Getenv("CLIENT_KEY")
@@ -86,12 +92,18 @@ func run(plain *slog.Logger) error {
 	// Telemetry: log lines go to stderr as before and, when it's on, over
 	// OTLP too (R73); the console's page text never does (R13a).
 	tel := telemetry.Start(ctx, telemetry.Settings{ServiceName: "pagerarchive-client", Version: version, InstanceID: id, Metrics: true, Log: plain})
+	log = slog.New(tel.LogHandler(plain.Handler(), "pagerarchive-client"))
 	defer func() {
+		// Why the client stopped is its most useful line: logged here, while
+		// telemetry can still export it, not by main after it shut down.
+		if err != nil {
+			log.Error("client stopped", "error", err.Error())
+			err = stopped{err}
+		}
 		flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
 		tel.Shutdown(flush)
 	}()
-	log = slog.New(tel.LogHandler(plain.Handler(), "pagerarchive-client"))
 	tracer := tel.Tracer("pagerarchive-client")
 	// With RADIO_FREQUENCY set the client runs the radio and measures its
 	// audio (R74a); reading stdin, it has no radio health to report.

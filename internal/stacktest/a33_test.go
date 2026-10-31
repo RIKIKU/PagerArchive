@@ -13,9 +13,16 @@ import (
 // A33 (R44a): after 5 wrong attempts for one account, further attempts are
 // refused for 15 minutes, even if the flow is restarted or a new code is
 // requested. Covers password-reset codes, passwords and the enrolment code.
-// Each attempt is logged, so the run shows what happens.
+// Each attempt is logged, so the run shows what happens, and each check
+// decides on a real answer from Authentik (outcome_test.go, ADR 0014).
 
 const wrongAttempts = 5
+
+// unique is an address at the allowed domain that no earlier run on this
+// stack used, so a check can run again (go test -count) on one stack.
+func unique(name string) string {
+	return fmt.Sprintf("%s-%d@example.com", name, time.Now().UnixNano()%1e9)
+}
 
 // otherCode is a code that isn't code.
 func otherCode(code string) string {
@@ -29,74 +36,63 @@ func throttleWait(failures int) {
 	time.Sleep(time.Duration(1<<(failures-1))*time.Second + 300*time.Millisecond)
 }
 
+// The checking stages, and what follows each when the answer is right.
+const (
+	passwordStage  = "ak-stage-password"               // sign-in: then into the app
+	resetCodeStage = "ak-stage-authenticator-validate" // password reset: then the new-password page
+	enrolCodeStage = "ak-stage-authenticator-email"    // enrolment: then into the app
+)
+
 // resetAttempt runs the password-reset flow from the start, requesting a
-// new code. With wrong, it enters a wrong code. It reports whether the
-// correct code was accepted (the new-password page was reached), and what
-// the flow said.
-func (s *stack) resetAttempt(t *testing.T, email string, wrong bool) (bool, string) {
+// new code, and enters it (with wrong, a wrong one).
+func (s *stack) resetAttempt(t *testing.T, email string, wrong bool) result {
 	t.Helper()
 	return s.resetAttemptAs(t, email, email, wrong)
 }
 
 // resetAttemptAs is resetAttempt with the address typed as typed; the code
-// still arrives in mailbox.
-func (s *stack) resetAttemptAs(t *testing.T, typed, mailbox string, wrong bool) (bool, string) {
+// still arrives in mailbox. The lock may refuse before a code is asked for.
+func (s *stack) resetAttemptAs(t *testing.T, typed, mailbox string, wrong bool) result {
 	t.Helper()
 	r := s.browser(t, mailbox)
 	var since time.Time
 	c := r.executor("pagerarchive-recovery", "", nil)
 	for steps := 0; steps < 8; steps++ {
 		var body map[string]any
-		switch c.Component {
-		case "ak-stage-identification":
+		switch {
+		case c.Component == "ak-stage-identification":
 			body = map[string]any{"uid_field": typed}
-		case "ak-stage-authenticator-validate":
-			switch {
-			case strings.Contains(c.errorText(), "Empty response"): // the code was sent
-				code := s.mailpit.code(t, mailbox, since)
-				if wrong {
-					code = otherCode(code)
-				}
-				body = map[string]any{"code": code}
-			case since.IsZero():
-				since = time.Now()
-				var v struct {
-					Devices []map[string]any `json:"device_challenges"`
-				}
-				_ = json.Unmarshal(c.raw, &v)
-				if len(v.Devices) == 0 {
-					return false, "no code offered: " + c.errorText()
-				}
-				body = map[string]any{"selected_challenge": v.Devices[0]}
-			default:
-				return false, "code refused: " + c.errorText()
+		case c.Component == resetCodeStage && strings.Contains(c.errorText(), "Empty response"): // the code was sent
+			code := s.mailpit.code(t, mailbox, since)
+			if wrong {
+				code = otherCode(code)
 			}
-		case "ak-stage-prompt":
-			return true, "code accepted: new-password page"
-		case "ak-stage-access-denied":
-			return false, "refused: " + c.errorText()
-		default:
-			return false, c.Component + ": " + c.errorText()
+			return judge(r.executor("pagerarchive-recovery", "", map[string]any{"component": c.Component, "code": code}), resetCodeStage, "ak-stage-prompt")
+		case c.Component == resetCodeStage && since.IsZero():
+			since = time.Now()
+			var v struct {
+				Devices []map[string]any `json:"device_challenges"`
+			}
+			_ = json.Unmarshal(c.raw, &v)
+			if len(v.Devices) == 0 {
+				return result{noAnswer, "no code offered: " + c.errorText()}
+			}
+			body = map[string]any{"selected_challenge": v.Devices[0]}
+		default: // refused before a code was entered, or no answer
+			return judge(c, resetCodeStage, "ak-stage-prompt")
 		}
 		body["component"] = c.Component
 		c = r.executor("pagerarchive-recovery", "", body)
 	}
-	return false, "flow didn't settle: " + c.Component
+	return result{noAnswer, "the flow didn't reach the code: " + c.Component}
 }
 
 // passwordAttempt signs in from a fresh start with password.
-func (s *stack) passwordAttempt(t *testing.T, email, password string) (bool, string) {
+func (s *stack) passwordAttempt(t *testing.T, email, password string) result {
 	t.Helper()
 	b := s.browser(t, email)
 	b.pw = password
-	ok, c := b.signIn()
-	if ok {
-		return true, "signed in"
-	}
-	if c.Component == "" {
-		return false, "not signed in: " + c.Error
-	}
-	return false, c.Component + ": " + c.errorText()
+	return b.signInAttempt()
 }
 
 // shiftFailures moves an account's recorded sign-in events and code
@@ -119,22 +115,40 @@ UPDATE authentik_stages_authenticator_email_emaildevice SET throttling_failure_t
 	}
 }
 
+// failureCount is what the lock counts for an account (the blueprint's
+// pagerarchive-not-locked): its login_failed events, plus the failure
+// count on its email device. The executor reads it before sending a
+// password or code again (ADR 0014).
+func (s *stack) failureCount(t *testing.T, username string) int {
+	t.Helper()
+	cmd := exec.Command("docker", "compose", "-f", "compose.yaml", "-f", "deploy/test/compose.yaml",
+		"exec", "-T", "db", "psql", "-qtA", "-v", "ON_ERROR_STOP=1", "-v", "u="+username, "-U", "postgres", "-d", "authentik")
+	cmd.Dir = "../.."
+	cmd.Stdin = strings.NewReader(`
+SELECT (SELECT count(*) FROM authentik_events_event WHERE action = 'login_failed' AND context->>'username' = :'u')
+     + (SELECT coalesce(sum(d.throttling_failure_count), 0) FROM authentik_stages_authenticator_email_emaildevice d
+         JOIN authentik_core_user u ON u.id = d.user_id WHERE u.username = :'u');
+`)
+	out, err := cmd.CombinedOutput()
+	n, convErr := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil || convErr != nil {
+		t.Fatalf("count failures: %v: %s", err, out)
+	}
+	return n
+}
+
 // lockLasts15Minutes checks an attempt with the right answer 14 minutes
-// after the failures (still refused) and 16 minutes after (accepted).
-func (s *stack) lockLasts15Minutes(t *testing.T, username string, attempt func() (bool, string)) {
+// after the failures (refused by the lock) and 16 minutes after (accepted).
+func (s *stack) lockLasts15Minutes(t *testing.T, username string, attempt func() result) {
 	t.Helper()
 	s.shiftFailures(t, username, 14*time.Minute)
-	ok, msg := attempt()
-	t.Logf("A33:   14 minutes later, right answer: %s", msg)
-	if ok {
-		t.Error("accepted 14 minutes after the 5th failure")
-	}
+	r := attempt()
+	t.Logf("A33:   14 minutes later, right answer: %v: %s", r.outcome, r.said)
+	expect(t, "the right answer 14 minutes after the 5th failure", r, lockedOut)
 	s.shiftFailures(t, username, 2*time.Minute)
-	ok, msg = attempt()
-	t.Logf("A33:   16 minutes later, right answer: %s", msg)
-	if !ok {
-		t.Error("still refused 16 minutes after the 5th failure")
-	}
+	r = attempt()
+	t.Logf("A33:   16 minutes later, right answer: %v: %s", r.outcome, r.said)
+	expect(t, "the right answer 16 minutes after the 5th failure", r, accepted)
 }
 
 func TestA33GuessingIsLimited(t *testing.T) {
@@ -144,30 +158,28 @@ func TestA33GuessingIsLimited(t *testing.T) {
 	t.Run("password-reset codes", func(t *testing.T) {
 		b := s.inviteAndEnrol(t, o, "a33reset@example.com")
 		for i := 1; i <= wrongAttempts; i++ {
-			_, msg := s.resetAttempt(t, b.email, true)
-			t.Logf("A33: reset attempt %d (new flow, new code), wrong code: %s", i, msg)
+			r := s.resetAttempt(t, b.email, true)
+			t.Logf("A33: reset attempt %d (new flow, new code), wrong code: %v: %s", i, r.outcome, r.said)
+			expect(t, fmt.Sprintf("wrong reset code %d", i), r, wrongAnswer)
 			throttleWait(i)
 		}
-		ok, msg := s.resetAttempt(t, b.email, false)
-		t.Logf("A33: reset attempt %d (new flow, new code), RIGHT code: %s", wrongAttempts+1, msg)
-		if ok {
-			t.Error("the right reset code was accepted after 5 wrong ones")
-		}
-		s.lockLasts15Minutes(t, b.email, func() (bool, string) { return s.resetAttempt(t, b.email, false) })
+		r := s.resetAttempt(t, b.email, false)
+		t.Logf("A33: reset attempt %d (new flow, new code), RIGHT code: %v: %s", wrongAttempts+1, r.outcome, r.said)
+		expect(t, "the right reset code after 5 wrong ones", r, lockedOut)
+		s.lockLasts15Minutes(t, b.email, func() result { return s.resetAttempt(t, b.email, false) })
 	})
 
 	t.Run("passwords", func(t *testing.T) {
 		c := s.inviteAndEnrol(t, o, "a33password@example.com")
 		for i := 1; i <= wrongAttempts; i++ {
-			_, msg := s.passwordAttempt(t, c.email, fmt.Sprintf("wrong password %d", i))
-			t.Logf("A33: sign-in attempt %d (new flow), wrong password: %s", i, msg)
+			r := s.passwordAttempt(t, c.email, fmt.Sprintf("wrong password %d", i))
+			t.Logf("A33: sign-in attempt %d (new flow), wrong password: %v: %s", i, r.outcome, r.said)
+			expect(t, fmt.Sprintf("wrong password %d", i), r, wrongAnswer)
 		}
-		ok, msg := s.passwordAttempt(t, c.email, c.pw)
-		t.Logf("A33: sign-in attempt %d (new flow), RIGHT password: %s", wrongAttempts+1, msg)
-		if ok {
-			t.Error("the right password was accepted after 5 wrong ones")
-		}
-		s.lockLasts15Minutes(t, c.email, func() (bool, string) { return s.passwordAttempt(t, c.email, c.pw) })
+		r := s.passwordAttempt(t, c.email, c.pw)
+		t.Logf("A33: sign-in attempt %d (new flow), RIGHT password: %v: %s", wrongAttempts+1, r.outcome, r.said)
+		expect(t, "the right password after 5 wrong ones", r, lockedOut)
+		s.lockLasts15Minutes(t, c.email, func() result { return s.passwordAttempt(t, c.email, c.pw) })
 	})
 
 	t.Run("enrolment code", func(t *testing.T) {
@@ -179,20 +191,21 @@ func TestA33GuessingIsLimited(t *testing.T) {
 		c := d.executor("pagerarchive-enrolment", query, nil)
 		c = d.executor("pagerarchive-enrolment", query, map[string]any{"component": "ak-stage-prompt",
 			"name": "A33 Enrol", "password": d.pw, "password_repeat": d.pw})
-		if c.Component != "ak-stage-authenticator-email" {
-			t.Fatalf("no code page: %s %s", c.Component, c.errorText())
+		if c.Component != enrolCodeStage {
+			t.Fatalf("no code page: %s %s %s", c.Component, c.errorText(), c.reply())
 		}
 		code := s.mailpit.code(t, email, since)
 		for i := 1; i <= wrongAttempts; i++ {
-			c = d.executor("pagerarchive-enrolment", query, map[string]any{"component": c.Component, "code": otherCode(code)})
-			t.Logf("A33: enrolment code attempt %d, wrong code: %s %s", i, c.Component, c.errorText())
+			r := judge(d.executor("pagerarchive-enrolment", query, map[string]any{"component": enrolCodeStage, "code": otherCode(code)}),
+				enrolCodeStage, "xak-flow-redirect")
+			t.Logf("A33: enrolment code attempt %d, wrong code: %v: %s", i, r.outcome, r.said)
+			expect(t, fmt.Sprintf("wrong enrolment code %d", i), r, wrongAnswer)
 			throttleWait(i)
 		}
-		c = d.executor("pagerarchive-enrolment", query, map[string]any{"component": "ak-stage-authenticator-email", "code": code})
-		t.Logf("A33: enrolment code attempt %d, RIGHT code: %s %s", wrongAttempts+1, c.Component, c.errorText())
-		if c.Component == "xak-flow-redirect" {
-			t.Error("the right enrolment code was accepted after 5 wrong ones")
-		}
+		r := judge(d.executor("pagerarchive-enrolment", query, map[string]any{"component": enrolCodeStage, "code": code}),
+			enrolCodeStage, "xak-flow-redirect")
+		t.Logf("A33: enrolment code attempt %d, RIGHT code: %v: %s", wrongAttempts+1, r.outcome, r.said)
+		expect(t, "the right enrolment code after 5 wrong ones", r, lockedOut)
 		if exists, active := s.authentikUser(t, email); active {
 			t.Errorf("enrolling user: exists %v, active %v", exists, active)
 		}
@@ -205,66 +218,69 @@ func TestA33WithinOneFlow(t *testing.T) {
 	s := setup(t, "restarted")
 	o := s.owner(t)
 
-	u := s.inviteAndEnrol(t, o, "a33sameflow@example.com")
+	u := s.inviteAndEnrol(t, o, unique("a33sameflow"))
 	b := s.browser(t, u.email)
 	end, c := b.walk(s.app.JoinPath("/auth/login").String(), func(c challenge) map[string]any {
-		switch c.Component {
-		case "ak-stage-identification":
+		if c.Component == "ak-stage-identification" {
 			return map[string]any{"uid_field": u.email}
-		case "ak-stage-password":
-			return nil // the password page: answered below
 		}
-		return nil
+		return nil // the password page (answered below), or anything else
 	})
-	if end != nil || c.Component != "ak-stage-password" {
-		t.Fatalf("no password page: %v %s", end, c.Component)
+	if end != nil || c.Component != passwordStage {
+		t.Fatalf("no password page: %v %s %s", end, c.Component, c.reply())
 	}
 	// walk stopped inside the sign-in flow; carry on in the same flow.
 	slug, query := "pagerarchive-authentication", c.query
+	ended := false
 	for i := 1; i <= wrongAttempts; i++ {
-		c = b.executor(slug, query, map[string]any{"component": "ak-stage-password", "password": fmt.Sprintf("wrong %d", i)})
-		t.Logf("A33: same flow, password attempt %d, wrong: %s %s", i, c.Component, c.errorText())
-		if c.Component != "ak-stage-password" {
-			break // Authentik cancels the flow after 5 wrong passwords
+		r := judge(b.executor(slug, query, map[string]any{"component": passwordStage, "password": fmt.Sprintf("wrong %d", i)}), passwordStage, "xak-flow-redirect")
+		t.Logf("A33: same flow, password attempt %d, wrong: %v: %s", i, r.outcome, r.said)
+		expect(t, fmt.Sprintf("wrong password %d in one flow", i), r, wrongAnswer)
+		ended = strings.HasSuffix(r.said, "(Authentik ended the flow)")
+		if ended && i < wrongAttempts {
+			t.Fatalf("Authentik ended the sign-in flow after %d wrong passwords, not 5", i)
 		}
 	}
-	c = b.executor(slug, query, map[string]any{"component": "ak-stage-password", "password": u.pw})
-	t.Logf("A33: same flow, password attempt %d, RIGHT: %s %s", wrongAttempts+1, c.Component, c.errorText())
-	if c.Component == "xak-flow-redirect" {
-		t.Error("right password accepted in the same flow after 5 wrong ones")
+	if ended {
+		// Authentik cancels the flow at the 5th wrong password, so there is
+		// no 6th attempt in it; the next one is a new flow, checked below.
+		t.Log("A33: same flow, password attempt 6: none, Authentik ended the flow at the 5th")
+	} else {
+		r := judge(b.executor(slug, query, map[string]any{"component": passwordStage, "password": u.pw}), passwordStage, "xak-flow-redirect")
+		t.Logf("A33: same flow, password attempt %d, RIGHT: %v: %s", wrongAttempts+1, r.outcome, r.said)
+		expect(t, "the right password in the same flow after 5 wrong ones", r, lockedOut)
 	}
-	if ok, _ := s.passwordAttempt(t, u.email, u.pw); ok {
-		t.Error("right password accepted in a new flow after 5 wrong ones")
-	}
+	r := s.passwordAttempt(t, u.email, u.pw)
+	t.Logf("A33: new flow, RIGHT password: %v: %s", r.outcome, r.said)
+	expect(t, "the right password in a new flow after 5 wrong ones", r, lockedOut)
+
 	// Reset codes in one flow: no cancel there, so this is the lock alone.
-	r := s.inviteAndEnrol(t, o, "a33sameflowreset@example.com")
-	rb := s.browser(t, r.email)
+	rs := s.inviteAndEnrol(t, o, unique("a33sameflowreset"))
+	rb := s.browser(t, rs.email)
 	rc := rb.executor("pagerarchive-recovery", "", nil)
-	rc = rb.executor("pagerarchive-recovery", "", map[string]any{"component": rc.Component, "uid_field": r.email})
+	rc = rb.executor("pagerarchive-recovery", "", map[string]any{"component": rc.Component, "uid_field": rs.email})
 	var v struct {
 		Devices []map[string]any `json:"device_challenges"`
 	}
 	_ = json.Unmarshal(rc.raw, &v)
 	if len(v.Devices) == 0 {
-		t.Fatalf("no code offered: %s", rc.Component)
+		t.Fatalf("no code offered: %s %s", rc.Component, rc.reply())
 	}
 	since := time.Now()
 	rc = rb.executor("pagerarchive-recovery", "", map[string]any{"component": rc.Component, "selected_challenge": v.Devices[0]})
-	code := s.mailpit.code(t, r.email, since)
+	code := s.mailpit.code(t, rs.email, since)
 	for i := 1; i <= wrongAttempts; i++ {
-		rc = rb.executor("pagerarchive-recovery", "", map[string]any{"component": "ak-stage-authenticator-validate", "code": otherCode(code)})
-		t.Logf("A33: same flow, reset code attempt %d, wrong: %s %s", i, rc.Component, rc.errorText())
+		r := judge(rb.executor("pagerarchive-recovery", "", map[string]any{"component": resetCodeStage, "code": otherCode(code)}), resetCodeStage, "ak-stage-prompt")
+		t.Logf("A33: same flow, reset code attempt %d, wrong: %v: %s", i, r.outcome, r.said)
+		expect(t, fmt.Sprintf("wrong reset code %d in one flow", i), r, wrongAnswer)
 		throttleWait(i)
 	}
-	rc = rb.executor("pagerarchive-recovery", "", map[string]any{"component": "ak-stage-authenticator-validate", "code": code})
-	t.Logf("A33: same flow, reset code attempt %d, RIGHT: %s %s", wrongAttempts+1, rc.Component, rc.errorText())
-	if rc.Component != "ak-stage-access-denied" {
-		t.Error("right reset code not refused in the same flow after 5 wrong ones")
-	}
+	r = judge(rb.executor("pagerarchive-recovery", "", map[string]any{"component": resetCodeStage, "code": code}), resetCodeStage, "ak-stage-prompt")
+	t.Logf("A33: same flow, reset code attempt %d, RIGHT: %v: %s", wrongAttempts+1, r.outcome, r.said)
+	expect(t, "the right reset code in the same flow after 5 wrong ones", r, lockedOut)
 
-	if ok, msg := s.passwordAttempt(t, o.email, o.pw); !ok {
-		t.Errorf("another account is affected: %s", msg)
-	} else {
+	r = s.passwordAttempt(t, o.email, o.pw)
+	if expect(t, "another account (the owner) signing in", r, accepted) {
 		t.Log("A33: another account (the owner) still signs in")
 	}
 }
@@ -284,15 +300,14 @@ func TestA33AddressVariations(t *testing.T) {
 		b := s.inviteAndEnrol(t, o, "a33variantpw@example.com")
 		vs := variants(b.email)
 		for i, v := range vs {
-			_, msg := s.passwordAttempt(t, v, fmt.Sprintf("wrong password %d", i+1))
-			t.Logf("A33: sign-in attempt %d as %q, wrong password: %s", i+1, v, msg)
+			r := s.passwordAttempt(t, v, fmt.Sprintf("wrong password %d", i+1))
+			t.Logf("A33: sign-in attempt %d as %q, wrong password: %v: %s", i+1, v, r.outcome, r.said)
+			expect(t, fmt.Sprintf("wrong password %d as %q", i+1, v), r, wrongAnswer)
 		}
 		for _, v := range append([]string{b.email}, vs...) {
-			ok, msg := s.passwordAttempt(t, v, b.pw)
-			t.Logf("A33: then the RIGHT password as %q: %s", v, msg)
-			if ok {
-				t.Errorf("signed in as %q after 5 wrong passwords", v)
-			}
+			r := s.passwordAttempt(t, v, b.pw)
+			t.Logf("A33: then the RIGHT password as %q: %v: %s", v, r.outcome, r.said)
+			expect(t, fmt.Sprintf("the right password as %q after 5 wrong ones", v), r, lockedOut)
 		}
 	})
 
@@ -300,16 +315,15 @@ func TestA33AddressVariations(t *testing.T) {
 		c := s.inviteAndEnrol(t, o, "a33variantreset@example.com")
 		vs := variants(c.email)
 		for i, v := range vs {
-			_, msg := s.resetAttemptAs(t, v, c.email, true)
-			t.Logf("A33: reset attempt %d as %q, wrong code: %s", i+1, v, msg)
+			r := s.resetAttemptAs(t, v, c.email, true)
+			t.Logf("A33: reset attempt %d as %q, wrong code: %v: %s", i+1, v, r.outcome, r.said)
+			expect(t, fmt.Sprintf("wrong reset code %d as %q", i+1, v), r, wrongAnswer)
 			throttleWait(i + 1)
 		}
 		for _, v := range append([]string{c.email}, vs...) {
-			ok, msg := s.resetAttemptAs(t, v, c.email, false)
-			t.Logf("A33: then the RIGHT code as %q: %s", v, msg)
-			if ok {
-				t.Errorf("reset code accepted as %q after 5 wrong ones", v)
-			}
+			r := s.resetAttemptAs(t, v, c.email, false)
+			t.Logf("A33: then the RIGHT code as %q: %v: %s", v, r.outcome, r.said)
+			expect(t, fmt.Sprintf("the right reset code as %q after 5 wrong ones", v), r, lockedOut)
 		}
 	})
 }

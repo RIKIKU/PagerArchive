@@ -227,7 +227,7 @@ func TestA67ToldWhenARadioStalls(t *testing.T) {
 	}
 	ra := s.startClient(t, a, keys[a], true)
 	rb := s.startClient(t, b, keys[b], true)
-	s.startClient(t, c, keys[c], false)
+	rc := s.startClient(t, c, keys[c], false)
 	started := time.Now()
 
 	// A minute of audio.
@@ -296,6 +296,25 @@ func TestA67ToldWhenARadioStalls(t *testing.T) {
 		t.Errorf("rtl_fm's messages by kind: %v before, %v after; want usb_transfer_failed and other up by 1", before, after)
 	} else {
 		t.Logf("A67: rtl_fm's messages by kind went from %v to %v", before, after)
+	}
+
+	// Each client's log lines reach Loki (R73): its start-up line, within
+	// two minutes (it's exported a second after it's logged). The search
+	// below looks through these lines, so it can't pass on none.
+	for _, cl := range []*radioClient{ra, rb, rc} {
+		want := "receiving"
+		if cl == rc {
+			want = "reading decoder output on stdin"
+		}
+		var lines []lokiLine
+		if !waitFor(2*time.Minute, func() bool {
+			lines = s.lokiLines(t, cl.id)
+			return slices.ContainsFunc(lines, func(l lokiLine) bool { return l.line == want })
+		}) {
+			t.Fatalf("%s's start-up line %q didn't reach Loki within 2 minutes; Loki has %d lines from it. The client logged:\n%s\n%s",
+				cl.id, want, len(lines), cl.ownLines(t), lokiRefusals(t))
+		}
+		t.Logf("A67: %s's lines in Loki %v after it started: %s", cl.id, time.Since(started).Round(time.Second), describeLines(lines))
 	}
 
 	// Neither message's text, nor any audio, reached the collector: not in
@@ -414,24 +433,11 @@ func (s *stack) collectorHas(t *testing.T, clients, banned []string) []string {
 		b, _ := json.Marshal(series.Data)
 		check("Prometheus series for "+id, string(b))
 
-		var logs struct {
-			Data struct {
-				Result []struct {
-					Values [][2]string `json:"values"`
-				} `json:"result"`
-			} `json:"data"`
+		lines := s.lokiLines(t, id)
+		for _, l := range lines {
+			check("Loki line from "+id, l.line)
 		}
-		q := fmt.Sprintf(`{service_name="pagerarchive-client", service_instance_id="%s"}`, id)
-		s.grafanaGet(t, fmt.Sprintf("/api/datasources/proxy/uid/loki/loki/api/v1/query_range?query=%s&start=%d&end=%d&limit=5000",
-			url.QueryEscape(q), end.Add(-time.Hour).UnixNano(), end.UnixNano()), &logs)
-		n := 0
-		for _, r := range logs.Data.Result {
-			for _, v := range r.Values {
-				n++
-				check("Loki line from "+id, v[1])
-			}
-		}
-		if n == 0 {
+		if len(lines) == 0 {
 			found = append(found, "no Loki lines at all for "+id+" (so nothing checked)")
 		}
 
@@ -451,6 +457,84 @@ func (s *stack) collectorHas(t *testing.T, clients, banned []string) []string {
 	}
 	slices.Sort(found)
 	return slices.Compact(found)
+}
+
+// lokiLine is a log line in Loki and the time it was logged.
+type lokiLine struct {
+	at   time.Time
+	line string
+}
+
+// lokiLines is every line Loki has from client id in the last hour.
+func (s *stack) lokiLines(t *testing.T, id string) []lokiLine {
+	t.Helper()
+	var logs struct {
+		Data struct {
+			Result []struct {
+				Values [][2]string `json:"values"`
+			} `json:"result"`
+		} `json:"data"`
+	}
+	end := time.Now()
+	q := fmt.Sprintf(`{service_name="pagerarchive-client", service_instance_id="%s"}`, id)
+	s.grafanaGet(t, fmt.Sprintf("/api/datasources/proxy/uid/loki/loki/api/v1/query_range?query=%s&start=%d&end=%d&limit=5000",
+		url.QueryEscape(q), end.Add(-time.Hour).UnixNano(), end.UnixNano()), &logs)
+	var out []lokiLine
+	for _, r := range logs.Data.Result {
+		for _, v := range r.Values {
+			ns, _ := strconv.ParseInt(v[0], 10, 64)
+			out = append(out, lokiLine{time.Unix(0, ns), v[1]})
+		}
+	}
+	slices.SortFunc(out, func(a, b lokiLine) int { return a.at.Compare(b.at) })
+	return out
+}
+
+func describeLines(lines []lokiLine) string {
+	var parts []string
+	for _, l := range lines {
+		parts = append(parts, fmt.Sprintf("%q logged at %s", l.line, l.at.UTC().Format("15:04:05.000")))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// ownLines is the client's own log lines (not rtl_fm's), from its container.
+func (c *radioClient) ownLines(t *testing.T) string {
+	out, err := exec.Command("docker", "logs", c.container).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("(docker logs: %v)", err)
+	}
+	var own []string
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.HasPrefix(l, "time=") {
+			own = append(own, "    "+l)
+		}
+	}
+	return strings.Join(own, "\n")
+}
+
+// lokiRefusals says whether Loki refused writes during the run, from its
+// own log: it does above 90% disk use (its WAL's disk_full_threshold).
+func lokiRefusals(t *testing.T) string {
+	name := os.Getenv("PA_MON_LOKI_CONTAINER")
+	out, err := exec.Command("docker", "logs", name).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("Loki's log (%s): %v", name, err)
+	}
+	var first string
+	n := 0
+	for _, l := range strings.Split(string(out), "\n") {
+		if strings.Contains(l, "throttling writes") && first == "" {
+			first = l
+		}
+		if strings.Contains(l, "Ingester is shutting down") {
+			n++
+		}
+	}
+	if first == "" && n == 0 {
+		return "Loki's log shows no refused writes."
+	}
+	return fmt.Sprintf("Loki refused writes: %d pushes refused (\"Ingester is shutting down\"); %s", n, first)
 }
 
 type alertSeen struct{ name, client string }

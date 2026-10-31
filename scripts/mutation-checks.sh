@@ -25,10 +25,16 @@ survived=0
 # and restore. <test> is "go:<regexp>" (the acceptance checks),
 # "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
 # dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
-# or "mon:<regexp>" (the example stack's checks: TestA65, TestA67).
+# "mon:<regexp>" (the example stack's checks: TestA65, TestA67) or
+# "stack:<regexp>" (the account checks against Authentik, through
+# scripts/stack-checks.sh with A23's first admin).
 #
 # mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
 # replacements, in two files, as one mutation (M12).
+#
+# With must set, the test must fail with that text in its output, not just
+# fail (ADR 0014: a broken lock must fail A33 as a security failure).
+must=""
 mutate() {
 	name=$1 file=$2 test=$3 old=$4 new=$5 file2=${6:-} old2=${7:-} new2=${8:-}
 	cp "$file" "$work/.orig"
@@ -63,6 +69,10 @@ mutate() {
 		# What failed, not the steps that passed before it (their lines say "A65:" or "A67:").
 		printf '%s\n' "$out" | grep -E '^\s+a6[57]_test.go:[0-9]+: ' | grep -vE ': A6[57]: ' | head -4
 		;;
+	stack:*)
+		out=$(PA_STACK_PART=accounts sh scripts/stack-checks.sh -run "TestA23FirstAdmin|${test#stack:}" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: (SECURITY FAILURE|FAILED|TEST ERROR)' | head -4
+		;;
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
 		printf '%s\n' "$out" | grep -E '\[-\]|Expected|Timed out' | head -4
@@ -72,11 +82,14 @@ mutate() {
 		printf '%s\n' "$out" | grep -E '^\s+Error: |^\s+(Expected|Received)|^\s+[0-9]+ (passed|failed)' | head -5
 		;;
 	esac
-	if printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]|^\s+[0-9]+ failed$'; then
-		echo "    -> the test fails: the check is guarded"
-	else
+	if ! printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]|^\s+[0-9]+ failed$'; then
 		echo "    -> SURVIVED: no test failed"
 		survived=1
+	elif [ -n "$must" ] && ! printf '%s\n' "$out" | grep -qF "$must"; then
+		echo "    -> SURVIVED: the test fails, but not with \"$must\""
+		survived=1
+	else
+		echo "    -> the test fails: the check is guarded"
 	fi
 	cp "$work/.orig" "$file"
 	[ -z "$file2" ] || cp "$work/.orig2" "$file2"
@@ -308,9 +321,34 @@ else
 	echo "=== the alert rules' and dashboard's mutations skipped: no Docker"
 fi
 
+# ADR 0014: the account checks decide on Authentik's real answer, and the
+# client exports its last line, which says why it stopped (R73).
+mutate "the flow executor's reply to a 500 is an empty challenge, its status and body dropped (as before)" internal/stacktest/flow_test.go unit:internal/stacktest:TestRepliesThatAreNotAnswers \
+	'	_ = json.Unmarshal(data, &c)' '	if resp.StatusCode == http.StatusInternalServerError {
+		return challenge{}, false
+	}
+	_ = json.Unmarshal(data, &c)'
+mutate "the executor retries any reply, not only transient ones" internal/stacktest/flow_test.go unit:internal/stacktest:TestOnlyTransientRepliesAreRetried \
+	'	return c.err != nil || c.status >= 500' '	return true'
+mutate "the executor resends a password or code without asking whether Authentik counted it" internal/stacktest/flow_test.go unit:internal/stacktest:TestOnlyTransientRepliesAreRetried \
+	'			if n := b.failures(); n != before {' '			if n := b.failures(); false {'
+mutate "the client logs why it stopped after telemetry has shut down" cmd/pagerarchive-client/main.go go:TestR73EveryClientLineExported \
+	'			log.Error("client stopped", "error", err.Error())
+			err = stopped{err}
+' ''
+if command -v docker >/dev/null; then
+	must="SECURITY FAILURE"
+	mutate "the lock allows a 6th attempt (LIMIT 6)" deploy/authentik/blueprints/pagerarchive.yaml stack:TestA33WithinOneFlow \
+		'LIMIT, WINDOW = 5, timedelta(minutes=15)' 'LIMIT, WINDOW = 6, timedelta(minutes=15)'
+	must=""
+else
+	echo "=== the lock's mutation skipped: no Docker"
+fi
+
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12' ./internal/acceptance/ 2>&1 | tail -1
-go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ 2>&1 | tail -4
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73' ./internal/acceptance/ 2>&1 | tail -1
+go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
+! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 [ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1

@@ -62,7 +62,7 @@ func TestLockedAccountsMetric(t *testing.T) {
 
 	u := s.inviteAndEnrol(t, o, "metrics-lock@example.com")
 	for i := 1; i <= wrongAttempts; i++ {
-		s.passwordAttempt(t, u.email, fmt.Sprintf("wrong password %d", i))
+		expect(t, fmt.Sprintf("wrong password %d", i), s.passwordAttempt(t, u.email, fmt.Sprintf("wrong password %d", i)), wrongAnswer)
 	}
 	n0, _ := strconv.Atoi(before)
 	m := lockedLine.FindStringSubmatch(s.scrape(t))
