@@ -83,7 +83,8 @@ mutate() {
 		;;
 	esac
 	if ! printf '%s\n' "$out" | grep -qE '^(--- FAIL|FAIL)|failed [1-9]|Passed [0-9]+, failed [1-9]|^\s+[0-9]+ failed$'; then
-		echo "    -> SURVIVED: no test failed"
+		echo "    -> SURVIVED: no test failed. The run ended with:"
+		printf '%s\n' "$out" | tail -n 5 | sed 's/^/       /'
 		survived=1
 	elif [ -n "$must" ] && ! printf '%s\n' "$out" | grep -qF "$must"; then
 		echo "    -> SURVIVED: the test fails, but not with \"$must\""
@@ -346,7 +347,7 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73' ./internal/acceptance/ 2>&1 | tail -1
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73' ./internal/acceptance/ 2>&1 | tail -20
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
