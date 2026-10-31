@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
@@ -20,6 +21,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 // DedupWindow is how far apart two copies of a page can be received and
@@ -55,6 +57,9 @@ type Service struct {
 	// duplicate copy), so work it queues commits with the page: the
 	// integrations' deliveries (ADR 0006 §3).
 	OnStored func(ctx context.Context, q *db.Queries, messageID int64) error
+	// Tracer traces each step, under the caller's "ingest" span (R71); nil
+	// traces nothing.
+	Tracer trace.Tracer
 }
 
 // Ingest processes one page from a client. It returns the message ID, or 0
@@ -64,12 +69,17 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 	if err := s.Store.TouchClient(ctx, db.TouchClientParams{ID: clientID, SeenAt: pg.ReceivedAt}); err != nil {
 		return "", 0, fmt.Errorf("touch client: %s", store.SafeError(err))
 	}
+	tr := telemetry.Or(s.Tracer)
+	_, span := tr.Start(ctx, "ingest.redact") // control tokens, redaction, priority
 	prep := pipeline.Prepare(s.Network, pg.Capcode, pg.Text)
+	span.End()
 	if prep.Dropped {
 		return Ignored, 0, nil
 	}
 
-	rows, err := s.Store.AliasesMatching(ctx, pg.Capcode)
+	pctx, span := tr.Start(ctx, "ingest.parse") // alias, template, agency profile
+	defer span.End()                            // already ended, unless it failed
+	rows, err := s.Store.AliasesMatching(pctx, pg.Capcode)
 	if err != nil {
 		return "", 0, fmt.Errorf("aliases: %s", store.SafeError(err))
 	}
@@ -91,14 +101,20 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 	}
 	params := messageParams(prep, fields, pg)
 	params.AliasID = aliasID
+	span.End()
 
 	outcome, id := Stored, int64(0)
+	ctx, span = tr.Start(ctx, "ingest.store")
+	defer span.End()
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
 		// Serialise copies of the same page so two clients can't both insert it.
-		if err := q.LockDedupKey(ctx, params.DedupKey); err != nil {
+		dctx, dspan := tr.Start(ctx, "ingest.dedup")
+		defer dspan.End()
+		if err := q.LockDedupKey(dctx, params.DedupKey); err != nil {
 			return err
 		}
-		dup, err := q.FindDuplicate(ctx, db.FindDuplicateParams{DedupKey: params.DedupKey, ReceivedAt: pg.ReceivedAt})
+		dup, err := q.FindDuplicate(dctx, db.FindDuplicateParams{DedupKey: params.DedupKey, ReceivedAt: pg.ReceivedAt})
+		dspan.End()
 		switch {
 		case err == nil:
 			outcome, id = Duplicate, dup.ID
@@ -109,7 +125,10 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 			if id, err = q.InsertMessage(ctx, params); err != nil {
 				return err
 			}
-			if err := Locate(ctx, s.Geo, q, id, fields); err != nil {
+			lctx, lspan := tr.Start(ctx, "ingest.locate")
+			err := Locate(lctx, s.Geo, q, id, fields)
+			lspan.End()
+			if err != nil {
 				return err
 			}
 			if err := q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt}); err != nil {

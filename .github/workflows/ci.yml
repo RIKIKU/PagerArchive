@@ -15,7 +15,7 @@ jobs:
   test:
     name: Tests, golden tables and acceptance checks
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 30
     services:
       postgres:
         image: postgis/postgis:18-3.6
@@ -44,13 +44,13 @@ jobs:
         run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
-      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A50, M9 live streams, address guard, preset stand-ins)
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A50, M9 live streams, address guard, preset stand-ins, A62-A64, A66, radio health, delivery failure causes)
         run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
         shell: bash
       - name: Acceptance check summary
         if: always()
         run: |
-          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9)|postgis:|^(ok|FAIL)' test.log || true
+          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9|M12|FailureCauses|Radio|NoSquelch)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
@@ -278,7 +278,17 @@ jobs:
           sh scripts/ci/client-replay.sh pagerarchive:ci pagerarchive-client:ci
 
   budget:
-    name: Resource budget, short run (A15)
+    name: Resource budget, short run (A15), telemetry ${{ matrix.telemetry }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - telemetry: "off"
+            flag: ""
+          # R69: with telemetry on, exporting to a test collector, the API
+          # stays within the budget too.
+          - telemetry: "on"
+            flag: "-t"
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -290,14 +300,38 @@ jobs:
       # 5 minutes of pages at 20x the 1,500/day rate, then 2 idle minutes.
       # The full 1-hour run is done by hand (docs/adr/0005).
       - name: A15 short run
-        run: sh scripts/a15.sh -m 5 -w 1 -i 2 -r 30000 -o a15-results
+        run: sh scripts/a15.sh -m 5 -w 1 -i 2 -r 30000 -o a15-results ${{ matrix.flag }}
       - name: Upload memory samples and summary
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: a15-${{ github.run_id }}-${{ github.run_attempt }}
+          name: a15-telemetry-${{ matrix.telemetry }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: a15-results/
           retention-days: 30
+
+  # A65 and A67 against the example monitoring stack itself (deploy/monitoring, R76):
+  # Alloy, Tempo, Loki, Prometheus and Grafana scraping a real API, with a
+  # webhook contact point the test receives, and (A67) clients in the client
+  # image with a stand-in for rtl_fm. The stack's memory is sampled.
+  monitoring:
+    name: Example monitoring stack (A65, A67)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: A65 and A67 on the example monitoring stack
+        run: sh scripts/monitoring-checks.sh -o monitoring-results
+      - name: Upload memory samples and the stack's logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: monitoring-${{ github.run_id }}-${{ github.run_attempt }}
+          path: monitoring-results/
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
   # 2026-10-13): main -> latest, main, sha-<commit>; a vX.Y.Z tag -> X.Y.Z,
@@ -305,7 +339,7 @@ jobs:
   # pushes build the images without publishing them.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, web, stack, stack-e2e, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -347,7 +381,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, web, stack, stack-e2e, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
     strategy:
       matrix:
         include:
@@ -444,7 +478,7 @@ jobs:
   # (the owner creates it).
   publish-powershell:
     name: Publish the PowerShell module to the PowerShell Gallery
-    needs: [test, web, stack, stack-e2e, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -479,7 +513,7 @@ jobs:
   # attached to the release of a v* tag whose checks all passed.
   release-binaries:
     name: Attach client binaries to the release
-    needs: [test, web, stack, stack-e2e, images, budget, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 15

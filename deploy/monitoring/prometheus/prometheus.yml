@@ -1,0 +1,5 @@
+# Prometheus scrapes nothing itself: Alloy scrapes PagerArchive and writes
+# what it gets here (remote write), with the clients' OTLP metrics.
+# Metrics are kept 30 days (--storage.tsdb.retention.time in compose.yaml).
+global:
+  evaluation_interval: 30s

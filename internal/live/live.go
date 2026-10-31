@@ -62,20 +62,24 @@ func (h *Hub) Unsubscribe(s *Sub) {
 	h.mu.Unlock()
 }
 
-// Publish announces a new message. A connection whose buffer is full is
-// dropped, so a slow viewer reconnects and reloads (or catches up) rather
-// than silently missing pages (ADR 0001).
-func (h *Hub) Publish(id int64) {
+// Publish announces a new message to every connection, and returns how
+// many it reached. A connection whose buffer is full is dropped, so a slow
+// viewer reconnects and reloads (or catches up) rather than silently
+// missing pages (ADR 0001).
+func (h *Hub) Publish(id int64) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	n := 0
 	for s := range h.subs {
 		select {
 		case s.C <- id:
+			n++
 		default:
 			s.drop(Behind)
 			delete(h.subs, s)
 		}
 	}
+	return n
 }
 
 // CloseUsers closes every connection of these users: they were deactivated

@@ -96,6 +96,7 @@ func TestReaderDecodesAndKeepsTextOffStdout(t *testing.T) {
 	}
 	p, _ := b.Peek()
 	want := Page{ClientID: "a", Capcode: "0100001", Text: "QDhello", ReceivedAt: at, Baud: 512}
+	p.trace = nil // its trace, which a no-op tracer doesn't record
 	if p != want {
 		t.Errorf("got %+v, want %+v", p, want)
 	}

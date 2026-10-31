@@ -116,7 +116,7 @@
 	.notice p {
 		margin: 0 0.75rem;
 	}
-	/* Below the results, on every screen width; the M12 redesign decides the
+	/* Below the results, on every screen width; the M13 redesign decides the
 	   final layout. */
 	.sheet-heading {
 		font-size: var(--text-xl);

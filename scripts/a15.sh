@@ -12,18 +12,21 @@
 # WARMUP minutes of load, the API's peak is <= 256 MiB and api + db peaks
 # sum to <= 1 GiB; mean CPU of api + db while idle is < 5 % of one core.
 #
-# usage: scripts/a15.sh [-m MINUTES] [-w WARMUP] [-i IDLE] [-r RATE] [-l LOCALITIES] [-o OUT]
+# usage: scripts/a15.sh [-m MINUTES] [-w WARMUP] [-i IDLE] [-r RATE] [-l LOCALITIES] [-o OUT] [-t]
+#   -t  telemetry on: the API exports traces and logs to a test collector on
+#       the host (scripts/test-collector, port 14320), as a deployment with
+#       the monitoring stack does (R69: still within the budget)
 #   full run (by hand, with evidence): scripts/a15.sh            (60/10/10, 1500/day)
 #   CI:                                scripts/a15.sh -m 5 -w 1 -i 2 -r 30000
 # needs: Docker with compose, Go, curl, awk. Uses 127.0.0.1:8080 and :9000.
 set -eu
 cd "$(dirname "$0")/.."
 
-MINUTES=60 WARMUP=10 IDLE=10 RATE=1500 LOCALITIES=3000 OUT=a15-results
-while getopts m:w:i:r:l:o: opt; do
+MINUTES=60 WARMUP=10 IDLE=10 RATE=1500 LOCALITIES=3000 OUT=a15-results TELEMETRY=""
+while getopts m:w:i:r:l:o:t opt; do
 	case $opt in
 	m) MINUTES=$OPTARG ;; w) WARMUP=$OPTARG ;; i) IDLE=$OPTARG ;; r) RATE=$OPTARG ;;
-	l) LOCALITIES=$OPTARG ;; o) OUT=$OPTARG ;; *) exit 2 ;;
+	l) LOCALITIES=$OPTARG ;; o) OUT=$OPTARG ;; t) TELEMETRY=1 ;; *) exit 2 ;;
 	esac
 done
 mkdir -p "$OUT"
@@ -33,6 +36,14 @@ export COMPOSE_PROJECT_NAME="pa-a15-$$"
 export PAGERARCHIVE_VERSION=a15
 # Loading the large dataset happens before the API listens (ADR 0005).
 export STACK_API_WAIT=1800
+COLLECTOR=""
+if [ -n "$TELEMETRY" ]; then
+	export STACK_OVERLAYS="-f deploy/test/telemetry.yaml" PA_TEST_COLLECTOR_PORT=14320
+	go build -o "$OUT/test-collector" ./scripts/test-collector
+	"$OUT/test-collector" -addr 0.0.0.0:14320 -summary "$OUT/a15-telemetry.txt" &
+	COLLECTOR=$!
+	echo "--- telemetry on: the API exports to the test collector on the host (port 14320)"
+fi
 . ./scripts/stack-lib.sh
 
 WORK=$(mktemp -d)
@@ -48,6 +59,10 @@ export PROFILES_DIR="$WORK/profiles"
 SAMPLER=""
 cleanup() {
 	[ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
+	if [ -n "$COLLECTOR" ]; then
+		kill "$COLLECTOR" 2>/dev/null && wait "$COLLECTOR" 2>/dev/null || true
+		rm -f "$OUT/test-collector"
+	fi
 	stack_compose logs --no-color api >"$OUT/a15-api.log" 2>&1 || true
 	[ -n "${STACK_KEEP:-}" ] || stack_down
 	rm -rf "$WORK"
@@ -118,6 +133,14 @@ stack_compose exec -T db psql -U postgres -tAc "SELECT datname, count(*) FROM pg
 stack_compose exec -T db psql -U postgres -tAc "SELECT 'messages ' || count(*) FROM messages; SELECT 'address points ' || count(*) FROM address_points; SELECT 'located ' || count(*) FROM messages WHERE location IS NOT NULL"
 
 budget_status=0
+if [ -n "$COLLECTOR" ]; then
+	kill "$COLLECTOR" && wait "$COLLECTOR" || true
+	COLLECTOR=""
+	rm -f "$OUT/test-collector"
+	cat "$OUT/a15-telemetry.txt"
+	# Telemetry was really on: the collector got spans.
+	grep -q 'received [1-9][0-9]* spans' "$OUT/a15-telemetry.txt" || { echo "A15 with telemetry: the collector got no spans" >&2; budget_status=1; }
+fi
 awk -F, -v warm=$((LOAD_START + WARMUP * 60)) -v idle0=$IDLE_START '
 	NR == 1 { next }
 	$2 == "load" && $1 >= warm { if ($4 > peak[$3]) peak[$3] = $4 }

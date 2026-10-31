@@ -32,7 +32,7 @@ const (
 func (s *Service) publish(ctx context.Context, l loaded, sec Secrets, topic string, body []byte, retained bool) result {
 	u, err := url.Parse(l.config.Broker)
 	if err != nil || u.Host == "" {
-		return result{outcome: refused, err: "the broker's address isn't valid"}
+		return result{outcome: refused, cause: "bad_request", err: "the broker's address isn't valid"}
 	}
 	var tlsConfig *tls.Config
 	if u.Scheme == "mqtts" {
@@ -40,7 +40,7 @@ func (s *Service) publish(ctx context.Context, l loaded, sec Secrets, topic stri
 		if l.config.CACert != "" {
 			pool := x509.NewCertPool()
 			if !pool.AppendCertsFromPEM([]byte(l.config.CACert)) {
-				return result{outcome: refused, err: "the CA certificate isn't valid PEM"}
+				return result{outcome: refused, cause: "bad_request", err: "the CA certificate isn't valid PEM"}
 			}
 			tlsConfig.RootCAs = pool
 		}
@@ -87,31 +87,35 @@ func (s *Service) publish(ctx context.Context, l loaded, sec Secrets, topic stri
 	t := c.Connect()
 	if !t.WaitTimeout(AttemptTimeout + time.Second) {
 		c.Disconnect(0)
-		return result{outcome: retryable, err: "the broker didn't answer the connection"}
+		return result{outcome: retryable, cause: "timeout", err: "the broker didn't answer the connection"}
 	}
 	if err := t.Error(); err != nil {
 		mu.Lock()
 		de := dialErr
 		mu.Unlock()
+		var timeout interface{ Timeout() bool }
 		switch {
 		case de != nil:
-			return result{outcome: retryable, err: netError(de)}
+			cause, text := netError(de)
+			return result{outcome: retryable, cause: cause, err: text}
 		case errors.Is(err, packets.ErrorRefusedBadUsernameOrPassword):
-			return result{outcome: refused, status: "MQTT refused", err: "MQTT: bad user name or password"}
+			return result{outcome: refused, status: "MQTT refused", cause: "auth_refused", err: "MQTT: bad user name or password"}
 		case errors.Is(err, packets.ErrorRefusedNotAuthorised):
-			return result{outcome: refused, status: "MQTT refused", err: "MQTT: not authorised"}
+			return result{outcome: refused, status: "MQTT refused", cause: "auth_refused", err: "MQTT: not authorised"}
 		case errors.Is(err, packets.ErrorRefusedBadProtocolVersion):
-			return result{outcome: refused, status: "MQTT refused", err: "MQTT: the broker doesn't speak MQTT 3.1.1"}
+			return result{outcome: refused, status: "MQTT refused", cause: "mqtt_protocol_refused", err: "MQTT: the broker doesn't speak MQTT 3.1.1"}
 		case errors.Is(err, packets.ErrorRefusedIDRejected), errors.Is(err, packets.ErrorRefusedServerUnavailable):
-			return result{outcome: retryable, status: "MQTT refused", err: "MQTT: the broker refused the connection for now"}
+			return result{outcome: retryable, status: "MQTT refused", cause: "mqtt_unavailable", err: "MQTT: the broker refused the connection for now"}
+		case errors.As(err, &timeout) && timeout.Timeout(): // connected, but no CONNACK within the timeout
+			return result{outcome: retryable, cause: "timeout", err: "the broker didn't answer the connection"}
 		}
-		return result{outcome: retryable, err: "MQTT: couldn't connect"}
+		return result{outcome: retryable, cause: "connection_failed", err: "MQTT: couldn't connect"}
 	}
 	defer c.Disconnect(250)
 	pt := c.Publish(topic, 1, retained, body)
 	if !pt.WaitTimeout(AttemptTimeout) || pt.Error() != nil {
 		// Sent, or maybe sent: never retried (owner, Q2).
-		return result{outcome: noAnswer, err: fmt.Sprintf("no acknowledgement from the broker within %d s", int(AttemptTimeout.Seconds()))}
+		return result{outcome: noAnswer, cause: "no_answer", err: fmt.Sprintf("no acknowledgement from the broker within %d s", int(AttemptTimeout.Seconds()))}
 	}
 	return result{outcome: delivered, status: "MQTT acknowledged"}
 }

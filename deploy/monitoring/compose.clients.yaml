@@ -1,0 +1,13 @@
+# Receiving clients on other machines (a Raspberry Pi by the antenna) send
+# their telemetry to Alloy's OTLP port, so it has to be published. Add this
+# file only if you want client telemetry from other machines:
+#
+#   docker compose -f compose.yaml -f compose.clients.yaml up -d
+#
+# ALLOY_OTLP_BIND in .env is the LAN address and port to publish it on.
+# Anyone who can reach it can send telemetry, so keep it on the LAN, never
+# the internet (docs/monitoring.md).
+services:
+  alloy:
+    ports:
+      - "${ALLOY_OTLP_BIND:?set ALLOY_OTLP_BIND in .env}:4318"

@@ -36,6 +36,7 @@ type result struct {
 	outcome    outcome
 	status     string // e.g. "HTTP 204 No Content", "MQTT acknowledged"
 	err        string
+	cause      string // a failure's kind, for its span (R70): a code such as connection_refused, or "HTTP 503"
 	retryAfter time.Duration
 	body       []byte // the answer's first 1 KB, kept for Send test only
 }
@@ -45,13 +46,13 @@ func (s *Service) send(ctx context.Context, l loaded, sec Secrets, p page, keepB
 	if l.kind == MQTT {
 		body, err := payload(l, p)
 		if err != nil {
-			return result{outcome: refused, err: "couldn't build the payload"}
+			return result{outcome: refused, cause: "bad_request", err: "couldn't build the payload"}
 		}
 		return s.publish(ctx, l, sec, l.config.Topic, body, false)
 	}
 	req, err := s.request(ctx, l, sec, p)
 	if err != nil {
-		return result{outcome: refused, err: safeText(err)}
+		return result{outcome: refused, cause: "bad_request", err: safeText(err)}
 	}
 	req.Header.Set("User-Agent", "PagerArchive/"+s.version())
 	return s.do(req, keepBody)
@@ -99,12 +100,13 @@ func (s *Service) do(req *http.Request, keepBody bool) result {
 	resp, err := s.httpClient().Do(req)
 	if err != nil {
 		if wrote {
-			return result{outcome: noAnswer, err: fmt.Sprintf("no answer within %d s", int(AttemptTimeout.Seconds()))}
+			return result{outcome: noAnswer, cause: "no_answer", err: fmt.Sprintf("no answer within %d s", int(AttemptTimeout.Seconds()))}
 		}
-		return result{outcome: retryable, err: netError(err)}
+		cause, text := netError(err)
+		return result{outcome: retryable, cause: cause, err: text}
 	}
 	defer resp.Body.Close()
-	r := result{status: fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))}
+	r := result{status: fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), cause: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 	var body []byte
 	if keepBody || resp.StatusCode == http.StatusTooManyRequests {
 		body, _ = io.ReadAll(io.LimitReader(resp.Body, 4<<10))
@@ -155,8 +157,9 @@ func retryAfter(header string, body []byte) time.Duration {
 }
 
 // netError describes a connection failure without Go's own message, which
-// quotes the URL, and a URL can carry credentials (ADR 0006 §9).
-func netError(err error) string {
+// quotes the URL, and a URL can carry credentials (ADR 0006 §9): its kind,
+// for the attempt's span, and its text, for the owner.
+func netError(err error) (cause, text string) {
 	var addr *AddressError
 	var dns *net.DNSError
 	var unknownCA x509.UnknownAuthorityError
@@ -167,25 +170,25 @@ func netError(err error) string {
 	var timeout interface{ Timeout() bool }
 	switch {
 	case errors.As(err, &addr):
-		return "address not allowed: " + addr.Error()
+		return "address_not_allowed", "address not allowed: " + addr.Error()
 	case errors.Is(err, ErrLookup), errors.As(err, &dns):
-		return "DNS lookup failed"
+		return "dns_lookup_failed", "DNS lookup failed"
 	case errors.Is(err, syscall.ECONNREFUSED):
-		return "connection refused"
+		return "connection_refused", "connection refused"
 	case errors.Is(err, syscall.ECONNRESET):
-		return "connection reset"
+		return "connection_reset", "connection reset"
 	case errors.Is(err, syscall.ENETUNREACH), errors.Is(err, syscall.EHOSTUNREACH):
-		return "network unreachable"
+		return "network_unreachable", "network unreachable"
 	case errors.As(err, &unknownCA), errors.As(err, &invalid), errors.As(err, &hostname), errors.As(err, &verify):
-		return "TLS: certificate not trusted"
-	case errors.As(err, &header):
-		return "TLS: the server didn't answer with TLS"
+		return "tls_not_trusted", "TLS: certificate not trusted"
+	case errors.As(err, &header), strings.Contains(err.Error(), "server gave HTTP response to HTTPS client"): // net/http's own text for a RecordHeaderError
+		return "tls_not_tls", "TLS: the server didn't answer with TLS"
 	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &timeout) && timeout.Timeout():
-		return fmt.Sprintf("couldn't connect within %d s", int(AttemptTimeout.Seconds()))
+		return "timeout", fmt.Sprintf("couldn't connect within %d s", int(AttemptTimeout.Seconds()))
 	case strings.Contains(fmt.Sprintf("%T", errors.Unwrap(err)), "tls"):
-		return "TLS handshake failed"
+		return "tls_handshake_failed", "TLS handshake failed"
 	}
-	return "connection failed"
+	return "connection_failed", "connection failed"
 }
 
 // bodyText is an answer's body for the owner's Send test, as valid UTF-8.

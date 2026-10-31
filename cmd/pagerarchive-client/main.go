@@ -1,6 +1,8 @@
 // Command pagerarchive-client receives POCSAG pages and posts them to a
 // PagerArchive server. With RADIO_FREQUENCY set it runs rtl_fm and
-// multimon-ng itself (R13); otherwise it reads multimon-ng output on stdin.
+// multimon-ng itself (R13), passing the audio from one to the other and
+// measuring it on the way (R74a, internal/radio; rtl_fm runs without
+// squelch); otherwise it reads multimon-ng output on stdin.
 //
 // Settings (environment):
 //
@@ -14,6 +16,11 @@
 //	RADIO_PPM        rtl_fm frequency correction (default 0)
 //	POCSAG_BAUDS     comma-separated baud rates to decode (default 512,1200,2400)
 //	MULTIMON_MODE    multimon-ng -f mode: alpha, numeric or auto (default alpha)
+//
+// Telemetry (R69-R74, docs/monitoring.md) is off unless the standard
+// OTEL_EXPORTER_OTLP_ENDPOINT is set; the other OTEL_* settings apply as
+// usual. Its service.name is pagerarchive-client and its
+// service.instance.id the client's ID.
 package main
 
 import (
@@ -24,7 +31,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"os/exec"
 	"os/signal"
 	"strconv"
 	"strings"
@@ -33,6 +39,8 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/client"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
+	"github.com/RIKIKU/PagerArchive/internal/radio"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 var version = "dev"
@@ -44,12 +52,13 @@ func main() {
 	}
 	log := slog.New(slog.NewTextHandler(os.Stderr, nil))
 	if err := run(log); err != nil {
-		log.Error(err.Error())
+		log.Error("client stopped", "error", err.Error())
 		os.Exit(1)
 	}
 }
 
-func run(log *slog.Logger) error {
+func run(plain *slog.Logger) error {
+	log := plain
 	serverURL, id := os.Getenv("SERVER_URL"), os.Getenv("CLIENT_ID")
 	key := os.Getenv("CLIENT_KEY")
 	if f := os.Getenv("CLIENT_KEY_FILE"); key == "" && f != "" {
@@ -74,10 +83,32 @@ func run(log *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
+	// Telemetry: log lines go to stderr as before and, when it's on, over
+	// OTLP too (R73); the console's page text never does (R13a).
+	tel := telemetry.Start(ctx, telemetry.Settings{ServiceName: "pagerarchive-client", Version: version, InstanceID: id, Metrics: true, Log: plain})
+	defer func() {
+		flush, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		tel.Shutdown(flush)
+	}()
+	log = slog.New(tel.LogHandler(plain.Handler(), "pagerarchive-client"))
+	tracer := tel.Tracer("pagerarchive-client")
+	// With RADIO_FREQUENCY set the client runs the radio and measures its
+	// audio (R74a); reading stdin, it has no radio health to report.
+	var health *radio.Health
+	if os.Getenv("RADIO_FREQUENCY") != "" {
+		health = radio.NewHealth(time.Now)
+	}
+
 	buf := client.NewBuffer(bufSize)
+	metrics, err := client.NewMetrics(tel.Meter("pagerarchive-client"), buf, health)
+	if err != nil {
+		log.Error("telemetry: client metrics are off", "error", err.Error())
+	}
+	buf.Metrics = metrics
 	sender := &client.Sender{
 		URL: serverURL, Key: key, HTTP: &http.Client{}, Buffer: buf, Log: log,
-		MinBackoff: time.Second, MaxBackoff: time.Minute,
+		MinBackoff: time.Second, MaxBackoff: time.Minute, Tracer: tracer, Metrics: metrics,
 	}
 	sendDone := make(chan struct{})
 	sendCtx, stopSend := context.WithCancel(context.Background())
@@ -87,22 +118,30 @@ func run(log *slog.Logger) error {
 	reader := &client.Reader{
 		ClientID: id, Adapter: decoder.Multimon{}, Buffer: buf, Now: time.Now,
 		PrintPages: os.Getenv("PRINT_PAGES") == "true", Stdout: os.Stdout, Log: log,
+		Tracer: tracer, Metrics: metrics,
 	}
 	var input io.Reader = os.Stdin
 	var wait func() error
-	if freq := os.Getenv("RADIO_FREQUENCY"); freq != "" {
-		out, w, err := startRadio(ctx, freq)
+	if health != nil {
+		freq := os.Getenv("RADIO_FREQUENCY")
+		out, w, err := radio.Start(ctx, radio.Settings{
+			Frequency: freq, Gain: os.Getenv("RADIO_GAIN"), PPM: getenv("RADIO_PPM", "0"), Mode: getenv("MULTIMON_MODE", "alpha"),
+			Bauds: strings.Split(getenv("POCSAG_BAUDS", "512,1200,2400"), ","),
+		}, health, os.Stderr) // rtl_fm's messages to stderr, as before; never page text
 		if err != nil {
 			return err
 		}
 		input, wait = out, w
+		metrics.Radio(true)
 		log.Info("receiving", "frequency", freq, "client", id, "version", version)
 	} else {
 		log.Info("reading decoder output on stdin", "client", id, "version", version)
 	}
 	readErr := reader.Run(input)
 	if wait != nil {
-		if err := wait(); err != nil && ctx.Err() == nil {
+		err := wait()
+		metrics.Radio(false)
+		if err != nil && ctx.Err() == nil {
 			readErr = errors.Join(readErr, fmt.Errorf("radio pipeline stopped: %w", err))
 		}
 	}
@@ -128,43 +167,6 @@ func drain(ctx context.Context, buf *client.Buffer, limit time.Duration) {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
-}
-
-// startRadio runs rtl_fm | multimon-ng and returns multimon-ng's output.
-func startRadio(ctx context.Context, freq string) (io.Reader, func() error, error) {
-	rtlArgs := []string{"-f", freq, "-M", "fm", "-s", "22050", "-p", getenv("RADIO_PPM", "0")}
-	if g := os.Getenv("RADIO_GAIN"); g != "" {
-		rtlArgs = append(rtlArgs, "-g", g)
-	}
-	rtlArgs = append(rtlArgs, "-")
-	mmArgs := []string{"-oL", "multimon-ng", "-t", "raw", "-f", getenv("MULTIMON_MODE", "alpha")}
-	for _, b := range strings.Split(getenv("POCSAG_BAUDS", "512,1200,2400"), ",") {
-		mmArgs = append(mmArgs, "-a", "POCSAG"+strings.TrimSpace(b))
-	}
-	mmArgs = append(mmArgs, "/dev/stdin")
-
-	rtl := exec.CommandContext(ctx, "rtl_fm", rtlArgs...)
-	mm := exec.CommandContext(ctx, "stdbuf", mmArgs...) // line-buffered output
-	rtl.Stderr = os.Stderr                              // rtl_fm status lines; never page text
-	pipe, err := rtl.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	mm.Stdin = pipe
-	out, err := mm.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := rtl.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start rtl_fm: %w", err)
-	}
-	if err := mm.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start multimon-ng: %w", err)
-	}
-	wait := func() error {
-		return errors.Join(mm.Wait(), rtl.Wait())
-	}
-	return out, wait, nil
 }
 
 func getenv(name, def string) string {

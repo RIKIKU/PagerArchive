@@ -26,6 +26,7 @@ The key is printed once. `pagerarchive client revoke <id>` revokes it immediatel
 | `MULTIMON_MODE` | `alpha` | `multimon-ng -f` mode |
 | `BUFFER_SIZE` | `1000` | Pages held **in memory** while the server is unreachable. The oldest are dropped when full; all are lost on restart |
 | `PRINT_PAGES` | `false` | `true` prints decoded pages to the console for troubleshooting |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | empty: off | Where to send the client's telemetry (its traces, log lines and metrics: lines read, pages decoded and sent, failed sends, buffered and dropped pages, R74), e.g. the example monitoring stack's Alloy. The other standard `OTEL_*` settings apply; see [Monitoring](monitoring.md). Console page text (`PRINT_PAGES`) is never sent |
 
 ## Reaching the server
 
@@ -41,6 +42,8 @@ sudo modprobe -r dvb_usb_rtl28xxu   # or reboot
 ```
 
 `rtl_test` should then find the dongle without errors.
+
+The client runs `rtl_fm` **without squelch**, on purpose: a working dongle then always produces audio (hiss, between pages), so audio stopping means the dongle has stopped. The client passes that audio to `multimon-ng` itself and measures it on the way, and with telemetry on it reports its **radio health**: audio per second, its level, how long since audio last came, and `rtl_fm`'s errors by kind (docs/monitoring.md, "Radio health"). `rtl_fm`'s messages still go to the client's log as before.
 
 ## Clock
 

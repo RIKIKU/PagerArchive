@@ -67,7 +67,7 @@ func (s *Server) putTemplateIcon(w http.ResponseWriter, r *http.Request) {
 	}
 	sum, err := s.Catalog.SetTemplateIcon(r.Context(), id, png)
 	if err != nil {
-		s.catalogError(w, "set template icon", err)
+		s.catalogError(w, r, "set template icon", err)
 		return
 	}
 	s.Log.Info("template icon set", "template", id, "by", currentUser(r).ID, "uploaded_bytes", len(data), "stored_bytes", len(png))
@@ -85,7 +85,7 @@ func (s *Server) deleteTemplateIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.Catalog.SetTemplateIcon(r.Context(), id, nil); err != nil {
-		s.catalogError(w, "remove template icon", err)
+		s.catalogError(w, r, "remove template icon", err)
 		return
 	}
 	s.Log.Info("template icon removed", "template", id, "by", currentUser(r).ID)

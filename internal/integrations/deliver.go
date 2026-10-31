@@ -8,6 +8,8 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/search"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -101,6 +103,9 @@ func (s *Service) Enqueue(ctx context.Context, q *db.Queries, messageID int64) e
 	now := s.now()
 	// R51a: a page already older than the cut-off when it arrives is not sent.
 	late := !now.Before(m.SentAt.Add(Cutoff))
+	if !late {
+		s.parents.put(messageID, trace.SpanContextFromContext(ctx), now)
+	}
 	for _, c := range cands {
 		l, err := decode(db.Integration{ID: c.ID, Config: []byte("{}"), Filter: c.Filter})
 		if err != nil {
@@ -251,6 +256,8 @@ func (s *Service) deliverAll(ctx context.Context, id int64, due []db.DueDeliveri
 // deliverOne makes one attempt. It reports whether the integration's other
 // due rows should wait (it was paused, deleted, or is failing right now).
 func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
+	ctx, span := s.startAttempt(ctx, d)
+	defer span.End()
 	r, err := s.Store.IntegrationByID(ctx, d.IntegrationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return true // deleted: its deliveries went with it
@@ -263,6 +270,7 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 	if err != nil {
 		return true
 	}
+	span.SetAttributes(attribute.String("pagerarchive.delivery.kind", l.row.Kind))
 	finish := func(status string, res result) {
 		s.finish(ctx, l, d, status, d.Attempts, res)
 	}
@@ -283,12 +291,12 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 	now := s.now()
 	deadline := m.SentAt.Add(Cutoff)
 	if !now.Before(deadline) {
-		s.tooOld(ctx, l, d, result{err: "skipped: too old"})
+		s.tooOld(ctx, l, d, result{cause: "too_old", err: "skipped: too old"})
 		return false
 	}
 	sec, err := s.secretsOf(l.row)
 	if err != nil {
-		res := result{outcome: refused, err: err.Error()}
+		res := result{outcome: refused, cause: "secrets_unreadable", err: err.Error()}
 		s.failed(ctx, l, d, d.Attempts, res)
 		return false
 	}
@@ -314,7 +322,8 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 			s.tooOld(ctx, l, d, res)
 			return false
 		}
-		s.logAttempt(l, d, "retry", res)
+		s.logAttempt(ctx, l, d, "retry", res)
+		attemptResult(ctx, "retry", res)
 		lr, le := strp(res.status), strp(res.err)
 		if err := s.Store.RetryDelivery(ctx, db.RetryDeliveryParams{IntegrationID: l.row.ID, MessageID: d.MessageID, Attempts: attempts,
 			NextAttemptAt: next, LastResult: lr, LastError: le, At: s.now()}); err != nil {
@@ -337,13 +346,14 @@ func strp(s string) *string {
 	return &s
 }
 
-func (s *Service) logAttempt(l loaded, d db.DueDeliveriesRow, status string, res result) {
-	s.Log.Info("delivery", "integration", l.row.ID, "kind", l.row.Kind, "message", d.MessageID, "status", status, "result", res.status, "error", res.err)
+func (s *Service) logAttempt(ctx context.Context, l loaded, d db.DueDeliveriesRow, status string, res result) {
+	s.Log.InfoContext(ctx, "delivery", "integration", l.row.ID, "kind", l.row.Kind, "message", d.MessageID, "status", status, "result", res.status, "error", res.err)
 }
 
 // finish takes a delivery off the queue.
 func (s *Service) finish(ctx context.Context, l loaded, d db.DueDeliveriesRow, status string, attempts int32, res result) {
-	s.logAttempt(l, d, status, res)
+	s.logAttempt(ctx, l, d, status, res)
+	attemptResult(ctx, status, res)
 	if err := s.Store.FinishDelivery(ctx, db.FinishDeliveryParams{Status: status, Attempts: attempts, LastResult: strp(res.status), LastError: strp(res.err),
 		At: s.now(), IntegrationID: l.row.ID, MessageID: d.MessageID}); err != nil {
 		s.Log.Error("delivery: finish", "integration", l.row.ID, "error", dbErr("finish", err).Error())

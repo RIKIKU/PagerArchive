@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
@@ -37,6 +38,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 // env is one test's server, database and clients.
@@ -87,10 +89,26 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// traced gives setup's API telemetry (M12): tel's exporters, as serve sets
+// them up, or only tracer, whose spans a test reads as they're made.
+type traced struct {
+	tel    *telemetry.Telemetry
+	tracer trace.Tracer
+}
+
 // setup gives an empty database with the standard test fixture (section 10)
 // and two clients, A and B.
-func setup(t *testing.T) *env {
+func setup(t *testing.T, with ...traced) *env {
 	t.Helper()
+	var tr trace.Tracer
+	var tel *telemetry.Telemetry
+	var dbTracer []pgx.QueryTracer
+	for _, w := range with {
+		if tel, tr = w.tel, w.tracer; tel != nil {
+			tr = tel.Tracer("pagerarchive")
+		}
+		dbTracer = append(dbTracer, store.Tracer{T: tr})
+	}
 	url := os.Getenv("PAGERARCHIVE_TEST_DATABASE_URL")
 	if url == "" {
 		if os.Getenv("PAGERARCHIVE_REQUIRE_DB") == "1" {
@@ -108,7 +126,7 @@ func setup(t *testing.T) *env {
 	}
 	conn.Close(ctx)
 
-	st, err := store.Open(ctx, url)
+	st, err := store.Open(ctx, url, dbTracer...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +171,11 @@ func setup(t *testing.T) *env {
 		t.Fatal(err)
 	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: n.GridSystem}
-	log := slog.New(slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	var handler slog.Handler = slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})
+	if tel != nil {
+		handler = tel.LogHandler(handler, "pagerarchive")
+	}
+	log := slog.New(handler)
 	hub := live.NewHub()
 	e.dir = newFakeDir()
 	e.acc = &accounts.Service{Store: st, Dir: e.dir, AllowedDomains: []string{"example.com"}, Now: time.Now, Log: log, CloseLive: hub.CloseUsers}
@@ -165,11 +187,12 @@ func setup(t *testing.T) *env {
 	}
 	appURL, _ := neturl.Parse("http://pager.example.test")
 	e.integ = &integrations.Service{Store: st, Network: n, Agencies: set.Agencies, Box: box, Presets: integrations.DefaultPresets(),
-		AppURL: appURL, Location: time.UTC, Version: "test", Log: log, Now: e.clock}
+		AppURL: appURL, Location: time.UTC, Version: "test", Log: log, Now: e.clock, Tracer: tr}
 	e.integ.Guard = &integrations.Guard{Allow: e.integ.AllowList, Restrict: integrations.OnlyLoopback}
 	srv := &server.Server{
 		Store:        st,
-		Ingest:       &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue},
+		Tracer:       tr,
+		Ingest:       &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue, Tracer: tr},
 		Integrations: e.integ,
 		MetricsToken: metricsToken,
 		Version:      "test",
@@ -182,12 +205,12 @@ func setup(t *testing.T) *env {
 	}
 	e.srv = srv
 	e.cat = srv.Catalog
-	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute}
+	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute, Tracer: tr}
 	melbourne, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log}
+	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr}
 	srv.Nightly = e.job
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)

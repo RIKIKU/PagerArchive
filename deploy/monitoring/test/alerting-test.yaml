@@ -1,0 +1,23 @@
+# Tests only: every alert goes to a webhook the test runs, quickly.
+# A deployment sets up its own contact point in Grafana instead
+# (docs/monitoring.md, "Where alerts go").
+apiVersion: 1
+
+contactPoints:
+  - orgId: 1
+    name: Test webhook
+    receivers:
+      - uid: pa-test-webhook
+        type: webhook
+        settings:
+          url: ${PA_ALERT_WEBHOOK_URL}
+          httpMethod: POST
+        disableResolveMessage: false
+
+policies:
+  - orgId: 1
+    receiver: Test webhook
+    group_by: [alertname, client]
+    group_wait: 5s
+    group_interval: 10s
+    repeat_interval: 1h

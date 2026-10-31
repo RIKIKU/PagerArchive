@@ -1,0 +1,13 @@
+# Test overlay for PagerArchive's own compose file, for A65
+# (scripts/monitoring-checks.sh), never for a deployment: the API sends its
+# telemetry to the monitoring stack's Alloy, and the database is reachable
+# on 127.0.0.1 so the test can move a client's last-seen time, as A32 does.
+services:
+  db:
+    ports:
+      - "${PA_MON_DB_BIND:-127.0.0.1:55436}:5432"
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_BSP_SCHEDULE_DELAY: "1000"
+      OTEL_BLRP_SCHEDULE_DELAY: "1000"

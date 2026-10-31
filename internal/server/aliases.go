@@ -17,7 +17,7 @@ import (
 
 // catalogError answers a refused change with its message and anything
 // else as a server error.
-func (s *Server) catalogError(w http.ResponseWriter, op string, err error) {
+func (s *Server) catalogError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	var refusal *catalog.Refusal
 	if errors.As(err, &refusal) {
 		writeJSON(w, refusal.Status, Problem{Error: refusal.Msg, Code: refusal.Code})
@@ -30,7 +30,7 @@ func (s *Server) catalogError(w http.ResponseWriter, op string, err error) {
 		return
 	}
 	// Catalog errors carry SQLSTATEs and capcodes, never names (store.SafeError).
-	s.Log.Error(op, "error", err.Error())
+	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 }
 
@@ -68,7 +68,7 @@ func (s *Server) myRequests(w http.ResponseWriter, r *http.Request) {
 	uid := currentUser(r).ID
 	out, err := s.Catalog.Requests(r.Context(), catalog.RequestFilter{RequestedBy: &uid, Which: "all", Max: 200})
 	if err != nil {
-		s.catalogError(w, "my requests", err)
+		s.catalogError(w, r, "my requests", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -87,7 +87,7 @@ func (s *Server) submitRequest(w http.ResponseWriter, r *http.Request) {
 	u := currentUser(r)
 	id, err := s.Catalog.SubmitRequest(r.Context(), u.ID, in)
 	if err != nil {
-		s.catalogError(w, "submit alias request", err)
+		s.catalogError(w, r, "submit alias request", err)
 		return
 	}
 	s.Log.Info("alias request submitted", "request", id, "user", u.ID, "kind", in.Kind)
@@ -104,7 +104,7 @@ func (s *Server) editRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Catalog.EditRequest(r.Context(), currentUser(r).ID, id, in); err != nil {
-		s.catalogError(w, "edit alias request", err)
+		s.catalogError(w, r, "edit alias request", err)
 		return
 	}
 	s.Log.Info("alias request edited", "request", id)
@@ -117,7 +117,7 @@ func (s *Server) withdrawRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Catalog.WithdrawRequest(r.Context(), currentUser(r).ID, id); err != nil {
-		s.catalogError(w, "withdraw alias request", err)
+		s.catalogError(w, r, "withdraw alias request", err)
 		return
 	}
 	s.Log.Info("alias request withdrawn", "request", id)
@@ -139,7 +139,7 @@ func (s *Server) adminRequests(w http.ResponseWriter, r *http.Request) {
 	}
 	out, err := s.Catalog.Requests(r.Context(), f)
 	if err != nil {
-		s.catalogError(w, "alias requests", err)
+		s.catalogError(w, r, "alias requests", err)
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -152,7 +152,7 @@ func (s *Server) approveRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	admin := currentUser(r).ID
 	if err := s.Catalog.ApproveRequest(r.Context(), admin, id); err != nil {
-		s.catalogError(w, "approve alias request", err)
+		s.catalogError(w, r, "approve alias request", err)
 		return
 	}
 	s.Log.Info("alias request approved", "request", id, "by", admin)
@@ -175,7 +175,7 @@ func (s *Server) rejectRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	admin := currentUser(r).ID
 	if err := s.Catalog.RejectRequest(r.Context(), admin, id, in.Feedback); err != nil {
-		s.catalogError(w, "reject alias request", err)
+		s.catalogError(w, r, "reject alias request", err)
 		return
 	}
 	s.Log.Info("alias request rejected", "request", id, "by", admin)
@@ -248,7 +248,7 @@ func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	v, found, err := s.aliasView(r, id, true)
 	if err != nil {
-		s.catalogError(w, "admin alias", err)
+		s.catalogError(w, r, "admin alias", err)
 		return
 	}
 	if !found {
@@ -257,11 +257,11 @@ func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	out := AdminAlias{AliasView: v}
 	if out.Requests, err = s.Catalog.Requests(r.Context(), catalog.RequestFilter{AliasID: &id, Which: "waiting", Max: 100, Admin: true}); err != nil {
-		s.catalogError(w, "admin alias", err)
+		s.catalogError(w, r, "admin alias", err)
 		return
 	}
 	if out.Integrations, err = s.Store.CountIntegrationsSelectingAlias(r.Context(), id); err != nil {
-		s.catalogError(w, "admin alias", fmt.Errorf("integrations: %s", store.SafeError(err)))
+		s.catalogError(w, r, "admin alias", fmt.Errorf("integrations: %s", store.SafeError(err)))
 		return
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -274,7 +274,7 @@ func (s *Server) createAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := s.Catalog.CreateAlias(r.Context(), in, s.by(r))
 	if err != nil {
-		s.catalogError(w, "add alias", err)
+		s.catalogError(w, r, "add alias", err)
 		return
 	}
 	s.Log.Info("alias added", "alias", id, "by", currentUser(r).ID)
@@ -291,7 +291,7 @@ func (s *Server) editAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.Catalog.EditAlias(r.Context(), id, in, s.by(r)); err != nil {
-		s.catalogError(w, "edit alias", err)
+		s.catalogError(w, r, "edit alias", err)
 		return
 	}
 	s.Log.Info("alias changed", "alias", id, "by", currentUser(r).ID)
@@ -305,7 +305,7 @@ func (s *Server) deleteAlias(w http.ResponseWriter, r *http.Request) {
 	}
 	d, err := s.Catalog.RemoveAlias(r.Context(), id, s.by(r))
 	if err != nil {
-		s.catalogError(w, "delete alias", err)
+		s.catalogError(w, r, "delete alias", err)
 		return
 	}
 	s.Log.Info("alias deleted", "alias", id, "by", currentUser(r).ID, "requests_closed", d.Requests, "integrations", d.Integrations)
