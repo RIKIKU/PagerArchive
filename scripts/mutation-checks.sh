@@ -23,8 +23,9 @@ survived=0
 
 # mutate <name> <file> <test> <old> <new>: replace exact text, run the test,
 # and restore. <test> is "go:<regexp>" (the acceptance checks),
-# "telemetry:<regexp>" (internal/telemetry's tests), "pester:<file>",
-# "e2e:<grep>" or "mon:" (the example stack's checks).
+# "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
+# dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
+# or "mon:<regexp>" (the example stack's checks: TestA65, TestA67).
 #
 # mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
 # replacements, in two files, as one mutation (M12).
@@ -52,9 +53,14 @@ mutate() {
 		out=$(go test -count=1 -v -run "${test#telemetry:}" ./internal/telemetry/ 2>&1)
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -4
 		;;
+	unit:*)
+		spec=${test#unit:}
+		out=$(go test -count=1 -v -run "${spec#*:}" "./${spec%%:*}/" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -4
+		;;
 	mon:*)
-		out=$(sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
-		printf '%s\n' "$out" | grep -E '^\s+a65_test.go:[0-9]+: ' | head -4
+		out=$(PA_MON_RUN="${test#mon:}" sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+a6[57]_test.go:[0-9]+: ' | head -4
 		;;
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
@@ -260,15 +266,50 @@ mutate "a span key added to the app's allowlist but not to Alloy's" $T/filter.go
 	'	"pagerarchive.reparse.messages": intKind,
 	"pagerarchive.reparse.batches":  intKind,'
 if command -v docker >/dev/null; then
-	mutate "the \"client not receiving\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon: \
+	mutate "the \"client not receiving\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA65 \
 		'(pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})' '(pagerarchive_client_last_seen_seconds{job="pagerarchive"})'
+fi
+
+# M12 addition (owner, 2026-10-31): radio health (R74a), the "radio stalled"
+# alert and stopped clients on the dashboard (R76, A67), and a failed
+# delivery's cause on its span (R71).
+mutate "a failed delivery's cause dropped from its span" internal/integrations/trace.go unit:internal/integrations:'TestFailureCauses|TestTooOldCause' \
+	'	cause := res.cause
+' '	cause := ""
+'
+R=internal/radio
+mutate "squelch added to rtl_fm's arguments" $R/radio.go unit:internal/radio:TestNoSquelch \
+	'"-s", fmt.Sprint(SampleRate), "-p", s.PPM}' '"-s", fmt.Sprint(SampleRate), "-l", "70", "-p", s.PPM}'
+mutate "rtl_fm's message text exported as the kind label" $R/health.go unit:internal/client:TestRadioExportsKindsOnly \
+	'			h.count(k)' '			h.count(line)'
+mutate "measuring made blocking: each chunk handed to the metrics side on an unbuffered channel" $R/health.go unit:internal/client:TestRadioMeasuringNeverBlocks \
+	'func (h *Health) measure(b []byte) {' '// Measured hands each chunk to the metrics side, which takes it when it collects.
+var Measured = make(chan []byte)
+
+func (h *Health) measure(b []byte) { Measured <- b }
+
+// Measure is what measure did.
+func (h *Health) Measure(b []byte) {' \
+	internal/client/metrics.go \
+	'			o.ObserveInt64(audio, health.Bytes())' '			select {
+			case b := <-radio.Measured:
+				health.Measure(b)
+			default:
+			}
+			o.ObserveInt64(audio, health.Bytes())'
+if command -v docker >/dev/null; then
+	mutate "the \"radio stalled\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA67 \
+		'(label_replace(pagerarchive_client_radio_silent_seconds,' '(label_replace(pagerarchive_client_radio_silence_seconds,'
+	mutate "the clients panel back on instant queries only" deploy/monitoring/grafana/dashboards/clients.json mon:TestA67 \
+		'last_over_time(' '(' \
+		deploy/monitoring/grafana/dashboards/clients.json '[$__range:1m])' ')'
 else
-	echo "=== the alert rule's mutation skipped: no Docker"
+	echo "=== the alert rules' and dashboard's mutations skipped: no Docker"
 fi
 
 echo "=== unmutated"
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12' ./internal/acceptance/ 2>&1 | tail -1
-go test -count=1 ./internal/telemetry/ 2>&1 | tail -1
+go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ 2>&1 | tail -4
 ! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 [ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'
 [ -z "$PA_PWSH" ] || "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 2>&1 | tail -1

@@ -1,10 +1,12 @@
 #!/bin/sh
-# A65 against the example monitoring stack itself (deploy/monitoring): the
-# API and its database from the compose file at the top (no Authentik: A65
-# needs none), the monitoring stack joined to their network as a deployment
-# runs it, and a webhook contact point that the test receives on the host.
-# Memory of the monitoring stack's containers is sampled throughout, idle
-# first and then during A65.
+# A65 and A67 against the example monitoring stack itself (deploy/monitoring):
+# the API and its database from the compose file at the top (no Authentik:
+# neither check needs it), the monitoring stack joined to their network as a
+# deployment runs it, and a webhook contact point that the test receives on
+# the host. A67's clients run in the client image on the API's network, with
+# a stand-in for rtl_fm (internal/radio/standin). Memory of the monitoring
+# stack's containers is sampled throughout, idle first and then during the
+# checks.
 #
 # usage: scripts/monitoring-checks.sh [-o OUT] [-s SCREENSHOTS]
 #   -o OUT          where the memory samples and summary go (default monitoring-results)
@@ -12,6 +14,8 @@
 #                   page's trace, the three dashboards and a firing alert into
 #                   this folder (needs Node with web/'s dependencies and
 #                   Playwright's Chromium)
+# PA_MON_RUN, if set, runs only the checks it matches (go test -run), e.g.
+# TestA67; mutation-checks.sh uses it.
 # needs: Docker with compose, Go, curl. Uses 127.0.0.1:18091, :13001, :14319,
 # :55437 and 0.0.0.0:18099 (the webhook, which Grafana reaches through the
 # Docker host's gateway).
@@ -43,8 +47,11 @@ app() { docker compose -p "$P" -f compose.yaml -f deploy/test/compose.yaml -f de
 mon() { docker compose -p "$P-mon" -f deploy/monitoring/compose.yaml -f deploy/monitoring/test/compose.yaml "$@"; }
 
 SAMPLER=""
+BIN=$(mktemp -d)
 cleanup() {
 	[ -n "$SAMPLER" ] && kill "$SAMPLER" 2>/dev/null || true
+	docker ps -aq --filter "label=pagerarchive.montest=$P" | xargs -r docker rm -f >/dev/null 2>&1 || true
+	rm -rf "$BIN"
 	mon logs --no-color >"$OUT/monitoring-stack.log" 2>&1 || true
 	app logs --no-color api >"$OUT/api.log" 2>&1 || true
 	if [ -z "${MON_KEEP:-}" ]; then
@@ -54,8 +61,12 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "--- building the API image and starting the API and its database ($P)"
+echo "--- building the API and client images and rtl_fm's stand-in, starting the API and its database ($P)"
 app build -q api
+docker build -q -f Dockerfile.client -t "pagerarchive-client:montest" . >/dev/null
+CGO_ENABLED=0 go build -o "$BIN/rtl_fm" ./internal/radio/standin
+export PA_MON_CLIENT_IMAGE=pagerarchive-client:montest PA_MON_STANDIN="$BIN/rtl_fm" PA_MON_NETWORK="${P}_default" \
+	PA_MON_API_ADDRESS=api:8080 PA_MON_LABEL="pagerarchive.montest=$P"
 app up -d db api >/dev/null 2>&1 || { app up -d db api; exit 1; }
 i=0
 until curl -sf http://127.0.0.1:18091/healthz >/dev/null; do
@@ -100,7 +111,7 @@ SAMPLER=$!
 
 echo "--- idle for 2 minutes (memory)"
 sleep 120
-echo a65 >"$PHASE_FILE"
+echo checks >"$PHASE_FILE"
 
 status=0
 PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 \
@@ -108,7 +119,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_DB_URL="postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:55437/postgres?sslmode=disable" \
 	PA_MON_STOP_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml stop api" \
 	PA_MON_START_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml start api" \
-	go test -count=1 -v -run TestA65 ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67}" ./internal/monitortest/ || status=1
 
 if [ -n "$SHOTS" ]; then
 	echo shots >"$PHASE_FILE"

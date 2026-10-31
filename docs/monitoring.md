@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-`deploy/monitoring` is a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, with data sources, three dashboards and two alert rules already set up. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+`deploy/monitoring` is a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, with data sources, three dashboards and three alert rules already set up. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -10,6 +10,7 @@ PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring s
 - [Pointing the API at it](#pointing-the-api-at-it)
 - [Pointing a receiving client at it](#pointing-a-receiving-client-at-it)
 - [The dashboards](#the-dashboards)
+- [Radio health](#radio-health)
 - [Alerts, and where they go](#alerts-and-where-they-go)
 - [Your first incident](#your-first-incident)
 - [Memory and disk](#memory-and-disk)
@@ -124,13 +125,15 @@ A client on the **same machine** as the monitoring stack (in Docker on PagerArch
 
 Anyone who can reach that port can send telemetry into your stack, so keep it on the LAN, or reach it over the same VPN the client uses for the server (docs/client.md).
 
-The client sends its traces (each page from decode to the server's answer), its log lines and its metrics: lines read, pages decoded and sent, failed sends and retries, pages buffered and dropped, when it last decoded a page and last sent one, and whether the radio pipeline is running (R74). Its `service.instance.id`, and so the `instance` label on its metrics, is its client ID.
+The client sends its traces (each page from decode to the server's answer), its log lines and its metrics: lines read, pages decoded and sent, failed sends and retries, pages buffered and dropped, when it last decoded a page and last sent one, and whether the radio pipeline is running (R74). A client that runs the radio itself (`RADIO_FREQUENCY` set) also sends its [radio health](#radio-health). Its `service.instance.id`, and so the `instance` label on its metrics, is its client ID.
 
 ## The dashboards
 
 All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick; change the files, or save a copy under another name.
 
-**A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), and the log lines from pages and requests (click one for its trace).
+**A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), integration deliveries and **failed delivery attempts by kind and cause**, and the log lines from pages and requests (click one for its trace).
+
+Each delivery attempt's span says why it failed, as a kind, never the error's text (R70): `error.type` is the cause (`connection_refused`, `dns_lookup_failed`, `connection_reset`, `network_unreachable`, `timeout`, `tls_not_trusted`, `tls_not_tls`, `tls_handshake_failed`, `address_not_allowed`, `auth_refused`, `mqtt_protocol_refused`, `mqtt_unavailable`, `no_answer`, `bad_request`, `secrets_unreadable`, `too_old`, or the answer's HTTP status such as `HTTP 503`), and `pagerarchive.delivery.failure` what it means for the page: `retryable` (tried again), `refused` (not tried again) or `no_answer` (sent, maybe received, never tried again). In **Explore → Tempo**, `{name="integration.deliver" && span.error.type="connection_refused"}` finds those attempts.
 
 ![A page's path](monitoring/dashboard-page-path.png)
 
@@ -142,22 +145,48 @@ One page's trace, opened from that table. The client's `buffer` span is long bec
 
 ![Requests and load](monitoring/dashboard-requests.png)
 
-**Clients.** Each client as the server sees it (last heard, receiving or not, clock ahead), and each client's own numbers. **Lines read** stopping means the radio or decoder has stopped; lines still read but **failed sends** climbing and pages **buffered** means the network or the server.
+**Clients.** Each client as the server sees it (last heard, receiving or not, clock ahead), each client's own numbers, and the radio's health. **Lines read** stopping means the radio or decoder has stopped; lines still read but **failed sends** climbing and pages **buffered** means the network or the server.
+
+"Each client's own view" keeps a client that has **stopped reporting**: it shows the last values it sent in the dashboard's time range, and **Last report** says how long ago they came (orange after 5 minutes). Without that, a switched-off client would drop out of the table after 5 minutes, just when you want to see what it said last. A client reading stdin shows *not run by the client* in the radio columns.
 
 ![Clients](monitoring/dashboard-clients.png)
 
+## Radio health
+
+A client that runs `rtl_fm` and `multimon-ng` itself (`RADIO_FREQUENCY` set) passes the audio from one to the other and measures it on the way (R74a). None of the audio is kept or sent anywhere; only these numbers are:
+
+| Number | Metric | What it means |
+|---|---|---|
+| **Audio** per second | `pagerarchive_client_radio_audio_bytes_total` (its rate) | How much audio came from `rtl_fm`. At its 22,050 samples a second that's **44,100 bytes a second** while the dongle works; anything much less means it's dropping out |
+| **Audio level** | `pagerarchive_client_radio_level` | The audio's loudness (RMS) in dBFS since the last report, 0 being full scale. An FM receiver without squelch hears loud hiss, so expect roughly −20 to −10 dBFS; a level stuck far lower suggests the dongle is giving silence |
+| **Radio silent for** | `pagerarchive_client_radio_silent_seconds` | Seconds since audio last came. A few hundredths of a second while it works |
+| **rtl_fm messages by kind** | `pagerarchive_client_radio_messages_total{kind}` | `rtl_fm`'s messages, counted: `no_device`, `open_failed`, `usb_transfer_failed`, `tuner_not_locked`, and `other` for anything else, its normal start-up lines included (about 13 each time it starts). Their text goes to the client's own log as before (`docker logs`), never to the stack |
+
+`rtl_fm` runs **without squelch** (no `-l`), and that matters: a working dongle then always produces audio, hiss included, even when the network sends nothing. With squelch on, a quiet channel would be silence too, and the numbers couldn't tell it from a stuck dongle. Don't add squelch to the client.
+
+Measuring never slows or changes what `multimon-ng` gets: the client copies each chunk to `multimon-ng` first and only then adds it to a few counters, with no locks and nothing waiting on the exporter.
+
+**Three cases, and what to do:**
+
+1. **No audio while `rtl_fm` is running** (Audio at 0, Radio silent for growing, Radio running *running*): the dongle has stopped, often after a USB hiccup (`usb_transfer_failed` going up first). The **Radio stalled** alert fires after 2 minutes. Reset the dongle: unplug it and plug it back in, or restart the client (`docker restart <client>`); if it keeps happening, try another USB port, a powered hub or a shorter cable.
+2. **Audio, but no pages for a long time** (Audio about 44 kB/s, Lines read flat): the radio is fine. Either the network is quiet (check another receiver, or wait for the next heartbeat page), or the signal is weak: check the antenna and its cable, `RADIO_GAIN` and `RADIO_PPM`. "Client not receiving" fires after 30 minutes of this.
+3. **rtl_fm errors by kind:** `no_device`: the dongle isn't plugged in or isn't passed into the container (`--device /dev/bus/usb`). `open_failed`: something else has it, usually Linux's DVB-T driver (docs/client.md) or a second client. `usb_transfer_failed`: the USB link dropped; expect case 1 next. `tuner_not_locked`: the tuner couldn't tune to the frequency; check `RADIO_FREQUENCY` and `RADIO_PPM`, and the dongle's temperature.
+
+A client reading `multimon-ng` output on stdin has no radio of its own, so it reports no radio health; the dashboard says *not run by the client*.
+
 ## Alerts, and where they go
 
-Two alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
+Three alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
 
 | Rule | Fires when | Clears when |
 |---|---|---|
 | **Client not receiving** | a client has sent no page of any kind (heartbeats included) for more than 30 minutes (R39). One alert per client | the client is heard again |
+| **Radio stalled** | a client running the radio has had no audio from `rtl_fm` for more than 2 minutes, while it still reports: a stuck dongle, or the pipeline not running (R74a). One alert per client. A client that's switched off is "Client not receiving"'s job, not this one's | audio flows again |
 | **API unreachable** | Alloy's scrape of `/metrics` has failed for 30 s: the API is down, unreachable, or `METRICS_TOKEN` changed | the scrape works again |
 
 ![A firing alert](monitoring/alert-firing.png)
 
-**The threshold** for "Client not receiving" is the number in `params: [1800]` in `rules.yaml` (seconds). Change it and restart Grafana (`docker compose restart grafana`). It's in the file because Grafana doesn't fill in settings inside an alert rule's query.
+**The thresholds** are the numbers in `params:` in `rules.yaml`, in seconds: `[1800]` for "Client not receiving", `[120]` for "Radio stalled". Change them and restart Grafana (`docker compose restart grafana`). They're in the file because Grafana doesn't fill in settings inside an alert rule's query. "Radio stalled" can take up to one client metrics interval (`OTEL_METRIC_EXPORT_INTERVAL`) plus 30 s longer than its threshold to fire.
 
 **Where alerts go.** Out of the box, **nowhere**: Grafana 13 starts with no contact point, and its default notification policy sends to one named `empty` that does nothing. The rules still fire and show in **Alerting → Alert rules**, but nobody is told until you add a contact point and make it the default policy's. Credentials stay in Grafana, never in the repository. In Grafana:
 

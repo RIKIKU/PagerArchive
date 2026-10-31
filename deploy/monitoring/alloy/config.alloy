@@ -73,7 +73,7 @@ otelcol.processor.transform "allowlist" {
   trace_statements {
     context    = "span"
     statements = [
-      `keep_keys(span.attributes, ["http.request.method", "http.route", "http.response.status_code", "error.type", "user.id", "user.role", "db.system.name", "db.operation.name", "pagerarchive.client.id", "pagerarchive.ingest.outcome", "pagerarchive.message.id", "pagerarchive.send.attempt", "pagerarchive.live.connections", "pagerarchive.delivery.kind", "pagerarchive.delivery.attempt", "pagerarchive.delivery.result", "pagerarchive.stream.caught_up", "pagerarchive.nightly.deleted", "pagerarchive.nightly.redacted", "pagerarchive.reparse.messages"])`,
+      `keep_keys(span.attributes, ["http.request.method", "http.route", "http.response.status_code", "error.type", "user.id", "user.role", "db.system.name", "db.operation.name", "pagerarchive.client.id", "pagerarchive.ingest.outcome", "pagerarchive.message.id", "pagerarchive.send.attempt", "pagerarchive.live.connections", "pagerarchive.delivery.kind", "pagerarchive.delivery.attempt", "pagerarchive.delivery.result", "pagerarchive.delivery.failure", "pagerarchive.stream.caught_up", "pagerarchive.nightly.deleted", "pagerarchive.nightly.redacted", "pagerarchive.reparse.messages"])`,
       `set(span.status.message, "")`,
     ]
   }
@@ -100,7 +100,7 @@ otelcol.processor.transform "allowlist" {
   metric_statements {
     context    = "datapoint"
     statements = [
-      `keep_keys(datapoint.attributes, ["reason"])`,
+      `keep_keys(datapoint.attributes, ["reason", "kind"])`,
     ]
   }
 

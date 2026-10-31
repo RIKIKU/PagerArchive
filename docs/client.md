@@ -43,6 +43,8 @@ sudo modprobe -r dvb_usb_rtl28xxu   # or reboot
 
 `rtl_test` should then find the dongle without errors.
 
+The client runs `rtl_fm` **without squelch**, on purpose: a working dongle then always produces audio (hiss, between pages), so audio stopping means the dongle has stopped. The client passes that audio to `multimon-ng` itself and measures it on the way, and with telemetry on it reports its **radio health**: audio per second, its level, how long since audio last came, and `rtl_fm`'s errors by kind (docs/monitoring.md, "Radio health"). `rtl_fm`'s messages still go to the client's log as before.
+
 ## Clock
 
 Keep the client's clock in sync with NTP. The server rejects receive times more than 60 seconds ahead of its own clock. The client then logs a warning (without page text) and drops the page, and `pagerarchive client list` shows the client as `clock ahead` until it next sends a page the server accepts.

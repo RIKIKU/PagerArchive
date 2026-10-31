@@ -1,6 +1,6 @@
 # Alert rules (R76). They go to the default notification policy, so they
 # reach whatever contact point you choose for it in Grafana (email,
-# Pushover, ...: docs/monitoring.md). Both resolve on their own when the
+# Pushover, ...: docs/monitoring.md). Each resolves on its own when the
 # problem is fixed.
 apiVersion: 1
 
@@ -52,6 +52,53 @@ groups:
             client for longer than the threshold. Check its radio and its
             connection: the "PagerArchive: clients" dashboard shows whether
             it still reads lines and whether its sends fail.
+
+      # R74a: a client running the radio has had no audio from rtl_fm for 2
+      # minutes. rtl_fm runs without squelch, so a working dongle always
+      # gives audio: none means the dongle is stuck, or the pipeline isn't
+      # running (it gives no audio either). The client counts the seconds
+      # itself, so the alert follows only clients that are still reporting:
+      # one that's switched off is "Client not receiving"'s job. One alert
+      # per client; it clears when audio flows again.
+      - uid: pa-radio-stalled
+        title: Radio stalled
+        condition: stalled
+        data:
+          - refId: silent
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: silent
+              instant: true
+              range: false
+              expr: max by (client) (label_replace(pagerarchive_client_radio_silent_seconds, "client", "$1", "instance", "(.*)"))
+          - refId: stalled
+            datasourceUid: __expr__
+            model:
+              refId: stalled
+              type: threshold
+              expression: silent
+              conditions:
+                - evaluator:
+                    type: gt
+                    # THE THRESHOLD SETTING: seconds without audio from a
+                    # client's radio before it alerts (R74a: 2 minutes).
+                    # Change it here and restart Grafana (docs/monitoring.md).
+                    params: [120]
+        # No numbers: no client runs the radio, or none is reporting.
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client {{ $labels.client }}'s radio has given no audio for {{ humanizeDuration $values.silent.Value }}"
+          description: >-
+            rtl_fm runs without squelch, so a working dongle always gives
+            audio, even from a quiet channel. None means the dongle is stuck
+            (reset it: unplug it, or restart the client) or rtl_fm isn't
+            running. The "PagerArchive: clients" dashboard shows the
+            client's radio health and rtl_fm's errors by kind.
 
       # R76: the API can't be scraped: it's down, or unreachable from Alloy.
       - uid: pa-api-unreachable

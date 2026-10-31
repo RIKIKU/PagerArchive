@@ -47,6 +47,7 @@ var SpanKeys = map[string]kind{
 	"pagerarchive.delivery.kind":    codeKind,
 	"pagerarchive.delivery.attempt": intKind,
 	"pagerarchive.delivery.result":  codeKind,
+	"pagerarchive.delivery.failure": codeKind, // retryable, refused or no_answer; the cause is error.type
 	"pagerarchive.stream.caught_up": intKind,
 	"pagerarchive.nightly.deleted":  intKind,
 	"pagerarchive.nightly.redacted": intKind,
@@ -112,7 +113,7 @@ var ResourceKeys = map[string]bool{
 }
 
 // MetricKeys are the attribute keys the client's metrics may carry.
-var MetricKeys = []attribute.Key{"reason"}
+var MetricKeys = []attribute.Key{"reason", "kind"} // kind: rtl_fm message kinds (R74a)
 
 // Span names: fixed ones here, routes and query names registered by the
 // server and the store at start-up (AllowSpanNames).

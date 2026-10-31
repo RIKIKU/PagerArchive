@@ -291,12 +291,12 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 	now := s.now()
 	deadline := m.SentAt.Add(Cutoff)
 	if !now.Before(deadline) {
-		s.tooOld(ctx, l, d, result{err: "skipped: too old"})
+		s.tooOld(ctx, l, d, result{cause: "too_old", err: "skipped: too old"})
 		return false
 	}
 	sec, err := s.secretsOf(l.row)
 	if err != nil {
-		res := result{outcome: refused, err: err.Error()}
+		res := result{outcome: refused, cause: "secrets_unreadable", err: err.Error()}
 		s.failed(ctx, l, d, d.Attempts, res)
 		return false
 	}

@@ -342,11 +342,18 @@ func TestA62PageTrace(t *testing.T) {
 	}
 	var results []string
 	for _, s := range named(spans, "pagerarchive", "integration.deliver") {
-		results = append(results, s.Attr("pagerarchive.delivery.attempt")+":"+s.Attr("pagerarchive.delivery.result"))
+		r := s.Attr("pagerarchive.delivery.attempt") + ":" + s.Attr("pagerarchive.delivery.result")
+		if c := s.Attr("error.type"); c != "" {
+			r += " (" + c + ", " + s.Attr("pagerarchive.delivery.failure") + ")"
+		}
+		results = append(results, r)
 	}
 	slices.Sort(results)
-	if !slices.Equal(results, []string{"1:retry", "2:delivered"}) {
-		t.Errorf("delivery attempts %v, want 1:retry and 2:delivered", results)
+	// The failed attempt says why, as exported (R71, R70).
+	if !slices.Equal(results, []string{"1:retry (HTTP 503, retryable)", "2:delivered"}) {
+		t.Errorf("delivery attempts %v, want 1:retry (HTTP 503, retryable) and 2:delivered", results)
+	} else {
+		t.Logf("A62: delivery attempts %v", results)
 	}
 	for _, step := range []string{"decode", "buffer", "send"} {
 		for _, s := range named(spans, "pagerarchive-client", step) {

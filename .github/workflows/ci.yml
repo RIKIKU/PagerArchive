@@ -44,13 +44,13 @@ jobs:
         run: go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 diff
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
-      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A50, M9 live streams, address guard, preset stand-ins, A62-A64, A66)
+      - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A50, M9 live streams, address guard, preset stand-ins, A62-A64, A66, radio health, delivery failure causes)
         run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
         shell: bash
       - name: Acceptance check summary
         if: always()
         run: |
-          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9|M12)|postgis:|^(ok|FAIL)' test.log || true
+          grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9|M12|FailureCauses|Radio|NoSquelch)|postgis:|^(ok|FAIL)' test.log || true
 
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
@@ -309,19 +309,20 @@ jobs:
           path: a15-results/
           retention-days: 30
 
-  # A65 against the example monitoring stack itself (deploy/monitoring, R76):
+  # A65 and A67 against the example monitoring stack itself (deploy/monitoring, R76):
   # Alloy, Tempo, Loki, Prometheus and Grafana scraping a real API, with a
-  # webhook contact point the test receives. The stack's memory is sampled.
+  # webhook contact point the test receives, and (A67) clients in the client
+  # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
-    name: Example monitoring stack (A65)
+    name: Example monitoring stack (A65, A67)
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
-      - name: A65 on the example monitoring stack
+      - name: A65 and A67 on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs
         if: always()

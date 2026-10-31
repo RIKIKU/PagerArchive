@@ -1,8 +1,10 @@
 #!/bin/sh
-# Feeds the example monitoring stack made-up test data and takes the
-# screenshots in docs/monitoring.md: a page's trace in Tempo, the three
-# dashboards and a firing alert. Run by scripts/monitoring-checks.sh -s DIR,
-# with its stacks up (project P); not on its own.
+# Feeds the example monitoring stack made-up test data (a receiver reading
+# stdin, one running the radio with rtl_fm's stand-in, and an integration
+# whose deliveries fail) and takes the screenshots in docs/monitoring.md: a
+# page's trace in Tempo, the three dashboards and a firing alert. Run by
+# scripts/monitoring-checks.sh -s DIR, with its stacks up (project P); not on
+# its own.
 #
 # usage: scripts/monitoring-screenshots.sh DIR P
 set -eu
@@ -14,7 +16,7 @@ app() { docker compose -p "$P" -f compose.yaml -f deploy/test/compose.yaml -f de
 psql_db() { app exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres "$@"; }
 
 BIN=$(mktemp -d)
-trap 'rm -rf "$BIN"' EXIT
+trap 'docker rm -f "$P-mast-receiver" >/dev/null 2>&1; rm -rf "$BIN"' EXIT
 go build -o "$BIN/client" ./cmd/pagerarchive-client
 
 echo "--- test data: the fixture's template and aliases, a user, two receivers"
@@ -30,6 +32,20 @@ KEY=$(app exec -T api /usr/local/bin/pagerarchive client add hill-receiver "Hill
 app exec -T api /usr/local/bin/pagerarchive client add shed-receiver "Shed receiver" >/dev/null
 # The second receiver was last heard 31 minutes ago: its alert fires.
 psql_db -c "UPDATE clients SET last_seen_at = now() - interval '31 minutes' WHERE id = 'shed-receiver'" >/dev/null
+
+echo "--- a receiver running the radio, with rtl_fm's stand-in (A67), for radio health"
+RKEY=$(app exec -T api /usr/local/bin/pagerarchive client add mast-receiver "Mast receiver" | tail -n 1)
+mkdir -p "$BIN/standin"
+docker run -d --name "$P-mast-receiver" --label "$PA_MON_LABEL" --network "$PA_MON_NETWORK" --user "$(id -u):$(id -g)" \
+	-e SERVER_URL=http://api:8080 -e CLIENT_ID=mast-receiver -e CLIENT_KEY="$RKEY" -e RADIO_FREQUENCY=148.8125M -e STANDIN_EVERY=15s \
+	-e OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318 -e OTEL_METRIC_EXPORT_INTERVAL=10000 \
+	-v "$PA_MON_STANDIN:/usr/local/bin/rtl_fm:ro" -v "$BIN/standin:/run/rtl_fm-standin" "$PA_MON_CLIENT_IMAGE" >/dev/null
+
+echo "--- an integration whose deliveries fail (nothing listens at db:9), for failures by cause"
+psql_db -c "INSERT INTO settings (key, value) VALUES ('integration_allow_list', '[\"db\"]') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value" >/dev/null
+curl -sf -o /dev/null -b "pa_session=$SESSION" -H 'Content-Type: application/json' \
+	-d '{"name":"Station 1 fires","kind":"webhook","content":"summary","capcodes":["0100001"],"secrets":{"url":"http://db:9/hook"}}' \
+	"$API/api/v1/integrations" || { echo "couldn't create the integration" >&2; exit 1; }
 
 line() { printf 'POCSAG1200: Address: %7d  Function: 3  Alpha:   %s\n' "$1" "$2"; }
 echo "--- a receiver decodes pages, the API is unreachable for 20 s, then it's back"

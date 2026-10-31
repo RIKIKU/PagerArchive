@@ -11,7 +11,7 @@
     {
       "id": 1, "type": "text", "title": "How to read this",
       "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt. The table lists recent pages: click a span ID to open that page's trace. The top chart is the slowest 10 % of each step."}
+      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt, which says why it failed (error.type: connection_refused, timeout, HTTP 503 ...). The table lists recent pages: click a span ID to open that page's trace. The top chart is the slowest 10 % of each step."}
     },
     {
       "id": 2, "type": "timeseries", "title": "Time in each step (90th percentile)",
@@ -44,10 +44,22 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Integration deliveries (per hour)",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 24},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (result) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\"}[1h]))", "legendFormat": "{{result}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Failed delivery attempts, by kind and cause",
+      "description": "Each failed integration.deliver span, by the integration's kind and error.type: connection_refused, dns_lookup_failed, timeout, tls_not_trusted, auth_refused, HTTP 503 ... Open a delivery's trace from the table above for its retries.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "tempo", "uid": "tempo"},
+      "targets": [{
+        "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
+        "query": "{name=\"integration.deliver\" && status=error} | count_over_time() by (span.pagerarchive.delivery.kind, span.error.type)"
+      }],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {

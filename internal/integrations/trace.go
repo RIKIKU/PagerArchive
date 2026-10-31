@@ -75,20 +75,25 @@ func (s *Service) startAttempt(ctx context.Context, d db.DueDeliveriesRow) (cont
 }
 
 // attemptResult records an attempt's result on its span: delivered, retry,
-// failed, too_old or cancelled, and for a failure its kind.
+// failed, too_old or cancelled. A failure also gets its cause as error.type
+// (connection_refused, dns_lookup_failed, timeout, tls_not_trusted,
+// auth_refused, HTTP 503 ...: a kind, never text, R70), and an attempt that
+// failed gets what that means for the page as pagerarchive.delivery.failure:
+// retryable, refused (won't be retried) or no_answer (sent, maybe received;
+// never retried).
 func attemptResult(ctx context.Context, status string, res result) {
 	span := trace.SpanFromContext(ctx)
 	span.SetAttributes(attribute.String("pagerarchive.delivery.result", status))
 	if status == statusDelivered || status == statusCancelled {
 		return
 	}
-	kind := map[outcome]string{retryable: "retryable", refused: "refused", noAnswer: "no_answer"}[res.outcome]
-	if res.outcome == delivered {
-		kind = status
+	if f, ok := map[outcome]string{retryable: "retryable", refused: "refused", noAnswer: "no_answer"}[res.outcome]; ok {
+		span.SetAttributes(attribute.String("pagerarchive.delivery.failure", f))
 	}
-	span.SetAttributes(attribute.String("error.type", telemetry.ErrorKind(kind)))
-	if res.status != "" {
-		span.SetAttributes(attribute.String("error.type", telemetry.ErrorKind(res.status)))
+	cause := res.cause
+	if cause == "" {
+		cause = "other"
 	}
+	span.SetAttributes(attribute.String("error.type", telemetry.ErrorKind(cause)))
 	span.SetStatus(codes.Error, "")
 }

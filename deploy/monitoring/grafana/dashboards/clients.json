@@ -1,7 +1,7 @@
 {
   "uid": "pa-clients",
   "title": "PagerArchive: clients",
-  "description": "Receiving clients: when the server last heard each one (R39), and each client's own numbers (R74), which tell a stuck radio from a network problem.",
+  "description": "Receiving clients: when the server last heard each one (R39), each client's own numbers (R74), which tell a stuck radio from a network problem, and the radio's health (R74a).",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -10,12 +10,12 @@
   "panels": [
     {
       "id": 1, "type": "text", "title": "How to read this",
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The panels below come from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server."}
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The rest comes from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server. A client that stops reporting keeps its row in **each client's own view**, with its last values and **last report** saying how long ago they came.\n\n**Radio health** (R74a), for clients that run the radio: rtl_fm runs without squelch, so a working dongle always gives about 44 kB of audio a second. **Silent for** growing while the client still reports means a stuck dongle: reset it. Audio but no pages for a long time means a quiet network or a weak signal. rtl_fm's errors are counted by kind; **other** includes its normal start-up lines. A client reading stdin shows *not run by the client*."}
     },
     {
       "id": 2, "type": "table", "title": "Clients, as the server sees them",
-      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 4},
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 5},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (client) (pagerarchive_client_last_seen_timestamp_seconds{job=\"pagerarchive\"})"},
@@ -38,15 +38,71 @@
     },
     {
       "id": 3, "type": "stat", "title": "Clients not receiving",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 4},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(pagerarchive_client_receiving{job=\"pagerarchive\"} == 0) or vector(0)"}],
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
       "options": {"colorMode": "background", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {
+      "id": 8, "type": "table", "title": "Each client's own view (last reported values in the time range)",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (last_over_time(timestamp(pagerarchive_client_pages_buffered)[$__range:1m]))"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (last_over_time(pagerarchive_client_last_decoded_timestamp_seconds[$__range:1m]))"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (last_over_time(pagerarchive_client_last_sent_timestamp_seconds[$__range:1m]))"},
+        {"refId": "D", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (last_over_time(pagerarchive_client_pages_buffered[$__range:1m]))"},
+        {"refId": "E", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (last_over_time(pagerarchive_client_radio_running[$__range:1m]))"},
+        {"refId": "F", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (last_over_time(rate(pagerarchive_client_radio_audio_bytes_total[2m])[$__range:1m]))"},
+        {"refId": "G", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (last_over_time(pagerarchive_client_radio_level[$__range:1m]))"},
+        {"refId": "H", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (last_over_time(pagerarchive_client_radio_silent_seconds[$__range:1m]))"}
+      ],
+      "transformations": [
+        {"id": "merge", "options": {}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value #A": "Last report", "Value #B": "Last page decoded", "Value #C": "Last send that worked", "Value #D": "Buffered", "Value #E": "Radio running", "Value #F": "Audio", "Value #G": "Audio level", "Value #H": "Radio silent for"}}}
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {"matcher": {"id": "byName", "options": "Last report"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "orange", "value": 300}]}}]},
+          {"matcher": {"id": "byName", "options": "Last page decoded"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byName", "options": "Last send that worked"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
+          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}, {"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]},
+          {"matcher": {"id": "byName", "options": "Audio"}, "properties": [{"id": "unit", "value": "Bps"}, {"id": "decimals", "value": 0}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]},
+          {"matcher": {"id": "byName", "options": "Audio level"}, "properties": [{"id": "unit", "value": "dB"}, {"id": "decimals", "value": 1}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]},
+          {"matcher": {"id": "byName", "options": "Radio silent for"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 120}]}}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]}
+        ]
+      },
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Radio: audio received per second",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 21},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_radio_audio_bytes_total[$__rate_interval]))", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Radio: audio level (dBFS)",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 21},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_radio_level)", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "dB", "decimals": 1}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Radio: rtl_fm messages by kind (per hour)",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 21},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[1h]))", "legendFormat": "{{instance}} {{kind}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
       "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 12},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_lines_read_total[$__rate_interval])) * 60", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -54,7 +110,7 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Pages decoded and sent, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 12},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_decoded_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} decoded"},
@@ -65,7 +121,7 @@
     },
     {
       "id": 6, "type": "timeseries", "title": "Failed sends and retries, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 20},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 37},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed"},
@@ -76,7 +132,7 @@
     },
     {
       "id": 7, "type": "timeseries", "title": "Pages buffered in memory, and dropped (R15)",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 20},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 37},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_pages_buffered)", "legendFormat": "{{instance}} buffered"},
@@ -84,29 +140,6 @@
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
-    },
-    {
-      "id": 8, "type": "table", "title": "Each client's own view",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 28},
-      "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (pagerarchive_client_last_decoded_timestamp_seconds)"},
-        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (pagerarchive_client_last_sent_timestamp_seconds)"},
-        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (pagerarchive_client_radio_running)"}
-      ],
-      "transformations": [
-        {"id": "merge", "options": {}},
-        {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value #A": "Last page decoded", "Value #B": "Last send that worked", "Value #C": "Radio running"}}}
-      ],
-      "fieldConfig": {
-        "defaults": {},
-        "overrides": [
-          {"matcher": {"id": "byName", "options": "Last page decoded"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
-          {"matcher": {"id": "byName", "options": "Last send that worked"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
-          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}, {"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
-        ]
-      },
-      "options": {"showHeader": true}
     }
   ]
 }

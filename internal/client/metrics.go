@@ -7,6 +7,8 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/metric"
+
+	"github.com/RIKIKU/PagerArchive/internal/radio"
 )
 
 // Metrics are the client's numbers, exported over OTLP (R74). Together they
@@ -20,9 +22,10 @@ type Metrics struct {
 }
 
 // NewMetrics registers the client's instruments on m. buf is the buffer
-// whose length is reported; radio says the client runs the radio pipeline
-// (R13), so whether it's running is reported too.
-func NewMetrics(m metric.Meter, buf *Buffer, radio bool) (*Metrics, error) {
+// whose length is reported. health is the radio's, when the client runs the
+// radio pipeline (R13): then whether it's running and its health (R74a)
+// are reported too. A client reading stdin passes nil and reports neither.
+func NewMetrics(m metric.Meter, buf *Buffer, health *radio.Health) (*Metrics, error) {
 	c := &Metrics{}
 	var err error
 	counter := func(name, unit, desc string) metric.Int64Counter {
@@ -59,12 +62,31 @@ func NewMetrics(m metric.Meter, buf *Buffer, radio bool) (*Metrics, error) {
 	}
 	observed := []metric.Observable{buffered, lastDecoded, lastSent}
 	var running metric.Int64ObservableGauge
-	if radio {
+	var audio, messages metric.Int64ObservableCounter
+	var level, silent metric.Float64ObservableGauge
+	if health != nil {
 		if running, err = m.Int64ObservableGauge("pagerarchive.client.radio_running",
 			metric.WithDescription("1 while rtl_fm and multimon-ng are running, 0 when they've stopped (R13).")); err != nil {
 			return nil, err
 		}
-		observed = append(observed, running)
+		// Radio health (R74a): numbers about the audio, never the audio.
+		if audio, err = m.Int64ObservableCounter("pagerarchive.client.radio.audio", metric.WithUnit("By"),
+			metric.WithDescription("Audio received from rtl_fm and passed to multimon-ng; 44,100 bytes a second while the dongle works.")); err != nil {
+			return nil, err
+		}
+		if level, err = m.Float64ObservableGauge("pagerarchive.client.radio.level",
+			metric.WithDescription("The audio's RMS level in dBFS since the last report (0 is full scale).")); err != nil {
+			return nil, err
+		}
+		if silent, err = m.Float64ObservableGauge("pagerarchive.client.radio.silent", metric.WithUnit("s"),
+			metric.WithDescription("Seconds since audio last came from rtl_fm (or since the client started).")); err != nil {
+			return nil, err
+		}
+		if messages, err = m.Int64ObservableCounter("pagerarchive.client.radio.messages", metric.WithUnit("{message}"),
+			metric.WithDescription("rtl_fm's messages, by kind: no_device, open_failed, usb_transfer_failed, tuner_not_locked or other.")); err != nil {
+			return nil, err
+		}
+		observed = append(observed, running, audio, level, silent, messages)
 	}
 	_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		o.ObserveInt64(buffered, int64(buf.Len()))
@@ -74,8 +96,16 @@ func NewMetrics(m metric.Meter, buf *Buffer, radio bool) (*Metrics, error) {
 		if t := c.lastSent.Load(); t != 0 {
 			o.ObserveFloat64(lastSent, float64(t)/1e9)
 		}
-		if radio {
+		if health != nil {
 			o.ObserveInt64(running, int64(c.radio.Load()))
+			o.ObserveInt64(audio, health.Bytes())
+			if db, ok := health.Level(); ok {
+				o.ObserveFloat64(level, db)
+			}
+			o.ObserveFloat64(silent, health.Silent().Seconds())
+			for kind, n := range health.Messages() {
+				o.ObserveInt64(messages, n, metric.WithAttributes(attribute.String("kind", kind)))
+			}
 		}
 		return nil
 	}, observed...)
