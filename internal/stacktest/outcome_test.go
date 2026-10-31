@@ -83,5 +83,3 @@ func expect(t testing.TB, what string, r result, want ...outcome) bool {
 	}
 	return false
 }
-
-// CI path-filter proof (ADR 0014): a Go change with a doc change runs CI. Reverted by the next commit.
