@@ -49,6 +49,7 @@ PagerArchive is for **people interested in what's happening on their network. It
 | Group | The pager group a copy was sent to, when the page names it (often a short code at the end) |
 | Heartbeat | A periodic page the network sends to show it's alive. Its capcodes are listed in the network profile |
 | Golden table | A JSON file of real-format raw lines and the exact fields they must parse to |
+| Album | A named list of messages one user keeps for later (R82). Only its creator sees it |
 
 ## 4. Scope
 
@@ -192,7 +193,7 @@ Many clients post to one server. Each client records its own receive time. The s
 - **R43c.** Users can delete their own account. People they invited keep their accounts, credited to "deleted user". Their unused invitations are cancelled (owner, 2026-10-13).
 - **R44. Roles and the first admin** (owner, 2026-10-12). Two roles: `user` and `admin`. Users browse, search and invite (R41). Admins can also manage aliases, templates, users, clients and retention, and see flags (R35c) and receiver status (R39). The deployment setting `INITIAL_ADMIN_EMAIL` names the first admin: **while no admin exists**, that address may enrol without an invitation, still verifying the emailed code, and is exempt from `ALLOWED_EMAIL_DOMAINS`; it becomes admin. While that set-up is available, a signed-out visitor is sent to the app's sign-in page, which offers it, rather than straight to the identity provider (owner, 2026-10-13). Once any admin exists, the setting is ignored. That is the only exception to the allowed-domain rule: every invitation made in the app is to an allowed domain. Admins can promote users to admin and demote admins. The **last active admin** can't be demoted, deactivated or deleted, including through deactivating an invite tree that contains them.
 - **R44a. Guessing protection** (owner, 2026-10-13). Sign-in passwords, enrolment codes and password-reset codes are protected against guessing: after 5 wrong attempts for one account, further attempts for it are refused for 15 minutes, even if the flow is restarted or a new code is requested.
-- **R44b. Administration** (owner, 2026-10-16). Admin-only screens are grouped in one **Administration** area, reached by a single **Admin** link in the header that only admins see. Its start page links to every admin screen. A signed-in user who isn't an admin sees no Admin link, and the admin pages refuse them. Each user's page in Administration lists their integrations (name, type, status, last delivery, Pause or Resume), never destinations or secrets. There is no list of every user's integrations. The users list shows each user's number of integrations and marks any that are paused for failing.
+- **R44b. Administration** (owner, 2026-10-16). Admin-only screens are grouped in one **Administration** area, reached by a single **Admin** link in the header that only admins see (from M13, the **Administration** group in the side menu, R77, which also carries R55's count). Its start page links to every admin screen. A signed-in user who isn't an admin sees no Admin link, and the admin pages refuse them. Each user's page in Administration lists their integrations (name, type, status, last delivery, Pause or Resume), never destinations or secrets. There is no list of every user's integrations. The users list shows each user's number of integrations and marks any that are paused for failing.
 
 ### 7.10 Retention
 - **R45.** Messages are kept for a configurable period, set **in days** in the admin UI (default **3,650 days**, minimum 30), then deleted completely (text, metadata and everything linked to them) by a nightly job. **Backups are out of scope.** The docs must say that deleted messages may survive in a deployment's own backups. The cut-off is a **calendar date** in the deployment time zone. The nightly job runs at **03:00** (configurable).
@@ -276,6 +277,39 @@ For troubleshooting incidents: following a page from the receiver to the databas
   - alert rules: **a client not receiving** (R39's 30 minutes; the threshold is a setting), which clears when the client is heard again; **a radio stalled** (R74a: a client running the radio reports no audio, or its pipeline not running, for 2 minutes; the threshold is a setting), which clears when audio flows again (owner, 2026-10-31); and **the API unreachable** (failed scrapes). They go to a contact point the deployment sets up, such as email or Pushover, whose credentials live in Grafana, never in the repo.
 
   The docs explain how to run it alongside PagerArchive, how to point the API and client at it, and how much memory it uses. They also say that Grafana access is for the deployment's admins, because it shows client and user IDs. The stack isn't counted in the resource budget, like Authentik.
+
+### 7.17 Layout and navigation (owner, 2026-11-01)
+Reference apps chosen by the owner: Grafana (side menu, groups, breadcrumbs) and Immich (use of the width, phone layout). The look and palette are chosen from prototypes.
+
+- **R77. Side menu.** On a desktop, a menu down the left side holds every page, each with an icon and a label, grouped under headings that open and close:
+  - **Messages** (not in a group): the message list, with the map and the job view reached from it;
+  - **Albums**: one entry per album the user has, growing as they add albums (R82); empty when they have none;
+  - **Tools**: Print sheet (R67), Unknown capcodes (R78);
+  - **Reports**: the group report (R38), with room for more;
+  - **Account**: Profile, Integrations (R47), My requests (R56), Invite someone (R43a);
+  - **Administration**, admins only (R44b): users, aliases, templates, clients, retention, waiting requests.
+
+  The menu can shrink to icons only; each icon then shows its label on hover and keyboard focus. Any page is at most two clicks from any other. The top bar keeps only the search box (R33a), the breadcrumbs (R79) and the account menu.
+- **R78. Unknown capcodes page.** R33's "capcodes with no alias" list gets its own page under Tools. The search filter `is:unaliased` stays.
+- **R79. Breadcrumbs show where a page is, not how you got there.** Every page below the top level shows its place in R77's tree (`Administration › Templates › Example Fire`). A page's breadcrumbs are the same whether it was reached from the menu, a search, a link or a bookmark. Each level above the current page is a link.
+- **R80. Using the width.** At 1,280 px and wider, the page uses the full width: the side menu, the message list, and the selected message's detail view (R35c) in a pane beside the list instead of a page of its own. There's no fixed-width centre column with empty margins. The list keeps its place and filters while messages are opened in the pane. The detail view still has its own address, so it can be bookmarked and shared.
+- **R81. Phones** (under 768 px wide). Phones get their own layout, not a squeezed desktop one:
+  - a **bottom bar** with Messages, Map, Albums and More; More opens the rest of R77's menu;
+  - **desktop-only pages** are left out of the phone menu: the print sheet, setting up or editing an integration, and Administration. They still open from a link or bookmark, so nobody is locked out on a large phone or a tablet;
+  - on phones, Integrations lists the user's integrations with a **Pause/Resume switch** each, and nothing else;
+  - R31's and R35c's phone rules still apply.
+
+  Desktop or phone is decided by screen width, never by detecting the device.
+- **R81a. Coming back to the list.** Leaving the message list and coming back (back button, breadcrumb or menu) restores its search, date range and scroll position.
+
+### 7.18 Year scrubber (owner, 2026-11-01)
+- **R81b. Scrubber.** A strip down the right side of the message list (and the alias, job and album views) shows the years that hold messages **for the current search**, newest at the top. Clicking or dragging on it jumps the list to that date; while dragging, the date under the pointer is shown. It works with the keyboard (arrow keys move by month, Page Up and Page Down by year).
+- **R81c. How busy.** For the most recent **3 years**, the scrubber shows how many messages each month holds (more dots, more messages). Older years show their label only. The counts follow the current search and live updates. Working them out stays within the resource budget (section 8).
+
+### 7.19 Albums (owner, 2026-11-01)
+- **R82. Albums.** Any signed-in user can create albums, name and rename them, delete them, and add messages to them or remove them. An album is **private to its creator**: nobody else sees it, admins included, and the API refuses anyone else. Messages are added from the message detail view ("Add to album"); the message list keeps no tick boxes (R67). An album shows its messages newest first, as they are **now**: current aliases (R23a) and current redaction (P1).
+- **R82a. Albums don't keep messages.** Retention (R45) deletes messages in albums like any others, and a deleted message leaves its albums. An album left with no messages is deleted too. The album screen says this in one line.
+- **R82b. Albums and accounts.** A deactivated user's albums are kept, since they may be reactivated. Deleting an account deletes its albums (R43c).
 
 ## 8. Constraints
 
@@ -371,6 +405,11 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A65. Told when a client stops.** **Given** the example monitoring stack scraping PagerArchive with two clients, and a test contact point, **when** one client's last message is moved to 31 minutes ago (test clock), **then** within 2 minutes the "client not receiving" alert fires for that client only; **when** that client posts again, **then** the alert resolves; **when** the API is stopped, **then** the "API unreachable" alert fires.
 - **A66. Client telemetry.** **Given** a client exporting telemetry, **when** it reads 5 pages and sends them, the API is then stopped, and it reads 2 more, **then** the collector shows 7 decoded, 5 sent, 2 buffered, failed sends counting up, and the times of the last decoded line and the last successful send.
 - **A67. Told when a radio stalls** (owner, 2026-10-31). **Given** a client running the radio pipeline with a stand-in for `rtl_fm` (a test program that writes audio holding POCSAG pages, and `rtl_fm`'s status messages), exporting to the example monitoring stack, **when** the stand-in writes audio for a minute, **then** the client reports audio per second matching what the stand-in wrote, and a level, and multimon-ng decodes every page in it; **when** the stand-in writes a "USB transfer failed" message and an unknown one, **then** those kinds' counts go up (the unknown one as "other") and neither message's text reaches the collector; **when** the stand-in stops writing audio but keeps running, **then** within 4 minutes the "radio stalled" alert fires for that client only, and "client not receiving" doesn't; **when** audio resumes, **then** the alert resolves; **when** that client stops reporting, **then** the clients dashboard still shows its last values and their age. No audio reaches the collector.
+- **A68. Side menu and breadcrumbs** (owner, 2026-11-01). **Given** user B on a 1,920 px screen, **then** the side menu shows every group of R77 except Administration, each page is reachable in at most two clicks, and the shrunk menu shows each label on hover and on focus; an admin also sees Administration. **When** B opens the same alias view from the menu, from a search result and from a pasted address, **then** the breadcrumbs are identical each time, and each level above it is a link. The axe check passes.
+- **A69. Using the width.** **Given** user B at 1,920 px, **when** B opens a message from the list, **then** its detail view opens in a pane beside the list, the list keeps its search and scroll position, and the page has no empty margin wider than the menu. **When** B searches, opens a message's alias, then clicks "Messages" in the breadcrumbs, **then** the list shows the same search, date range and scroll position. Screenshots at 1,920, 1,280 and 375 px are part of the evidence.
+- **A70. Phones.** **Given** user B and an admin at 375 px, **then** each sees the bottom bar, and More holds no print sheet, no Administration and no way to set up an integration; **when** B pauses an integration on the phone, **then** it's paused; **when** B opens the print page's address directly, **then** it works.
+- **A71. Scrubber.** **Given** 3 years and 2 months of made-up messages, with one month holding 10 times the usual number, **when** B drags the scrubber to a date 2 years ago, **then** the list shows that date's messages; the busy month shows more dots than its neighbours, and years older than 3 show labels only; **when** B searches `alias:"Station 1"`, **then** the scrubber shows only Station 1's years and counts. With 1,500 pages a day for 3 years, the scrubber's counts load within 1 second, within the resource budget.
+- **A72. Albums.** **Given** user B, **when** B creates the album "Big storm" and adds 3 messages, **then** it appears under Albums in the menu with 3 messages; **when** user C or an admin asks the API for it, **then** it's refused; **when** a redaction rule is added that matches one of its messages, **then** after the nightly run the album shows that message redacted; **when** retention deletes 2 of its messages, **then** the album holds 1; **when** the last one is deleted, **then** the album is gone; **when** B deletes their account, **then** B's albums are gone.
 
 ## 10. Example profile (made-up network)
 
@@ -422,7 +461,8 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M10** | Templates in Administration, template icons stored as images and shown beside aliases | A56–A58 |
 | **M11** | Print sheet for training: tick messages, print them as a pager shows them | A60 |
 | **M12** | Telemetry: OpenTelemetry traces, metrics and logs from the API and client; the example monitoring stack with its alerts (owner, 2026-10-30); radio health and the "radio stalled" alert (owner, 2026-10-31) | A62–A67 |
-| **M13** | UI redesign, including the single search box (R33a); the redesign's own requirements are added once the owner has chosen a direction | A61 |
+| **M13** | UI redesign: side menu, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01) | A61, A68–A70 |
+| **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 
 ## 13. Open questions
 
