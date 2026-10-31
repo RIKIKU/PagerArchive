@@ -331,6 +331,21 @@ The first version of this branch used Tempo 2.10.10, on the grounds that Tempo 3
 
 **Checked** (cld01, `scripts/monitoring-checks.sh -s`, Tempo 3.1.1): A65 passed (`"Client not receiving" fired … 31s`, `resolved 24s`, `"API unreachable" fired 58s`, `resolved 29s`), and the screenshots, which open a page's trace and the three dashboards with their TraceQL metrics panels, were taken from it. Memory: the monitoring stack alone, idle for a minute, nothing else changed: Tempo 3.1.1 34 MiB against 2.10.10's 127 MiB (Alloy 58 and 48 MiB). In the full run Tempo peaked at 58 MiB idle, 94 MiB during A65 and 224 MiB while dashboards were open, as with 2.10.
 
+## Trial on cld01 (2026-10-31)
+
+The live copy on cld01 was upgraded to 117ac0a with telemetry on for its API and replay client. The example stack was started beside it by following `docs/monitoring.md` as written, which tested the docs. What the docs got wrong, now fixed:
+
+- **`GRAFANA_ROOT_URL`** wasn't mentioned. With Grafana on a LAN address and the root URL left at `http://localhost:3000`, the alert that reached the webhook linked to `http://localhost:3000/alerting/grafana/pa-client-not-receiving/view`. Step 2 now says to set it with `GRAFANA_BIND`, and `.env.example` says why.
+- **Where alerts go out of the box.** The docs said a default contact point, `grafana-default-email`, existed. Grafana 13.2.5 starts with none: its default policy sends to a receiver named `empty` that has no integration (`/api/alertmanager/grafana/config/api/v1/alerts`: `{"route":"empty","receivers":[{"name":"empty","types":[]}]}`). The docs now say alerts go nowhere until a contact point is added and made the default policy's, and they cover webhooks alongside Pushover and email.
+- Smaller: the API's "telemetry on" line is JSON, not `key=value`; and `.env` holds the admin password and metrics token, so the docs now say `chmod 600 .env`.
+
+Everything else worked as written:
+- Five services running; only Grafana published. Grafana answered 151 s after `docker compose up -d`.
+- The three dashboards in the PagerArchive folder, and `up{job="pagerarchive"} = 1`.
+- After the API and client were pointed at `http://alloy:4318`, both logged `telemetry on`. A live page's trace in Tempo had 36 spans, from the client's decode, buffer and send, through the API's steps and queries, to two `integration.deliver` spans. Loki had the API's log lines (22 of 24 with a trace ID); Prometheus had the replay client's own metrics.
+
+**Memory after an hour in use**, nobody viewing Grafana: 845 MiB for all five (`docs/monitoring.md`, "Memory and disk"). Alloy showed 278 MiB, like the 370 MiB seen once before, and the cause was found. `/bin/alloy` is a 543 MiB binary, and the kernel's cache of its pages is counted against the first container that reads them (cgroup `active_file` 227 MiB). Alloy's own memory (`anon`) was 48 MiB. The swing between runs is that cache, not a leak.
+
 ## Consequences
 
 - An operator who runs the example stack can follow one page from the receiver's decoder to each delivery attempt, see where time goes, see which routes and which user numbers made the load, and is told when a receiver goes quiet or the API is unreachable, without any page text, query, secret or address leaving PagerArchive.

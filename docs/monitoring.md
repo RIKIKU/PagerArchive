@@ -72,6 +72,9 @@ You need PagerArchive running from the compose file at the top of the repository
    - `GRAFANA_ADMIN_PASSWORD`: a long password for Grafana's `admin` account;
    - `PA_METRICS_TOKEN`: the same value as `METRICS_TOKEN` in PagerArchive's `.env`;
    - `GRAFANA_BIND`: `127.0.0.1:3000` keeps Grafana on this machine; use the server's LAN address (`192.168.1.20:3000`) to open it from other computers. **Never publish it to the internet.**
+   - `GRAFANA_ROOT_URL`: the address you open Grafana at, so change it with `GRAFANA_BIND` (`http://192.168.1.20:3000`, or the server's name on your network). The links in alert notifications use it; left at `http://localhost:3000`, they only work on the server itself.
+
+   Keep `.env` readable only by you (`chmod 600 .env`): it holds the admin password and the metrics token.
 
    If you renamed PagerArchive's compose project, set `PAGERARCHIVE_NETWORK` to its network (`docker network ls` shows it: `<project>_default`).
 
@@ -98,7 +101,7 @@ In PagerArchive's `.env` (not the monitoring stack's), add:
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
 ```
 
-and recreate the API: `docker compose up -d api`. The API reaches Alloy by name because the monitoring stack joined PagerArchive's network. Its log then says `telemetry on traces=true logs=true metrics=false`. Its metrics stay on `/metrics`, which Alloy scrapes (R75); they're never pushed.
+and recreate the API: `docker compose up -d api`. The API reaches Alloy by name because the monitoring stack joined PagerArchive's network. Its log then says `telemetry on`, with `traces` and `logs` true and `metrics` false (`docker compose logs api | grep telemetry`). Its metrics stay on `/metrics`, which Alloy scrapes (R75); they're never pushed.
 
 To turn telemetry off again, remove the line (or set `OTEL_SDK_DISABLED=true`) and recreate the API.
 
@@ -156,10 +159,13 @@ Two alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), i
 
 **The threshold** for "Client not receiving" is the number in `params: [1800]` in `rules.yaml` (seconds). Change it and restart Grafana (`docker compose restart grafana`). It's in the file because Grafana doesn't fill in settings inside an alert rule's query.
 
-**Where alerts go.** Out of the box, alerts go to Grafana's default contact point, which emails nobody until you set it up. Credentials stay in Grafana, never in the repository. In Grafana:
+**Where alerts go.** Out of the box, **nowhere**: Grafana 13 starts with no contact point, and its default notification policy sends to one named `empty` that does nothing. The rules still fire and show in **Alerting → Alert rules**, but nobody is told until you add a contact point and make it the default policy's. Credentials stay in Grafana, never in the repository. In Grafana:
 
-- **Pushover:** **Alerting → Contact points → + Add contact point**. Name it, choose **Integration: Pushover**, paste your Pushover **API token** (from an application you create at pushover.net) and **user key**, and **Test** it. Then **Alerting → Notification policies**, edit the **Default policy** and set its contact point to the new one.
-- **Email:** Grafana needs a mail server first. Add to the `grafana` service's `environment` in `compose.yaml` (or a `compose.override.yaml` next to it): `GF_SMTP_ENABLED: "true"`, `GF_SMTP_HOST: smtp.example.org:587`, `GF_SMTP_USER`, `GF_SMTP_PASSWORD` (from `.env`, like the admin password) and `GF_SMTP_FROM_ADDRESS`, then `docker compose up -d grafana`. Then edit the contact point **grafana-default-email** (or add one) with your address and **Test** it.
+- **Pushover:** **Alerting → Contact points → + Add contact point**. Name it, choose **Integration: Pushover**, paste your Pushover **API token** (from an application you create at pushover.net) and **user key**, and **Test** it.
+- **Email:** Grafana needs a mail server first. Add to the `grafana` service's `environment` in `compose.yaml` (or a `compose.override.yaml` next to it): `GF_SMTP_ENABLED: "true"`, `GF_SMTP_HOST: smtp.example.org:587`, `GF_SMTP_USER`, `GF_SMTP_PASSWORD` (from `.env`, like the admin password) and `GF_SMTP_FROM_ADDRESS`, then `docker compose up -d grafana`. Then add a contact point with **Integration: Email** and your address, and **Test** it.
+- **Webhook** (your own receiver, or a chat service that takes webhooks): add a contact point with **Integration: Webhook** and the receiver's URL. Grafana POSTs JSON with each alert's status, labels (`client`), summary and a link back to the rule (built from `GRAFANA_ROOT_URL`). Grafana is the only part of the stack with a way out, so the receiver only has to be reachable from the server.
+
+Then, whichever you chose: **Alerting → Notification policies**, edit the **Default policy**, and set its contact point to the new one. Within about a minute any alert that is already firing is sent there.
 
 Like integrations, these alerts are a convenience for you as the operator, not operational alerting (SPEC.md section 4).
 
@@ -189,6 +195,10 @@ Measured on the test machine (`scripts/monitoring-checks.sh`, two runs on 2026-1
 | **All five** (sum of each one's peak) | **618–752 MiB** | **638–832 MiB** | **960–1,334 MiB** |
 
 Grafana is most of it, and varies most between runs. Plan on about 1 GB, more while someone has dashboards open. (These runs used Tempo 2.10.10. Tempo 3.1.1, now in `compose.yaml`, used about a quarter as much idle: 34 MiB against 127 MiB, measured side by side with nothing else running.)
+
+**After an hour in use** (the test machine on 2026-10-31, Tempo 3.1.1: a PagerArchive with one receiving client posting a page every 30 s, both sending telemetry, and nobody looking at Grafana; sampled every minute for 65 minutes): all five used **845 MiB** at 60 minutes. Grafana 222 MiB, Alloy 278, Tempo 224, Prometheus 62, Loki 59. Tempo grew over the first 35 minutes, from 98 MiB, as it kept the newest traces, then stayed between 190 and 236 MiB. The others hardly moved.
+
+**Why Alloy's number varies so much** (50 MiB in one run, 270 to 410 in another): Alloy is a single 543 MiB program, and Docker counts the parts of it the kernel has read and cached as memory of the first container that read them. Alloy's own memory was 48 MiB of its 278. That cache isn't Alloy growing, and the kernel gives it back when the machine needs it. To see the split, read `anon` (the program's own) and `active_file` (cache) in the container's `memory.stat` (`/sys/fs/cgroup/system.slice/docker-<container ID>.scope/memory.stat` on most Linux machines).
 
 The stack isn't counted in PagerArchive's resource budget (like Authentik). On disk, traces and logs are kept 7 days (`tempo/tempo.yaml`'s `block_retention`, `loki/loki.yaml`'s `retention_period`) and metrics 30 days (`METRICS_RETENTION` in `.env`). At hobby scale (about a page a minute) that's well under a gigabyte.
 
