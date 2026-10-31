@@ -10,12 +10,12 @@
   "panels": [
     {
       "id": 1, "type": "text", "title": "How to read this",
-      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
       "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The rest comes from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server. A client that stops reporting keeps its row in **each client's own view**, with its last values and **last report** saying how long ago they came.\n\n**Radio health** (R74a), for clients that run the radio: rtl_fm runs without squelch, so a working dongle always gives about 44 kB of audio a second. **Silent for** growing while the client still reports means a stuck dongle: reset it. Audio but no pages for a long time means a quiet network or a weak signal. rtl_fm's errors are counted by kind; **other** includes its normal start-up lines. A client reading stdin shows *not run by the client*."}
     },
     {
       "id": 2, "type": "table", "title": "Clients, as the server sees them",
-      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 5},
+      "gridPos": {"h": 8, "w": 16, "x": 0, "y": 7},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (client) (pagerarchive_client_last_seen_timestamp_seconds{job=\"pagerarchive\"})"},
@@ -30,15 +30,15 @@
         "defaults": {},
         "overrides": [
           {"matcher": {"id": "byName", "options": "Last heard"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
-          {"matcher": {"id": "byName", "options": "Receiving"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "NOT RECEIVING", "color": "red"}, "1": {"text": "receiving", "color": "green"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]},
-          {"matcher": {"id": "byName", "options": "Clock ahead"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "no"}, "1": {"text": "AHEAD", "color": "orange"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]}
+          {"matcher": {"id": "byName", "options": "Receiving"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "NOT RECEIVING", "color": "red"}, "1": {"text": "receiving", "color": "green"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text", "wrapText": true}}]},
+          {"matcher": {"id": "byName", "options": "Clock ahead"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "no"}, "1": {"text": "AHEAD", "color": "orange"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text", "wrapText": true}}]}
         ]
       },
       "options": {"showHeader": true}
     },
     {
       "id": 3, "type": "stat", "title": "Clients not receiving",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 5},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 7},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(pagerarchive_client_receiving{job=\"pagerarchive\"} == 0) or vector(0)"}],
       "fieldConfig": {"defaults": {"unit": "short", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
@@ -46,7 +46,7 @@
     },
     {
       "id": 8, "type": "table", "title": "Each client's own view (last reported values in the time range)",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 13},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 15},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "time() - max by (instance) (last_over_time(timestamp(pagerarchive_client_pages_buffered)[$__range:1m]))"},
@@ -63,22 +63,23 @@
         {"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value #A": "Last report", "Value #B": "Last page decoded", "Value #C": "Last send that worked", "Value #D": "Buffered", "Value #E": "Radio running", "Value #F": "Audio", "Value #G": "Audio level", "Value #H": "Radio silent for"}}}
       ],
       "fieldConfig": {
-        "defaults": {},
+        "defaults": {"custom": {"wrapText": true, "wrapHeaderText": true}},
         "overrides": [
-          {"matcher": {"id": "byName", "options": "Last report"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "orange", "value": 300}]}}]},
+          {"matcher": {"id": "byName", "options": "Client"}, "properties": [{"id": "custom.minWidth", "value": 150}]},
+          {"matcher": {"id": "byName", "options": "Last report"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text", "wrapText": true}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "text", "value": null}, {"color": "orange", "value": 300}]}}]},
           {"matcher": {"id": "byName", "options": "Last page decoded"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
           {"matcher": {"id": "byName", "options": "Last send that worked"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}]},
-          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}, {"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}]},
+          {"matcher": {"id": "byName", "options": "Radio running"}, "properties": [{"id": "mappings", "value": [{"type": "value", "options": {"0": {"text": "STOPPED", "color": "red"}, "1": {"text": "running", "color": "green"}}}, {"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}, {"id": "custom.cellOptions", "value": {"type": "color-text", "wrapText": true}}]},
           {"matcher": {"id": "byName", "options": "Audio"}, "properties": [{"id": "unit", "value": "Bps"}, {"id": "decimals", "value": 0}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]},
           {"matcher": {"id": "byName", "options": "Audio level"}, "properties": [{"id": "unit", "value": "dB"}, {"id": "decimals", "value": 1}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]},
-          {"matcher": {"id": "byName", "options": "Radio silent for"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text"}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 120}]}}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]}
+          {"matcher": {"id": "byName", "options": "Radio silent for"}, "properties": [{"id": "unit", "value": "s"}, {"id": "decimals", "value": 0}, {"id": "custom.cellOptions", "value": {"type": "color-text", "wrapText": true}}, {"id": "thresholds", "value": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 120}]}}, {"id": "mappings", "value": [{"type": "special", "options": {"match": "null", "result": {"text": "not run by the client", "color": "text"}}}]}]}
         ]
       },
       "options": {"showHeader": true}
     },
     {
       "id": 9, "type": "timeseries", "title": "Radio: audio received per second",
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 21},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 25},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_radio_audio_bytes_total[$__rate_interval]))", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
@@ -86,7 +87,7 @@
     },
     {
       "id": 10, "type": "timeseries", "title": "Radio: audio level (dBFS)",
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 21},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 25},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_radio_level)", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "dB", "decimals": 1}, "overrides": []},
@@ -94,15 +95,15 @@
     },
     {
       "id": 11, "type": "timeseries", "title": "Radio: rtl_fm messages by kind (per hour)",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 21},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 25},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[1h]))", "legendFormat": "{{instance}} {{kind}}"}],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[1h])) > 0", "legendFormat": "{{instance}} {{kind}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "noValue": "none in the last hour"}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
       "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 29},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 33},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_lines_read_total[$__rate_interval])) * 60", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -110,7 +111,7 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Pages decoded and sent, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 29},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 33},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_decoded_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} decoded"},
@@ -121,7 +122,7 @@
     },
     {
       "id": 6, "type": "timeseries", "title": "Failed sends and retries, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 37},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed"},
@@ -132,7 +133,7 @@
     },
     {
       "id": 7, "type": "timeseries", "title": "Pages buffered in memory, and dropped (R15)",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 37},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 41},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_pages_buffered)", "legendFormat": "{{instance}} buffered"},

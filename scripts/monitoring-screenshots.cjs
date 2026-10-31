@@ -13,15 +13,24 @@ const grafana = process.env.GRAFANA_URL;
 const traceWait = Number(process.env.TRACE_WAIT_MS || 90000);
 const auth = 'Basic ' + Buffer.from('admin:' + process.env.GRAFANA_PASSWORD).toString('base64');
 
-// The distinct span names in a trace from Tempo's API (OTLP JSON).
-function spanNames(t) {
-	const names = new Set();
+// The spans in a trace from Tempo's API (OTLP JSON).
+function spans(t) {
+	const out = [];
 	for (const b of t.batches || t.resourceSpans || []) {
-		for (const s of b.scopeSpans || b.instrumentationLibrarySpans || []) {
-			for (const sp of s.spans || []) names.add(sp.name);
-		}
+		for (const s of b.scopeSpans || b.instrumentationLibrarySpans || []) out.push(...(s.spans || []));
 	}
-	return [...names];
+	return out;
+}
+
+// The distinct span names in a trace.
+function spanNames(t) {
+	return [...new Set(spans(t).map((sp) => sp.name))];
+}
+
+// How long the client's buffer span lasted, in ms (0 if there's none).
+function bufferMs(t) {
+	const b = spans(t).find((sp) => sp.name === 'buffer');
+	return b ? Number((BigInt(b.endTimeUnixNano) - BigInt(b.startTimeUnixNano)) / 1000000n) : 0;
 }
 
 async function api(p) {
@@ -31,20 +40,24 @@ async function api(p) {
 }
 
 (async () => {
-	// The newest stored page's trace: the API's ingest span, found in Tempo.
-	const q = encodeURIComponent('{resource.service.name="pagerarchive" && name="ingest" && span.pagerarchive.ingest.outcome="stored"}');
+	// The newest stored page's trace from the screenshots' receiver
+	// (monitoring-screenshots.sh): the API's ingest span, found in Tempo.
+	const q = encodeURIComponent('{resource.service.name="pagerarchive" && name="ingest" && span.pagerarchive.ingest.outcome="stored" && span.pagerarchive.client.id="hill-receiver"}');
 	const end = Math.floor(Date.now() / 1000);
 	const found = await api(`/api/datasources/proxy/uid/tempo/api/search?q=${q}&limit=50&start=${end - 3600}&end=${end}`);
 	const traces = (found.traces || []).sort((a, b) => Number(b.startTimeUnixNano) - Number(a.startTimeUnixNano));
 	if (!traces.length) throw new Error('no page traces in Tempo');
-	// The page held while the API was down, if it's there: its trace shows the buffering.
+	// The page held while the API was down, if it's there: its buffer span
+	// (not the whole trace, which a failing integration's retries lengthen)
+	// lasted over 10 s.
 	let trace = traces[0].traceID;
 	let names = spanNames(await api(`/api/datasources/proxy/uid/tempo/api/traces/${trace}`));
 	for (const t of traces) {
 		const full = await api(`/api/datasources/proxy/uid/tempo/api/traces/${t.traceID}`);
-		if (spanNames(full).includes('buffer') && Number(t.durationMs) > 10000) {
+		if (bufferMs(full) > 10000) {
 			trace = t.traceID;
 			names = spanNames(full);
+			console.log(`trace ${trace}: the client buffered the page for ${(bufferMs(full) / 1000).toFixed(1)} s`);
 			break;
 		}
 	}
