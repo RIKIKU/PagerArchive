@@ -75,11 +75,23 @@ The docs-only filter (ADR 0014) is unchanged, under the branch filter: both must
 
 ### 7. The manifest says 0.12.0
 
-The manifest said `ModuleVersion = '0.9.0'` because CI wrote the tag's version into a copy at publish time. This branch sets it to `0.12.0`, the version v0.12.0's release publishes. The module's files are the same at v0.12.0 (59f40ff) and at main (1f41c38): `git diff --quiet 59f40ff 1f41c38 -- powershell/` succeeds.
+The manifest said `ModuleVersion = '0.9.0'` because CI wrote the tag's version into a copy at publish time. This branch sets it to `0.12.0`, the version v0.12.0's release published. The module's files are the same at v0.12.0 (59f40ff) and at main (1f41c38): `git diff --quiet 59f40ff 1f41c38 -- powershell/` succeeds.
 
 **On merge**, the change to the manifest counts as a module change, so the plan asks the Gallery for 0.12.0. With 0.12.0 on the Gallery, it's `unchanged`: the run logs `module unchanged: the Gallery keeps 0.12.0 (the module changed, but 0.12.0 is on the Gallery already)`, the notes say so, and `publish-powershell` is skipped. The merge publishes no module.
 
-EVIDENCE-GALLERY
+**0.12.0 on the Gallery.** When this branch started, the Gallery had only 0.10.0 (`FindPackagesById()`; `Packages(Id='PagerArchive',Version='0.12.0')` answered 404), because v0.12.0's tag run, 41290573137, was still running its checks. It finished at about 09:13 UTC with all 21 jobs passed, "Publish the PowerShell module to the PowerShell Gallery" among them. Afterwards the Gallery lists 0.10.0 and 0.12.0, and 0.12.0 answers 200. 0.9.0 was never on the Gallery (404). The plan for this branch's merge, run against main and this branch's implementation commit:
+
+```
+$ sh scripts/ci/release-plan.sh 1f41c38 7eeb2f5
+module unchanged: the Gallery keeps 0.12.0 (the module changed, but 0.12.0 is on the Gallery already)
+version=0.12.1
+tag=v0.12.1
+module=unchanged
+module_version=0.12.0
+notes=PowerShell module: unchanged; the Gallery keeps 0.12.0.
+```
+
+Run before v0.12.0's publish, the same command said `module: publishing PagerArchive 0.12.0 (the module changed and 0.12.0 isn't on the Gallery yet)`. Had that publish failed, this merge would have published 0.12.0 itself: the same files as v0.12.0's, so it would have caught up rather than published something new.
 
 ### 8. Small changes
 
@@ -174,7 +186,7 @@ module: publishing PagerArchive 0.12.1 (the module changed and 0.12.1 isn't on t
 
 The Gallery's own answers at the time: 0.10.0 200, 0.12.1 404 (`FindPackagesById()` listed only 0.10.0).
 
-**A docs-only push to main starts no run.** 1f41c38, main's last commit (SPEC.md only), has no run and no check runs (`gh api "repos/RIKIKU/PagerArchive/actions/runs?head_sha=1f41c38…" --jq .total_count`: 0; its check runs: 0). That was under the old trigger. Under the new one (`branches: ["**"]` with the same paths), main is one of the branches, and the paths still have to match: DOCS-ONLY-PUSH
+**A docs-only push to main starts no run.** 1f41c38, main's last commit (SPEC.md only), has no run and no check runs (`gh api "repos/RIKIKU/PagerArchive/actions/runs?head_sha=1f41c38…" --jq .total_count`: 0; its check runs: 0). That was under the old trigger. Under the new one (`branches: ["**"]` with the same paths), main is one of the branches, and the paths still have to match. Nothing can be pushed to main from this branch, so the new trigger was shown on the branch: 6cc4f9c, which added only this ADR's draft and the CLAUDE.md line, was pushed on its own at 09:10:59 UTC. 150 s later it had no run and no check runs (both `total_count` 0), and the branch's only runs were the two proofs above. The next push, which reverts a0791d1, is code and runs everything.
 
 ## Consequences
 
