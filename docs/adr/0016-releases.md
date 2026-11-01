@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-01). The owner's brief: releases on merge, SPEC.md R63's "Guidelines and publishing" bullet and section 12.1 (owner, 2026-11-01), as a fix on its own branch, `releases-on-merge`, from main at 1f41c38.
+Proposed (2026-11-01). The owner's brief: releases on merge, SPEC.md R63's "Guidelines and publishing" bullet and section 12.1 (owner, 2026-11-01), as a fix on its own branch, `releases-on-merge`, from main at 1f41c38. Revised after the owner's review of 21cdc17 (2026-11-02; main 7008d55, which changed section 12.1): see "Review (owner, 2026-11-02)".
 
 ## Context
 
@@ -18,7 +18,7 @@ Section 12.1 makes every merge into main a release, with its version in a `VERSI
 
 A Go package at the root of the module (`version.go`, package `pagerarchive`) embeds the file (`//go:embed VERSION`) as `pagerarchive.Version`. The server's and the client's `version` variables are set from it, so `pagerarchive version`, `pagerarchive-client --version`, the `version` field of their start-up log lines, and telemetry's `service.version` (both call `telemetry.Start` with `Version: version`) all report VERSION. Before, they reported whatever `-ldflags "-X main.version=…"` set: the commit SHA in CI's images, the tag's name in a release, and `dev` in any other build. The `VERSION` build argument and `-X` flag are gone from both Dockerfiles and from the workflow. A `go:embed` has to be in a package at or above the file, hence the root package; any `go build` or `go run` gets the version, with nothing to pass.
 
-So a branch's build reports the version it will be released as, not the commit. Question 1 asks whether that's what the owner wants.
+So a branch's build reports the version it will be released as, not the commit. The owner confirmed that's fine (2026-11-02).
 
 `version_test.go` fails if VERSION isn't `MAJOR.MINOR.PATCH`. The `images` job checks `pagerarchive version` and `pagerarchive-client --version` in the built images against VERSION.
 
@@ -40,18 +40,19 @@ It's a separate, quick job (a minute) and not a step in another job, so its fail
 
 ### 4. The release, on main
 
-On a push to main, a new job, `release`, needs every check (the same eight jobs the publish jobs needed before). It runs only on a push to main. Its first step, `scripts/ci/release-plan.sh <github.event.before> <commit>`, decides and publishes nothing:
+On a push to main, a new job, `release`, needs every check (the same eight jobs the publish jobs needed before). It runs only on a push to main. Its first step, `scripts/ci/release-plan.sh <commit>`, decides and publishes nothing. **Earlier releases** are the `v*` tags (fetched with `git fetch --tags`), other than one on this commit, which is a re-run's own tag:
 
-- **Version and tag:** VERSION at the commit, tag `v<VERSION>`. If that tag exists on **another** commit, it fails: "Tag v… already exists, on …: … was released already, and a version is never reused. Nothing is published; raise VERSION in a new branch." Nothing has been published at that point: the tag, the release, the images and the module all come after it. If the tag is on **this** commit, it's a re-run of this release (below), and it goes on.
-- **The module:** "changed" if `git diff --quiet <before> <commit> -- powershell/PagerArchive/` finds a difference, `before` being the push's previous main commit (`github.event.before`). This is git on the full checkout, not a third-party action. If the module changed, the Gallery is asked for that version (`GET https://www.powershellgallery.com/api/v2/Packages(Id='PagerArchive',Version='<v>')`: 200 is there, 404 isn't, anything else fails the job, since it can't tell). The plan is `publish` only if the module changed and its version isn't on the Gallery. Otherwise it logs `module unchanged: the Gallery keeps <version>`, with the reason in brackets, and the release notes say `PowerShell module: unchanged; the Gallery keeps <version>.`
-- If there's no previous main commit to compare with (`before` is all zeros, or isn't in the history after a force-push), the module counts as changed: the Gallery check still keeps a version from being published twice.
+- **Version and tag:** VERSION at the commit, tag `v<VERSION>`. If that tag exists on **another** commit, it fails: "Tag v… already exists, on …: … was released already, and a version is never reused. Nothing is published; raise VERSION in a new branch." Nothing has been published at that point: the tag, the release, the images and the module all come after it. If the tag is on **this** commit, it's a re-run of this release (below), and it goes on (the owner confirmed this reading, 2026-11-02).
+- **Higher than every earlier release** (SPEC 12.1, owner 2026-11-02): it fails if VERSION isn't higher than the newest earlier `v*` tag, by version: "VERSION is …, which isn't higher than the newest release, v…: every release is a new, higher version. Nothing is published; raise VERSION above … in a new branch." This doesn't depend on the branch check: nothing makes `versions` required before a merge, and none is added (owner, 2026-11-02).
+- **The module:** "changed" if `git diff --quiet <previous release> <commit> -- powershell/PagerArchive/` finds a difference, the previous release being the newest earlier `v*` tag merged into the commit. This is git on the full checkout, not a third-party action. It compares with the previous release, not the push's previous commit: if a merge's run fails and isn't re-run, the next merge still sees the module version the failed one raised (see the review below). If the module changed, the Gallery is asked for that version (`GET https://www.powershellgallery.com/api/v2/Packages(Id='PagerArchive',Version='<v>')`: 200 is there, 404 isn't, anything else fails the job, since it can't tell). The plan is `publish` only if the module changed and its version isn't on the Gallery. Otherwise it logs `module unchanged: the Gallery keeps <version>`, with the reason in brackets, and the release notes say `PowerShell module: unchanged; the Gallery keeps <version>.`
+- If there's no earlier release in the commit's history, the module counts as changed, and the Gallery check decides.
 
 The job then builds the client's binaries for linux/amd64 and linux/arm64 with `SHA256SUMS` (as the old `release-binaries` job did, which this job replaces), tags the commit with an annotated tag, `PagerArchive v<VERSION>`, by `github-actions[bot]`, pushes the tag with the workflow's `GITHUB_TOKEN`, and creates the GitHub release with the binaries and notes listing the images' version and the module's line from the plan. The job has `contents: write`; the workflow's default stays `contents: read`.
 
 Everything else follows the release job, in the same run:
 
-- **Images:** `publish-server` and `publish-client-manifest` tag them `<VERSION>`, `latest`, `main` and `sha-<commit>` on a push to main. `X.Y` is gone: section 12.1 lists the four, and there are no tag runs left to make it. A manual run still publishes `sha-<commit>` only, on any branch: `latest` and `main` used to follow `{{is_default_branch}}`, which a manual run on main also matched; now they need a push to main.
-- **The module:** `publish-powershell` runs only when the plan said `publish`. It checks the manifest with `Test-ModuleManifest`, checks that its version is the plan's, and publishes `powershell/PagerArchive` as it is, with the manifest's own version, not VERSION. A missing `PSGALLERY_API_KEY` still skips it, successfully, as before.
+- **Images:** `publish-server` and `publish-client-manifest` tag them `<VERSION>`, its `MAJOR.MINOR` (`0.12` for 0.12.1, the plan's `major_minor`), `latest`, `main` and `sha-<commit>` on a push to main, as section 12.1 lists them (owner, 2026-11-02). Hand-made tags had `X.Y` too. A manual run still publishes `sha-<commit>` only, on any branch: `latest` and `main` used to follow `{{is_default_branch}}`, which a manual run on main also matched; now they need a push to main.
+- **The module:** `publish-powershell` runs only when the plan said `publish`. It checks the manifest with `Test-ModuleManifest`, checks that its version is the plan's, and publishes `powershell/PagerArchive` as it is, with the manifest's own version, not VERSION. If `PSGALLERY_API_KEY` isn't set, it fails, saying to set the secret and re-run the job, since the release notes already say the module is published (owner, 2026-11-02; the key exists).
 
 The publish jobs need `release` and `versions`, which are skipped off main and on main respectively, so they use `if: !failure() && !cancelled()`: they run unless a job they need failed.
 
@@ -79,19 +80,21 @@ The manifest said `ModuleVersion = '0.9.0'` because CI wrote the tag's version i
 
 **On merge**, the change to the manifest counts as a module change, so the plan asks the Gallery for 0.12.0. With 0.12.0 on the Gallery, it's `unchanged`: the run logs `module unchanged: the Gallery keeps 0.12.0 (the module changed, but 0.12.0 is on the Gallery already)`, the notes say so, and `publish-powershell` is skipped. The merge publishes no module.
 
-**0.12.0 on the Gallery.** When this branch started, the Gallery had only 0.10.0 (`FindPackagesById()`; `Packages(Id='PagerArchive',Version='0.12.0')` answered 404), because v0.12.0's tag run, 41290573137, was still running its checks. It finished at about 09:13 UTC with all 21 jobs passed, "Publish the PowerShell module to the PowerShell Gallery" among them. Afterwards the Gallery lists 0.10.0 and 0.12.0, and 0.12.0 answers 200. 0.9.0 was never on the Gallery (404). The plan for this branch's merge, run against main and this branch's implementation commit:
+**0.12.0 on the Gallery.** When this branch started, the Gallery had only 0.10.0 (`FindPackagesById()`; `Packages(Id='PagerArchive',Version='0.12.0')` answered 404), because v0.12.0's tag run, 41290573137, was still running its checks. It finished at about 09:13 UTC with all 21 jobs passed, "Publish the PowerShell module to the PowerShell Gallery" among them. Afterwards the Gallery lists 0.10.0 and 0.12.0, and 0.12.0 answers 200. 0.9.0 was never on the Gallery (404). The plan for this branch's merge (the revised script, on 91ec415, after main 7008d55 was merged in):
 
 ```
-$ sh scripts/ci/release-plan.sh 1f41c38 7eeb2f5
-module unchanged: the Gallery keeps 0.12.0 (the module changed, but 0.12.0 is on the Gallery already)
+$ sh scripts/ci/release-plan.sh HEAD
+VERSION 0.12.1 is higher than the newest release, v0.12.0.
+module unchanged: the Gallery keeps 0.12.0 (the module changed since v0.12.0, but 0.12.0 is on the Gallery already)
 version=0.12.1
+major_minor=0.12
 tag=v0.12.1
 module=unchanged
 module_version=0.12.0
 notes=PowerShell module: unchanged; the Gallery keeps 0.12.0.
 ```
 
-Run before v0.12.0's publish, the same command said `module: publishing PagerArchive 0.12.0 (the module changed and 0.12.0 isn't on the Gallery yet)`. Had that publish failed, this merge would have published 0.12.0 itself: the same files as v0.12.0's, so it would have caught up rather than published something new.
+Run before v0.12.0's publish, the first script (`release-plan.sh 1f41c38 7eeb2f5`) said `module: publishing PagerArchive 0.12.0 (the module changed and 0.12.0 isn't on the Gallery yet)`. Had that publish failed, this merge would have published 0.12.0 itself: the same files as v0.12.0's, so it would have caught up rather than published something new.
 
 ### 8. Small changes
 
@@ -100,6 +103,8 @@ Run before v0.12.0's publish, the same command said `module: publishing PagerArc
 - The old `release-binaries` job is gone (into `release`). The binaries are still named `pagerarchive-client-v<VERSION>-linux-<arch>`, so docs/client.md's download lines are unchanged.
 
 ## Evidence
+
+The first round, on 21cdc17. The plan's runs here are the first script's, which took the push's previous commit as well; the review below has the revised script's.
 
 Nothing was published, tagged or released from this branch. The Gallery was only read (HTTP GETs).
 
@@ -191,12 +196,94 @@ The Gallery's own answers at the time: 0.10.0 200, 0.12.1 404 (`FindPackagesById
 ## Consequences
 
 - Every branch that runs CI raises VERSION, even one that only changes tests or the workflow, because its merge is a release. A docs-only branch doesn't, and isn't released (ADR 0014).
-- Two branches open at once both raise VERSION from main's. The second to merge then fails `versions` on its next push (its VERSION is no longer higher than main's) and raises it again. Its pull request shows the failure only after main moves and the branch is pushed or re-run; a pull request's check doesn't re-run by itself when main moves. A merge that skipped that would fail in `release` (the tag exists on another commit) before publishing anything.
-- The workflow's `github.event.before` is the previous main commit for a merge pushed to main. For a push of several commits at once it's still the commit before them all, so the module comparison covers the whole push.
+- Two branches open at once both raise VERSION from main's. The second to merge then fails `versions` on its next push (its VERSION is no longer higher than main's) and raises it again. Its pull request shows the failure only after main moves and the branch is pushed or re-run; a pull request's check doesn't re-run by itself when main moves. A merge that skipped that fails in `release` (not higher than the newest release) before publishing anything.
+- A merge whose release fails and isn't re-run isn't released, and its version is skipped. The next release includes its changes: the module is compared with the previous release, and VERSION only has to be higher than the newest tag.
+
+## The owner's answers (2026-11-02)
+
+The first round's questions, answered in the review of 21cdc17:
+
+1. **Builds that aren't releases report VERSION** (a branch's image, a manual run's, a local build): fine as it is.
+2. **A re-run that finds its tag on this same commit carries on:** right; it's how a re-run finishes a release.
+3. **Branch protection:** no required check and no branch protection. The release plan checks VERSION against the newest `v*` tag instead (SPEC 12.1, owner 2026-11-02).
+4. **A missing Gallery key:** `publish-powershell` fails when the plan says publish and the key isn't set. The key exists now.
+
+## Review (owner, 2026-11-02)
+
+Main moved to 7008d55, which changed section 12.1 (VERSION higher than every earlier release's; the `MAJOR.MINOR` image tag; the module compared with the previous release). It was merged into the branch first (ac32c34), then 91ec415 made the four changes:
+
+1. **The module is compared with the previous release, not the previous push.** The first script compared with `github.event.before`. If a merge's run failed and wasn't re-run, the next merge compared with the failed one, so the module version that one raised was never published. The reviewer's case: A raises `ModuleVersion` to 0.13.0, B raises only VERSION, and `release-plan.sh A B` printed `module unchanged: the Gallery keeps 0.13.0`, though 0.13.0 isn't on the Gallery. The plan now compares with the newest earlier `v*` tag merged into the commit, and counts the module as changed when there's no such tag, so the Gallery decides. Nothing else used `github.event.before`, so the script takes the commit only.
+2. **VERSION must be higher than the newest earlier release**, or the plan fails before anything is published (section 4 above).
+3. **Images are tagged `MAJOR.MINOR` too**: the plan outputs `major_minor` (`0.12` for 0.12.1), and both images' metadata steps list it.
+4. **A missing `PSGALLERY_API_KEY` fails `publish-powershell`** when the plan says publish: `::error::The PSGALLERY_API_KEY secret isn't set, so PagerArchive <version> can't be published: set the secret (Settings, Secrets and variables, Actions), then re-run this job.`
+
+### Evidence
+
+Nothing was published, tagged or released. The Gallery was only read, and nothing was pushed to GHCR.
+
+**The plan, in a scratch clone of the branch** (its remote removed, so nothing could be pushed), with made-up commits and tags on top of it:
+
+```
+6763588 (HEAD) E: VERSION 0.12.6
+61da63f D: VERSION 0.12.5 (no check, its release failed: no tag)
+8d82d75 (tag: v0.13.1) B: VERSION 0.13.1 only
+4755c4b A: module changed, ModuleVersion 0.13.0, VERSION 0.13.0 (its run failed: no tag)
+46a57de (tag: v0.12.1) R: this branch, as merged (VERSION 0.12.1, ModuleVersion 0.12.0)
+```
+
+The reviewer's A/B case, before v0.13.1 was tagged on B. 21cdc17's script, then the revised one:
+
+```
+$ old-release-plan.sh 4755c4b 8d82d75     # A B
+module unchanged: the Gallery keeps 0.13.0 (this push didn't change powershell/PagerArchive/)
+$ release-plan.sh 8d82d75                  # B
+VERSION 0.13.1 is higher than the newest release, v0.12.1.
+module: publishing PagerArchive 0.13.0 (the module changed since v0.12.1 and 0.13.0 isn't on the Gallery yet)
+version=0.13.1
+major_minor=0.13
+tag=v0.13.1
+module=publish
+module_version=0.13.0
+notes=PowerShell module: PagerArchive 0.13.0, published to the PowerShell Gallery by this release.
+exit 0
+```
+
+The Gallery answered 404 for 0.13.0. With v0.13.1 tagged on B, a re-run of B's release: `Tag v0.13.1 is already on 8d82d75…: a re-run, finishing the release.`, then the same `VERSION 0.13.1 is higher than the newest release, v0.12.1.` and `module: publishing PagerArchive 0.13.0 …` (its own tag isn't an earlier release).
+
+A VERSION lower than the newest tag but higher than the previous commit's (E's 0.12.6 against D's 0.12.5 and v0.13.1):
+
+```
+$ release-plan.sh 6763588
+::error file=VERSION::VERSION is 0.12.6, which isn't higher than the newest release, v0.13.1: every release is a new, higher version. Nothing is published; raise VERSION above 0.13.1 in a new branch.
+exit 1
+```
+
+21cdc17's script, given D and E, went on and planned a 0.12.6 release (`version=0.12.6`).
+
+F, on E, with VERSION 0.13.2 and the module untouched since v0.13.1: `module unchanged: the Gallery keeps 0.13.0 (powershell/PagerArchive/ didn't change since v0.13.1)`. With every tag deleted from the clone: `No earlier release in this commit's history: counting the module as changed.`, then `module: publishing PagerArchive 0.13.0 (the module changed with no earlier release and 0.13.0 isn't on the Gallery yet)`.
+
+**The images' metadata steps list `MAJOR.MINOR`.** On cld01, a bundle of 91ec415 with its tags (v0.10.0, v0.12.0) was cloned onto a branch named main. A workflow was generated from `ci.yml` with the release job's plan step, and the `meta` step and `env` of `publish-server` and `publish-client-manifest` copied verbatim. act 0.2.89 then ran it as a push to `refs/heads/main`. `docker/metadata-action` reads the repository from GitHub's API. It was pointed (`GITHUB_API_URL`) at a local server returning the public repository record, fetched without a token, and that server was stopped afterwards. Nothing logged in to GHCR or pushed. All three jobs succeeded:
+
+```
+[release] | version=0.12.1
+[release] | major_minor=0.12
+[publish-server] | ghcr.io/rikiku/pagerarchive:0.12.1
+[publish-server] | ghcr.io/rikiku/pagerarchive:0.12
+[publish-server] | ghcr.io/rikiku/pagerarchive:latest
+[publish-server] | ghcr.io/rikiku/pagerarchive:main
+[publish-server] | ghcr.io/rikiku/pagerarchive:sha-91ec415
+[publish-client-manifest] | ghcr.io/rikiku/pagerarchive-client:0.12.1
+[publish-client-manifest] | ghcr.io/rikiku/pagerarchive-client:0.12
+[publish-client-manifest] | ghcr.io/rikiku/pagerarchive-client:latest
+[publish-client-manifest] | ghcr.io/rikiku/pagerarchive-client:main
+[publish-client-manifest] | ghcr.io/rikiku/pagerarchive-client:sha-91ec415
+```
+
+The same workflow as a push to `refs/heads/some-branch` listed only `ghcr.io/rikiku/pagerarchive:sha-91ec415`.
+
+`actionlint` 1.7.12 on the revised workflow: no findings.
 
 ## Questions for the owner
 
-1. **Builds that aren't releases report VERSION.** A branch's or pull request's image, a manual run's `sha-<commit>` image, and a local `go build` all say `0.12.1` before 0.12.1 is released, and telemetry's `service.version` too. Is that right, or should a build that isn't from main say something else (for example `0.12.1-dev+<commit>`)? That needs the commit passed in at build time again.
-2. **A re-run that finds its tag.** The plan fails if `v<VERSION>` is a tag on another commit, but goes on if it's on this commit, so that re-running the release job finishes the release. Is that the reading of "if the tag already exists, fail" the owner wants?
-3. **Branch protection.** Nothing makes `versions` (or any check) required before merging (ADR 0014: no protection, no rulesets). A merge with a lower VERSION is still stopped at the release, but only if that version was tagged before; one that is lower but never released would be released. Should `versions` be a required check, or should the release job also check VERSION against the previous main commit's?
-4. **The Gallery key.** With `PSGALLERY_API_KEY` missing, `publish-powershell` passes without publishing, as before, while the release notes already say the module was published. Should a missing key fail the job instead, now that releases are automatic?
+1. **A failed release that isn't re-run skips its version.** If v0.13.0's run fails and the next merge says 0.13.1, 0.13.0 is never released, and 0.13.1's release includes its changes. Nothing marks the gap. Should the release notes list the versions skipped since the previous release?
+2. **Every `v*` tag counts as a release**, wherever it is: one made by hand on a branch would raise the bar for VERSION on main. Section 12.1 says nothing is tagged by hand, so the plan doesn't look further. Should it count only tags on main's history?
