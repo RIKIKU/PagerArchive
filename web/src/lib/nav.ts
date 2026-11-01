@@ -17,19 +17,22 @@ export interface Group {
 	id: 'tools' | 'reports' | 'account' | 'admin';
 	label: string;
 	icon: IconName;
+	/** What's in it, in a few words: the shrunk menu's tooltip for it. */
+	text: string;
 	/** The group's start page, listing its pages (ADR 0015, decision 4). */
 	href: string;
 	adminOnly?: boolean;
 	entries: Entry[];
 }
 
-export const messages: Entry = { href: '/', label: 'Messages', icon: 'messages', text: 'Every message, newest first, live.' };
+export const messages: Entry = { href: '/', label: 'Messages', icon: 'messages', text: 'Every page, newest first, as it arrives' };
 
 export const groups: Group[] = [
 	{
 		id: 'tools',
 		label: 'Tools',
 		icon: 'tools',
+		text: 'Printing for training, and capcodes with no alias',
 		href: '/menu/tools',
 		entries: [
 			{ href: '/sheet', label: 'Print sheet', icon: 'print', desktopOnly: true, text: 'Pick messages and print their text for training.' },
@@ -40,6 +43,7 @@ export const groups: Group[] = [
 		id: 'reports',
 		label: 'Reports',
 		icon: 'reports',
+		text: 'Counts of past pages',
 		href: '/menu/reports',
 		entries: [{ href: '/reports', label: 'Capcode report', icon: 'reports', text: "One capcode's Emergency messages per event category, for a date range." }]
 	},
@@ -47,19 +51,20 @@ export const groups: Group[] = [
 		id: 'account',
 		label: 'Account',
 		icon: 'account',
+		text: 'Your profile, integrations, requests and invitations',
 		href: '/menu/account',
 		entries: [
 			{ href: '/account', label: 'Profile', icon: 'profile', text: 'Who you are, who invited you, and deleting your account.' },
 			{ href: '/integrations', label: 'Integrations', icon: 'integrations', text: 'Send pages on to your own systems.' },
 			{ href: '/requests', label: 'My requests', icon: 'requests', text: 'Aliases you asked for or asked to change, and what the admins said.' },
-			// A part of the Profile page (R43a), as it has been since M3.
-			{ href: '/account#invite', label: 'Invite someone', icon: 'invite', text: 'Send someone an invitation, and see the ones you sent.' }
+			{ href: '/account/invite', label: 'Invite someone', icon: 'invite', text: 'Send someone an invitation, and see the ones you sent.' }
 		]
 	},
 	{
 		id: 'admin',
 		label: 'Administration',
 		icon: 'administration',
+		text: 'Users, aliases, templates and the server',
 		href: '/admin',
 		adminOnly: true,
 		entries: [

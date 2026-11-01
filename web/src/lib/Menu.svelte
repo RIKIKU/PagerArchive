@@ -36,7 +36,7 @@
 			<a class="item top" href={listHref} aria-current={path === '/' ? 'page' : undefined} aria-label={shrunk ? messages.label : undefined}
 				><Icon name={messages.icon} /><span class="label">{messages.label}</span></a
 			>
-			{#if shrunk}<span class="tip" aria-hidden="true">{messages.label}</span>{/if}
+			{#if shrunk}<span class="tip" aria-hidden="true">{messages.text}</span>{/if}
 		</li>
 		{#each visible(admin) as g (g.id)}
 			{@const open = shrunk || isOpen(g.id, holds(g))}
@@ -59,14 +59,14 @@
 							aria-expanded={open}
 							aria-controls="menu-{g.id}"
 							aria-label="{g.label}: {open ? 'hide' : 'show'} its pages"
-							title="{open ? 'Hide' : 'Show'} {g.label}'s pages"
 							onclick={() => toggleGroup(g.id, open)}><Icon name={open ? 'open' : 'closed'} /></button
 						>
 					{/if}
 				</div>
-				<!-- Shrunk, the panel opens with the group's name: its tooltip. -->
+				<!-- Shrunk, the panel opens with what's in the group, in a few
+				     words: its tooltip, which doesn't just repeat its name. -->
 				<ul id="menu-{g.id}" class="entries" hidden={!open}>
-					{#if shrunk}<li class="flyhead" aria-hidden="true">{g.label}</li>{/if}
+					{#if shrunk}<li class="flyhead" aria-hidden="true">{g.text}</li>{/if}
 					{#each g.entries as e (e.href)}
 						<li>
 							{#if e.href === '/sheet'}
@@ -95,14 +95,19 @@
 	</ul>
 	<div class="foot">
 		{#if admin && quiet > 0}
-			<a class="item alert" href="/admin/clients" aria-label={shrunk ? `${plural(quiet, 'receiver', 'receivers')} not receiving` : undefined}
-				><Icon name="warning" /><span class="label" data-testid="not-receiving">{plural(quiet, 'receiver', 'receivers')} not receiving</span></a
-			>
+			<div class="tipped">
+				<a class="item alert" href="/admin/clients" aria-label={shrunk ? `${plural(quiet, 'receiver', 'receivers')} not receiving` : undefined}
+					><Icon name="warning" /><span class="label" data-testid="not-receiving">{plural(quiet, 'receiver', 'receivers')} not receiving</span></a
+				>
+				{#if shrunk}<span class="tip" aria-hidden="true">No pages from {quiet === 1 ? 'a receiver' : 'some receivers'} for 30 minutes</span>{/if}
+			</div>
 		{/if}
-		<button class="item shrink" type="button" aria-label={shrunk ? 'Widen the menu' : undefined} aria-pressed={shrunk} onclick={toggleShrunk}
-			><Icon name={shrunk ? 'widen' : 'shrink'} /><span class="label">Shrink menu</span></button
-		>
-		{#if shrunk}<span class="tip foot-tip" aria-hidden="true">Widen the menu</span>{/if}
+		<div class="tipped">
+			<button class="item shrink" type="button" aria-label={shrunk ? 'Widen the menu' : undefined} aria-pressed={shrunk} onclick={toggleShrunk}
+				><Icon name={shrunk ? 'widen' : 'shrink'} /><span class="label">Shrink menu</span></button
+			>
+			{#if shrunk}<span class="tip" aria-hidden="true">Show the pages' names again</span>{/if}
+		</div>
 	</div>
 </div>
 
@@ -264,7 +269,8 @@
 		width: 100%;
 		align-items: center;
 	}
-	.shrunk .group {
+	.shrunk .group,
+	.shrunk .tipped {
 		position: relative;
 		display: flex;
 		justify-content: center;
@@ -310,8 +316,8 @@
 	.shrunk .group:focus-within > .entries,
 	.shrunk .group:hover > .tip,
 	.shrunk .group:focus-within > .tip,
-	.shrunk .foot:hover > .tip,
-	.shrunk .foot:focus-within > .tip {
+	.shrunk .tipped:hover > .tip,
+	.shrunk .tipped:focus-within > .tip {
 		display: block;
 	}
 	.flyhead {
@@ -332,10 +338,5 @@
 		font-size: var(--text-xs);
 		white-space: nowrap;
 		pointer-events: none;
-	}
-	.foot-tip {
-		top: auto;
-		bottom: 0;
-		transform: none;
 	}
 </style>

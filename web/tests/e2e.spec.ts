@@ -222,6 +222,8 @@ test('account and users pages', async ({ page, browser }) => {
 	await expect(page.getByRole('heading', { level: 1, name: 'Your account' })).toBeVisible();
 	await expect(page.locator('dl')).toContainText('user@example.test');
 	await expect(page.locator('dl')).toContainText('Test Admin (admin@example.test)');
+	// Inviting has its own page since M13 (owner, 2026-11-02; ADR 0015).
+	await page.goto('/account/invite');
 	await expect(page.getByRole('button', { name: 'Send invitation' })).toBeVisible();
 	await page.goto('/admin/users');
 	await expect(page.getByRole('alert')).toContainText('admins only');
@@ -782,11 +784,12 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			await admin.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Administration' }).click();
 		}
 
-		// The Users page links to the invite form on the Account page (R41, R44b).
+		// The Users page links to the invite form in Account (R41, R44b), a page
+		// of its own since M13 (owner, 2026-11-02; ADR 0015).
 		await screens.getByRole('link', { name: 'Users' }).click();
 		await admin.getByRole('main').getByRole('link', { name: 'Invite someone' }).click();
-		await expect(admin).toHaveURL(/\/account#invite$/);
-		await expect(admin.getByRole('heading', { level: 2, name: 'Invite someone' })).toBeInViewport();
+		await expect(admin).toHaveURL(/\/account\/invite$/);
+		await expect(admin.getByRole('heading', { level: 1, name: 'Invite someone' })).toBeInViewport();
 		await expect(admin.getByLabel('Their email address')).toBeVisible();
 		await expect(admin.getByRole('button', { name: 'Send invitation' })).toBeVisible();
 		await admin.goBack();
@@ -2204,7 +2207,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 				console.log(`A68 (${role}): ${g} > ${label} in ${clicks} click(s), ${Date.now() % 100000}`);
 				expect(clicks, `${g} > ${label}`).toBeLessThanOrEqual(2);
 				expect(await crumbsOf(page), `${g} > ${label}: its breadcrumbs`).toEqual(
-					label === 'Invite someone' ? [{ label: g, href: '/menu/account' }, { label: 'Profile', href: null }] : [{ label: g, href: g === 'Administration' ? '/admin' : `/menu/${g.toLowerCase()}` }, { label, href: null }]
+					[{ label: g, href: g === 'Administration' ? '/admin' : `/menu/${g.toLowerCase()}` }, { label, href: null }]
 				);
 			}
 		}
@@ -2220,12 +2223,15 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	await nav.getByRole('button', { name: 'Shrink menu' }).click();
 	await expect(nav.locator('.label').first()).toBeHidden();
 	for (const g of ['Messages', 'Tools', 'Reports', 'Account', 'Administration']) await expect(nav.getByRole('link', { name: new RegExp(`^${g}`) })).toBeVisible();
-	await nav.getByRole('link', { name: 'Messages' }).hover();
-	await expect(nav.locator('.tip', { hasText: 'Messages' })).toBeVisible();
+	// A tooltip says what's there, not the name again (owner, 2026-11-02).
+	await nav.getByRole('link', { name: 'Messages', exact: true }).hover();
+	await expect(nav.locator('.tip', { hasText: 'Every page, newest first, as it arrives' })).toBeVisible();
 	await nav.getByRole('link', { name: 'Tools' }).hover();
-	await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Tools');
+	await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Printing for training, and capcodes with no alias');
 	await expect(nav.getByRole('link', { name: /^Print sheet/ })).toBeVisible();
 	await page.screenshot({ path: info.outputPath('a68-shrunk-hover.png') });
+	await nav.getByRole('button', { name: 'Widen the menu' }).hover();
+	await expect(nav.locator('.tip', { hasText: "Show the pages' names again" })).toBeVisible();
 	await page.mouse.move(1500, 600);
 	await expect(nav.getByRole('link', { name: /^Print sheet/ })).toBeHidden();
 	await nav.getByRole('link', { name: 'Reports' }).focus();

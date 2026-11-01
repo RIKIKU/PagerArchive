@@ -77,7 +77,7 @@
 	tree first shows everyone they invited, and everyone those people invited, so you can choose who to spare. Only an
 	admin can invite a deactivated person again.
 </p>
-<p class="invite"><a href="/account#invite">Invite someone</a> from your account page, like everyone else.</p>
+<p class="invite"><a href="/account/invite">Invite someone</a> from your account, like everyone else.</p>
 <div aria-live="polite">
 	{#if notice}<p class="ok" role="status">{notice}</p>{/if}
 </div>

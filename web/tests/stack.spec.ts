@@ -71,7 +71,7 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	// The admin invites the test user.
 	const tester = `tester@${DOMAIN}`;
 	const since = new Date(Date.now() - 2000);
-	await admin.goto('/account');
+	await admin.goto('/account/invite'); // its own page since M13 (ADR 0015)
 	await admin.getByLabel('Their email address').fill(tester);
 	await admin.getByRole('button', { name: 'Send invitation' }).click();
 	await expect(admin.getByRole('status').filter({ hasText: `Invitation sent to ${tester}` })).toBeVisible();

@@ -1,62 +1,19 @@
 <script lang="ts">
-	import { api, type Invitation, type Me, type Meta } from '#lib/api.ts';
-	import { dateTime, isoAttr } from '#lib/format.ts';
+	// Profile: who you are, who invited you, and deleting your account.
+	// Inviting someone has its own page (owner, 2026-11-02; ADR 0015).
+	import { goto } from '$app/navigation';
+	import { api, type Me, type Meta } from '#lib/api.ts';
 
 	let meta: Meta | undefined = $state();
 	let me: Me | undefined = $state();
-	let invitations: Invitation[] = $state([]);
-	let email = $state('');
-	let sending = $state(false);
-	let inviteError = $state('');
-	let inviteDone = $state('');
-	let listError = $state('');
 	let confirmDelete = $state(false);
 	let deleteError = $state('');
 
-	const tz = $derived(meta?.time_zone ?? 'UTC');
-	const labels: Record<Invitation['status'], string> = {
-		pending: 'Waiting',
-		expired: 'Expired',
-		used: 'Joined',
-		cancelled: 'Cancelled'
-	};
+	// Links from before the invitations had a page of their own.
+	if (location.hash === '#invite') goto('/account/invite', { replaceState: true });
 
 	api.meta().then((m) => (meta = m));
 	api.me().then((m) => (me = m));
-	function load() {
-		api
-			.invitations()
-			.then((r) => (invitations = r))
-			.catch((e) => (listError = e.message));
-	}
-	load();
-
-	async function invite(ev: SubmitEvent) {
-		ev.preventDefault();
-		inviteError = inviteDone = '';
-		sending = true;
-		try {
-			const inv = await api.invite(email.trim());
-			inviteDone = `Invitation sent to ${inv.email}. It works once and expires in 7 days.`;
-			email = '';
-			load();
-		} catch (e) {
-			inviteError = (e as Error).message;
-		} finally {
-			sending = false;
-		}
-	}
-
-	async function cancel(inv: Invitation) {
-		inviteError = inviteDone = '';
-		try {
-			await api.cancelInvitation(inv.id);
-			inviteDone = `Invitation to ${inv.email} cancelled.`;
-			load();
-		} catch (e) {
-			inviteError = (e as Error).message;
-		}
-	}
 
 	async function deleteAccount() {
 		deleteError = '';
@@ -86,46 +43,9 @@
 {/if}
 <div class="actions">
 	{#if meta?.account_url}<a class="button secondary" href={meta.account_url}>Change your name or password</a>{/if}
+	<a class="button secondary" href="/account/invite">Invite someone</a>
 	<button class="secondary" type="button" onclick={() => api.signOut()}>Sign out</button>
 </div>
-
-<section id="invite" aria-labelledby="invite-heading">
-	<h2 id="invite-heading">Invite someone</h2>
-	<form onsubmit={invite}>
-		<label for="invite-email">Their email address</label>
-		<div class="row">
-			<input id="invite-email" type="email" autocomplete="off" required bind:value={email} aria-describedby="invite-help" />
-			<button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send invitation'}</button>
-		</div>
-		<p id="invite-help" class="help">
-			{#if meta?.allowed_email_domains?.length}Addresses at {meta.allowed_email_domains.join(' or ')} only.{/if}
-			They'll get an email with a link that works once, for 7 days, and a code to confirm their address.
-		</p>
-	</form>
-	{#if inviteError}<p class="error" role="alert">{inviteError}</p>{/if}
-	{#if inviteDone}<p class="ok" role="status">{inviteDone}</p>{/if}
-</section>
-
-<section aria-labelledby="invitations-heading">
-	<h2 id="invitations-heading">Your invitations</h2>
-	{#if listError}<p class="error" role="alert">{listError}</p>{/if}
-	{#if invitations.length === 0 && !listError}<p class="status">You haven't invited anyone yet.</p>{/if}
-	<ul class="cards">
-		{#each invitations as inv (inv.id)}
-			<li>
-				<span class="who">{inv.email}</span>
-				<span class="state {inv.status}">{labels[inv.status]}</span>
-				<span class="when">
-					Sent <time datetime={isoAttr(inv.created_at)}>{dateTime(inv.created_at, tz)}</time>{#if inv.status === 'pending'}, expires
-						<time datetime={isoAttr(inv.expires_at)}>{dateTime(inv.expires_at, tz)}</time>{/if}
-				</span>
-				{#if inv.status === 'pending'}
-					<button class="secondary" type="button" onclick={() => cancel(inv)} aria-label="Cancel: invitation to {inv.email}">Cancel</button>
-				{/if}
-			</li>
-		{/each}
-	</ul>
-</section>
 
 <section aria-labelledby="delete-heading">
 	<h2 id="delete-heading">Delete your account</h2>
@@ -175,56 +95,12 @@
 	section .actions {
 		margin: var(--space-sm) 0;
 	}
-	.row {
-		display: flex;
-		gap: var(--space-sm);
-		flex-wrap: wrap;
-	}
-	.row input {
-		flex: 1 1 var(--field-wide);
-	}
 	.help {
 		color: var(--muted);
 		font-size: var(--text-md);
 		margin: var(--space-xs) 0;
 	}
-	section .error,
-	section .ok,
-	section .status {
+	.error {
 		padding: var(--space-sm) 0;
-	}
-	section .ok {
-		padding: var(--space-sm) var(--space-md);
-	}
-	.cards {
-		list-style: none;
-		padding: 0;
-		margin: 0;
-	}
-	.cards li {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--space-2xs) var(--space-md);
-		padding: var(--space-sm) 0;
-		border-bottom: var(--border-width) solid var(--border);
-	}
-	.who {
-		font-weight: var(--weight-strong);
-		overflow-wrap: anywhere;
-	}
-	.when {
-		color: var(--muted);
-		font-size: var(--text-md);
-		flex-basis: 100%;
-	}
-	.state {
-		font-size: var(--text-sm);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius-pill);
-		padding: 0 var(--space-sm);
-	}
-	.cards button {
-		margin-left: auto;
 	}
 </style>
