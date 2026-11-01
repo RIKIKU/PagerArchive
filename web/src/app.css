@@ -288,10 +288,9 @@ button,
 	line-height: var(--leading-tight);
 	text-decoration: none;
 	cursor: pointer;
-	transition:
-		background-color 0.12s,
-		border-color 0.12s,
-		transform 0.06s;
+	/* Only the press moves; colours change at once, so a theme change is
+	   never seen (or measured) half done. */
+	transition: transform 0.06s;
 }
 
 button:hover,
