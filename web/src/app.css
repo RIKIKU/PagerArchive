@@ -373,8 +373,20 @@ input[type='radio'] {
 	height: var(--control-check);
 	min-height: var(--control-check);
 	padding: 0;
+	margin: var(--space-3xs);
 	flex: none;
 	accent-color: var(--accent);
+}
+
+/* The browser's own bold, as a token. */
+h1,
+h2,
+h3,
+h4,
+strong,
+b,
+th {
+	font-weight: var(--weight-heavy);
 }
 
 h1 {
