@@ -238,7 +238,7 @@ Many clients post to one server. Each client records its own receive time. The s
   - **Import output:** a result object for each row (added, unchanged, different, squashed).
   - **No export command:** `Get-PagerArchiveAlias` outputs objects whose properties match the import's parameters, so `Get-PagerArchiveAlias | Export-Csv` writes the import format.
   - **Rules and history:** the same rules apply as in the browser (R27, R27a, R30, R53, R58). Changes are recorded in the alias history (R57) as made by the signed-in admin.
-  - **Guidelines and publishing:** the module follows [`docs/powershell-guidelines.md`](docs/powershell-guidelines.md). CI publishes it to the PowerShell Gallery, only from a release whose checks all passed.
+  - **Guidelines and publishing:** the module follows [`docs/powershell-guidelines.md`](docs/powershell-guidelines.md). It has **its own version**, in its manifest, separate from PagerArchive's. A branch that changes the module (`powershell/PagerArchive/`) raises that version, and CI fails a branch that changes the module without raising it. CI publishes the module to the PowerShell Gallery from a release (section 12.1) whose checks all passed, **only when that release changed the module**, and only if its version isn't on the Gallery yet. A release that didn't change the module says it kept the version already there. A failed publish is caught up by re-running it (owner, 2026-11-01).
 - **R63a. Messages** (owner, 2026-10-20). `Get-PagerArchiveMessage` returns messages as objects, newest first.
   - **Filters:** the same as search (R33): text, capcode, alias, agency, group, priority, event category, job number, a time range, capcodes with no alias, and admin flags. They can be combined.
   - **Ignored aliases:** their pages are included only when asked, as in the browser (R27).
@@ -464,6 +464,12 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M12** | Telemetry: OpenTelemetry traces, metrics and logs from the API and client; the example monitoring stack with its alerts (owner, 2026-10-30); radio health and the "radio stalled" alert (owner, 2026-10-31) | A62–A67 |
 | **M13** | UI redesign: side menu and icons, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01) | A61, A68–A70 |
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
+
+### 12.1 Releases (owner, 2026-11-01)
+- **Every merge into main is a release.** The branch sets the release's version in the `VERSION` file (a semantic version: a milestone raises the minor number, a fix the patch number). CI fails a branch whose `VERSION` isn't higher than main's, so every merge is a new version.
+- Once every check has passed on main, CI tags the merge commit `v<version>`, creates the GitHub release with the client binaries and their checksums, publishes the images tagged with the version as well as `latest`, `main` and `sha-<commit>`, and publishes the PowerShell module if it changed (R63).
+- Nothing is released by hand: v0.12.0 is the last tag made by hand. Docs-only pushes don't run CI (ADR 0014), so they never release.
+- If part of a release fails to publish, that job is re-run; a version is never reused.
 
 ## 13. Open questions
 
