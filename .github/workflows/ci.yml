@@ -386,7 +386,8 @@ jobs:
 
   # The release (SPEC.md 12.1, ADR 0016): on a push to main whose checks all
   # passed, before anything is published. The plan fails if VERSION isn't
-  # higher than the newest v* tag, or if v<VERSION> is already a tag on
+  # higher than the previous release (the newest v* tag in the commit's
+  # history), or if v<VERSION> is already a tag on
   # another commit, so nothing is published. Otherwise this
   # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
   # GitHub release with the client's binaries and checksums, and passes on

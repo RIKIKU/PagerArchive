@@ -1,16 +1,16 @@
 #!/bin/sh
 # Decides what a push to main releases (SPEC.md 12.1 and R63, ADR 0016),
-# publishing nothing itself. Earlier releases are the v* tags, other than
-# one on this commit (a re-run's own tag):
+# publishing nothing itself. The previous release is the newest v* tag in
+# the commit's history, other than one on this commit (a re-run's own tag);
+# a tag anywhere else doesn't count. Both checks use it:
 #   - version and tag: VERSION at the commit, tag v<VERSION>. It fails if
-#     VERSION isn't higher than the newest earlier release, or if the tag
-#     already exists on another commit: that version was released. A tag on
-#     this same commit is a re-run finishing the release, and it goes on.
+#     VERSION isn't higher than the previous release, or if the tag already
+#     exists on another commit: that version was released. A tag on this
+#     same commit is a re-run finishing the release, and it goes on.
 #   - module: "publish" only if powershell/PagerArchive/ changed since the
-#     previous release (the newest earlier v* tag merged into the commit)
-#     and the manifest's version isn't on the PowerShell Gallery yet;
-#     otherwise "unchanged". With no previous release, the module counts as
-#     changed and the Gallery decides.
+#     previous release and the manifest's version isn't on the PowerShell
+#     Gallery yet; otherwise "unchanged". With no previous release, the
+#     module counts as changed and the Gallery decides.
 # Needs the tags (git fetch --tags). Prints key=value lines, and appends
 # them to $GITHUB_OUTPUT when it's set.
 #
@@ -28,10 +28,10 @@ is_version "$version" || { fail VERSION "VERSION is '$version', not MAJOR.MINOR.
 tag=v$version
 commit=$(git rev-parse "$COMMIT^{commit}")
 
-# earlier_releases [--merged]: v* tags, newest version first, other than any
-# on this commit; with --merged, only those in the commit's history.
+# earlier_releases: the v* tags in the commit's history, newest version
+# first, other than any on this commit.
 earlier_releases() {
-	git tag -l 'v*' --sort=-v:refname ${1:+"$1"} ${1:+"$commit"} | while read -r t; do
+	git tag -l 'v*' --sort=-v:refname --merged "$commit" | while read -r t; do
 		[ "$(git rev-parse "$t^{commit}")" != "$commit" ] && echo "$t"
 	done
 	return 0
@@ -45,17 +45,16 @@ if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
 	echo "Tag $tag is already on $commit: a re-run, finishing the release."
 fi
 
-newest=$(earlier_releases | head -n 1)
-if [ -n "$newest" ]; then
-	if ! higher "$version" "${newest#v}"; then
-		fail VERSION "VERSION is $version, which isn't higher than the newest release, $newest: every release is a new, higher version. Nothing is published; raise VERSION above ${newest#v} in a new branch."
+previous=$(earlier_releases | head -n 1)
+if [ -n "$previous" ]; then
+	if ! higher "$version" "${previous#v}"; then
+		fail VERSION "VERSION is $version, which isn't higher than the previous release, $previous: every release is a new, higher version. Nothing is published; raise VERSION above ${previous#v} in a new branch."
 		exit 1
 	fi
-	echo "VERSION $version is higher than the newest release, $newest."
+	echo "VERSION $version is higher than the previous release, $previous."
 fi
 
 module_version=$(module_version_at "$commit")
-previous=$(earlier_releases --merged | head -n 1)
 if [ -z "$previous" ]; then
 	echo "No earlier release in this commit's history: counting the module as changed."
 	changed=true since="with no earlier release"
