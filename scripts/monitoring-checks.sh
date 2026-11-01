@@ -87,6 +87,16 @@ until curl -sf http://127.0.0.1:13001/api/health >/dev/null; do
 done
 echo "--- monitoring stack ready after $(($(date +%s) - start)) s: $(mon ps --format '{{.Service}}' | sort | tr '\n' ' ')"
 
+# Loki refuses every write above 90% disk use (its WAL's disk_full_threshold),
+# so A67 would find no client lines (ADR 0014): stop now if the disk is close.
+disk_used() { df -P "$(docker info -f '{{.DockerRootDir}}')" | awk 'NR == 2 { sub("%", "", $5); print $5 }'; }
+echo "--- disk use under Docker's data: $(disk_used)% (Loki refuses writes above 90%)"
+if [ "$(disk_used)" -ge 85 ]; then
+	echo "the disk is $(disk_used)% full: Loki would stop taking logs during the checks; free some space first" >&2
+	exit 1
+fi
+export PA_MON_LOKI_CONTAINER="$P-mon-loki-1"
+
 # Memory of each monitoring container: seconds, phase, container, MiB.
 PHASE_FILE=$(mktemp)
 echo idle >"$PHASE_FILE"
@@ -120,6 +130,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_STOP_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml stop api" \
 	PA_MON_START_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml start api" \
 	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67}" ./internal/monitortest/ || status=1
+echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then
 	echo shots >"$PHASE_FILE"

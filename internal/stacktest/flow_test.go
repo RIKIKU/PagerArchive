@@ -23,15 +23,22 @@ type browser struct {
 	email  string
 	pw     string
 	client *http.Client
+	// failures counts the failures Authentik has recorded for the account
+	// (the lock's own count), or is nil where there's no database to ask.
+	failures func() int
 }
 
 func (s *stack) browser(t *testing.T, email string) *browser {
 	jar, _ := cookiejar.New(nil)
-	return &browser{t: t, s: s, email: email, pw: "correct horse " + strings.ReplaceAll(email, "@", " at "), client: &http.Client{
+	b := &browser{t: t, s: s, email: email, pw: "correct horse " + strings.ReplaceAll(email, "@", " at "), client: &http.Client{
 		Jar:           jar,
 		Timeout:       30 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}}
+	if s.db {
+		b.failures = func() int { return s.failureCount(t, strings.ToLower(strings.TrimSpace(email))) }
+	}
+	return b
 }
 
 // challenge is one step of an Authentik flow.
@@ -42,8 +49,26 @@ type challenge struct {
 	Errors    map[string][]struct {
 		String string `json:"string"`
 	} `json:"response_errors"`
-	raw   []byte
-	query string // the flow's query, when walk stopped inside a flow
+	status int    // the reply's HTTP status
+	raw    []byte // the reply's body
+	err    error  // why there was no reply (a timeout)
+	query  string // the flow's query, when walk stopped inside a flow
+}
+
+// isChallenge reports whether the reply was a step of a flow: a 2xx reply
+// naming a component. Anything else parses to an empty challenge, so its
+// status and body are all there is to go on.
+func (c challenge) isChallenge() bool {
+	return c.status >= 200 && c.status < 300 && c.Component != ""
+}
+
+// reply is the status and body, for messages about a reply that isn't a
+// flow challenge.
+func (c challenge) reply() string {
+	if c.err != nil {
+		return "no reply: " + c.err.Error()
+	}
+	return fmt.Sprintf("HTTP %d %.500q", c.status, c.raw)
 }
 
 func (c challenge) errorText() string {
@@ -113,46 +138,92 @@ func (b *browser) walk(start string, answers answer) (*url.URL, challenge) {
 	return nil, challenge{}
 }
 
-// executor gets (body nil) or answers the current challenge of a flow.
+// transientTries bounds how often executor sends one request whose replies
+// are clearly transient (transient). Each resend is logged (ADR 0014).
+const transientTries = 3
+
+// transient reports whether a reply is worth sending the same request
+// again for: a 5xx (Authentik's front server answers 502 when it couldn't
+// hand the request to a web worker) or no reply at all. Nothing else is
+// ever resent: a refusal, an acceptance or a 4xx is the answer.
+func (c challenge) transient() bool {
+	return c.err != nil || c.status >= 500
+}
+
+// executor gets (body nil) or answers the current challenge of a flow. A
+// transient reply is retried, at most transientTries times in all; a
+// request carrying a password or code only while the account's failures
+// show the earlier try wasn't counted, so a retried attempt never counts
+// twice (and a counted one is never lost: its reply is returned as it came).
 func (b *browser) executor(slug, query string, body map[string]any) challenge {
 	b.t.Helper()
-	u := b.s.authentik.JoinPath("/api/v3/flows/executor/", slug, "/").String() + "?query=" + url.QueryEscape(query)
-	for range 5 {
-		var req *http.Request
-		if body != nil {
-			data, _ := json.Marshal(body)
-			req, _ = http.NewRequest(http.MethodPost, u, bytes.NewReader(data))
-			req.Header.Set("Content-Type", "application/json")
-			// Once signed in, Authentik wants its CSRF cookie echoed in a
-			// header, as its web pages do (the device code, ADR 0009 §2).
-			for _, c := range b.client.Jar.Cookies(b.s.authentik) {
-				if c.Name == "authentik_csrf" {
-					req.Header.Set("X-authentik-CSRF", c.Value)
-				}
+	secret := body["password"] != nil || body["code"] != nil
+	before := 0
+	if secret && b.failures != nil {
+		before = b.failures()
+	}
+	for redirects, tries := 0, 1; ; {
+		c, answered := b.exchange(slug, query, body)
+		if answered { // the executor redirects to itself after a POST: the POST was answered
+			if redirects++; redirects == 5 {
+				b.t.Fatal("executor redirect loop")
 			}
-		} else {
-			req, _ = http.NewRequest(http.MethodGet, u, nil)
-		}
-		req.Header.Set("Accept", "application/json")
-		resp, err := b.client.Do(req)
-		if err != nil {
-			b.t.Fatal(err)
-		}
-		data, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode == http.StatusFound { // the executor redirects to itself after a POST
-			body = nil
+			body, secret = nil, false
 			continue
 		}
-		var c challenge
-		if err := json.Unmarshal(data, &c); err != nil {
-			b.t.Fatalf("executor %s: %d %.200s", slug, resp.StatusCode, data)
+		if !c.isChallenge() {
+			b.t.Logf("executor %s at %s: not a flow challenge: %s", slug, time.Now().UTC().Format("15:04:05.000"), c.reply())
 		}
-		c.raw = data
-		return c
+		if !c.transient() || tries == transientTries {
+			return c
+		}
+		if secret {
+			if b.failures == nil {
+				return c // no way to tell whether Authentik counted it
+			}
+			if n := b.failures(); n != before {
+				b.t.Logf("executor %s: Authentik counted that attempt (the account's failures went from %d to %d), so it isn't sent again", slug, before, n)
+				return c
+			}
+		}
+		tries++
+		b.t.Logf("executor %s: sending the same request again (try %d of %d)", slug, tries, transientTries)
+		time.Sleep(time.Duration(tries-1) * time.Second)
 	}
-	b.t.Fatal("executor redirect loop")
-	return challenge{}
+}
+
+// exchange makes one request to the flow executor. answered says the
+// executor redirected to itself, as it does after taking a POST.
+func (b *browser) exchange(slug, query string, body map[string]any) (c challenge, answered bool) {
+	u := b.s.authentik.JoinPath("/api/v3/flows/executor/", slug, "/").String() + "?query=" + url.QueryEscape(query)
+	var req *http.Request
+	if body != nil {
+		data, _ := json.Marshal(body)
+		req, _ = http.NewRequest(http.MethodPost, u, bytes.NewReader(data))
+		req.Header.Set("Content-Type", "application/json")
+		// Once signed in, Authentik wants its CSRF cookie echoed in a
+		// header, as its web pages do (the device code, ADR 0009 §2).
+		for _, c := range b.client.Jar.Cookies(b.s.authentik) {
+			if c.Name == "authentik_csrf" {
+				req.Header.Set("X-authentik-CSRF", c.Value)
+			}
+		}
+	} else {
+		req, _ = http.NewRequest(http.MethodGet, u, nil)
+	}
+	req.Header.Set("Accept", "application/json")
+	resp, err := b.client.Do(req)
+	if err != nil {
+		return challenge{err: err}, false
+	}
+	data, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode == http.StatusFound {
+		return challenge{}, true
+	}
+	_ = json.Unmarshal(data, &c) // a body that isn't JSON leaves it empty: not a challenge
+	c.status, c.raw = resp.StatusCode, data
+	return c, false
 }
 
 // enrolAnswers fills in the enrolment flow: name and password, then the
@@ -201,6 +272,20 @@ func (b *browser) signIn() (bool, challenge) {
 		return false, c
 	}
 	return end.Path != "/signin", challenge{Error: end.RawQuery}
+}
+
+// signInAttempt signs in as signIn does, and says what came of it: a check
+// that someone can't sign in passes only on a real refusal (outcome_test.go).
+func (b *browser) signInAttempt() result {
+	b.t.Helper()
+	end, c := b.walk(b.s.app.JoinPath("/auth/login").String(), b.signInAnswers())
+	switch {
+	case end == nil:
+		return judge(c, passwordStage, "xak-flow-redirect")
+	case end.Path == "/signin":
+		return result{appRefused, "the app's sign-in page: " + end.RawQuery}
+	}
+	return result{accepted, "signed in, at " + end.Path}
 }
 
 // api calls the app's API with this browser's session.

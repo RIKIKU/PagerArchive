@@ -4,7 +4,7 @@ Date: 2026-10-30
 
 ## Status
 
-Proposed. The owner answered the questions on 2026-10-31 ("The owner's answers", at the end); question 6, the A33 flake, stays open as separate work after M12. The owner's addition of the same day (radio health, "Radio stalled", stopped clients on the dashboard, a failed delivery's cause; A67) is in the last section.
+Proposed. The owner answered the questions on 2026-10-31 ("The owner's answers", at the end); question 6, the A33 flake, stays open as separate work after M12 (ADR 0014). The owner's addition of the same day (radio health, "Radio stalled", stopped clients on the dashboard, a failed delivery's cause; A67) is in the last section.
 
 ## Context
 

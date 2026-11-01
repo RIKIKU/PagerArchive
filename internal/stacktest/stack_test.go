@@ -26,6 +26,7 @@ type stack struct {
 	app, authentik *url.URL
 	mailpit        mailpit
 	token          string // the app's Authentik API token
+	db             bool   // Authentik's database can be read (docker compose exec db)
 }
 
 func setup(t *testing.T, phase string) *stack {
@@ -44,7 +45,7 @@ func setup(t *testing.T, phase string) *stack {
 		return u
 	}
 	return &stack{app: parse("PA_STACK_APP_URL"), authentik: parse("PA_STACK_AUTHENTIK_URL"),
-		mailpit: mailpit{parse("PA_STACK_MAILPIT_URL")}, token: os.Getenv("PA_STACK_AUTHENTIK_TOKEN")}
+		mailpit: mailpit{parse("PA_STACK_MAILPIT_URL")}, token: os.Getenv("PA_STACK_AUTHENTIK_TOKEN"), db: true}
 }
 
 // authentikUser returns whether a user with this username exists in
@@ -312,9 +313,8 @@ func TestA25A26InviteTree(t *testing.T) {
 		t.Errorf("A can't sign in after reactivation: %s", ch.errorText())
 	}
 	for _, m := range []*browser{b, c} {
-		if ok, _ := s.browser(t, m.email).withPassword(m).signIn(); ok {
-			t.Errorf("%s can sign in", m.email)
-		}
+		r := s.browser(t, m.email).withPassword(m).signInAttempt()
+		expect(t, m.email+" signing in while deactivated", r, wrongAnswer, lockedOut, appRefused)
 	}
 	t.Log("A26: A signs in again; B and C still can't")
 
@@ -352,9 +352,7 @@ func TestA27DeletingYourOwnAccount(t *testing.T) {
 	if code, msg := b.api(http.MethodDelete, "/api/v1/me", nil, nil); code != http.StatusNoContent {
 		t.Fatalf("B deletes their account: %d %s", code, msg)
 	}
-	if ok, _ := s.browser(t, b.email).withPassword(b).signIn(); ok {
-		t.Error("B can still sign in")
-	}
+	expect(t, "B signing in after deleting their account", s.browser(t, b.email).withPassword(b).signInAttempt(), wrongAnswer, lockedOut, appRefused)
 	if exists, _ := s.authentikUser(t, b.email); exists {
 		t.Error("B still exists in Authentik")
 	}
@@ -476,9 +474,7 @@ func TestPasswordResetWithEmailedCode(t *testing.T) {
 	}
 	old := s.browser(t, u.email)
 	old.pw = oldPassword
-	if ok, _ := old.signIn(); ok {
-		t.Error("old password still works")
-	}
+	expect(t, "the old password after the reset", old.signInAttempt(), wrongAnswer)
 	t.Log("password reset with the emailed code: the new password works, the old one doesn't")
 }
 
@@ -498,7 +494,5 @@ func TestAuthentikAdminNeedsSecondFactor(t *testing.T) {
 	}
 	t.Logf("akadmin after a correct password: %s (second factor required)", c.Component)
 	// An ordinary user isn't asked.
-	if ok, msg := s.passwordAttempt(t, "owner@example.org", s.owner(t).pw); !ok {
-		t.Errorf("owner: %s", msg)
-	}
+	expect(t, "the owner signing in", s.passwordAttempt(t, "owner@example.org", s.owner(t).pw), accepted)
 }
