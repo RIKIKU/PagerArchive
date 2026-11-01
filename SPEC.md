@@ -466,8 +466,8 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 
 ### 12.1 Releases (owner, 2026-11-01)
-- **Every merge into main is a release.** The branch sets the release's version in the `VERSION` file (a semantic version: a milestone raises the minor number, a fix the patch number). CI fails a branch whose `VERSION` isn't higher than main's, so every merge is a new version.
-- Once every check has passed on main, CI tags the merge commit `v<version>`, creates the GitHub release with the client binaries and their checksums, publishes the images tagged with the version as well as `latest`, `main` and `sha-<commit>`, and publishes the PowerShell module if it changed (R63).
+- **Every merge into main is a release.** The branch sets the release's version in the `VERSION` file (a semantic version: a milestone raises the minor number, a fix the patch number). CI fails a branch whose `VERSION` isn't higher than main's, and the release fails before publishing anything if `VERSION` isn't higher than every earlier release's, so every merge is a new version (owner, 2026-11-02).
+- Once every check has passed on main, CI tags the merge commit `v<version>`, creates the GitHub release with the client binaries and their checksums, publishes the images tagged with the version, its `MAJOR.MINOR` (such as `0.12`), `latest`, `main` and `sha-<commit>`, and publishes the PowerShell module if it changed since the previous release (R63).
 - Nothing is released by hand: v0.12.0 is the last tag made by hand. Docs-only pushes don't run CI (ADR 0014), so they never release.
 - If part of a release fails to publish, that job is re-run; a version is never reused.
 
