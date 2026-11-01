@@ -50,6 +50,7 @@ PagerArchive is for **people interested in what's happening on their network. It
 | Heartbeat | A periodic page the network sends to show it's alive. Its capcodes are listed in the network profile |
 | Golden table | A JSON file of real-format raw lines and the exact fields they must parse to |
 | Album | A named list of messages one user keeps for later (R82). Only its creator sees it |
+| Look | A named style for the whole UI: colours, type, spacing, corners and how priority is shown, each in light and dark (R82c). Harbour is the default |
 
 ## 4. Scope
 
@@ -312,6 +313,10 @@ Reference apps chosen by the owner: Grafana (side menu, groups, breadcrumbs) and
 - **R82a. Albums don't keep messages.** Retention (R45) deletes messages in albums like any others, and a deleted message leaves its albums. An album left with no messages is deleted too. The album screen says this in one line.
 - **R82b. Albums and accounts.** A deactivated user's albums are kept, since they may be reactivated. Deleting an account deletes its albums (R43c).
 
+### 7.20 Looks (owner, 2026-11-02)
+- **R82c. Everything is a token.** From M13, every value that styles the UI is a token in one place: colours, type sizes, spacing, corner radii, target sizes, and how each priority is shown (edge, tint, dot or label). Components use tokens only, and CI fails a component with a hard-coded value. A look is one set of these tokens, in light and dark, so a look can be added or changed without touching a component. M13 builds Harbour only (ADR 0015).
+- **R82d. Choosing a look.** Users choose between **Harbour** (the default) and **Console** (M13's second prototype, ADR 0015) in the account menu, beside Auto / Light / Dark. The look is **saved on the account**, so it follows the user to every browser and device. A change applies at once, without reloading, and a page never shows the default look first and then switches. Pages before sign-in use Harbour. Every look meets WCAG 2.1 AA in light and dark (section 8).
+
 ## 8. Constraints
 
 | Constraint | Because |
@@ -411,6 +416,8 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A70. Phones.** **Given** user B and an admin at 375 px, **then** each sees the bottom bar, and More holds no print sheet, no Administration and no way to set up an integration; **when** B pauses an integration on the phone, **then** it's paused; **when** B opens the print page's address directly, **then** it works.
 - **A71. Scrubber.** **Given** 3 years and 2 months of made-up messages, with one month holding 10 times the usual number, **when** B drags the scrubber to a date 2 years ago, **then** the list shows that date's messages; the busy month shows more dots than its neighbours, and years older than 3 show labels only; **when** B searches `alias:"Station 1"`, **then** the scrubber shows only Station 1's years and counts. With 1,500 pages a day for 3 years, the scrubber's counts load within 1 second, within the resource budget.
 - **A72. Albums.** **Given** user B, **when** B creates the album "Big storm" and adds 3 messages, **then** it appears under Albums in the menu with 3 messages; **when** user C or an admin asks the API for it, **then** it's refused; **when** a redaction rule is added that matches one of its messages, **then** after the nightly run the album shows that message redacted; **when** retention deletes 2 of its messages, **then** the album holds 1; **when** the last one is deleted, **then** the album is gone; **when** B deletes their account, **then** B's albums are gone.
+- **A73. Style tokens** (owner, 2026-11-02). **When** a test commit gives a component a hard-coded colour, size, spacing or corner radius, **then** CI fails and names the file and value. **When** Harbour's tokens are swapped for a test set with every value changed, **then** screenshots of every page change, and no page keeps a Harbour value.
+- **A74. Choosing a look.** **Given** user B on Harbour, **when** B chooses Console in the account menu on a PC, **then** the page changes to Console without reloading; **when** B then signs in on a phone, **then** the first paint is already Console, in the phone's light or dark mode; **when** user C signs in, **then** C still sees Harbour. Every page passes the axe check and WCAG AA contrast in both looks, light and dark, with screenshots of each as evidence.
 
 ## 10. Example profile (made-up network)
 
@@ -462,8 +469,9 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M10** | Templates in Administration, template icons stored as images and shown beside aliases | A56–A58 |
 | **M11** | Print sheet for training: tick messages, print them as a pager shows them | A60 |
 | **M12** | Telemetry: OpenTelemetry traces, metrics and logs from the API and client; the example monitoring stack with its alerts (owner, 2026-10-30); radio health and the "radio stalled" alert (owner, 2026-10-31) | A62–A67 |
-| **M13** | UI redesign: side menu and icons, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01) | A61, A68–A70 |
+| **M13** | UI redesign: side menu and icons, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01); every style value is a token (R82c, owner 2026-11-02) | A61, A68–A70, A73 |
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
+| **M15** | Looks: Console as a second look, chosen in the account menu and saved on the account (R82d) | A74 |
 
 ### 12.1 Releases (owner, 2026-11-01)
 - **Every merge into main is a release.** The branch sets the release's version in the `VERSION` file (a semantic version: a milestone raises the minor number, a fix the patch number). CI fails a branch whose `VERSION` isn't higher than main's, and the release fails before publishing anything if `VERSION` isn't higher than every earlier release's, so every merge is a new version (owner, 2026-11-02).
