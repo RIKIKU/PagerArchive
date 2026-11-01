@@ -385,8 +385,9 @@ jobs:
           retention-days: 14
 
   # The release (SPEC.md 12.1, ADR 0016): on a push to main whose checks all
-  # passed, before anything is published. The plan fails if v<VERSION> is
-  # already a tag on another commit, so nothing is published. Otherwise this
+  # passed, before anything is published. The plan fails if VERSION isn't
+  # higher than the newest v* tag, or if v<VERSION> is already a tag on
+  # another commit, so nothing is published. Otherwise this
   # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
   # GitHub release with the client's binaries and checksums, and passes on
   # whether the module is published. A tag pushed with GITHUB_TOKEN starts no
@@ -402,6 +403,7 @@ jobs:
       contents: write
     outputs:
       version: ${{ steps.plan.outputs.version }}
+      major_minor: ${{ steps.plan.outputs.major_minor }}
       tag: ${{ steps.plan.outputs.tag }}
       module: ${{ steps.plan.outputs.module }}
       module_version: ${{ steps.plan.outputs.module_version }}
@@ -413,7 +415,7 @@ jobs:
         id: plan
         run: |
           git fetch --force --tags origin
-          sh scripts/ci/release-plan.sh "${{ github.event.before }}" "$GITHUB_SHA"
+          sh scripts/ci/release-plan.sh "$GITHUB_SHA"
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -460,8 +462,8 @@ jobs:
           gh release upload "$TAG" dist/* --clobber
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
-  # 2026-10-13): a release (a push to main) -> <VERSION>, latest, main and
-  # sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
+  # 2026-10-13): a release (a push to main) -> <VERSION>, its MAJOR.MINOR,
+  # latest, main and sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
   # pushes build the images without publishing them. Off main the release job
   # is skipped, so these run unless something they need failed.
   publish-server:
@@ -491,6 +493,7 @@ jobs:
           images: ghcr.io/rikiku/pagerarchive
           tags: |
             type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.release.outputs.major_minor || 'none' }},enable=${{ env.RELEASE }}
             type=raw,value=latest,enable=${{ env.RELEASE }}
             type=raw,value=main,enable=${{ env.RELEASE }}
             type=sha,prefix=sha-,format=short
@@ -590,6 +593,7 @@ jobs:
           images: ghcr.io/rikiku/pagerarchive-client
           tags: |
             type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.release.outputs.major_minor || 'none' }},enable=${{ env.RELEASE }}
             type=raw,value=latest,enable=${{ env.RELEASE }}
             type=raw,value=main,enable=${{ env.RELEASE }}
             type=sha,prefix=sha-,format=short
@@ -601,13 +605,14 @@ jobs:
           docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
 
   # The PowerShell module on the PowerShell Gallery (R63): only from a release
-  # whose plan said "publish" (the push changed powershell/PagerArchive/ and
-  # the manifest's version isn't on the Gallery yet), with the manifest's own
-  # version, not VERSION. Otherwise it's skipped, and the release job's log
-  # and the release notes say "module unchanged: the Gallery keeps <version>".
-  # Re-run after a failure, it publishes the version, or finds it already
-  # there. Skipped, successfully, while the PSGALLERY_API_KEY secret doesn't
-  # exist (the owner creates it).
+  # whose plan said "publish" (powershell/PagerArchive/ changed since the
+  # previous release and the manifest's version isn't on the Gallery yet),
+  # with the manifest's own version, not VERSION. Otherwise it's skipped, and
+  # the release job's log and the release notes say "module unchanged: the
+  # Gallery keeps <version>". Without the PSGALLERY_API_KEY secret it fails,
+  # since the release notes already say the module is published (owner,
+  # 2026-11-02). Re-run after a failure, it publishes the version, or finds
+  # it already there.
   publish-powershell:
     name: Publish the PowerShell module to the PowerShell Gallery
     needs: [release]
@@ -618,19 +623,14 @@ jobs:
       PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
       MODULE_VERSION: ${{ needs.release.outputs.module_version }}
     steps:
-      - name: Is the Gallery key set?
-        id: key
+      - name: The Gallery key is set
         run: |
           if [ -z "$PSGALLERY_API_KEY" ]; then
-            echo "PowerShell Gallery key not set: skipping publishing"
-            echo "set=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "set=true" >> "$GITHUB_OUTPUT"
+            echo "::error::The PSGALLERY_API_KEY secret isn't set, so PagerArchive $MODULE_VERSION can't be published: set the secret (Settings, Secrets and variables, Actions), then re-run this job."
+            exit 1
           fi
       - uses: actions/checkout@v5
-        if: steps.key.outputs.set == 'true'
       - name: Check the manifest and publish its version
-        if: steps.key.outputs.set == 'true'
         shell: pwsh
         run: |
           $manifest = Test-ModuleManifest -Path powershell/PagerArchive/PagerArchive.psd1 -ErrorAction Stop
