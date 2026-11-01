@@ -217,14 +217,23 @@
 	});
 
 	// R81a: keep what it has and where it is, on every way out.
+	// And when it stays on the screen with the same search, as a message
+	// opens or closes beside it (R80), it stays where it was, though it's
+	// now narrower or wider: not every browser keeps the rows in view by
+	// itself.
+	let left: { key: string; place: Kept['place'] } | undefined;
 	if (untrack(() => remember)) {
 		beforeNavigate(() => {
-			if (askedKey !== undefined) keep({ key: askedKey, messages: $state.snapshot(messages) as Message[], next, place: place() });
+			if (askedKey === undefined) return;
+			left = { key: askedKey, place: place() };
+			keep({ key: askedKey, messages: $state.snapshot(messages) as Message[], next, place: left.place });
 		});
 		afterNavigate((nav) => {
 			// The back and forward buttons: the browser and SvelteKit put the
 			// page back where it was themselves.
 			popped = nav.type === 'popstate';
+			if (settled && !popped && keepScroll && left && left.key === askedKey) pendingScroll = left.place;
+			left = undefined;
 			settled = true;
 			applyScroll();
 		});
