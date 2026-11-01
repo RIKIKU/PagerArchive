@@ -30,6 +30,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	pagerarchive "github.com/RIKIKU/PagerArchive"
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
@@ -68,8 +69,8 @@ func profileHash(set *profile.Set, net *profile.Network) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// version is set at build time with -ldflags "-X main.version=...".
-var version = "dev"
+// version is the release's, from the VERSION file (ADR 0016).
+var version = pagerarchive.Version
 
 const usage = `usage: pagerarchive <command> [arguments]
 

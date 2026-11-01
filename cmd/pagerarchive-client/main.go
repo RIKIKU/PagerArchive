@@ -37,13 +37,14 @@ import (
 	"syscall"
 	"time"
 
+	pagerarchive "github.com/RIKIKU/PagerArchive"
 	"github.com/RIKIKU/PagerArchive/internal/client"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/radio"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
-var version = "dev"
+var version = pagerarchive.Version
 
 func main() {
 	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "version") {

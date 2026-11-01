@@ -3,10 +3,15 @@ name: CI
 # A push or pull request that changes only documentation (SPEC.md, docs/**,
 # other Markdown) runs nothing (owner, 2026-11-01; ADR 0014). Any other file
 # changed runs everything. The map sprites' LICENSE.md is built into the
-# server (web/web.go embeds web/build), so web/static/** counts as code. Tag
-# pushes ignore path filters, so releases always run.
+# server (web/web.go embeds web/build), so web/static/** counts as code.
+#
+# Every push to main that runs is a release (SPEC.md 12.1, ADR 0016): once
+# every check has passed, the release job tags the commit v<VERSION> and the
+# publish jobs follow, in the same run. Pushes are filtered to branches, so a
+# tag push (the release's own, or one made by hand) starts no run at all.
 on:
   push:
+    branches: ["**"]
     paths:
       - "**"
       - "!SPEC.md"
@@ -29,6 +34,21 @@ permissions:
 # Every job has a time limit well above its usual time (ADR 0012), so a hang
 # fails in minutes rather than after GitHub's 6 hours.
 jobs:
+  # A branch's or pull request's VERSION is higher than main's, and so is the
+  # module's ModuleVersion if the branch changes the module (SPEC.md 12.1,
+  # R63). On main, the release job's plan checks the version instead.
+  versions:
+    name: VERSION and the module's version are raised
+    if: github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Compare with main
+        run: sh scripts/ci/check-versions.sh origin/main
+
   test:
     name: Tests, golden tables and acceptance checks
     runs-on: ubuntu-24.04
@@ -275,12 +295,19 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Build client image (native ${{ matrix.arch }})
-        run: docker build -f Dockerfile.client --build-arg VERSION=${{ github.sha }} -t pagerarchive-client:ci .
-      - name: Client --version
-        run: docker run --rm pagerarchive-client:ci --version
+        run: docker build -f Dockerfile.client -t pagerarchive-client:ci .
+      - name: Client --version is VERSION
+        run: |
+          docker run --rm pagerarchive-client:ci --version | tee client-version.txt
+          test "$(cat client-version.txt)" = "pagerarchive-client $(cat VERSION)"
       - name: Build server image (amd64 only)
         if: matrix.server
-        run: docker build --build-arg VERSION=${{ github.sha }} -t pagerarchive:ci .
+        run: docker build -t pagerarchive:ci .
+      - name: Server version is VERSION
+        if: matrix.server
+        run: |
+          docker run --rm pagerarchive:ci version | tee server-version.txt
+          test "$(cat server-version.txt)" = "pagerarchive $(cat VERSION)"
       - name: Server image runs validate-profile
         if: matrix.server
         run: docker run --rm -v "$PWD/profiles/example:/profiles:ro" pagerarchive:ci validate-profile /profiles
@@ -357,20 +384,98 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # The release (SPEC.md 12.1, ADR 0016): on a push to main whose checks all
+  # passed, before anything is published. The plan fails if v<VERSION> is
+  # already a tag on another commit, so nothing is published. Otherwise this
+  # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
+  # GitHub release with the client's binaries and checksums, and passes on
+  # whether the module is published. A tag pushed with GITHUB_TOKEN starts no
+  # run, and the push trigger takes branches only anyway. Re-run, the job
+  # finds its own tag and release on this commit and finishes them.
+  release:
+    name: Release v<VERSION> (tag, GitHub release, client binaries)
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      module: ${{ steps.plan.outputs.module }}
+      module_version: ${{ steps.plan.outputs.module_version }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Decide what to publish
+        id: plan
+        run: |
+          git fetch --force --tags origin
+          sh scripts/ci/release-plan.sh "${{ github.event.before }}" "$GITHUB_SHA"
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # For a Raspberry Pi without Docker (docs/client.md).
+      - name: Build the client's binaries
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          mkdir -p dist
+          for arch in amd64 arm64; do
+            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w" \
+              -o "dist/pagerarchive-client-$TAG-linux-$arch" ./cmd/pagerarchive-client
+          done
+          (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
+      - name: Tag the commit
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "$TAG is already on this commit (a re-run)"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "PagerArchive $TAG" "$GITHUB_SHA"
+            git push origin "refs/tags/$TAG"
+          fi
+      - name: Create the GitHub release with the binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          MODULE_NOTES: ${{ steps.plan.outputs.notes }}
+        run: |
+          {
+            echo "PagerArchive $TAG, from $GITHUB_SHA."
+            echo
+            echo "- Images: \`ghcr.io/rikiku/pagerarchive:$VERSION\` and \`ghcr.io/rikiku/pagerarchive-client:$VERSION\` (amd64 and arm64)."
+            echo "- The client's binaries for linux/amd64 and linux/arm64, with \`SHA256SUMS\` (docs/client.md)."
+            echo "- $MODULE_NOTES"
+          } > notes.md
+          cat notes.md
+          gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --verify-tag --title "PagerArchive $TAG" --notes-file notes.md
+          gh release upload "$TAG" dist/* --clobber
+
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
-  # 2026-10-13): main -> latest, main, sha-<commit>; a vX.Y.Z tag -> X.Y.Z,
-  # X.Y, sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
-  # pushes build the images without publishing them.
+  # 2026-10-13): a release (a push to main) -> <VERSION>, latest, main and
+  # sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
+  # pushes build the images without publishing them. Off main the release job
+  # is skipped, so these run unless something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
       packages: write
     env:
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      RELEASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -385,16 +490,14 @@ jobs:
         with:
           images: ghcr.io/rikiku/pagerarchive
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=main,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=latest,enable=${{ env.RELEASE }}
+            type=raw,value=main,enable=${{ env.RELEASE }}
             type=sha,prefix=sha-,format=short
       - uses: docker/build-push-action@v7
         with:
           context: .
           platforms: linux/amd64
-          build-args: VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: ${{ env.PUBLISH == 'true' }}
@@ -405,7 +508,8 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:
         include:
@@ -419,7 +523,7 @@ jobs:
       contents: read
       packages: write
     env:
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
+      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
     steps:
       - uses: actions/checkout@v5
       - uses: docker/setup-buildx-action@v4
@@ -441,7 +545,6 @@ jobs:
           context: .
           file: Dockerfile.client
           platforms: linux/${{ matrix.arch }}
-          build-args: VERSION=${{ github.ref_type == 'tag' && github.ref_name || github.sha }}
           labels: ${{ steps.meta.outputs.labels }}
           outputs: type=image,name=ghcr.io/rikiku/pagerarchive-client,push-by-digest=true,name-canonical=true,push=${{ env.PUBLISH }}
       - name: Keep the digest
@@ -460,13 +563,15 @@ jobs:
 
   publish-client-manifest:
     name: Publish client image (amd64 + arm64)
-    needs: [publish-client]
-    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    needs: [publish-client, release]
+    if: ${{ !failure() && !cancelled() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       packages: write
+    env:
+      RELEASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -484,10 +589,9 @@ jobs:
         with:
           images: ghcr.io/rikiku/pagerarchive-client
           tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=main,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=latest,enable=${{ env.RELEASE }}
+            type=raw,value=main,enable=${{ env.RELEASE }}
             type=sha,prefix=sha-,format=short
       - name: Join the architectures under the tags
         working-directory: digests
@@ -496,18 +600,23 @@ jobs:
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
           docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
 
-  # The PowerShell module on the PowerShell Gallery (R63), only from a
-  # release (a v* tag) whose checks all passed, with the release's version.
-  # Skipped, successfully, while the PSGALLERY_API_KEY secret doesn't exist
-  # (the owner creates it).
+  # The PowerShell module on the PowerShell Gallery (R63): only from a release
+  # whose plan said "publish" (the push changed powershell/PagerArchive/ and
+  # the manifest's version isn't on the Gallery yet), with the manifest's own
+  # version, not VERSION. Otherwise it's skipped, and the release job's log
+  # and the release notes say "module unchanged: the Gallery keeps <version>".
+  # Re-run after a failure, it publishes the version, or finds it already
+  # there. Skipped, successfully, while the PSGALLERY_API_KEY secret doesn't
+  # exist (the owner creates it).
   publish-powershell:
     name: Publish the PowerShell module to the PowerShell Gallery
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [release]
+    if: needs.release.outputs.module == 'publish'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
       PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+      MODULE_VERSION: ${{ needs.release.outputs.module_version }}
     steps:
       - name: Is the Gallery key set?
         id: key
@@ -520,46 +629,19 @@ jobs:
           fi
       - uses: actions/checkout@v5
         if: steps.key.outputs.set == 'true'
-      - name: Set the release's version, check and publish
+      - name: Check the manifest and publish its version
         if: steps.key.outputs.set == 'true'
         shell: pwsh
         run: |
-          $version = '${{ github.ref_name }}'.TrimStart('v')
-          $out = Join-Path $env:RUNNER_TEMP 'PagerArchive'
-          Copy-Item -Path powershell/PagerArchive -Destination $out -Recurse
-          $manifest = Join-Path $out 'PagerArchive.psd1'
-          Update-PSModuleManifest -Path $manifest -ModuleVersion $version
-          Test-ModuleManifest -Path $manifest -ErrorAction Stop | Format-List Name, Version, PowerShellVersion, CompatiblePSEditions
-          Publish-PSResource -Path $out -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY
-
-  # The receiving client's binaries for linux/amd64 and linux/arm64 (for a
-  # Raspberry Pi without Docker, docs/client.md), with SHA-256 checksums,
-  # attached to the release of a v* tag whose checks all passed.
-  release-binaries:
-    name: Attach client binaries to the release
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-go@v6
-        with:
-          go-version-file: go.mod
-      - name: Build
-        run: |
-          mkdir -p dist
-          for arch in amd64 arm64; do
-            CGO_ENABLED=0 GOOS=linux GOARCH=$arch go build -trimpath -ldflags "-s -w -X main.version=$GITHUB_REF_NAME" \
-              -o "dist/pagerarchive-client-$GITHUB_REF_NAME-linux-$arch" ./cmd/pagerarchive-client
-          done
-          (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
-      - name: Attach to the release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 ||
-            gh release create "$GITHUB_REF_NAME" --verify-tag --title "$GITHUB_REF_NAME" --notes "PagerArchive $GITHUB_REF_NAME"
-          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          $manifest = Test-ModuleManifest -Path powershell/PagerArchive/PagerArchive.psd1 -ErrorAction Stop
+          $manifest | Format-List -Property Name, Version, PowerShellVersion, CompatiblePSEditions
+          if ("$($manifest.Version)" -ne $env:MODULE_VERSION) {
+              throw "The manifest says $($manifest.Version), the release's plan $env:MODULE_VERSION"
+          }
+          $published = Find-PSResource -Name PagerArchive -Version $env:MODULE_VERSION -Repository PSGallery -ErrorAction SilentlyContinue
+          if ($published) {
+              Write-Output -InputObject "PagerArchive $env:MODULE_VERSION is on the Gallery already (an earlier attempt published it)"
+          } else {
+              Publish-PSResource -Path powershell/PagerArchive -Repository PSGallery -ApiKey $env:PSGALLERY_API_KEY
+              Write-Output -InputObject "Published PagerArchive $env:MODULE_VERSION"
+          }
