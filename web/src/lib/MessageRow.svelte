@@ -65,7 +65,7 @@
 	.row {
 		position: relative;
 		min-width: 0;
-		padding: 12px 16px;
+		padding: var(--row-pad-y) var(--row-pad-x);
 		border-bottom: var(--border-width) solid var(--border);
 		border-left: var(--edge-width) solid transparent;
 		background: var(--plain-row);
