@@ -1,6 +1,6 @@
 @{
     RootModule           = 'PagerArchive.psm1'
-    ModuleVersion        = '0.9.0'
+    ModuleVersion        = '0.12.0'
     GUID                 = '5e2fd431-890a-492d-8fc8-f7217b3bb42d'
     Author               = 'PagerArchive contributors'
     CompanyName          = 'PagerArchive'

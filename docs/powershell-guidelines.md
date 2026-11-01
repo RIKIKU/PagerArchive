@@ -110,4 +110,4 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 ## 11. Tests and publishing
 
 - **PSScriptAnalyzer runs in CI with zero warnings allowed.** Pester 5 runs the meta-tests above for every exported command, plus the behaviour checks in SPEC.md (A51–A54) against the real stack. **[pester]**
-- **Publishing:** the module is published to the PowerShell Gallery as **PagerArchive** by CI, only from a release whose checks all passed, and with the release's version (owner). The Gallery key is a CI secret the owner sets. Nothing is published from a branch.
+- **Publishing:** the module is published to the PowerShell Gallery as **PagerArchive** by CI, only from a release whose checks all passed, only when that release changed the module, and with the module's own version: `ModuleVersion` in the manifest, separate from PagerArchive's `VERSION` (R63, owner 2026-11-01; ADR 0016). A branch that changes `powershell/PagerArchive/` raises `ModuleVersion`, or CI fails it. The Gallery key is a CI secret the owner sets. Nothing is published from a branch.

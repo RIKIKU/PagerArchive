@@ -11,5 +11,6 @@ Self-hosted archive and live browser for any POCSAG paging network. **`SPEC.md` 
 - Never commit anything named `*PRIVATE*`, `.env`, or secrets.
 - Show evidence when claiming something works: the command run and its output.
 - Docs-only pushes don't run CI (SPEC.md, docs/**, other Markdown; ADR 0014).
+- Every merge to main is a release (SPEC.md 12.1, ADR 0016): raise `VERSION`, and `ModuleVersion` in `powershell/PagerArchive/PagerArchive.psd1` when the module changes.
 - Styles use the tokens in web/src/app.css; no hard-coded colours or font sizes in components.
 - The PowerShell module follows `docs/powershell-guidelines.md`.

@@ -12,8 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 COPY --from=web /web/build ./web/build
-ARG VERSION=dev
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o /out/pagerarchive ./cmd/pagerarchive
+RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/pagerarchive ./cmd/pagerarchive
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/pagerarchive /usr/local/bin/pagerarchive
