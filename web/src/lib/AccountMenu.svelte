@@ -48,7 +48,7 @@
 		{#if me}
 			<p class="who"><span class="name">{me.name ?? me.email}</span>{#if me.name}<span class="email">{me.email}</span>{/if}</p>
 		{/if}
-		<a class="row" href="/account" onclick={() => (open = false)}><Icon name="profile" />Profile</a>
+		<a class="row" href="/account/profile" onclick={() => (open = false)}><Icon name="profile" />Profile</a>
 		<label class="theme">
 			<span class="row-label"><Icon name={theme === 'dark' ? 'dark' : theme === 'light' ? 'light' : 'auto'} />Colour theme</span>
 			<select bind:value={theme}>

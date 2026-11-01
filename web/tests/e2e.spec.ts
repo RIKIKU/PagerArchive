@@ -218,7 +218,7 @@ test('R44 signed-out visitors on a new install see first-admin set-up', async ({
 // R44 screens: the account page shows who you are and who invited you; the
 // users page lists users for admins, with their inviter.
 test('account and users pages', async ({ page, browser }) => {
-	await page.goto('/account');
+	await page.goto('/account/profile');
 	await expect(page.getByRole('heading', { level: 1, name: 'Your account' })).toBeVisible();
 	await expect(page.locator('dl')).toContainText('user@example.test');
 	await expect(page.locator('dl')).toContainText('Test Admin (admin@example.test)');
@@ -298,11 +298,11 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account', '/menu/tools', '/menu/reports', '/menu/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(330_000); // 33 views
+			test.setTimeout(360_000); // 35 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
@@ -370,7 +370,7 @@ for (const scheme of ['light', 'dark'] as const) {
 					await expect(page.locator('main h1').first()).toBeVisible();
 					if (view === 'admin-user' || view === 'admin-tree-preview') await expect(page.getByTestId('tree-person').first()).toBeVisible();
 					if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
-					else if (path.startsWith('/reports')) await expect(page.getByTestId('report')).toBeVisible();
+					else if (path.startsWith('/reports/capcode')) await expect(page.getByTestId('report')).toBeVisible();
 					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
 					else await page.waitForTimeout(300);
 				}
@@ -2207,7 +2207,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 				console.log(`A68 (${role}): ${g} > ${label} in ${clicks} click(s), ${Date.now() % 100000}`);
 				expect(clicks, `${g} > ${label}`).toBeLessThanOrEqual(2);
 				expect(await crumbsOf(page), `${g} > ${label}: its breadcrumbs`).toEqual(
-					[{ label: g, href: g === 'Administration' ? '/admin' : `/menu/${g.toLowerCase()}` }, { label, href: null }]
+					[{ label: g, href: g === 'Administration' ? '/admin' : `/${g.toLowerCase()}` }, { label, href: null }]
 				);
 			}
 		}
@@ -2252,7 +2252,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	const seen: Awaited<ReturnType<typeof crumbsOf>>[] = [];
 	const box = user.getByRole('combobox', { name: 'Search' });
 	// From the menu: Messages, then the alias on a row.
-	await user.goto('/account');
+	await user.goto('/account/profile');
 	await user.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Messages', exact: true }).click();
 	await user.getByTestId('message-list').getByRole('link', { name: 'Station 1', exact: true }).first().click();
 	await expect(user).toHaveURL(/\/aliases\/\d+$/);

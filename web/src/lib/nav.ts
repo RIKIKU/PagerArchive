@@ -33,7 +33,7 @@ export const groups: Group[] = [
 		label: 'Tools',
 		icon: 'tools',
 		text: 'Printing for training, and capcodes with no alias',
-		href: '/menu/tools',
+		href: '/tools',
 		entries: [
 			{ href: '/sheet', label: 'Print sheet', icon: 'print', desktopOnly: true, text: 'Pick messages and print their text for training.' },
 			{ href: '/capcodes', label: 'Unknown capcodes', icon: 'unknown', text: 'Capcodes with no alias, how many pages each had and when.' }
@@ -44,17 +44,17 @@ export const groups: Group[] = [
 		label: 'Reports',
 		icon: 'reports',
 		text: 'Counts of past pages',
-		href: '/menu/reports',
-		entries: [{ href: '/reports', label: 'Capcode report', icon: 'reports', text: "One capcode's Emergency messages per event category, for a date range." }]
+		href: '/reports',
+		entries: [{ href: '/reports/capcode', label: 'Capcode report', icon: 'reports', text: "One capcode's Emergency messages per event category, for a date range." }]
 	},
 	{
 		id: 'account',
 		label: 'Account',
 		icon: 'account',
 		text: 'Your profile, integrations, requests and invitations',
-		href: '/menu/account',
+		href: '/account',
 		entries: [
-			{ href: '/account', label: 'Profile', icon: 'profile', text: 'Who you are, who invited you, and deleting your account.' },
+			{ href: '/account/profile', label: 'Profile', icon: 'profile', text: 'Who you are, who invited you, and deleting your account.' },
 			{ href: '/integrations', label: 'Integrations', icon: 'integrations', text: 'Send pages on to your own systems.' },
 			{ href: '/requests', label: 'My requests', icon: 'requests', text: 'Aliases you asked for or asked to change, and what the admins said.' },
 			{ href: '/account/invite', label: 'Invite someone', icon: 'invite', text: 'Send someone an invitation, and see the ones you sent.' }

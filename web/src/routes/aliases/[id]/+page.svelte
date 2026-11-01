@@ -69,7 +69,7 @@
 			<dd>{alias.ignored ? 'Yes: its pages are hidden from the main list' : 'No'}</dd>
 		</dl>
 		{#if !/[%_]/.test(alias.pattern)}
-			<p><a href="/reports?capcode={alias.pattern}">Report for this capcode</a></p>
+			<p><a href="/reports/capcode?capcode={alias.pattern}">Report for this capcode</a></p>
 		{/if}
 		<div aria-live="polite">
 			{#if notice}<p class="ok" role="status">{notice}</p>{/if}

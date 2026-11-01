@@ -84,7 +84,7 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	await enrol(user, request, tester, 'Test Person');
 	await user.waitForURL((u) => u.origin === app && u.pathname === '/');
 	await expect(user.getByRole('status').filter({ hasText: 'Live' })).toBeVisible();
-	await user.goto('/account');
+	await user.goto('/account/profile');
 	await expect(user.locator('dl')).toContainText(tester);
 	await expect(user.locator('dl')).toContainText('User');
 	await expect(user.locator('dl')).toContainText(`Owner Person (${OWNER})`);

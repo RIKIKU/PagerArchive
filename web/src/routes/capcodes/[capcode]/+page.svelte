@@ -45,7 +45,7 @@
 			{#if c.last_seen}<dt>Last seen</dt>
 				<dd><time datetime={isoAttr(c.last_seen)}>{dateTime(c.last_seen, tz)}</time></dd>{/if}
 		</dl>
-		<p><a href="/reports?capcode={c.capcode}">Report for this capcode</a></p>
+		<p><a href="/reports/capcode?capcode={c.capcode}">Report for this capcode</a></p>
 		{#if meta?.role === 'admin'}
 			<p><a class="button secondary" href="/admin/aliases?add={c.capcode}">Add an alias for this capcode</a></p>
 		{:else if meta}
