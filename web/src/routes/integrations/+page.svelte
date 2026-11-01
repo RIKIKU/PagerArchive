@@ -4,7 +4,9 @@
 	import { api, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import IntegrationForm from '#lib/IntegrationForm.svelte';
+	import Icon from '#lib/Icon.svelte';
 	import { deliveryLabels, kindLabels, notice as convenience, statusLabel } from '#lib/integrations.ts';
+	import { screen } from '#lib/screen.svelte.ts';
 
 	let meta: Meta | undefined = $state();
 	let list: Integration[] = $state([]);
@@ -109,19 +111,45 @@
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if notice}<p class="ok" role="status">{notice}</p>{/if}
 
-{#if enabled && meta && editing === undefined}
-	<div class="actions top">
-		<button type="button" onclick={() => ((editing = 'new'), (notice = ''))}>New integration</button>
-	</div>
-{/if}
-{#if meta && editing === 'new'}
-	<IntegrationForm {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
+{#if screen.phone}
+	<!-- R81: on a phone, a Pause/Resume switch for each, and nothing else;
+	     setting one up or editing it is for a desktop. -->
+	{#if loaded && list.length === 0}<p class="status">You have no integrations yet.</p>{/if}
+	<ul class="switches" data-testid="integration-switches">
+		{#each list as i (i.id)}
+			{@const on = i.status === 'active'}
+			<li>
+				<span class="name">{i.name}</span>
+				<button
+					class="switch"
+					type="button"
+					role="switch"
+					aria-checked={on}
+					aria-label="{i.name}: sending"
+					disabled={!enabled || (!on && i.paused_by === 'admin')}
+					onclick={() =>
+						act(() => (on ? api.pauseIntegration(i.id) : api.resumeIntegration(i.id)), `${on ? 'Paused' : 'Resumed'} “${i.name}”.`)}
+					><span class="knob" aria-hidden="true"></span><span data-testid="integration-status">{statusLabel(i)}</span></button
+				>
+			</li>
+		{/each}
+	</ul>
+{:else}
+	{#if enabled && meta && editing === undefined}
+		<div class="actions top">
+			<button type="button" onclick={() => ((editing = 'new'), (notice = ''))}><Icon name="integrations" />New integration</button>
+		</div>
+	{/if}
+	{#if meta && editing === 'new'}
+		<IntegrationForm {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
+	{/if}
+
+	{#if loaded && list.length === 0 && editing !== 'new'}
+		<p class="status">You have no integrations yet.</p>
+	{/if}
 {/if}
 
-{#if loaded && list.length === 0 && editing !== 'new'}
-	<p class="status">You have no integrations yet.</p>
-{/if}
-
+{#if !screen.phone}
 <ul class="cards">
 	{#each list as i (i.id)}
 		<li data-testid="integration">
@@ -212,45 +240,113 @@
 		</li>
 	{/each}
 </ul>
+{/if}
 
 <style>
 	.convenience {
-		margin: 0 0.75rem 0.5rem;
-		max-width: 44rem;
-		padding: 0.5rem 0.75rem;
+		margin: 0 0 var(--space-md);
+		max-width: var(--measure);
+		padding: var(--space-sm) var(--space-md);
 		background: var(--warn-bg);
 		color: var(--warn-fg);
-		border-radius: 0.3rem;
-		font-weight: 600;
+		border-radius: var(--radius-small);
+		font-weight: var(--weight-strong);
 	}
 	.intro {
-		margin: 0 0.75rem;
-		max-width: 44rem;
+		margin: 0;
+		max-width: var(--measure);
 		color: var(--muted);
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin: 0.5rem 0;
+		gap: var(--space-sm);
+		margin: var(--space-md) 0 0;
 	}
 	.actions.top {
-		margin: 0.75rem;
+		margin: var(--space-lg) 0;
 	}
-	.cards {
+	.cards,
+	.switches {
+		display: grid;
+		gap: var(--space-md);
 		list-style: none;
 		padding: 0;
 		margin: 0;
 	}
 	.cards > li {
-		border-bottom: 1px solid var(--border);
-		padding: 0.75rem;
+		padding: var(--space-lg) var(--space-xl);
+		background: var(--surface);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+	}
+	.switches {
+		margin-top: var(--space-lg);
+	}
+	.switches li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: var(--space-lg);
+		padding: var(--space-sm) var(--space-lg);
+		background: var(--surface);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+	}
+	.name {
+		font-weight: var(--weight-strong);
+		overflow-wrap: anywhere;
+	}
+	.switch {
+		flex: none;
+		gap: var(--space-sm);
+		padding: 0 var(--space-2xs);
+		border: 0;
+		background: transparent;
+		color: var(--fg);
+	}
+	.switch:hover,
+	.switch:active {
+		background: transparent;
+	}
+	.knob {
+		position: relative;
+		flex: none;
+		width: var(--switch-width);
+		height: var(--switch-height);
+		border-radius: var(--radius-pill);
+		background: var(--control-border);
+	}
+	.knob::after {
+		content: '';
+		position: absolute;
+		top: var(--switch-inset);
+		left: var(--switch-inset);
+		width: calc(var(--switch-height) - 2 * var(--switch-inset));
+		height: calc(var(--switch-height) - 2 * var(--switch-inset));
+		border-radius: var(--radius-round);
+		background: var(--surface-2);
+		transition: transform 0.15s;
+	}
+	.switch[aria-checked='true'] .knob {
+		background: var(--accent);
+	}
+	.switch[aria-checked='true'] .knob::after {
+		transform: translateX(calc(var(--switch-width) - var(--switch-height)));
+	}
+	.switch:hover .knob {
+		box-shadow: 0 0 0 var(--space-2xs) var(--hover);
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.knob::after {
+			transition: none;
+		}
 	}
 	.head {
 		display: flex;
 		flex-wrap: wrap;
 		align-items: baseline;
-		gap: 0.25rem 0.75rem;
+		gap: var(--space-2xs) var(--space-md);
 	}
 	h2 {
 		font-size: var(--text-lg);
@@ -264,9 +360,9 @@
 	.state,
 	.dstate {
 		font-size: var(--text-sm);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.state.paused,
 	.dstate.failed,
@@ -278,8 +374,8 @@
 	dl {
 		display: grid;
 		grid-template-columns: max-content 1fr;
-		gap: 0.15rem 1rem;
-		margin: 0.5rem 0;
+		gap: var(--space-3xs) var(--space-lg);
+		margin: var(--space-sm) 0;
 	}
 	dt {
 		color: var(--muted);
@@ -289,42 +385,42 @@
 		overflow-wrap: anywhere;
 	}
 	.mono {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 	}
 	.warn {
 		color: var(--warn-fg);
 	}
 	.answer {
-		border-left: 4px solid var(--accent);
+		border-left: var(--rule-width) solid var(--accent);
 		background: var(--surface);
-		padding: 0.25rem 0.75rem;
-		margin: 0.5rem 0;
+		padding: var(--space-2xs) var(--space-md);
+		margin: var(--space-sm) 0;
 	}
 	.answer p {
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 	pre {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
-		margin: 0.25rem 0;
-		max-height: 12rem;
+		margin: var(--space-2xs) 0;
+		max-height: var(--pre-height);
 		overflow-y: auto;
 	}
 	.deliveries {
 		list-style: none;
 		padding: 0;
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 	.deliveries li {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.75rem;
+		gap: var(--space-2xs) var(--space-md);
 		align-items: baseline;
-		padding: 0.25rem 0;
-		border-top: 1px solid var(--border);
+		padding: var(--space-2xs) 0;
+		border-top: var(--border-width) solid var(--border);
 	}
 	.muted {
 		color: var(--muted);

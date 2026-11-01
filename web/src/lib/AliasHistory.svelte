@@ -71,19 +71,19 @@
 
 <style>
 	.alias-history {
-		padding: 0 0.75rem 0.5rem;
-		max-width: 44rem;
+		padding: 0 0 var(--space-sm);
+		max-width: var(--measure);
 	}
 	.alias-history :global(h2),
 	.alias-history :global(h3),
 	.alias-history :global(h4) {
 		font-size: var(--text-lg);
-		margin: 1rem 0 0.25rem;
+		margin: var(--space-lg) 0 var(--space-2xs);
 	}
 	.note {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 	.history {
 		list-style: none;
@@ -91,16 +91,16 @@
 		margin: 0;
 	}
 	.history > li {
-		padding: 0.5rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-sm) 0;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.was {
 		color: var(--muted);
 		overflow-wrap: anywhere;
 	}
 	.fields {
-		margin: 0.2rem 0;
-		padding-left: 1.25rem;
+		margin: var(--space-2xs) 0;
+		padding-left: var(--space-xl);
 		overflow-wrap: anywhere;
 	}
 	.by {

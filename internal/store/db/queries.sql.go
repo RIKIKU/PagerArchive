@@ -3788,6 +3788,98 @@ func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (Stree
 	return i, err
 }
 
+const suggestAgencies = `-- name: SuggestAgencies :many
+SELECT DISTINCT agency FROM templates
+WHERE strpos(lower(agency), lower($1::text)) > 0
+ORDER BY agency
+LIMIT 10
+`
+
+// R33a: template agencies containing what was typed.
+func (q *Queries) SuggestAgencies(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestAgencies, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var agency string
+		if err := rows.Scan(&agency); err != nil {
+			return nil, err
+		}
+		items = append(items, agency)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const suggestAliasNames = `-- name: SuggestAliasNames :many
+SELECT DISTINCT name FROM aliases
+WHERE strpos(lower(name), lower($1::text)) > 0
+ORDER BY name
+LIMIT 10
+`
+
+// R33a: alias names containing what was typed, for the search box.
+func (q *Queries) SuggestAliasNames(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestAliasNames, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const suggestPagingGroups = `-- name: SuggestPagingGroups :many
+WITH RECURSIVE g AS (
+    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
+    UNION ALL
+    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
+    FROM g WHERE g.grp IS NOT NULL
+)
+SELECT grp::text AS paging_group FROM g
+WHERE grp IS NOT NULL AND strpos(lower(grp), lower($1::text)) > 0
+ORDER BY grp
+LIMIT 10
+`
+
+// R33a: paging groups containing what was typed. The groups are few and the
+// messages many, so each distinct group is found with one step down
+// messages_group_idx (a loose index scan), not by reading every message.
+func (q *Queries) SuggestPagingGroups(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestPagingGroups, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var paging_group string
+		if err := rows.Scan(&paging_group); err != nil {
+			return nil, err
+		}
+		items = append(items, paging_group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const templateByID = `-- name: TemplateByID :one
 SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE id = $1
 `

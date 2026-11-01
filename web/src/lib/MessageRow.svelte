@@ -6,30 +6,53 @@
 	import PrintTick from './PrintTick.svelte';
 
 	// pick: a tick box for the print sheet, on the print page only (R67).
-	let { m, tz, fresh = false, pick = false }: { m: Message; tz: string; fresh?: boolean; pick?: boolean } = $props();
+	// selected: the message open beside the list (R80); keepScroll: opening
+	// it leaves the list where it is.
+	let {
+		m,
+		tz,
+		fresh = false,
+		pick = false,
+		selected = false,
+		keepScroll = false
+	}: { m: Message; tz: string; fresh?: boolean; pick?: boolean; selected?: boolean; keepScroll?: boolean } = $props();
 
 	// R35d: the alias opens the alias view; a capcode with no alias opens its own.
 	const whoHref = $derived(m.alias_id != null ? `/aliases/${m.alias_id}` : `/capcodes/${m.capcode}`);
+	const priority = $derived(
+		m.priority === 'Emergency' ? 'emergency' : m.priority === 'Non-emergency' ? 'nonemergency' : m.priority === 'Admin' ? 'admin' : 'plain'
+	);
 </script>
 
 <!-- R35d: the whole row opens the detail view (the text's link stretches over
-     it); the alias and job links sit above it. -->
-<article class="row" class:fresh aria-labelledby="m{m.id}-who" data-message-id={m.id}>
+     it); the alias and job links sit above it. R31: priority, date and time,
+     the template's icon and the alias (R66), group and job, then the text. -->
+<article class="row {priority}" class:fresh class:selected aria-labelledby="m{m.id}-who" data-message-id={m.id}>
 	<header>
+		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
 		<time datetime={isoAttr(m.sent_at)}>
 			<span class="date">{date(m.sent_at, tz)}</span>
 			<span class="time">{time(m.sent_at, tz)}</span>
 		</time>
-		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
-		{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
-		<a id="m{m.id}-who" class="who" href={whoHref} style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a>
+		<span class="who-wrap"
+			>{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}<a
+				id="m{m.id}-who"
+				class="who"
+				href={whoHref}
+				style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a
+			></span
+		>
 		{#if m.group}<span class="group">{m.group}</span>{/if}
+		{#if m.job_number}<a class="job" href="/jobs/{encodeURIComponent(m.job_number)}">Job {m.job_number}</a>{/if}
 		{#if pick}<PrintTick id={m.id} />{/if}
 	</header>
-	<p class="text"><a class="open" href="/messages/{m.id}">{m.display_text || '(no text)'}</a></p>
-	{#if m.job_number || m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
+	<p class="text">
+		<a class="open" href="/messages/{m.id}" aria-current={selected ? 'true' : undefined} data-sveltekit-reset={keepScroll ? 'false' : undefined}
+			>{m.display_text || '(no text)'}</a
+		>
+	</p>
+	{#if m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
 		<footer>
-			{#if m.job_number}<a class="job" href="/jobs/{encodeURIComponent(m.job_number)}">Job {m.job_number}</a>{/if}
 			{#if m.flags?.parse_failed}<span class="flag">parse failed</span>{/if}
 			{#if m.flags?.address_unsplit}<span class="flag">address unsplit</span>{/if}
 			{#if m.flags?.location_mismatch}<span class="flag">location mismatch</span>{/if}
@@ -38,14 +61,41 @@
 </article>
 
 <style>
+	/* How a row shows its priority is in the tokens (R82c). */
 	.row {
 		position: relative;
-		padding: 0.6rem 0.75rem;
-		border-bottom: 1px solid var(--border);
 		min-width: 0;
+		padding: var(--row-pad-y) var(--row-pad-x);
+		border-bottom: var(--border-width) solid var(--border);
+		border-left: var(--edge-width) solid transparent;
+		background: var(--plain-row);
 	}
 	.row:has(.open:hover) {
-		background: var(--surface);
+		background: var(--plain-row-hover);
+	}
+	.row.emergency {
+		background: var(--emergency-row);
+		border-left-color: var(--emergency-edge);
+	}
+	.row.emergency:has(.open:hover) {
+		background: var(--emergency-row-hover);
+	}
+	.row.nonemergency {
+		background: var(--nonemergency-row);
+		border-left-color: var(--nonemergency-edge);
+	}
+	.row.nonemergency:has(.open:hover) {
+		background: var(--nonemergency-row-hover);
+	}
+	.row.admin {
+		background: var(--admin-row);
+		border-left-color: var(--admin-edge);
+	}
+	.row.admin:has(.open:hover) {
+		background: var(--admin-row-hover);
+	}
+	.row.selected {
+		box-shadow: inset 0 0 0 var(--border-width-strong) var(--accent);
 	}
 	.fresh {
 		animation: fresh 3s ease-out;
@@ -64,14 +114,21 @@
 	header {
 		display: flex;
 		flex-wrap: wrap;
-		align-items: baseline;
-		gap: 0.25rem 0.5rem;
+		align-items: center;
+		gap: var(--space-2xs) var(--space-md);
 		font-size: var(--text-sm);
 	}
 	time {
 		color: var(--muted);
+		font-family: var(--font-meta);
 		font-variant-numeric: tabular-nums;
 		white-space: nowrap;
+	}
+	.who-wrap {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-width: 0;
 	}
 	.who,
 	.job {
@@ -79,11 +136,11 @@
 		z-index: var(--layer-content);
 	}
 	.who {
-		font-weight: 600;
+		padding-left: var(--space-xs);
+		border-left: var(--agency-bar) solid var(--agency);
 		color: var(--fg);
+		font-weight: var(--weight-strong);
 		text-decoration: none;
-		border-left: 0.3rem solid var(--agency);
-		padding-left: 0.3rem;
 		overflow-wrap: anywhere;
 	}
 	.who:hover,
@@ -92,12 +149,17 @@
 	}
 	.group {
 		color: var(--muted);
-		font-family: var(--mono);
+		font-family: var(--font-mono);
+	}
+	.job {
+		margin-left: auto;
+		font-family: var(--font-meta);
 	}
 	.text {
-		margin: 0.25rem 0 0;
-		font-family: var(--mono);
-		font-size: var(--text-md);
+		margin: var(--space-xs) 0 0;
+		font-family: var(--font-page);
+		font-size: var(--text-page);
+		line-height: var(--leading);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
@@ -114,20 +176,20 @@
 		outline: none;
 	}
 	.open:focus-visible::after {
-		outline: 2px solid var(--accent);
-		outline-offset: -2px;
+		outline: var(--focus-width) solid var(--focus);
+		outline-offset: calc(-1 * var(--focus-width));
 	}
 	footer {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.75rem;
-		margin-top: 0.25rem;
+		gap: var(--space-md);
+		margin-top: var(--space-xs);
 		font-size: var(--text-xs);
 	}
 	.flag {
-		color: var(--warn-fg);
+		padding: 0 var(--space-2xs);
+		border-radius: var(--radius-small);
 		background: var(--warn-bg);
-		padding: 0 0.3rem;
-		border-radius: 0.2rem;
+		color: var(--warn-fg);
 	}
 </style>

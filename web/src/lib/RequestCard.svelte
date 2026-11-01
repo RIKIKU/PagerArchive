@@ -85,13 +85,13 @@
 
 <style>
 	.request {
-		padding: 0.6rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-sm) 0;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.head {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.5rem;
+		gap: var(--space-2xs) var(--space-sm);
 		align-items: center;
 	}
 	.title {
@@ -101,9 +101,9 @@
 	}
 	.tag {
 		font-size: var(--text-xs);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.tag.warn,
 	.mark {
@@ -112,40 +112,40 @@
 		border-color: var(--warn-fg);
 	}
 	.mark {
-		padding: 0.25rem 0.5rem;
-		border-radius: 0.25rem;
-		margin: 0.4rem 0;
+		padding: var(--space-2xs) var(--space-sm);
+		border-radius: var(--radius-small);
+		margin: var(--space-xs) 0;
 		font-size: var(--text-sm);
 	}
 	table {
 		border-collapse: collapse;
-		margin: 0.4rem 0;
+		margin: var(--space-xs) 0;
 		width: 100%;
-		max-width: 36rem;
+		max-width: var(--measure-narrow);
 		font-size: var(--text-md);
 	}
 	th,
 	td {
 		text-align: left;
-		padding: 0.2rem 0.5rem 0.2rem 0;
+		padding: var(--space-2xs) var(--space-sm) var(--space-2xs) 0;
 		vertical-align: top;
 		overflow-wrap: anywhere;
 	}
 	thead th {
 		color: var(--muted);
-		font-weight: 600;
-		border-bottom: 1px solid var(--border);
+		font-weight: var(--weight-strong);
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	tbody th {
-		font-weight: normal;
+		font-weight: var(--weight-normal);
 		color: var(--muted);
 	}
 	tr.changed td:last-child {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 		background: var(--highlight);
 	}
 	.text {
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 		overflow-wrap: anywhere;
 		white-space: pre-line;
 	}
@@ -153,20 +153,20 @@
 		color: var(--muted);
 	}
 	.feedback {
-		border-left: 3px solid var(--accent);
-		padding-left: 0.5rem;
+		border-left: var(--rule-width) solid var(--accent);
+		padding-left: var(--space-sm);
 	}
 	.meta {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 		overflow-wrap: anywhere;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.4rem;
+		gap: var(--space-xs);
 		align-items: flex-start;
-		margin-top: 0.4rem;
+		margin-top: var(--space-xs);
 	}
 </style>

@@ -39,13 +39,22 @@
 	maplibregl.setWorkerUrl(workerUrl);
 	let protocolAdded = false;
 
+	// A colour token as the browser draws it: tokens are written once for
+	// both themes, light-dark(…), which only an element's computed colour
+	// resolves (app.css).
 	function token(name: string): string {
-		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		const probe = document.createElement('span');
+		probe.style.color = `var(${name})`;
+		probe.hidden = true;
+		document.documentElement.append(probe);
+		const colour = getComputedStyle(probe).color;
+		probe.remove();
+		return colour;
 	}
 
 	// A type-scale token in pixels, for text drawn by the map.
 	function rem(name: string): number {
-		return parseFloat(token(name)) * parseFloat(getComputedStyle(document.documentElement).fontSize);
+		return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) * parseFloat(getComputedStyle(document.documentElement).fontSize);
 	}
 
 	function dark(): boolean {
@@ -263,20 +272,22 @@
 
 <style>
 	.map {
-		height: min(65vh, 40rem);
-		min-height: 18rem;
-		border-bottom: 1px solid var(--border);
+		height: var(--map-height);
+		min-height: var(--map-min-height);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
 		background: var(--surface);
 	}
 	.single {
-		height: 16rem;
+		height: var(--map-height-small);
 		min-height: 0;
-		border: 1px solid var(--border);
-		border-radius: 0.3rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
 	}
 	.unavailable {
 		height: auto;
 		min-height: 0;
-		padding: 0.75rem;
+		padding: var(--space-md);
 	}
 </style>

@@ -116,6 +116,16 @@ jobs:
       - name: svelte-check
         working-directory: web
         run: npm run check
+      # R82c, A73: components style with the tokens in src/app.css only; a
+      # hard-coded colour, size, spacing, radius or type fails, naming the
+      # file, line and value.
+      - name: Style tokens only (A73)
+        working-directory: web
+        run: node scripts/check-tokens.mjs
+      # R77a: the icons are generated from the pinned Tabler Icons package.
+      - name: Icons are as generated from @tabler/icons
+        working-directory: web
+        run: node scripts/icons.mjs --check
       - name: Playwright is the image's version
         working-directory: web
         run: test "$(npx playwright --version)" = "Version 1.64.0"

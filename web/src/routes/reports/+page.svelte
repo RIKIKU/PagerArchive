@@ -88,12 +88,12 @@
 
 <style>
 	.page {
-		padding: 0 0.75rem 1rem;
-		max-width: 48rem;
+		padding: 0 0 var(--space-lg);
+		max-width: var(--measure-wide);
 	}
 	h1 {
 		font-size: var(--text-xl);
-		margin: 0.75rem 0 0.25rem;
+		margin: var(--space-md) 0 var(--space-2xs);
 	}
 	.note {
 		color: var(--muted);
@@ -103,14 +103,14 @@
 	.form {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem 0.75rem;
+		gap: var(--space-sm) var(--space-md);
 		align-items: flex-end;
-		margin: 0.75rem 0 1rem;
+		margin: var(--space-md) 0 var(--space-lg);
 	}
 	label {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
+		gap: var(--space-3xs);
 		font-size: var(--text-sm);
 	}
 	table {
@@ -119,26 +119,26 @@
 	}
 	caption {
 		text-align: left;
-		font-weight: 600;
-		padding-bottom: 0.5rem;
+		font-weight: var(--weight-strong);
+		padding-bottom: var(--space-sm);
 	}
 	th,
 	td {
 		text-align: left;
-		padding: 0.4rem 0.5rem 0.4rem 0;
-		border-bottom: 1px solid var(--border);
-		font-weight: normal;
+		padding: var(--space-xs) var(--space-sm) var(--space-xs) 0;
+		border-bottom: var(--border-width) solid var(--border);
+		font-weight: var(--weight-normal);
 	}
 	thead th,
 	tfoot th,
 	tfoot td {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 	}
 	.num {
 		text-align: right;
 	}
 	.code th {
-		padding-left: 1.25rem;
+		padding-left: var(--space-xl);
 		color: var(--muted);
 		font-size: var(--text-sm);
 	}

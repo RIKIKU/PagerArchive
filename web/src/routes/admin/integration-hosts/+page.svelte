@@ -47,29 +47,29 @@
 
 <style>
 	.note {
-		margin: 0 0.75rem 0.5rem;
+		margin: 0 0 var(--space-sm);
 		color: var(--muted);
-		max-width: 44rem;
+		max-width: var(--measure);
 	}
 	.ok,
 	.error {
-		margin: 0 0.75rem 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	form {
-		margin: 0 0.75rem;
-		max-width: 30rem;
+		margin: 0;
+		max-width: var(--measure-narrow);
 		display: grid;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 		justify-items: start;
 	}
 	textarea {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 		color: inherit;
 		background: var(--bg);
-		border: 1px solid var(--muted);
-		border-radius: 0.3rem;
-		padding: 0.35rem 0.5rem;
+		border: var(--border-width) solid var(--muted);
+		border-radius: var(--radius-small);
+		padding: var(--space-xs) var(--space-sm);
 		width: 100%;
 	}
 </style>

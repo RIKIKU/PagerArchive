@@ -1,84 +1,221 @@
-/* Colours meet WCAG 2.1 AA contrast in both themes (checked by axe-core). */
+/* Every value that styles the UI is a token here, and only here (R82c,
+   ADR 0015): components use var(--…) and nothing else, and
+   scripts/check-tokens.mjs fails CI if one doesn't. A look is the set of
+   tokens below, in light and dark; M13 builds Harbour only.
+
+   Colours are written once, light-dark(light, dark): the root's
+   color-scheme picks one, following the system unless data-theme says
+   otherwise. Every pair used together meets WCAG 2.1 AA (4.5:1 for text,
+   3:1 for borders, focus rings and the marks that show priority), measured
+   in the browser by web/tests/e2e.spec.ts. */
+
+/* The same in every look. */
 :root {
-	--bg: #ffffff;
-	--surface: #f6f7f9;
-	--fg: #1a1c20;
-	--muted: #555b66;
-	--border: #d7dbe0;
-	--accent: #0b5cad;
-	--highlight: #fff3c4;
-	--emergency-bg: #b3261e;
-	--emergency-fg: #ffffff;
-	--nonemergency-bg: #8a5300;
-	--nonemergency-fg: #ffffff;
-	--admin-bg: #2f5d8a;
-	--admin-fg: #ffffff;
-	--warn-bg: #fff0d6;
-	--warn-fg: #6b3d00;
-	--ok-fg: #2e7d32;
-	/* Template icons sit on a light tile in both themes, so dark artwork stays
-	   visible (R66): it isn't redefined for dark mode. */
-	--icon-tile: #ffffff;
-	--mono: ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
-	/* Type scale: components use these, never their own sizes (CLAUDE.md). */
-	--text-xxs: 0.75rem;
-	--text-xs: 0.8rem;
-	--text-sm: 0.85rem;
-	--text-md: 0.9rem;
-	--text-base: 1rem;
-	--text-lg: 1.05rem;
-	--text-xl: 1.1rem;
-	--text-2xl: 1.25rem;
-	/* Checkboxes and radios: exempt from the full-width, tall text-input box. */
-	--control-check: 1.1rem;
-	/* Stacking order: components use these, never their own z-index numbers.
-	   Page content stacks inside main, so nothing in it can rise above the
-	   header, whatever its z-index (a map's controls, say). */
+	/* Stacking order. Page content stacks inside main, so nothing in it can
+	   rise above the header, whatever its z-index (a map's controls, say). */
 	--layer-content: 1; /* links raised above a row's whole-row link */
-	--layer-header: 10; /* the sticky header, above all page content */
-	--layer-overlay: 20; /* above the header: the skip link */
-	color-scheme: light;
+	--layer-header: 10; /* the sticky top bar and side menu */
+	--layer-overlay: 20; /* above them: the skip link, menus, suggestions */
+	/* Text for screen readers only sits in a box this size. */
+	--hidden-size: 1px;
+	/* R68: a printed sheet is black on white in a heavy black border, whatever
+	   the look or theme (ADR 0012). */
+	--print-fg: #000000;
+	--print-bg: #ffffff;
+	--print-rule: 0.25rem;
+	--print-pad: 0.75rem;
+	--print-gap: 1.5rem;
+	--print-text: 1rem;
 }
 
-@media (prefers-color-scheme: dark) {
-	:root:not([data-theme='light']) {
-		--bg: #121417;
-		--surface: #1b1e23;
-		--fg: #e8eaed;
-		--muted: #a4abb6;
-		--border: #343941;
-		--accent: #7cb7ff;
-		--highlight: #4a3f10;
-		--emergency-bg: #ff8a80;
-		--emergency-fg: #2b0000;
-		--nonemergency-bg: #ffc56b;
-		--nonemergency-fg: #2b1700;
-		--admin-bg: #9cc3ef;
-		--admin-fg: #0d1b2a;
-		--warn-bg: #3d2a00;
-		--warn-fg: #ffd58a;
-		--ok-fg: #7bd88f;
-		color-scheme: dark;
+/* Harbour (ADR 0015): airy, with larger type, more room and big targets,
+   and a forest-green accent. Priority is a soft tinted label with a dot;
+   rows have no edge or tint. */
+:root {
+	color-scheme: light dark;
+
+	/* Surfaces and text. */
+	--bg: light-dark(#f6f8f7, #0f1614);
+	--surface: light-dark(#ffffff, #151f1c);
+	--surface-2: light-dark(#ffffff, #192521);
+	--fg: light-dark(#13201b, #e4ece8);
+	--muted: light-dark(#4b5c55, #a3b4ad);
+	--border: light-dark(#d9e3df, #283833);
+	--control-border: light-dark(#73867f, #74897f);
+	--hover: light-dark(#eaf1ee, #1b2925);
+	--highlight: light-dark(#fff3c4, #4a3f10);
+	--scrim: light-dark(#0000008c, #000000b3);
+	/* Template icons sit on a light tile in both themes, so dark artwork
+	   stays visible (R66). */
+	--icon-tile: #ffffff;
+
+	/* The accent: links, primary buttons, the current page, focus. */
+	--accent: light-dark(#1b6a46, #74d4a3);
+	--accent-fg: light-dark(#ffffff, #062619);
+	--accent-hover: light-dark(#155839, #8fdeb6);
+	--accent-pressed: light-dark(#0f452c, #5cc28e);
+	--accent-soft: light-dark(#dbeee4, #1c3a2d);
+	--accent-soft-fg: light-dark(#0d3a25, #bdeed3);
+	--focus: light-dark(#1b6a46, #74d4a3);
+
+	/* States. */
+	--warn-bg: light-dark(#fdecd4, #45310f);
+	--warn-fg: light-dark(#6b3d00, #ffd08f);
+	--ok-fg: light-dark(#1d6b3a, #7bd88f);
+	--danger: light-dark(#b3261e, #ff8a80);
+	--danger-fg: light-dark(#ffffff, #2b0000);
+	--danger-hover: light-dark(#93201a, #ffa49b);
+	--danger-text: light-dark(#9e1d16, #ffb7ae);
+
+	/* How each priority is shown (R82c): a label with a dot, tinted; rows
+	   plain. --<priority>-bg is the priority's own colour, also the map's
+	   marker for it. */
+	--emergency-bg: light-dark(#d0342a, #ff6f62);
+	--emergency-dot: var(--emergency-bg);
+	--emergency-edge: transparent;
+	--emergency-row: transparent;
+	--emergency-row-hover: var(--hover);
+	--emergency-badge-bg: light-dark(#fde4e1, #4b1f1b);
+	--emergency-badge-fg: light-dark(#9e1d16, #ffb7ae);
+	--emergency-badge-border: transparent;
+	--nonemergency-bg: light-dark(#bb6c00, #f0a83f);
+	--nonemergency-dot: var(--nonemergency-bg);
+	--nonemergency-edge: transparent;
+	--nonemergency-row: transparent;
+	--nonemergency-row-hover: var(--hover);
+	--nonemergency-badge-bg: light-dark(#fcecd4, #45310f);
+	--nonemergency-badge-fg: light-dark(#7a4500, #ffd08f);
+	--nonemergency-badge-border: transparent;
+	--admin-bg: light-dark(#4964b5, #93a9ec);
+	--admin-dot: var(--admin-bg);
+	--admin-edge: transparent;
+	--admin-row: transparent;
+	--admin-row-hover: var(--hover);
+	--admin-badge-bg: light-dark(#e4e9f8, #262f4b);
+	--admin-badge-fg: light-dark(#2c4382, #c6d2f6);
+	--admin-badge-border: transparent;
+	--plain-row: transparent;
+	--plain-row-hover: var(--hover);
+	--heartbeat-fg: var(--muted);
+	--heartbeat-border: var(--border);
+	--edge-width: 0rem;
+	--badge-dot: inline-block;
+	--badge-dot-size: 0.6em;
+	--badge-case: none;
+	--badge-tracking: 0em;
+	--badge-pad-x: 0.5rem;
+	--badge-pad-y: 0.125rem;
+
+	/* Type: system font stacks, nothing downloaded (ADR 0015, decision 3). */
+	--font-ui: 'Avenir Next', Avenir, Montserrat, Corbel, 'URW Gothic', source-sans-pro, sans-serif;
+	--font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'Liberation Mono', Menlo, Consolas, monospace;
+	--font-page: var(--font-mono);
+	--font-meta: var(--font-ui);
+	--text-xxs: 0.75rem;
+	--text-xs: 0.85rem;
+	--text-sm: 0.9rem;
+	--text-md: 0.95rem;
+	--text-base: 1rem;
+	--text-lg: 1.05rem;
+	--text-xl: 1.15rem;
+	--text-2xl: 1.375rem;
+	--text-page: 1rem;
+	--weight-normal: 400;
+	--weight-strong: 600;
+	--weight-heavy: 700;
+	--leading: 1.45;
+	--leading-tight: 1.2;
+	--leading-loose: 1.55;
+
+	/* Spacing. */
+	--space-3xs: 0.125rem;
+	--space-2xs: 0.25rem;
+	--space-xs: 0.375rem;
+	--space-sm: 0.5rem;
+	--space-md: 0.75rem;
+	--space-lg: 1rem;
+	--space-xl: 1.25rem;
+	--space-2xl: 1.5rem;
+	--space-3xl: 2rem;
+	--page-pad: 1.5rem;
+	--page-pad-phone: 1rem;
+	--row-pad-y: 1rem;
+	--row-pad-x: 1.25rem;
+	--button-pad-x: 1.25rem;
+
+	/* Lines and corners. */
+	--border-width: 1px;
+	--border-width-strong: 2px;
+	--focus-width: 3px;
+	--focus-offset: 2px;
+	--agency-bar: 0.25rem;
+	--rule-width: 0.25rem;
+	--radius: 0.625rem;
+	--radius-button: 0.625rem;
+	--radius-badge: 0.5rem;
+	--radius-small: 0.25rem;
+	--radius-pill: 999rem;
+	--radius-round: 50%;
+	--press-shift: 1px;
+
+	/* Targets and sizes. Buttons, menu items and links styled as buttons are
+	   at least --target high and wide, and 44 px on touch screens. */
+	--target-min: 2.75rem;
+	--target-coarse: 2.75rem;
+	--target: var(--target-min);
+	--control-check: 1.1rem;
+	--icon-size: 1.25em;
+	--icon-stroke: 1.5;
+	--tile-size: 1.25em;
+	--tile-size-large: 2.75rem;
+	--tile-pad: 0.125rem;
+	--avatar-size: 2rem;
+	--pulse-size: 0.55rem;
+	--count-min: 1.5rem;
+	--switch-width: 2.75rem;
+	--switch-height: 1.5rem;
+	--switch-inset: 0.1875rem;
+	--menu-width: 17rem;
+	--menu-width-shrunk: 4.75rem;
+	--flyout-width: 15rem;
+	--list-min: 26rem;
+	--detail-map-width: 20rem;
+	--full-height: 100dvh;
+	--sheet-height: 85dvh;
+	--map-height: min(65dvh, 40rem);
+	--map-min-height: 18rem;
+	--map-height-small: 16rem;
+	--swatch-size: 1.5rem;
+	--swatch-size-small: 0.9rem;
+	--panel-max: calc(100vw - 2rem);
+	--field-search: 24rem;
+	--field-narrow: 9rem;
+	--bottom-bar-height: 4rem;
+	--suggestions-height: 20rem;
+	--pre-height: 12rem;
+	--list-height: 14rem;
+	--measure: 44rem;
+	--measure-narrow: 32rem;
+	--measure-wide: 56rem;
+	--field-min: 10rem;
+	--field-wide: 14rem;
+	--label-min: 7rem;
+	--card-min: 12rem;
+	--dialog-width: 32rem;
+	--disabled-opacity: 0.6;
+}
+
+@media (pointer: coarse) {
+	:root {
+		--target: var(--target-coarse);
 	}
 }
 
+:root[data-theme='light'] {
+	color-scheme: light;
+}
+
 :root[data-theme='dark'] {
-	--bg: #121417;
-	--surface: #1b1e23;
-	--fg: #e8eaed;
-	--muted: #a4abb6;
-	--border: #343941;
-	--accent: #7cb7ff;
-	--highlight: #4a3f10;
-	--emergency-bg: #ff8a80;
-	--emergency-fg: #2b0000;
-	--nonemergency-bg: #ffc56b;
-	--nonemergency-fg: #2b1700;
-	--admin-bg: #9cc3ef;
-	--admin-fg: #0d1b2a;
-	--warn-bg: #3d2a00;
-	--warn-fg: #ffd58a;
-	--ok-fg: #7bd88f;
 	color-scheme: dark;
 }
 
@@ -96,13 +233,9 @@ body {
 	margin: 0;
 	background: var(--bg);
 	color: var(--fg);
-	font-family:
-		system-ui,
-		-apple-system,
-		'Segoe UI',
-		Roboto,
-		sans-serif;
-	line-height: 1.45;
+	font-family: var(--font-ui);
+	font-size: var(--text-base);
+	line-height: var(--leading);
 	overflow-x: hidden;
 }
 
@@ -111,32 +244,128 @@ a {
 }
 
 :focus-visible {
-	outline: 3px solid var(--accent);
-	outline-offset: 2px;
+	outline: var(--focus-width) solid var(--focus);
+	outline-offset: var(--focus-offset);
 }
 
 input,
 select,
+textarea,
 button {
 	font: inherit;
 	color: inherit;
-	background: var(--bg);
-	border: 1px solid var(--muted);
-	border-radius: 0.3rem;
-	padding: 0.35rem 0.5rem;
-	min-height: 2.25rem;
+}
+
+input,
+select,
+textarea {
+	background: var(--surface-2);
+	border: var(--border-width) solid var(--control-border);
+	border-radius: var(--radius);
+	padding: var(--space-xs) var(--space-md);
+	min-height: var(--target);
 	min-width: 0;
 	width: 100%;
 }
 
-button {
+/* Buttons: a visible hover, focus and pressed state, and at least --target
+   high and wide. Primary by default; secondary, ghost and danger below. */
+button,
+.button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	gap: var(--space-sm);
 	width: auto;
+	min-height: var(--target);
+	min-width: var(--target);
+	padding: 0 var(--button-pad-x);
+	border: var(--border-width) solid var(--accent);
+	border-radius: var(--radius-button);
 	background: var(--accent);
-	color: var(--bg);
-	border-color: var(--accent);
-	font-weight: 600;
-	padding: 0.35rem 1rem;
+	color: var(--accent-fg);
+	font-weight: var(--weight-strong);
+	line-height: var(--leading-tight);
+	text-decoration: none;
 	cursor: pointer;
+	transition:
+		background-color 0.12s,
+		border-color 0.12s,
+		transform 0.06s;
+}
+
+button:hover,
+.button:hover {
+	background: var(--accent-hover);
+	border-color: var(--accent-hover);
+}
+
+button:active,
+.button:active {
+	background: var(--accent-pressed);
+	border-color: var(--accent-pressed);
+	transform: translateY(var(--press-shift));
+}
+
+button.secondary,
+.button.secondary {
+	background: var(--surface-2);
+	border-color: var(--control-border);
+	color: var(--fg);
+}
+
+button.ghost,
+.button.ghost {
+	background: transparent;
+	border-color: transparent;
+	color: var(--fg);
+	padding: 0 var(--space-sm);
+}
+
+button.secondary:hover,
+.button.secondary:hover,
+button.ghost:hover,
+.button.ghost:hover {
+	background: var(--hover);
+}
+
+button.secondary:active,
+.button.secondary:active,
+button.ghost:active,
+.button.ghost:active,
+.button.secondary[aria-current] {
+	background: var(--accent-soft);
+	color: var(--accent-soft-fg);
+}
+
+button.danger {
+	background: var(--danger);
+	border-color: var(--danger);
+	color: var(--danger-fg);
+}
+
+button.danger:hover {
+	background: var(--danger-hover);
+	border-color: var(--danger-hover);
+}
+
+button:disabled,
+button:disabled:hover,
+button:disabled:active {
+	opacity: var(--disabled-opacity);
+	cursor: default;
+	transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	button,
+	.button {
+		transition: none;
+	}
+	button:active,
+	.button:active {
+		transform: none;
+	}
 }
 
 input[type='checkbox'],
@@ -146,19 +375,30 @@ input[type='radio'] {
 	min-height: var(--control-check);
 	padding: 0;
 	flex: none;
+	accent-color: var(--accent);
 }
 
 h1 {
 	font-size: var(--text-2xl);
-	margin: 0.75rem;
+	line-height: var(--leading-tight);
+	margin: 0 0 var(--space-lg);
+}
+
+h2 {
+	font-size: var(--text-xl);
+	line-height: var(--leading-tight);
+}
+
+table {
+	border-collapse: collapse;
 }
 
 .visually-hidden {
 	position: absolute;
-	width: 1px;
-	height: 1px;
+	width: var(--hidden-size);
+	height: var(--hidden-size);
 	padding: 0;
-	margin: -1px;
+	margin: calc(-1 * var(--hidden-size));
 	overflow: hidden;
 	clip: rect(0, 0, 0, 0);
 	white-space: nowrap;
@@ -166,287 +406,30 @@ h1 {
 }
 
 .status {
-	padding: 0.75rem;
+	padding: var(--space-md) 0;
 	color: var(--muted);
 }
 
 .error {
-	padding: 0.75rem;
-	color: var(--emergency-bg);
-}
-
-/* A link that looks like a button, and quieter buttons. */
-a.button {
-	display: inline-block;
-	background: var(--accent);
-	color: var(--bg);
-	border: 1px solid var(--accent);
-	border-radius: 0.3rem;
-	font-weight: 600;
-	padding: 0.35rem 1rem;
-	min-height: 2.25rem;
-	text-decoration: none;
-}
-
-button.secondary,
-a.button.secondary {
-	background: var(--bg);
-	color: var(--accent);
-}
-
-button.danger {
-	background: var(--emergency-bg);
-	border-color: var(--emergency-bg);
-	color: var(--emergency-fg);
-}
-
-button:disabled {
-	opacity: 0.6;
-	cursor: default;
+	padding: var(--space-md) 0;
+	color: var(--danger-text);
 }
 
 .ok {
-	padding: 0.75rem;
+	padding: var(--space-md) var(--space-lg);
 	color: var(--fg);
-	background: var(--surface);
-	border-left: 4px solid var(--accent);
+	background: var(--accent-soft);
+	border-radius: var(--radius);
 }
 
-/* M13 prototypes (ADR 0015), throwaway: three looks for the owner to choose
-   from, used only by /prototype, which sets data-proto on the root. Each look
-   is a set of token values; light-dark() gives each colour's light and dark
-   value at once. The prototype's own theme switch is data-proto-theme, and
-   without it the look follows the system. Every colour pair used together
-   meets WCAG 2.1 AA contrast (web/tests/prototype.spec.ts measures them). */
-:root[data-proto] {
-	color-scheme: light dark;
-	--target-min-coarse: 2.75rem;
-	/* Controls are at least --target high and wide: larger on touch screens. */
-	--target: var(--target-min);
-	--focus-width: 3px;
-	--button-border: 1px;
-	--scrim: light-dark(#0000008c, #000000b3);
-	--icon-tile: #ffffff;
-	--font-page: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'Liberation Mono', Menlo, Consolas, monospace;
-}
-
-@media (pointer: coarse) {
-	:root[data-proto] {
-		--target: var(--target-min-coarse);
-	}
-}
-
-:root[data-proto][data-proto-theme='light'] {
-	color-scheme: light;
-}
-
-:root[data-proto][data-proto-theme='dark'] {
-	color-scheme: dark;
-}
-
-/* Ledger: warm paper and ink, a teal accent and a humanist typeface. An
-   Emergency row is tinted, with a red edge; other priorities are a dot and a
-   coloured word. Medium density. */
-:root[data-proto='ledger'] {
-	--bg: light-dark(#fbfaf7, #1a1814);
-	--surface: light-dark(#f2efe8, #211e19);
-	--surface-2: light-dark(#ffffff, #25221c);
-	--fg: light-dark(#1f1c17, #efe9df);
-	--muted: light-dark(#5e584d, #b3ab9c);
-	--border: light-dark(#e2ddd2, #3a362e);
-	--control-border: light-dark(#857d6f, #8c8474);
-	--accent: light-dark(#0b6b69, #62c6c0);
-	--accent-fg: light-dark(#ffffff, #0b1d1c);
-	--accent-hover: light-dark(#095856, #7dd3ce);
-	--accent-pressed: light-dark(#064341, #4fb0aa);
-	--accent-soft: light-dark(#dcefed, #1d3533);
-	--accent-soft-fg: light-dark(#06403e, #c2ebe8);
-	--hover: light-dark(#efebe2, #2b2721);
-	--focus: light-dark(#0b6b69, #62c6c0);
-	--highlight: light-dark(#fff0c2, #4a3f10);
-	--warn-bg: light-dark(#fbecd0, #3d2a00);
-	--warn-fg: light-dark(#6b3d00, #ffd58a);
-	--emergency-edge: light-dark(#c2261d, #ff7b70);
-	--emergency-dot: light-dark(#c2261d, #ff7b70);
-	--emergency-row: light-dark(#fcece9, #3b1f1b);
-	--emergency-row-hover: light-dark(#f8dfda, #48251f);
-	--emergency-badge-bg: transparent;
-	--emergency-badge-fg: light-dark(#a1201a, #ffaaa1);
-	--emergency-badge-border: transparent;
-	--nonemergency-edge: transparent;
-	--nonemergency-dot: light-dark(#b06800, #e9a743);
-	--nonemergency-row: var(--bg);
-	--nonemergency-row-hover: var(--hover);
-	--nonemergency-badge-bg: transparent;
-	--nonemergency-badge-fg: light-dark(#85500a, #f0bd6e);
-	--nonemergency-badge-border: transparent;
-	--admin-edge: transparent;
-	--admin-dot: light-dark(#5a5f99, #a9aee6);
-	--admin-row: var(--bg);
-	--admin-row-hover: var(--hover);
-	--admin-badge-bg: transparent;
-	--admin-badge-fg: light-dark(#4a4e85, #c2c6f2);
-	--admin-badge-border: transparent;
-	--plain-row: var(--bg);
-	--plain-row-hover: var(--hover);
-	--heartbeat-fg: var(--muted);
-	--heartbeat-border: transparent;
-	--font-ui: Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', source-sans-pro, sans-serif;
-	--font-meta: var(--font-ui);
-	--text-page: 0.95rem;
-	--weight-strong: 650;
-	--radius: 0.375rem;
-	--radius-button: 0.375rem;
-	--radius-badge: 0.25rem;
-	--row-pad-y: 0.75rem;
-	--row-pad-x: 1rem;
-	--edge-width: 4px;
-	--badge-dot: inline-block;
-	--badge-case: none;
-	--badge-tracking: 0;
-	--badge-pad-x: 0;
-	--button-pad-x: 1rem;
-	--target-min: 2.5rem;
-	--icon-stroke: 1.75;
-	--menu-width: 16rem;
-	--menu-width-shrunk: 4.5rem;
-}
-
-/* Console: ink on white (or white on ink), no accent colour at all, square
-   corners and dense rows. Priority is the only colour: an edge down every
-   row and an outlined capital label, so the eye goes straight to it. */
-:root[data-proto='console'] {
-	--bg: light-dark(#ffffff, #141414);
-	--surface: light-dark(#f1f1f0, #1c1c1c);
-	--surface-2: light-dark(#fafaf9, #181818);
-	--fg: light-dark(#111111, #ededed);
-	--muted: light-dark(#545454, #a8a8a8);
-	--border: light-dark(#dcdcdc, #2f2f2f);
-	--control-border: light-dark(#767676, #8a8a8a);
-	--accent: light-dark(#111111, #f2f2f2);
-	--accent-fg: light-dark(#ffffff, #111111);
-	--accent-hover: light-dark(#363636, #cfcfcf);
-	--accent-pressed: light-dark(#000000, #b5b5b5);
-	--accent-soft: light-dark(#e6e6e6, #303030);
-	--accent-soft-fg: light-dark(#111111, #f2f2f2);
-	--hover: light-dark(#f2f2f2, #222222);
-	--focus: light-dark(#1d5bd6, #7ea8ff);
-	--highlight: light-dark(#fff3b0, #47400f);
-	--warn-bg: light-dark(#fff0d6, #3d2a00);
-	--warn-fg: light-dark(#6b3d00, #ffd58a);
-	--emergency-edge: light-dark(#d42020, #ff5c5c);
-	--emergency-dot: transparent;
-	--emergency-row: var(--bg);
-	--emergency-row-hover: var(--hover);
-	--emergency-badge-bg: transparent;
-	--emergency-badge-fg: light-dark(#b31818, #ff8585);
-	--emergency-badge-border: var(--emergency-edge);
-	--nonemergency-edge: light-dark(#c26700, #f2a33a);
-	--nonemergency-dot: transparent;
-	--nonemergency-row: var(--bg);
-	--nonemergency-row-hover: var(--hover);
-	--nonemergency-badge-bg: transparent;
-	--nonemergency-badge-fg: light-dark(#8a4a00, #f5b660);
-	--nonemergency-badge-border: var(--nonemergency-edge);
-	--admin-edge: light-dark(#2a6fb0, #6aa9e6);
-	--admin-dot: transparent;
-	--admin-row: var(--bg);
-	--admin-row-hover: var(--hover);
-	--admin-badge-bg: transparent;
-	--admin-badge-fg: light-dark(#1f5c94, #8fc0ee);
-	--admin-badge-border: var(--admin-edge);
-	--plain-row: var(--bg);
-	--plain-row-hover: var(--hover);
-	--heartbeat-fg: var(--muted);
-	--heartbeat-border: var(--control-border);
-	--font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-	--font-meta: var(--font-page);
-	--text-page: 0.9rem;
-	--weight-strong: 700;
-	--radius: 2px;
-	--radius-button: 2px;
-	--radius-badge: 2px;
-	--row-pad-y: 0.5rem;
-	--row-pad-x: 0.875rem;
-	--edge-width: 4px;
-	--badge-dot: none;
-	--badge-case: uppercase;
-	--badge-tracking: 0.06em;
-	--badge-pad-x: 0.35rem;
-	--button-pad-x: 0.875rem;
-	--target-min: 2.25rem;
-	--icon-stroke: 2;
-	--menu-width: 15rem;
-	--menu-width-shrunk: 4rem;
-}
-
-/* Harbour: airy, with larger type and more room, a forest-green accent and
-   soft tinted labels with a dot. Rows have no edge or tint: the label alone
-   carries priority, calm but unmistakable. */
-:root[data-proto='harbour'] {
-	--bg: light-dark(#f6f8f7, #0f1614);
-	--surface: light-dark(#ffffff, #151f1c);
-	--surface-2: light-dark(#ffffff, #192521);
-	--fg: light-dark(#13201b, #e4ece8);
-	--muted: light-dark(#4b5c55, #a3b4ad);
-	--border: light-dark(#d9e3df, #283833);
-	--control-border: light-dark(#73867f, #74897f);
-	--accent: light-dark(#1b6a46, #74d4a3);
-	--accent-fg: light-dark(#ffffff, #062619);
-	--accent-hover: light-dark(#155839, #8fdeb6);
-	--accent-pressed: light-dark(#0f452c, #5cc28e);
-	--accent-soft: light-dark(#dbeee4, #1c3a2d);
-	--accent-soft-fg: light-dark(#0d3a25, #bdeed3);
-	--hover: light-dark(#eaf1ee, #1b2925);
-	--focus: light-dark(#1b6a46, #74d4a3);
-	--highlight: light-dark(#fff3c4, #4a3f10);
-	--warn-bg: light-dark(#fdecd4, #45310f);
-	--warn-fg: light-dark(#6b3d00, #ffd08f);
-	--emergency-edge: transparent;
-	--emergency-dot: light-dark(#d0342a, #ff6f62);
-	--emergency-row: var(--bg);
-	--emergency-row-hover: var(--hover);
-	--emergency-badge-bg: light-dark(#fde4e1, #4b1f1b);
-	--emergency-badge-fg: light-dark(#9e1d16, #ffb7ae);
-	--emergency-badge-border: transparent;
-	--nonemergency-edge: transparent;
-	--nonemergency-dot: light-dark(#bb6c00, #f0a83f);
-	--nonemergency-row: var(--bg);
-	--nonemergency-row-hover: var(--hover);
-	--nonemergency-badge-bg: light-dark(#fcecd4, #45310f);
-	--nonemergency-badge-fg: light-dark(#7a4500, #ffd08f);
-	--nonemergency-badge-border: transparent;
-	--admin-edge: transparent;
-	--admin-dot: light-dark(#4964b5, #93a9ec);
-	--admin-row: var(--bg);
-	--admin-row-hover: var(--hover);
-	--admin-badge-bg: light-dark(#e4e9f8, #262f4b);
-	--admin-badge-fg: light-dark(#2c4382, #c6d2f6);
-	--admin-badge-border: transparent;
-	--plain-row: var(--bg);
-	--plain-row-hover: var(--hover);
-	--heartbeat-fg: var(--muted);
-	--heartbeat-border: var(--border);
-	--font-ui: 'Avenir Next', Avenir, Montserrat, Corbel, 'URW Gothic', source-sans-pro, sans-serif;
-	--font-meta: var(--font-ui);
-	--text-page: 1rem;
-	--text-xs: 0.85rem;
-	--text-sm: 0.9rem;
-	--text-md: 0.95rem;
-	--weight-strong: 600;
-	--radius: 0.625rem;
-	--radius-button: 0.625rem;
-	--radius-badge: 0.5rem;
-	--row-pad-y: 1rem;
-	--row-pad-x: 1.25rem;
-	--edge-width: 0px;
-	--badge-dot: inline-block;
-	--badge-case: none;
-	--badge-tracking: 0;
-	--badge-pad-x: 0.5rem;
-	--button-pad-x: 1.25rem;
-	--target-min: 2.75rem;
-	--icon-stroke: 1.5;
-	--menu-width: 17rem;
-	--menu-width-shrunk: 4.75rem;
+/* An icon (R77a): drawn in the text colour, sized with the text. */
+.ui-icon {
+	width: var(--icon-size);
+	height: var(--icon-size);
+	flex: none;
+	fill: none;
+	stroke: currentColor;
+	stroke-width: var(--icon-stroke);
+	stroke-linecap: round;
+	stroke-linejoin: round;
 }

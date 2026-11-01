@@ -99,6 +99,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/messages/by-id":               s.messagesByID,
 		"GET /api/v1/jobs/{job}":                   s.getJob,
 		"GET /api/v1/capcodes/unaliased":           s.unaliased,
+		"GET /api/v1/search/suggest":               s.suggestSearch,
 		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,
 		"GET /api/v1/aliases/{id}":                 s.getAlias,
 		"GET /api/v1/map":                          s.mapMessages,

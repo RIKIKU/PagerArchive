@@ -11,5 +11,5 @@ Self-hosted archive and live browser for any POCSAG paging network. **`SPEC.md` 
 - Never commit anything named `*PRIVATE*`, `.env`, or secrets.
 - Show evidence when claiming something works: the command run and its output.
 - Docs-only pushes don't run CI (SPEC.md, docs/**, other Markdown; ADR 0014).
-- Styles use the tokens in web/src/app.css; no hard-coded colours or font sizes in components.
+- Every style value is a token in web/src/app.css (R82c): colours, type sizes, fonts and weights, spacing, corner radii, borders, target and other sizes, and how each priority is shown. Components use `var(--…)` only, in style blocks, inline styles and class strings; `web/scripts/check-tokens.mjs` fails CI on a hard-coded value (A73).
 - The PowerShell module follows `docs/powershell-guidelines.md`.

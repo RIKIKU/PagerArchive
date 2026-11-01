@@ -25,12 +25,12 @@
 		margin-left: auto;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.3rem;
+		gap: var(--space-2xs);
 		color: var(--muted);
 		font-size: var(--text-xs);
 		cursor: pointer;
 		/* A bigger target than the box alone. */
-		padding: 0.2rem 0 0.2rem 0.4rem;
-		margin-block: -0.2rem;
+		padding: var(--space-2xs) 0 var(--space-2xs) var(--space-xs);
+		margin-block: calc(-1 * var(--space-2xs));
 	}
 </style>

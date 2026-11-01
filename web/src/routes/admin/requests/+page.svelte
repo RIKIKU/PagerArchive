@@ -114,40 +114,40 @@
 <style>
 	.tabs {
 		display: flex;
-		gap: 0.5rem;
-		margin: 0 0.75rem 0.5rem;
+		gap: var(--space-sm);
+		margin: 0 0 var(--space-sm);
 	}
 	.ok {
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.list {
-		margin: 0 0.75rem;
-		max-width: 48rem;
+		margin: 0;
+		max-width: var(--measure-wide);
 	}
 	.reject {
 		width: 100%;
-		max-width: 36rem;
+		max-width: var(--measure-narrow);
 	}
 	.reject label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	textarea {
 		font: inherit;
 		color: inherit;
 		background: var(--bg);
-		border: 1px solid var(--muted);
-		border-radius: 0.3rem;
-		padding: 0.35rem 0.5rem;
+		border: var(--border-width) solid var(--muted);
+		border-radius: var(--radius-small);
+		padding: var(--space-xs) var(--space-sm);
 		width: 100%;
 	}
 	.reject .error {
-		padding: 0.25rem 0;
+		padding: var(--space-2xs) 0;
 	}
 	.buttons {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.4rem;
+		gap: var(--space-sm);
+		margin-top: var(--space-xs);
 	}
 </style>

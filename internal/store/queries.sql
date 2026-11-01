@@ -605,6 +605,35 @@ WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0 OR strpos(pattern, sqlc.
 ORDER BY lower(name), pattern
 LIMIT 20;
 
+-- name: SuggestAliasNames :many
+-- R33a: alias names containing what was typed, for the search box.
+SELECT DISTINCT name FROM aliases
+WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0
+ORDER BY name
+LIMIT 10;
+
+-- name: SuggestAgencies :many
+-- R33a: template agencies containing what was typed.
+SELECT DISTINCT agency FROM templates
+WHERE strpos(lower(agency), lower(sqlc.arg(q)::text)) > 0
+ORDER BY agency
+LIMIT 10;
+
+-- name: SuggestPagingGroups :many
+-- R33a: paging groups containing what was typed. The groups are few and the
+-- messages many, so each distinct group is found with one step down
+-- messages_group_idx (a loose index scan), not by reading every message.
+WITH RECURSIVE g AS (
+    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
+    UNION ALL
+    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
+    FROM g WHERE g.grp IS NOT NULL
+)
+SELECT grp::text AS paging_group FROM g
+WHERE grp IS NOT NULL AND strpos(lower(grp), lower(sqlc.arg(q)::text)) > 0
+ORDER BY grp
+LIMIT 10;
+
 -- name: ExactAliases :many
 -- R48: the aliases of exact capcodes (zero-padded), which select them.
 SELECT id, pattern_key FROM aliases WHERE pattern_key = ANY(sqlc.arg(capcodes)::text[]);

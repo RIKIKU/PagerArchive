@@ -7,6 +7,7 @@
 	import { date, dateTime, isoAttr } from '#lib/format.ts';
 	import { kindLabels, statusLabel } from '#lib/integrations.ts';
 	import InviteTree from '#lib/InviteTree.svelte';
+	import { setTitle } from '#lib/here.svelte.ts';
 
 	let meta: Meta | undefined = $state();
 	let data: AdminUser | undefined = $state();
@@ -15,6 +16,9 @@
 	const id = $derived(page.params.id ?? '');
 	const tz = $derived(meta?.time_zone ?? 'UTC');
 	const label = $derived(data ? (data.user.name ? `${data.user.name} (${data.user.email})` : data.user.email) : 'User');
+	$effect(() => {
+		if (data) setTitle(label);
+	});
 
 	api.meta().then((m) => (meta = m));
 	function load() {
@@ -146,8 +150,8 @@
 	dl {
 		display: grid;
 		grid-template-columns: max-content 1fr;
-		gap: 0.25rem 1rem;
-		margin: 0 0.75rem;
+		gap: var(--space-2xs) var(--space-lg);
+		margin: 0;
 	}
 	dt {
 		color: var(--muted);
@@ -157,32 +161,32 @@
 		overflow-wrap: anywhere;
 	}
 	.note {
-		margin: 0.5rem 0.75rem;
+		margin: var(--space-sm) 0;
 		color: var(--muted);
-		max-width: 44rem;
+		max-width: var(--measure);
 	}
 	.ok,
 	.error {
-		margin: 0 0.75rem 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	section {
-		margin: 1rem 0;
+		margin: var(--space-lg) 0;
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 0 0.75rem 0.25rem;
+		margin: 0 0 var(--space-2xs);
 	}
 	.buttons {
-		margin: 0.5rem 0.75rem 0;
+		margin: var(--space-sm) 0 0;
 	}
 	.records {
 		list-style: none;
 		padding: 0;
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.records li {
-		padding: 0.5rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-sm) 0;
+		border-bottom: var(--border-width) solid var(--border);
 		overflow-wrap: anywhere;
 	}
 	.cards {
@@ -194,12 +198,12 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.25rem 0.75rem;
-		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid var(--border);
+		gap: var(--space-2xs) var(--space-md);
+		padding: var(--space-sm) var(--space-md);
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.name {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 		overflow-wrap: anywhere;
 	}
 	.muted {
@@ -211,9 +215,9 @@
 	}
 	.state {
 		font-size: var(--text-sm);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.state.paused {
 		background: var(--warn-bg);

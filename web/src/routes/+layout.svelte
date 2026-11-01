@@ -1,22 +1,37 @@
 <script lang="ts">
+	// The frame of every signed-in page (R77-R81, ADR 0015): the side menu,
+	// the top bar with the breadcrumbs, the search box and the account menu,
+	// and on phones a bottom bar instead of the side menu. The page itself
+	// uses the full width (R80).
 	import '../app.css';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { api, type Meta } from '#lib/api.ts';
-	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
+	import { api, type Me, type Meta } from '#lib/api.ts';
+	import AccountMenu from '#lib/AccountMenu.svelte';
+	import BottomBar from '#lib/BottomBar.svelte';
+	import Crumbs from '#lib/Crumbs.svelte';
+	import { here } from '#lib/here.svelte.ts';
+	import { list, listHref } from '#lib/listState.svelte.ts';
+	import Menu from '#lib/Menu.svelte';
+	import { menu } from '#lib/menu.svelte.ts';
+	import { crumbs } from '#lib/nav.ts';
+	import SearchBox from '#lib/SearchBox.svelte';
+	import { criteria } from '#lib/search.ts';
 	import { loadSheet, sheet } from '#lib/sheet.svelte.ts';
+	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
 
 	let { children } = $props();
 	let meta: Meta | undefined = $state();
+	let me: Me | undefined = $state();
 	let theme: 'system' | 'light' | 'dark' = $state('system');
+	let topHeight = $state(0);
 
-	// The sign-in page works without a session, and the M13 prototypes
-	// (ADR 0015) are static pages with their own layout and no API calls.
-	const prototype = $derived(page.url.pathname.startsWith('/prototype'));
-	const signedOut = $derived(page.url.pathname.startsWith('/signin') || prototype);
+	// The sign-in page works without a session, and has no frame.
+	const signedOut = $derived(page.url.pathname.startsWith('/signin'));
 
 	onMount(() => {
-		if (!signedOut) api
+		if (!signedOut)
+			api
 				.meta()
 				.then((m) => (meta = m))
 				.catch(() => {}); // 401 goes to the sign-in page
@@ -26,9 +41,13 @@
 		window.addEventListener('pagerarchive:meta', update);
 		// R67: the print sheet is kept per user (their ID is in its key).
 		let unfollow = () => {};
-		if (!signedOut) api
+		if (!signedOut)
+			api
 				.me()
-				.then((me) => (unfollow = loadSheet(me.id)))
+				.then((m) => {
+					me = m;
+					unfollow = loadSheet(m.id);
+				})
 				.catch(() => {});
 		try {
 			const saved = localStorage.getItem('theme');
@@ -53,7 +72,7 @@
 	});
 
 	// R39: admins see at a glance when a receiver has gone quiet; R55: and how
-	// many alias requests wait for review (the count on the Admin link).
+	// many alias requests wait for review (the count on Administration).
 	let quiet = $state(0);
 	$effect(() => {
 		if (meta?.role !== 'admin') return;
@@ -68,190 +87,166 @@
 		return () => clearInterval(t);
 	});
 
-	const current = (href: string) =>
-		href === '/admin' ? page.url.pathname === '/admin' || page.url.pathname.startsWith('/admin/') : page.url.pathname === href;
+	const admin = $derived(meta?.role === 'admin');
+	const route = $derived(page.route.id ?? '');
+	const path = $derived(page.url.pathname);
+	const title = $derived(here.path === path ? here.title : '');
+	const trail = $derived(crumbs(route, page.params as Record<string, string>, title));
 
-	const nav = $derived(page.url.pathname.startsWith('/signin') ? [] : [
-		{ href: '/', label: 'Messages' },
-		{ href: '/map', label: 'Map' },
-		{ href: '/reports', label: 'Reports' },
-		{ href: '/capcodes', label: 'Unknown capcodes' },
-		...(meta ? [{ href: '/integrations', label: 'Integrations' }] : []),
-		...(meta ? [{ href: '/requests', label: 'Requests' }] : []),
-		...(meta ? [{ href: '/sheet', label: 'Print sheet' }] : []),
-		// R44b: one Admin link, for admins only.
-		...(meta?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
-		...(meta ? [{ href: '/account', label: 'Account' }] : [])
-	]);
+	// R33a: the search box applies to the view it's on, if that view lists
+	// messages; elsewhere it searches the message list. On a message's own
+	// page, it shows the list's search.
+	const searchable = ['/(list)', '/map', '/aliases/[id]', '/capcodes/[capcode]', '/jobs/[job]', '/sheet'];
+	const own = $derived(searchable.includes(route));
+	const action = $derived(own ? path : '/');
+	const query = $derived(own ? criteria(page.url) : route === '/(list)/messages/[id]' ? new URLSearchParams(list.query) : new URLSearchParams());
+	const mapHref = $derived(list.query ? `/map?${list.query}` : '/map');
 </script>
 
-{#if prototype}
-	{@render children()}
+{#if signedOut}
+	<main id="main" class="bare">{@render children()}</main>
 {:else}
-<a class="skip" href="#main">Skip to content</a>
-<header class="top">
-	<a class="brand" href="/">PagerArchive</a>
-	<nav aria-label="Main">
-		{#each nav as item (item.href)}
-			{#if item.href === '/admin' && waiting.count > 0}
-				<a
-					href={item.href}
-					aria-current={current(item.href) ? 'page' : undefined}
-					data-testid="admin-link"
-					aria-label="{item.label}, {waiting.count} alias request{waiting.count === 1 ? '' : 's'} waiting"
-					>{item.label}<span class="count">{waiting.count}</span></a
-				>
-			{:else if item.href === '/sheet'}
-				<!-- R67: the sheet's link shows how many messages it holds. -->
-				<a
-					href={item.href}
-					aria-current={current(item.href) ? 'page' : undefined}
-					data-testid="sheet-link"
-					aria-label="{item.label}, {sheet.ids.length} message{sheet.ids.length === 1 ? '' : 's'}"
-					>{item.label}<span class="count">{sheet.ids.length}</span></a
-				>
-			{:else}
-				<a href={item.href} aria-current={current(item.href) ? 'page' : undefined} data-testid={item.href === '/admin' ? 'admin-link' : undefined}>{item.label}</a>
-			{/if}
-		{/each}
-	</nav>
-	{#if quiet > 0}
-		<a class="quiet" href="/admin/clients" data-testid="not-receiving"
-			>{quiet} receiver{quiet === 1 ? '' : 's'} not receiving</a
-		>
-	{/if}
-	<label class="theme">
-		<span class="visually-hidden">Colour theme</span>
-		<select bind:value={theme}>
-			<option value="system">Auto</option>
-			<option value="light">Light</option>
-			<option value="dark">Dark</option>
-		</select>
-	</label>
-</header>
-<main id="main">
-	{@render children()}
-</main>
-{#if meta?.attribution}
-	<footer class="bottom">Address data: {meta.attribution}</footer>
-{/if}
+	<a class="skip" href="#main">Skip to content</a>
+	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
+		<nav class="side" aria-label="Main">
+			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} />
+		</nav>
+		<header class="top" bind:clientHeight={topHeight}>
+			<Crumbs {trail} listHref={listHref()} />
+			<div class="tools">
+				{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} />{/if}
+				<AccountMenu {me} bind:theme />
+			</div>
+		</header>
+		<main id="main">
+			{@render children()}
+		</main>
+		{#if meta?.attribution}
+			<footer class="note">Address data: {meta.attribution}</footer>
+		{/if}
+		<BottomBar {path} {admin} listHref={listHref()} {mapHref} />
+	</div>
 {/if}
 
 <style>
-	.top {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.5rem 1rem;
-		padding: 0.5rem 0.75rem;
-		border-bottom: 1px solid var(--border);
-		background: var(--surface);
+	.shell {
+		display: grid;
+		grid-template-columns: var(--menu-width) minmax(0, 1fr);
+		grid-template-rows: auto 1fr auto;
+		grid-template-areas: 'side top' 'side main' 'side note';
+		min-height: var(--full-height);
+	}
+	.shell.shrunk {
+		grid-template-columns: var(--menu-width-shrunk) minmax(0, 1fr);
+	}
+	.side {
+		grid-area: side;
 		position: sticky;
 		top: 0;
 		z-index: var(--layer-header);
+		height: var(--full-height);
+		overflow-y: auto;
+		background: var(--surface);
+		border-right: var(--border-width) solid var(--border);
 	}
-	.quiet {
-		background: var(--warn-bg);
-		color: var(--warn-fg);
-		padding: 0.15rem 0.5rem;
-		border-radius: 0.25rem;
-		font-size: var(--text-sm);
-		font-weight: 600;
+	.shrunk .side {
+		overflow: visible;
 	}
-	.brand {
-		font-weight: 700;
-		color: var(--fg);
-		text-decoration: none;
-	}
-	nav {
+	.top {
+		grid-area: top;
+		position: sticky;
+		top: 0;
+		z-index: var(--layer-header);
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.9rem;
-		flex: 1;
+		align-items: center;
+		gap: var(--space-sm) var(--space-lg);
+		padding: var(--space-sm) var(--page-pad);
+		background: var(--bg);
+		border-bottom: var(--border-width) solid var(--border);
 	}
-	nav a {
-		color: var(--fg);
-		text-decoration: none;
-		padding: 0.2rem 0;
+	.tools {
+		display: flex;
+		flex: 1 1 auto;
+		align-items: center;
+		justify-content: flex-end;
+		gap: var(--space-sm);
+		min-width: 0;
 	}
-	.count {
-		display: inline-block;
-		margin-left: 0.3rem;
-		min-width: 1.25rem;
-		padding: 0 0.35rem;
-		border-radius: 1rem;
-		background: var(--accent);
-		color: var(--bg);
-		font-size: var(--text-xs);
-		font-weight: 600;
-		text-align: center;
-	}
-	nav a[aria-current='page'] {
-		font-weight: 600;
-		border-bottom: 2px solid var(--accent);
-	}
-	.theme {
-		margin-left: auto;
-	}
-	.theme select {
-		font-size: var(--text-sm);
-	}
-	/* Phones: brand and theme on one row, the links in a row below, so the
-	   header stays short and the first message stays on screen (R31). */
-	@media (max-width: 40rem) {
-		.top {
-			row-gap: 0.15rem;
-			padding-bottom: 0.25rem;
-		}
-		/* One row of links that scrolls sideways within itself (the page
-		   never does), however many links there are. */
-		nav {
-			order: 3;
-			flex-basis: 100%;
-			flex-wrap: nowrap;
-			overflow-x: auto;
-			white-space: nowrap;
-			scrollbar-width: none;
-		}
-		.quiet {
-			order: 4;
-		}
+	.tools > :global(.search) {
+		flex: 1 1 auto;
+		max-width: var(--measure-wide);
 	}
 	main {
-		max-width: 64rem;
-		margin: 0 auto;
-		/* Its own stacking context: content stays below the header (app.css). */
+		grid-area: main;
+		min-width: 0;
+		padding: var(--page-pad);
+		/* Its own stacking context: content stays below the top bar. */
 		isolation: isolate;
 	}
-	.bottom {
-		max-width: 64rem;
-		margin: 1rem auto;
-		padding: 0 0.75rem;
+	main.bare {
+		max-width: var(--measure);
+		margin: 0 auto;
+	}
+	.note {
+		grid-area: note;
+		padding: 0 var(--page-pad) var(--space-lg);
 		font-size: var(--text-xxs);
 		color: var(--muted);
 	}
+	/* Off the screen, above it, until it has focus. */
 	.skip {
 		position: absolute;
-		left: -9999px;
+		left: 0;
+		top: 0;
+		transform: translateY(-200%);
 	}
-	/* A printout has no header, navigation or footer (R68), nor SvelteKit's
-	   hidden announcement of the page's title. */
+	.skip:focus {
+		transform: translate(var(--space-sm), var(--space-sm));
+		z-index: var(--layer-overlay);
+		background: var(--surface-2);
+		padding: var(--space-sm) var(--space-lg);
+	}
+	/* Phones (R81): no side menu; the bottom bar instead. */
+	@media (max-width: 47.99rem) {
+		.shell,
+		.shell.shrunk {
+			display: block;
+			padding-bottom: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom));
+		}
+		.side {
+			display: none;
+		}
+		.top {
+			padding: var(--space-sm) var(--page-pad-phone);
+		}
+		.tools {
+			flex-basis: 100%;
+			flex-wrap: nowrap;
+			align-items: flex-start;
+		}
+		main {
+			padding: var(--page-pad-phone);
+		}
+		.note {
+			padding: 0 var(--page-pad-phone) var(--space-lg);
+		}
+	}
+	/* A printout has no frame (R68), nor SvelteKit's hidden announcement of
+	   the page's title. */
 	@media print {
 		.skip,
+		.side,
 		.top,
-		.bottom,
+		.note,
 		:global(#svelte-announcer) {
 			display: none;
 		}
-		main {
-			max-width: none;
+		.shell {
+			display: block;
 		}
-	}
-	.skip:focus {
-		left: 0.5rem;
-		top: 0.5rem;
-		z-index: var(--layer-overlay);
-		background: var(--surface);
-		padding: 0.5rem;
+		main {
+			padding: 0;
+		}
 	}
 </style>

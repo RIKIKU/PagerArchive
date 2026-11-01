@@ -148,8 +148,8 @@
 	dl {
 		display: grid;
 		grid-template-columns: max-content 1fr;
-		gap: 0.25rem 1rem;
-		margin: 0 0.75rem;
+		gap: var(--space-2xs) var(--space-lg);
+		margin: 0;
 	}
 	dt {
 		color: var(--muted);
@@ -159,42 +159,42 @@
 		overflow-wrap: anywhere;
 	}
 	section {
-		margin: 1.5rem 0.75rem 0;
-		max-width: 40rem;
+		margin: var(--space-2xl) 0 0;
+		max-width: var(--measure);
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 0 0 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin: 0.75rem;
+		gap: var(--space-sm);
+		margin: var(--space-md) 0;
 	}
 	section .actions {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	.row {
 		display: flex;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 		flex-wrap: wrap;
 	}
 	.row input {
-		flex: 1 1 14rem;
+		flex: 1 1 var(--field-wide);
 	}
 	.help {
 		color: var(--muted);
 		font-size: var(--text-md);
-		margin: 0.4rem 0;
+		margin: var(--space-xs) 0;
 	}
 	section .error,
 	section .ok,
 	section .status {
-		padding: 0.5rem 0;
+		padding: var(--space-sm) 0;
 	}
 	section .ok {
-		padding: 0.5rem 0.75rem;
+		padding: var(--space-sm) var(--space-md);
 	}
 	.cards {
 		list-style: none;
@@ -205,12 +205,12 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: center;
-		gap: 0.25rem 0.75rem;
-		padding: 0.5rem 0;
-		border-bottom: 1px solid var(--border);
+		gap: var(--space-2xs) var(--space-md);
+		padding: var(--space-sm) 0;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.who {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 		overflow-wrap: anywhere;
 	}
 	.when {
@@ -220,9 +220,9 @@
 	}
 	.state {
 		font-size: var(--text-sm);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.cards button {
 		margin-left: auto;

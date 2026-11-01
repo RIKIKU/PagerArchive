@@ -1,15 +1,16 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
-	import { criteria, rangeProblem } from '#lib/filters.ts';
+	import { rangeProblem } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
-	import Filters from '#lib/Filters.svelte';
+	import Icon from '#lib/Icon.svelte';
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
+	import { apiParams, criteria } from '#lib/search.ts';
 
 	// R35: located messages, the last 24 hours unless the search gives dates,
-	// following the active filters and live updates (section 14).
+	// following the search box (R33a) and live updates (section 14).
 	let meta: Meta | undefined = $state();
 	let messages: Message[] = $state([]);
 	let truncated = $state(false);
@@ -18,11 +19,14 @@
 	let mapView: MapView | undefined = $state();
 
 	const query = $derived(criteria(page.url));
-	const queryKey = $derived(query.toString());
+	const asked = $derived(meta ? apiParams(query, meta.categories) : undefined);
+	const queryKey = $derived(asked?.params.toString());
+	const askedProblem = $derived(asked?.problem ?? '');
 	const focus = $derived(Number(page.url.searchParams.get('focus')) || null);
 	const tz = $derived(meta?.time_zone ?? 'UTC');
 	const ranged = $derived(query.has('from') || query.has('to'));
 	const shown = $derived(selected.length ? messages.filter((m) => selected.includes(m.id)) : messages);
+	const listHref = $derived(query.toString() ? `/?${query}` : '/');
 
 	api.meta().then((m) => (meta = m)).catch((e) => (error = e.message));
 
@@ -39,10 +43,11 @@
 	}
 
 	$effect(() => {
+		if (queryKey === undefined) return;
 		const q = new URLSearchParams(queryKey);
 		// A reversed range in the URL: say so, without asking the API.
 		// error is only written here: reading it would make this effect depend on it.
-		const problem = rangeProblem(q.get('from'), q.get('to'));
+		const problem = rangeProblem(q.get('from'), q.get('to')) || askedProblem;
 		error = problem;
 		if (problem) {
 			messages = [];
@@ -77,11 +82,12 @@
 
 <svelte:head><title>Map · PagerArchive</title></svelte:head>
 
-{#if meta}
-	<Filters {query} {meta} />
-{/if}
 <div class="bar">
 	<h1>Map</h1>
+	<div class="views" role="group" aria-label="View">
+		<a class="button secondary" href={listHref}><Icon name="list" />List</a>
+		<span class="button secondary" aria-current="page"><Icon name="map" />Map</span>
+	</div>
 	<p class="status">
 		{messages.length} located message{messages.length === 1 ? '' : 's'}{ranged ? '' : ' from the last 24 hours'}{truncated
 			? ' (the newest only: narrow the search to see more)'
@@ -98,18 +104,18 @@
 <section aria-labelledby="located-h" class="located">
 	<div class="list-head">
 		<h2 id="located-h">{selected.length ? `Selected on the map (${selected.length})` : 'Located messages'}</h2>
-		{#if selected.length}<button type="button" onclick={() => (selected = [])}>Show all</button>{/if}
+		{#if selected.length}<button class="secondary" type="button" onclick={() => (selected = [])}>Show all</button>{/if}
 	</div>
 	<ul data-testid="located-list">
 		{#each shown as m (m.id)}
 			<li>
 				<a href="/messages/{m.id}">
+					<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
 					<span class="when"><time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time></span>
 					{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 					<span class="who">{m.alias ?? m.capcode}</span>
-					<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
-					<span class="text">{m.display_text}</span>
 					<span class="where">{where(m)}</span>
+					<span class="text">{m.display_text}</span>
 				</a>
 			</li>
 		{/each}
@@ -119,27 +125,44 @@
 
 <style>
 	.bar {
-		padding: 0.5rem 0.75rem 0;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: var(--space-sm) var(--space-lg);
+		margin-bottom: var(--space-md);
 	}
 	h1 {
-		font-size: var(--text-xl);
-		margin: 0.25rem 0;
+		margin: 0;
+	}
+	.views {
+		display: flex;
+		margin-left: auto;
+	}
+	.views > :first-child {
+		border-top-right-radius: 0;
+		border-bottom-right-radius: 0;
+	}
+	.views > * + * {
+		margin-left: calc(-1 * var(--border-width));
+		border-top-left-radius: 0;
+		border-bottom-left-radius: 0;
 	}
 	.bar .status {
-		margin: 0 0 0.5rem;
-		color: var(--muted);
+		flex-basis: 100%;
+		margin: 0;
+		padding: 0;
 		font-size: var(--text-sm);
 	}
 	.located {
-		padding: 0 0.75rem 1rem;
+		margin-top: var(--space-lg);
 	}
 	.list-head {
 		display: flex;
 		align-items: center;
-		gap: 1rem;
+		gap: var(--space-lg);
 	}
 	h2 {
-		font-size: var(--text-base);
+		font-size: var(--text-lg);
 	}
 	ul {
 		list-style: none;
@@ -149,10 +172,10 @@
 	li a {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.15rem 0.6rem;
-		align-items: baseline;
-		padding: 0.5rem 0;
-		border-bottom: 1px solid var(--border);
+		gap: var(--space-xs) var(--space-md);
+		align-items: center;
+		padding: var(--space-md) 0;
+		border-bottom: var(--border-width) solid var(--border);
 		color: var(--fg);
 		text-decoration: none;
 	}
@@ -166,10 +189,11 @@
 		font-size: var(--text-sm);
 	}
 	.who {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 	}
 	.text {
 		flex-basis: 100%;
+		font-family: var(--font-page);
 		overflow-wrap: anywhere;
 	}
 </style>

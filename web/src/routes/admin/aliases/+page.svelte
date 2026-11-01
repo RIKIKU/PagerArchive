@@ -100,24 +100,24 @@
 
 <style>
 	.ok {
-		margin: 0 0.75rem 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	.tools {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin: 0 0.75rem 0.5rem;
+		gap: var(--space-sm);
+		margin: 0 0 var(--space-sm);
 	}
 	.search {
-		margin: 0.75rem;
-		max-width: 24rem;
+		margin: var(--space-md) 0;
+		max-width: var(--field-search);
 	}
 	.search label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	.scroll {
-		margin: 0 0.75rem;
+		margin: 0;
 		overflow-x: auto;
 	}
 	table {
@@ -128,24 +128,24 @@
 	th,
 	td {
 		text-align: left;
-		padding: 0.35rem 0.75rem 0.35rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-xs) var(--space-md) var(--space-xs) 0;
+		border-bottom: var(--border-width) solid var(--border);
 		vertical-align: top;
 		overflow-wrap: anywhere;
 	}
 	th {
 		color: var(--muted);
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 	}
 	.mono {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 		white-space: nowrap;
 	}
 	.tag {
 		font-size: var(--text-xs);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
-		margin-left: 0.25rem;
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
+		margin-left: var(--space-2xs);
 		white-space: nowrap;
 	}
 	.tag.warn {

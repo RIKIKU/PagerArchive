@@ -296,11 +296,11 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account', '/menu/tools', '/menu/reports', '/menu/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(280_000); // 30 views
+			test.setTimeout(330_000); // 33 views
 			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
 			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
 			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
@@ -324,6 +324,9 @@ for (const scheme of ['light', 'dark'] as const) {
 			const adminPage = await ctx.newPage();
 			const userPage = await userCtx.newPage();
 			for (const view of views) {
+				// R81 (M13): phones can't set up an integration, so its form is
+				// checked on a desktop only.
+				if (width === 375 && (view === 'integration-form' || view === 'selection')) continue;
 				const page = view === 'detail' || view.startsWith('admin-') || view.startsWith('/admin') ? adminPage : userPage;
 				if (view === 'detail') {
 					// A located message, so its small map is checked too (R35c).
@@ -935,7 +938,8 @@ test('A43 request approved', async ({ page, browser, request }, info) => {
 	const admin = await (await signedIn(browser, 'admin')).newPage();
 	await admin.goto('/');
 	const link = admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' });
-	const waitingName = (k: number) => (k === 0 ? 'Admin' : `Admin, ${k} alias request${k === 1 ? '' : 's'} waiting`);
+	// R44b: from M13 the count is on the side menu's Administration group.
+	const waitingName = (k: number) => (k === 0 ? 'Administration' : `Administration, ${k} alias request${k === 1 ? '' : 's'} waiting`);
 	await expect(link).toHaveAccessibleName(waitingName(before + 1));
 	await expect(link).toContainText(String(before + 1));
 	await link.click();
@@ -1552,13 +1556,13 @@ const listIds = (page: Page) =>
 	page.getByTestId('message-list').locator('article').evaluateAll((els) => els.map((e) => Number((e as HTMLElement).dataset.messageId)));
 const squash = (s: string) => s.replace(/\s+/g, '');
 
-/** Searches with the search form on this page (the print page's or the
- * search page's), filling the fields given by label ('' empties one). */
-async function searchWith(page: Page, fields: Record<string, string>) {
+/** Searches with the search box on this page (the print page's or the
+ * search page's): since M13 one box (R33a), so filters are typed in it
+ * (job:EX0000001). */
+async function searchWith(page: Page, text: string) {
 	const form = page.getByRole('search', { name: 'Search messages' });
-	if (!(await form.isVisible())) await page.locator('summary', { hasText: 'Search' }).click();
-	for (const [label, v] of Object.entries(fields)) await form.getByLabel(label, { exact: true }).fill(v);
-	await form.getByRole('button', { name: 'Search' }).click();
+	await form.getByRole('combobox', { name: 'Search' }).fill(text);
+	await form.getByRole('button', { name: 'Search', exact: true }).click();
 }
 
 /** R67: messages are listed here, and none has a tick box. */
@@ -1713,7 +1717,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await page.getByTestId('sheet-link').click();
 	await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
 	await waitLive(page);
-	await searchWith(page, { Text: ref });
+	await searchWith(page, ref);
 	await expect(page).toHaveURL(new RegExp(`/sheet\\?q=${ref}(&|$)`));
 	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(4);
 	expect(await listIds(page)).toEqual([arrived, c, b, a]);
@@ -1731,7 +1735,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await expect.poll(() => sheetIds(page)).toEqual([b, c, a]);
 
 	// A second search, for the job: d.
-	await searchWith(page, { Text: '', 'Job number': job });
+	await searchWith(page, `job:${job}`);
 	await expect(page).toHaveURL(new RegExp(`/sheet\\?.*job=${job}`));
 	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(1);
 	await tickOf(page, d).check();
@@ -1766,7 +1770,10 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	// On screen only (the print checks below find nothing but the texts).
 	await expect(page.getByTestId('print-hint')).toHaveText(`In the print dialog, untick "Headers and footers" to leave out the browser's own date, title and address.`);
 	for (const scheme of ['light', 'dark'] as const) {
+		// Since M13 the theme is in the account menu (ADR 0015, decision 5).
+		await page.getByRole('button', { name: /^Account menu/ }).click();
 		await page.getByLabel('Colour theme').selectOption(scheme);
+		await page.keyboard.press('Escape');
 		const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
 		expect(results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), scheme).toEqual([]);
 		await page.screenshot({ path: info.outputPath(`a60-sheet-${scheme}.png`), fullPage: true });
@@ -1840,7 +1847,11 @@ test('print page search matches the search page', async ({ browser, request }) =
 		await expect(print.locator('article').first()).toBeVisible();
 		const fields = await fieldsOf(list);
 		expect(await fieldsOf(print), `${role}: the same search form`).toEqual(fields);
-		expect(fields.includes('parse_failed'), `${role}: flag filters`).toBe(role === 'admin');
+		// Since M13 one box (R33a), with no field per filter: the flag filters
+		// are its flag: key, offered to admins only.
+		await print.getByRole('combobox', { name: 'Search' }).fill('fl');
+		await expect(print.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option', { name: 'flag:' }), `${role}: flag filters`).toHaveCount(role === 'admin' ? 1 : 0);
+		await print.getByRole('combobox', { name: 'Search' }).fill('');
 		await expect(print.getByText('Flags (admins only)')).toHaveCount(role === 'admin' ? 1 : 0);
 		const seen: string[] = [];
 		for (const s of searches) {
@@ -2046,4 +2057,474 @@ test('print sheet without storage', async ({ browser, request }) => {
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
 	expect(errors).toEqual([]);
 	await ctx.close();
+});
+
+// M13 (ADR 0015): the redesign. Screenshots of each check go to its output
+// folder; with PA_M13_SHOTS set to a folder, the screenshots test writes the
+// full set there.
+
+/** The breadcrumbs as shown: each level's text, and where it links. */
+function crumbsOf(page: Page) {
+	return page.getByRole('navigation', { name: 'Breadcrumb' }).evaluate((nav) =>
+		[...nav.querySelectorAll('li')].map((li) => {
+			const a = li.querySelector('a');
+			return { label: li.textContent?.trim() ?? '', href: a ? new globalThis.URL(a.href).pathname : null };
+		})
+	);
+}
+
+async function axeOf(page: Page) {
+	const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+	return results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`);
+}
+
+// A61. One search box: suggestions, partial and exact values, several values
+// for a key, text with colons, the address, and flag: for admins only, with
+// the keyboard alone.
+test('A61 one search box', async ({ browser, request }, info) => {
+	const marker = `FINDME${projectN(info)}${uniqueJob().slice(2)}`;
+	await post(request, '0600001', `@@${marker} SMOKE AT HILLSIDE NORTH`);
+	await post(request, '0600002', `QD${marker} DRILL AT HILLSIDE SOUTH`);
+	await post(request, '0100001', `@@${marker} SMOKE AT STATION ONE`);
+	await post(request, '0100001', `QD${marker} DRILL AT STATION ONE`);
+	await post(request, '0100002', `@@${marker} SMOKE AT STATION TWO`);
+	await post(request, '0100003', `@@${marker} SMOKE AT STATION THREE`);
+	await post(request, '0100004', `QD${marker} MEET AT 14:05 AT STATION FOUR`);
+	const page = await (await signedIn(browser, 'user')).newPage();
+	await page.goto('/');
+	await waitLive(page);
+	const box = page.getByRole('combobox', { name: 'Search' });
+	const options = page.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option');
+	const announced = page.getByRole('search', { name: 'Search messages' }).locator('[aria-live]');
+	const list = page.getByTestId('message-list');
+	const who = async () => (await list.locator('article .who').allTextContents()).sort();
+
+	// alias:hill suggests both Hillside aliases, and no Station; it's said how many.
+	await box.fill('alias:hill');
+	await expect(options).toHaveText(['Hillside North', 'Hillside South']);
+	await expect(announced).toHaveText('2 suggestions');
+	// Searched without picking: pages from both.
+	await box.fill(`alias:hill ${marker}`);
+	await box.press('Enter');
+	await expect(page).toHaveURL(new RegExp(`/\\?alias=hill&q=${marker}$`));
+	await expect.poll(who).toEqual(['Hillside North', 'Hillside South']);
+
+	// Station 1 picked from alias:sta's suggestions, with the keyboard.
+	await box.fill('alias:sta');
+	await expect(options.first()).toHaveText('Station 1');
+	await expect(options.filter({ hasText: 'Hillside' })).toHaveCount(0);
+	await box.press('ArrowDown');
+	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+	await box.press('Enter');
+	await expect(box).toHaveValue(/^alias:"Station 1"\s*$/);
+	await expect(options).toHaveCount(0);
+	await page.keyboard.type(marker);
+	await box.press('Enter');
+	await expect.poll(who).toEqual(['Station 1', 'Station 1']);
+
+	// Two aliases (either) and a priority (both).
+	await box.fill(`alias:"Station 1" alias:"Station 2" priority:emergency ${marker}`);
+	await box.press('Enter');
+	await expect.poll(who).toEqual(['Station 1', 'Station 2']);
+	await expect(list.locator('article .badge')).toHaveText(['Emergency priority', 'Emergency priority']);
+
+	// 14:05 is text.
+	await box.fill('14:05');
+	await box.press('Enter');
+	await expect(page).toHaveURL(/\/\?q=14%3A05$/);
+	await expect(list.locator('article', { hasText: marker })).toHaveCount(1);
+	for (const t of await list.locator('article p.text').allTextContents()) expect(t).toContain('14:05');
+
+	// A reload keeps the search.
+	await page.reload();
+	await expect(box).toHaveValue('14:05');
+	await expect(list.locator('article', { hasText: marker })).toHaveCount(1);
+
+	// fl: no flag: for B, but an admin gets it; Escape closes the list.
+	await box.fill('fl');
+	await expect(options).toHaveCount(0);
+	const admin = await (await signedIn(browser, 'admin')).newPage();
+	await admin.goto('/');
+	await waitLive(admin);
+	const adminBox = admin.getByRole('combobox', { name: 'Search' });
+	await adminBox.fill('fl');
+	const adminOptions = admin.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option');
+	await expect(adminOptions).toHaveText(['flag:']);
+	await adminBox.press('ArrowDown');
+	await adminBox.press('Enter');
+	await expect(adminBox).toHaveValue('flag:');
+	await expect(adminOptions).toHaveText(['parse_failed', 'address_unsplit', 'location_mismatch']);
+	await admin.screenshot({ path: info.outputPath('a61-suggestions-admin.png') });
+	expect(await axeOf(admin), 'axe with the suggestions open').toEqual([]);
+	await adminBox.press('Escape');
+	await expect(adminOptions).toHaveCount(0);
+	await page.context().close();
+	await admin.context().close();
+});
+
+// A68. The side menu and the breadcrumbs, at 1,920 px.
+test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
+	test.setTimeout(180_000);
+	const desk = { viewport: { width: 1920, height: 1080 } };
+	const origins = new Set<string>();
+	const watch = (p: Page) => p.on('request', (r) => !r.url().startsWith('data:') && origins.add(new globalThis.URL(r.url()).origin));
+	const expected = {
+		Tools: ['Print sheet', 'Unknown capcodes'],
+		Reports: ['Capcode report'],
+		Account: ['Profile', 'Integrations', 'My requests', 'Invite someone'],
+		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']
+	};
+	for (const role of ['user', 'admin'] as const) {
+		const page = await (await signedIn(browser, role, desk)).newPage();
+		watch(page);
+		await page.goto('/');
+		await waitLive(page);
+		const nav = page.getByRole('navigation', { name: 'Main' });
+		const groups = Object.keys(expected).filter((g) => role === 'admin' || g !== 'Administration');
+		for (const g of Object.keys(expected)) await expect(nav.getByRole('link', { name: g, exact: true }), `${role}: ${g}`).toHaveCount(groups.includes(g) ? 1 : 0);
+		// Every group and page has its icon.
+		const bare = await nav.locator('a.item').evaluateAll((as) => as.filter((a) => !a.querySelector('svg.ui-icon')).map((a) => a.textContent));
+		expect(bare, `${role}: links without an icon`).toEqual([]);
+		await page.screenshot({ path: info.outputPath(`a68-menu-${role}.png`) });
+		// Each page in at most two clicks: its group's toggle, if closed, then the page.
+		for (const g of groups) {
+			for (const label of expected[g as keyof typeof expected]) {
+				await page.goto('/');
+				// Administration is drawn once the page knows who's signed in.
+				await expect(nav.getByRole('link', { name: new RegExp(`^${g}`) })).toBeVisible();
+				let clicks = 0;
+				const link = nav.getByRole('link', { name: label, exact: true }).or(nav.getByRole('link', { name: new RegExp(`^${label},`) }));
+				if (!(await link.isVisible())) {
+					await nav.getByRole('button', { name: `${g}: show its pages` }).click();
+					clicks++;
+				}
+				await link.click();
+				clicks++;
+				await expect(page.locator('main h1').first(), `${role}: ${g} > ${label}`).toBeVisible();
+				console.log(`A68 (${role}): ${g} > ${label} in ${clicks} click(s), ${Date.now() % 100000}`);
+				expect(clicks, `${g} > ${label}`).toBeLessThanOrEqual(2);
+				expect(await crumbsOf(page), `${g} > ${label}: its breadcrumbs`).toEqual(
+					label === 'Invite someone' ? [{ label: g, href: '/menu/account' }, { label: 'Profile', href: null }] : [{ label: g, href: g === 'Administration' ? '/admin' : `/menu/${g.toLowerCase()}` }, { label, href: null }]
+				);
+			}
+		}
+		await page.context().close();
+	}
+
+	// Shrunk: the group icons only, each named, with a tooltip; hovering or
+	// focusing a group opens its pages' panel.
+	const page = await (await signedIn(browser, 'admin', desk)).newPage();
+	watch(page);
+	await page.goto('/');
+	const nav = page.getByRole('navigation', { name: 'Main' });
+	await nav.getByRole('button', { name: 'Shrink menu' }).click();
+	await expect(nav.locator('.label').first()).toBeHidden();
+	for (const g of ['Messages', 'Tools', 'Reports', 'Account', 'Administration']) await expect(nav.getByRole('link', { name: new RegExp(`^${g}`) })).toBeVisible();
+	await nav.getByRole('link', { name: 'Messages' }).hover();
+	await expect(nav.locator('.tip', { hasText: 'Messages' })).toBeVisible();
+	await nav.getByRole('link', { name: 'Tools' }).hover();
+	await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Tools');
+	await expect(nav.getByRole('link', { name: /^Print sheet/ })).toBeVisible();
+	await page.screenshot({ path: info.outputPath('a68-shrunk-hover.png') });
+	await page.mouse.move(1500, 600);
+	await expect(nav.getByRole('link', { name: /^Print sheet/ })).toBeHidden();
+	await nav.getByRole('link', { name: 'Reports' }).focus();
+	await expect(nav.getByRole('link', { name: 'Capcode report' })).toBeVisible();
+	await page.keyboard.press('Tab');
+	await expect(nav.getByRole('link', { name: 'Capcode report' })).toBeFocused();
+	await page.screenshot({ path: info.outputPath('a68-shrunk-focus.png') });
+	expect(await axeOf(page), 'axe, shrunk, a panel open').toEqual([]);
+	await nav.getByRole('button', { name: 'Widen the menu' }).click();
+	await page.context().close();
+
+	// The same alias view from the menu, a search result and a pasted address:
+	// the same breadcrumbs, each level above a link.
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
+	const user = await (await signedIn(browser, 'user', desk)).newPage();
+	watch(user);
+	const seen: Awaited<ReturnType<typeof crumbsOf>>[] = [];
+	const box = user.getByRole('combobox', { name: 'Search' });
+	// From the menu: Messages, then the alias on a row.
+	await user.goto('/account');
+	await user.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Messages', exact: true }).click();
+	await user.getByTestId('message-list').getByRole('link', { name: 'Station 1', exact: true }).first().click();
+	await expect(user).toHaveURL(/\/aliases\/\d+$/);
+	await expect(user.getByRole('heading', { level: 1, name: 'Station 1' })).toBeVisible();
+	seen.push(await crumbsOf(user));
+	const address = user.url();
+	// From a search result.
+	await user.goto('/requests');
+	await box.fill(`job:${job}`);
+	await box.press('Enter');
+	await expect(user).toHaveURL(`/?job=${job}`);
+	await expect(user.getByTestId('message-list').locator('article')).toHaveCount(1);
+	await user.getByTestId('message-list').getByRole('link', { name: 'Station 1', exact: true }).click();
+	await expect(user.getByRole('heading', { level: 1, name: 'Station 1' })).toBeVisible();
+	seen.push(await crumbsOf(user));
+	// From a pasted address.
+	await user.goto(address);
+	await expect(user.getByRole('heading', { level: 1, name: 'Station 1' })).toBeVisible();
+	seen.push(await crumbsOf(user));
+	console.log(`A68: the alias view's breadcrumbs from the menu, a search result and a pasted address: ${JSON.stringify(seen)}`);
+	expect(seen[0]).toEqual([{ label: 'Messages', href: '/' }, { label: 'Station 1', href: null }]);
+	expect(seen[1]).toEqual(seen[0]);
+	expect(seen[2]).toEqual(seen[0]);
+	expect(await axeOf(user), 'axe on the alias view').toEqual([]);
+	await user.context().close();
+	expect([...origins], 'origins requested, icons included').toEqual([URL]);
+});
+
+// A69. Using the width: a message opens beside the list, which keeps its
+// search, dates and place; coming back from an alias by the breadcrumbs
+// restores them (R81a).
+test('A69 using the width', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const marker = `WIDTH${projectN(info)}${uniqueJob().slice(2)}`;
+	for (let n = 1; n <= 40; n++) await post(request, `010000${(n % 4) + 1}`, `QD${marker} ROW ${String(n).padStart(2, '0')} AT THE STATION`);
+	const search = `q=${marker}&from=2020-01-01&to=2099-12-31`;
+	for (const width of [1920, 1280, 375]) {
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: width === 375 ? 740 : 1000 } })).newPage();
+		await page.goto(`/?${search}`);
+		await waitLive(page);
+		const list = page.getByTestId('message-list');
+		await expect(list.locator('article')).toHaveCount(40);
+		await page.evaluate(() => window.scrollTo(0, 900));
+		const row = list.locator('article').nth(12);
+		// Mid-screen, clear of the top bar, so the click needs no more scrolling.
+		await row.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+		const y = await page.evaluate(() => window.scrollY);
+		expect(y, 'scrolled down the list').toBeGreaterThan(0);
+		// Its place: where the row opened sits on the screen. (When the pane
+		// opens beside it the list narrows and its rows may wrap, so the
+		// browser keeps that row in place rather than the scroll offset.)
+		const opened = list.locator(`article[data-message-id="${await row.getAttribute('data-message-id')}"]`);
+		const top = (await opened.boundingBox())!.y;
+		await row.locator('a.open').click();
+		await expect(page).toHaveURL(/\/messages\/\d+$/);
+		await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+		await page.screenshot({ path: info.outputPath(`a69-${width}-message.png`) });
+		if (width >= 1280) {
+			// Beside the list, which is where it was, with its search.
+			await expect(opened).toBeInViewport();
+			const moved = (await opened.boundingBox())!.y - top;
+			console.log(`A69 (${width} px): the opened row moved ${moved} px on the screen when the pane opened (scrollY ${y} -> ${await page.evaluate(() => window.scrollY)})`);
+			expect(Math.abs(moved), `${width}: the list kept its place`).toBeLessThan(40);
+			await expect(page.getByRole('combobox', { name: 'Search' })).toHaveValue(marker);
+			const edges = await page.evaluate(() => {
+				const side = document.querySelector('nav.side')!.getBoundingClientRect();
+				const l = document.querySelector('[data-testid="message-list"]')!.getBoundingClientRect();
+				const pane = document.querySelector('section.pane')!.getBoundingClientRect();
+				return { menu: side.width, left: l.left - side.right, right: document.documentElement.clientWidth - pane.right };
+			});
+			console.log(`A69 (${width} px): menu ${edges.menu} px; empty margin left of the list ${edges.left} px, right of the pane ${edges.right} px`);
+			expect(edges.left).toBeLessThanOrEqual(edges.menu);
+			expect(edges.right).toBeLessThanOrEqual(edges.menu);
+			expect(Math.max(edges.left, edges.right)).toBeLessThanOrEqual(1);
+		} else {
+			await page.goBack();
+			await expect(opened).toBeVisible();
+			console.log(`A69 (${width} px): back from the message: the opened row ${Math.round((await opened.boundingBox())!.y - top)} px from where it was; scrollY ${y} before, ${await page.evaluate(() => window.scrollY)} now, top bar ${await page.evaluate(() => document.querySelector('header.top')!.getBoundingClientRect().height)}`);
+		}
+		// Its alias, then back to the list by the breadcrumbs.
+		await list.locator('article').nth(12).getByRole('link', { name: /^Station \d$/ }).click();
+		await expect(page).toHaveURL(/\/aliases\/\d+$/);
+		await expect(page.getByRole('heading', { level: 1, name: /^Station \d$/ })).toBeVisible();
+		await page.getByRole('navigation', { name: 'Breadcrumb' }).getByRole('link', { name: 'Messages' }).click();
+		await expect(page).toHaveURL(`/?${search}`);
+		await expect(list.locator('article')).toHaveCount(40);
+		await expect(opened).toBeInViewport();
+		await expect.poll(async () => Math.abs((await opened.boundingBox())!.y - top), `${width}: the list's place`).toBeLessThan(40);
+		await expect(page.getByRole('combobox', { name: 'Search' })).toHaveValue(marker);
+		if (width >= 768) {
+			await expect(page.getByLabel('From', { exact: true })).toHaveValue('2020-01-01');
+			await expect(page.getByLabel('To', { exact: true })).toHaveValue('2099-12-31');
+		}
+		await page.screenshot({ path: info.outputPath(`a69-${width}-back.png`) });
+		console.log(`A69 (${width} px): back at the list by the breadcrumbs: the opened row ${Math.round((await opened.boundingBox())!.y - top)} px from where it was (scrollY ${y} before, ${await page.evaluate(() => window.scrollY)} now), search and dates kept`);
+		await page.context().close();
+	}
+});
+
+// A70. Phones: the bottom bar, More without the desktop-only pages, the
+// integration switch, and the print page from its address.
+test('A70 phones', async ({ browser, request }, info) => {
+	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: asRole('admin'), data: { entries: ['127.0.0.0/8'] } });
+	const name = `Phone switch ${Date.now()}`;
+	const made = await request.post(`${URL}/api/v1/integrations`, {
+		headers: asRole('user'),
+		data: { name, kind: 'webhook', capcodes: ['0500009'], secrets: { url: 'http://127.0.0.1:9/hook' } }
+	});
+	expect(made.status()).toBe(201);
+	const id = (await made.json()).id as number;
+	try {
+		for (const role of ['user', 'admin'] as const) {
+			const page = await (await signedIn(browser, role, { viewport: { width: 375, height: 740 }, hasTouch: true })).newPage();
+			await page.goto('/');
+			await waitLive(page);
+			const bar = page.getByRole('navigation', { name: 'Main' });
+			await expect(bar.getByRole('link', { name: 'Messages' })).toBeVisible();
+			await expect(bar.getByRole('link', { name: 'Map' })).toBeVisible();
+			await bar.getByRole('button', { name: 'More' }).click();
+			const more = page.getByRole('dialog', { name: 'More' });
+			await expect(more).toBeVisible();
+			for (const there of ['Unknown capcodes', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
+			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses'])
+				await expect(more.getByRole('link', { name: gone })).toHaveCount(0);
+			await expect(more.getByText(/set up|new integration/i)).toHaveCount(0);
+			await page.screenshot({ path: info.outputPath(`a70-more-${role}.png`) });
+			expect(await axeOf(page), `${role}: axe with More open`).toEqual([]);
+			if (role === 'user') {
+				await more.getByRole('link', { name: 'Integrations', exact: true }).click();
+				await expect(page.getByRole('heading', { level: 1, name: 'Integrations' })).toBeVisible();
+				await expect(page.getByRole('button', { name: 'New integration' })).toHaveCount(0);
+				const sw = page.getByRole('switch', { name: `${name}: sending` });
+				await expect(sw).toHaveAttribute('aria-checked', 'true');
+				await sw.tap();
+				await expect(sw).toHaveAttribute('aria-checked', 'false');
+				await expect(sw).toContainText('Paused');
+				const saved = (await (await request.get(`${URL}/api/v1/integrations`, { headers: asRole('user') })).json()).integrations.find((i: { id: number }) => i.id === id);
+				expect(saved.status).toBe('paused');
+				await page.screenshot({ path: info.outputPath('a70-integrations.png') });
+				await page.goto('/sheet');
+				await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
+				await waitLive(page);
+				console.log(`A70: paused "${name}" with its switch on a 375 px phone (API: ${saved.status}); /sheet opened from its address`);
+			}
+			await page.context().close();
+		}
+	} finally {
+		await request.delete(`${URL}/api/v1/integrations/${id}`, { headers: asRole('user') });
+	}
+});
+
+// WCAG 2.1 AA: 4.5:1 for text (1.4.3), 3:1 for focus rings, control borders
+// and the marks that show priority (1.4.11), each token as the browser
+// resolves it, light and dark. Priorities carry their names in words, so
+// none relies on colour alone (1.4.1).
+const colourTokens = [
+	...['bg', 'surface', 'surface-2', 'fg', 'muted', 'border', 'control-border', 'accent', 'accent-fg', 'accent-hover', 'accent-pressed', 'accent-soft', 'accent-soft-fg'],
+	...['hover', 'focus', 'warn-bg', 'warn-fg', 'ok-fg', 'danger', 'danger-fg', 'danger-hover', 'danger-text', 'heartbeat-fg', 'highlight'],
+	...['emergency', 'nonemergency', 'admin'].flatMap((p) => ['bg', 'edge', 'dot', 'row', 'row-hover', 'badge-bg', 'badge-fg'].map((t) => `${p}-${t}`))
+];
+test('M13: WCAG AA contrast of Harbour, light and dark', async ({ browser }) => {
+	const report: string[] = [];
+	const failures: string[] = [];
+	for (const scheme of ['light', 'dark'] as const) {
+		const page = await (await signedIn(browser, 'user', { colorScheme: scheme })).newPage();
+		await page.goto('/');
+		await waitLive(page);
+		const t: Record<string, string> = await page.evaluate((names) => {
+			const root = getComputedStyle(document.documentElement);
+			const probe = document.createElement('span');
+			document.body.append(probe);
+			const out: Record<string, string> = {};
+			for (const n of names) {
+				probe.style.color = `var(--${n})`;
+				out[n] = root.getPropertyValue(`--${n}`).trim() === 'transparent' ? 'transparent' : getComputedStyle(probe).color;
+			}
+			probe.remove();
+			return out;
+		}, colourTokens);
+		// A transparent row is drawn on the page or on a card.
+		const on = (names: string[]) => names.flatMap((n) => (t[n] === 'transparent' ? ['bg', 'surface'] : [n]));
+		const rgb = (n: string) => t[n].match(/[\d.]+/g)!.slice(0, 3).map(Number);
+		const lum = (c: number[]) =>
+			c.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+		const ratio = (a: string, b: string) => {
+			const [x, y] = [lum(rgb(a)), lum(rgb(b))].sort((p, q) => q - p);
+			return (x + 0.05) / (y + 0.05);
+		};
+		const pairs: { what: string; fg: string; on: string[]; min: number }[] = [
+			{ what: 'Text', fg: 'fg', on: ['bg', 'surface', 'surface-2', 'hover', 'highlight'], min: 4.5 },
+			{ what: 'Secondary text', fg: 'muted', on: ['bg', 'surface', 'surface-2', 'hover'], min: 4.5 },
+			{ what: 'Links', fg: 'accent', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
+			{ what: 'Button text', fg: 'accent-fg', on: ['accent', 'accent-hover', 'accent-pressed'], min: 4.5 },
+			{ what: 'Current page, pressed', fg: 'accent-soft-fg', on: ['accent-soft'], min: 4.5 },
+			{ what: 'Danger button text', fg: 'danger-fg', on: ['danger', 'danger-hover'], min: 4.5 },
+			{ what: 'Error text', fg: 'danger-text', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
+			{ what: 'Live, saved', fg: 'ok-fg', on: ['bg', 'surface'], min: 3 },
+			{ what: 'Tooltip', fg: 'bg', on: ['fg'], min: 4.5 },
+			{ what: 'Warnings and flags', fg: 'warn-fg', on: ['warn-bg'], min: 4.5 },
+			{ what: 'Heartbeat label', fg: 'heartbeat-fg', on: ['bg', 'surface'], min: 4.5 },
+			{ what: 'Focus ring', fg: 'focus', on: ['bg', 'surface', 'surface-2'], min: 3 },
+			{ what: 'Control borders', fg: 'control-border', on: ['bg', 'surface', 'surface-2'], min: 3 },
+			{ what: 'Switch on', fg: 'accent', on: ['surface-2'], min: 3 }
+		];
+		for (const p of ['emergency', 'nonemergency', 'admin']) {
+			const rows = on([`${p}-row`, `${p}-row-hover`]);
+			pairs.push(
+				{ what: `${p}: label`, fg: `${p}-badge-fg`, on: on([`${p}-badge-bg`]), min: 4.5 },
+				{ what: `${p}: dot`, fg: `${p}-dot`, on: on([`${p}-badge-bg`]), min: 3 },
+				{ what: `${p}: map marker`, fg: `${p}-bg`, on: ['bg', 'surface'], min: 3 },
+				{ what: `${p}: text on its row`, fg: 'fg', on: rows, min: 4.5 },
+				{ what: `${p}: secondary text on its row`, fg: 'muted', on: rows, min: 4.5 },
+				{ what: `${p}: links on its row`, fg: 'accent', on: rows, min: 4.5 }
+			);
+			if (t[`${p}-edge`] !== 'transparent') pairs.push({ what: `${p}: row edge`, fg: `${p}-edge`, on: rows, min: 3 });
+		}
+		report.push(`Harbour, ${scheme}`);
+		for (const p of pairs) {
+			const each = p.on.map((b) => ({ b, r: ratio(p.fg, b) }));
+			const worst = each.reduce((w, e) => (e.r < w.r ? e : w));
+			report.push(`  ${p.what}: ${worst.r.toFixed(2)}:1 at worst (--${p.fg} on --${worst.b}; needs ${p.min}:1) [${each.map((e) => `${e.b} ${e.r.toFixed(2)}`).join(', ')}]`);
+			if (worst.r < p.min) failures.push(`${scheme}: ${p.what}: --${p.fg} on --${worst.b} is ${worst.r.toFixed(2)}:1, needs ${p.min}:1`);
+		}
+		await page.context().close();
+	}
+	console.log(report.join('\n'));
+	expect(failures).toEqual([]);
+});
+
+// The evidence for ADR 0015: with PA_M13_SHOTS set to a folder, screenshots
+// at 1,920, 1,280 and 375 px, light and dark: the menu open and shrunk, a
+// message open in the pane, the phone with its bottom bar and More, and an
+// admin's view with Administration. Chromium only.
+test('M13 screenshots', async ({ browser, request }, info) => {
+	const dir = process.env.PA_M13_SHOTS;
+	test.skip(!dir || info.project.name !== 'chromium', 'only with PA_M13_SHOTS set, in Chromium');
+	test.setTimeout(300_000);
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1`);
+	const shot = async (page: Page, name: string) => page.screenshot({ path: join(dir!, `${name}.png`) });
+	for (const scheme of ['light', 'dark'] as const) {
+		for (const width of [1920, 1280, 375]) {
+			const size = { viewport: { width, height: width === 375 ? 812 : 1080 }, colorScheme: scheme, hasTouch: width === 375 };
+			for (const role of ['user', 'admin'] as const) {
+				const page = await (await signedIn(browser, role, size)).newPage();
+				const base = `${scheme}-${width}-${role}`;
+				await page.goto('/');
+				await waitLive(page);
+				await shot(page, `${base}-list`);
+				await page.getByTestId('message-list').locator('article a.open').first().click();
+				await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+				await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+				await page.waitForTimeout(800);
+				await shot(page, `${base}-message`);
+				if (width === 375) {
+					await page.goto('/');
+					await waitLive(page);
+					await page.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'More' }).click();
+					await shot(page, `${base}-more`);
+				} else {
+					const nav = page.getByRole('navigation', { name: 'Main' });
+					if (role === 'admin') {
+						await page.goto('/admin');
+						await expect(page.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
+						await shot(page, `${base}-administration`);
+						await page.goto('/admin/templates');
+						await page.getByTestId('template-table').getByRole('link', { name: 'Example Fire' }).click();
+						await expect(page.getByRole('heading', { level: 1 })).toHaveText('Template “Example Fire”');
+						await shot(page, `${base}-template`);
+					}
+					await page.goto('/');
+					await waitLive(page);
+					await nav.getByRole('button', { name: 'Shrink menu' }).click();
+					await nav.getByRole('link', { name: 'Account' }).hover();
+					await shot(page, `${base}-shrunk`);
+					await nav.getByRole('button', { name: 'Widen the menu' }).click();
+				}
+				await page.context().close();
+			}
+		}
+	}
 });

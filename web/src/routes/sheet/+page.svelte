@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
-	import { criteria } from '#lib/filters.ts';
+	import { criteria } from '#lib/search.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import MessageList from '#lib/MessageList.svelte';
 	import { MAX_SHEET, clearSheet, drop, sheet, tick } from '#lib/sheet.svelte.ts';
@@ -69,7 +69,7 @@
 	<div class="notice" aria-live="polite">
 		{#if sheet.notice}<p class="ok" data-testid="sheet-full">{sheet.notice}</p>{/if}
 	</div>
-	<section aria-label="Search for messages to print" data-testid="sheet-search">
+	<section class="listbox" aria-label="Search for messages to print" data-testid="sheet-search">
 		<MessageList {query} level={2} title="Search results" pick scroll={false} />
 	</section>
 	<h2 class="sheet-heading">Your sheet</h2>
@@ -114,21 +114,26 @@
 
 <style>
 	.notice p {
-		margin: 0 0.75rem;
+		margin: 0;
 	}
-	/* Below the results, on every screen width; the M13 redesign decides the
-	   final layout. */
+	.listbox {
+		background: var(--surface);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
+	}
+	/* Below the results, on every screen width (A60). */
 	.sheet-heading {
 		font-size: var(--text-xl);
-		margin: 1.5rem 0 0;
-		padding: 1rem 0.75rem 0;
-		border-top: 1px solid var(--border);
+		margin: var(--space-2xl) 0 0;
+		padding: var(--space-lg) 0 0;
+		border-top: var(--border-width) solid var(--border);
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		padding: 0 0.75rem;
+		gap: var(--space-sm);
+		padding: 0;
 	}
 	.hint {
 		align-self: center;
@@ -137,24 +142,25 @@
 		font-size: var(--text-sm);
 	}
 	.note {
-		padding: 0 0.75rem;
+		padding: 0;
 		color: var(--muted);
 		font-size: var(--text-sm);
 	}
 	.sheet {
 		list-style: none;
 		margin: 0;
-		padding: 0 0.75rem 1rem;
+		padding: 0 0 var(--space-lg);
 	}
 	.item {
 		display: grid;
 		grid-template-columns: 1fr auto;
-		gap: 0.25rem 0.75rem;
+		gap: var(--space-2xs) var(--space-md);
 		align-items: start;
-		border: 2px solid var(--fg);
-		border-radius: 0.3rem;
-		padding: 0.6rem 0.75rem;
-		margin-bottom: 0.75rem;
+		border: var(--border-width-strong) solid var(--fg);
+		border-radius: var(--radius);
+		padding: var(--space-md) var(--space-lg);
+		background: var(--surface);
+		margin-bottom: var(--space-md);
 	}
 	.about {
 		grid-column: 1 / -1;
@@ -167,8 +173,8 @@
 	/* As the message list shows it (R31). */
 	.text {
 		margin: 0;
-		font-family: var(--mono);
-		font-size: var(--text-md);
+		font-family: var(--font-page);
+		font-size: var(--text-page);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		min-width: 0;
@@ -176,13 +182,13 @@
 
 	/* R68: the text alone, black on white whatever the theme, each message in
 	   a heavy black border with space between, and never split across paper
-	   pages. The colours are fixed by R68, not tokens (ADR 0012). The
+	   pages. Its values are fixed by R68, the same in every look: the print tokens in app.css. The
 	   header, navigation and footer are hidden by the layout. */
 	@media print {
 		:global(html),
 		:global(body) {
-			background: #ffffff;
-			color: #000000;
+			background: var(--print-bg);
+			color: var(--print-fg);
 		}
 		.screen {
 			display: none;
@@ -195,18 +201,18 @@
 		}
 		.item {
 			display: block;
-			color: #000000;
-			background: #ffffff;
-			border: 0.25rem solid #000000;
+			color: var(--print-fg);
+			background: var(--print-bg);
+			border: var(--print-rule) solid var(--print-fg);
 			border-radius: 0;
-			padding: 0.75rem;
-			margin: 0 0 1.5rem;
+			padding: var(--print-pad);
+			margin: 0 0 var(--print-gap);
 			break-inside: avoid;
 			page-break-inside: avoid;
 		}
 		.text {
-			color: #000000;
-			font-size: var(--text-base);
+			color: var(--print-fg);
+			font-size: var(--print-text);
 		}
 	}
 </style>

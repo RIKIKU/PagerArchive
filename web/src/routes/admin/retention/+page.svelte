@@ -104,16 +104,16 @@
 
 <style>
 	.page {
-		padding: 0 0.75rem 1rem;
-		max-width: 48rem;
+		padding: 0 0 var(--space-lg);
+		max-width: var(--measure-wide);
 	}
 	h1 {
 		font-size: var(--text-xl);
-		margin: 0.75rem 0 0.25rem;
+		margin: var(--space-md) 0 var(--space-2xs);
 	}
 	h2 {
 		font-size: var(--text-base);
-		margin-top: 1.5rem;
+		margin-top: var(--space-2xl);
 	}
 	.note,
 	.hint {
@@ -124,44 +124,36 @@
 		display: flex;
 		flex-wrap: wrap;
 		align-items: flex-end;
-		gap: 0.5rem 0.75rem;
+		gap: var(--space-sm) var(--space-md);
 	}
 	label {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
+		gap: var(--space-3xs);
 		font-size: var(--text-sm);
 	}
 	input {
-		width: 9rem;
+		width: var(--field-narrow);
 	}
 	.confirm {
-		border: 1px solid var(--border);
+		border: var(--border-width) solid var(--border);
 		background: var(--warn-bg);
 		color: var(--warn-fg);
-		padding: 0.75rem;
-		border-radius: 0.25rem;
+		padding: var(--space-md);
+		border-radius: var(--radius-small);
 	}
 	.confirm p {
-		margin: 0 0 0.5rem;
-		font-weight: 600;
+		margin: 0 0 var(--space-sm);
+		font-weight: var(--weight-strong);
 	}
 	.actions {
 		display: flex;
-		gap: 0.75rem;
-	}
-	.danger {
-		background: var(--emergency-bg);
-		color: var(--emergency-fg);
-		border-color: var(--emergency-bg);
-	}
-	.saved {
-		min-height: 1.2em;
+		gap: var(--space-md);
 	}
 	dl {
 		display: grid;
 		grid-template-columns: max-content 1fr;
-		gap: 0.25rem 1rem;
+		gap: var(--space-2xs) var(--space-lg);
 	}
 	dt {
 		color: var(--muted);

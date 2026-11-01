@@ -146,6 +146,38 @@ func TestSearchCriteria(t *testing.T) {
 	}
 }
 
+// R33a: the search box's suggestions for alias:, agency: and group: are the
+// values containing what was typed, ignoring case, in order.
+func TestSearchSuggestions(t *testing.T) {
+	e := setup(t)
+	for n := 1; n <= 3; n++ {
+		e.mustPost("a", fmt.Sprintf("010000%d", n), fmt.Sprintf("@@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN%d", n), e.now)
+	}
+	e.mustPost("a", "0999999", "plain text no group", e.now)
+	tests := []struct {
+		key, q string
+		want   []string
+	}{
+		{"alias", "STATION", []string{"Station 1", "Station 2", "Station 3", "Station 4"}},
+		{"alias", "on 3", []string{"Station 3"}},
+		{"alias", "nothing like it", []string{}},
+		{"agency", "fire", []string{"Example Fire Service"}},
+		{"group", "stn", []string{"STN1", "STN2", "STN3"}},
+		{"group", "2", []string{"STN2"}},
+		{"group", "", []string{"STN1", "STN2", "STN3"}},
+	}
+	for _, tt := range tests {
+		var got []string
+		path := "/api/v1/search/suggest?" + url.Values{"key": {tt.key}, "q": {tt.q}}.Encode()
+		if code := e.getJSON(path, &got); code != http.StatusOK || got == nil || fmt.Sprint(got) != fmt.Sprint(tt.want) {
+			t.Errorf("%s: %d %q, want %q", path, code, got, tt.want)
+		}
+	}
+	if code := e.getJSON("/api/v1/search/suggest?key=capcode&q=1", nil); code != http.StatusBadRequest {
+		t.Errorf("capcode suggestions (there are none, R33a): %d", code)
+	}
+}
+
 func TestPaginationNewestFirst(t *testing.T) {
 	e := setup(t)
 	for i := 0; i < 55; i++ {

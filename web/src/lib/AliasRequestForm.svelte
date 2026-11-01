@@ -122,51 +122,51 @@
 
 <style>
 	.request-form {
-		margin: 0.75rem 0;
-		padding: 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: 0.4rem;
+		margin: var(--space-md) 0;
+		padding: var(--space-md);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-badge);
 		background: var(--surface);
-		max-width: 36rem;
+		max-width: var(--measure-narrow);
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 0 0 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	.field {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	.field label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	.check {
 		display: inline-flex;
 		align-items: baseline;
-		gap: 0.4rem;
-		margin: 0.25rem 0;
+		gap: var(--space-xs);
+		margin: var(--space-2xs) 0;
 	}
 	.help {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 	textarea {
 		font: inherit;
 		color: inherit;
 		background: var(--bg);
-		border: 1px solid var(--muted);
-		border-radius: 0.3rem;
-		padding: 0.35rem 0.5rem;
+		border: var(--border-width) solid var(--muted);
+		border-radius: var(--radius-small);
+		padding: var(--space-xs) var(--space-sm);
 		width: 100%;
 	}
 	.error {
-		padding: 0.25rem 0;
+		padding: var(--space-2xs) 0;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
+		gap: var(--space-sm);
+		margin-top: var(--space-sm);
 	}
 </style>

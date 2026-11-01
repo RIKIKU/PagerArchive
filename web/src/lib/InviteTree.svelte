@@ -102,32 +102,32 @@
 	.tree {
 		list-style: none;
 		padding: 0;
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.tree ul {
 		list-style: none;
 		margin: 0;
-		padding-left: 1.1rem;
-		border-left: 1px solid var(--border);
-		margin-left: 0.4rem;
+		padding-left: var(--space-lg);
+		border-left: var(--border-width) solid var(--border);
+		margin-left: var(--space-xs);
 	}
 	.person,
 	.inviter {
-		padding-top: 0.45rem;
+		padding-top: var(--space-sm);
 	}
 	.row {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.5rem;
+		gap: var(--space-2xs) var(--space-sm);
 		align-items: center;
 	}
 	.who {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 		overflow-wrap: anywhere;
 	}
 	.off > .row .who {
 		color: var(--muted);
-		font-weight: 400;
+		font-weight: var(--weight-normal);
 	}
 	.meta {
 		color: var(--muted);
@@ -136,9 +136,9 @@
 	}
 	.tag {
 		font-size: var(--text-xs);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.tag.warn {
 		background: var(--warn-bg);
@@ -146,7 +146,7 @@
 		border-color: var(--warn-fg);
 	}
 	.spare {
-		margin-top: 0.3rem;
+		margin-top: var(--space-2xs);
 		font-size: var(--text-sm);
 	}
 </style>

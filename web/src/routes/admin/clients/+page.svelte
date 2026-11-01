@@ -60,20 +60,20 @@
 <style>
 	table {
 		border-collapse: collapse;
-		width: calc(100% - 1.5rem);
-		margin: 0 0.75rem;
+		width: 100%;
+		margin: 0;
 	}
 	th,
 	td {
 		text-align: left;
-		padding: 0.4rem 0.5rem 0.4rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-xs) var(--space-sm) var(--space-xs) 0;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.id {
 		color: var(--muted);
 	}
 	.warn {
 		color: var(--warn-fg);
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 	}
 </style>

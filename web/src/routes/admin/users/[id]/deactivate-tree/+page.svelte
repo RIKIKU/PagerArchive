@@ -8,6 +8,7 @@
 	import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 	import { api, ApiError, type DeactivationPreview, type Meta, type TreeDeactivateResult, type TreeNode } from '#lib/api.ts';
 	import InviteTree, { everyone, type Ticks } from '#lib/InviteTree.svelte';
+	import { setTitle } from '#lib/here.svelte.ts';
 
 	let meta: Meta | undefined = $state();
 	let preview: DeactivationPreview | undefined = $state();
@@ -17,6 +18,10 @@
 	let done: TreeDeactivateResult | undefined = $state();
 	const id = $derived(page.params.id ?? '');
 	const tz = $derived(meta?.time_zone ?? 'UTC');
+	// The breadcrumb above this page is the user's own page (R79).
+	$effect(() => {
+		if (preview) setTitle(preview.root.label);
+	});
 
 	const ticked = new SvelteSet<number>();
 	const marks = new SvelteMap<number, 'new' | 'changed'>();
@@ -116,34 +121,34 @@
 
 <style>
 	.note {
-		margin: 0.5rem 0.75rem;
+		margin: var(--space-sm) 0;
 		color: var(--muted);
-		max-width: 44rem;
+		max-width: var(--measure);
 	}
 	.ok,
 	.error {
-		margin: 0 0.75rem 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	form {
-		margin: 1rem 0.75rem;
-		max-width: 44rem;
+		margin: var(--space-lg) 0;
+		max-width: var(--measure);
 	}
 	label {
 		display: block;
-		font-weight: 600;
-		margin-bottom: 0.25rem;
+		font-weight: var(--weight-strong);
+		margin-bottom: var(--space-2xs);
 	}
 	textarea {
 		width: 100%;
 		font: inherit;
 	}
 	.totals {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 		align-items: center;
 	}
 </style>

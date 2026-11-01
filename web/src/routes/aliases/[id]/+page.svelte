@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { api, type AliasView, type Meta } from '#lib/api.ts';
-	import { criteria } from '#lib/filters.ts';
+	import { criteria } from '#lib/search.ts';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import AliasHistory from '#lib/AliasHistory.svelte';
 	import AliasRequestForm from '#lib/AliasRequestForm.svelte';
 	import MessageList from '#lib/MessageList.svelte';
 	import RequestCard from '#lib/RequestCard.svelte';
+	import { setTitle } from '#lib/here.svelte.ts';
 
 	// R35e: the alias, then the messages from the capcodes it covers. Pages to
 	// an ignored alias are shown here: that's what was asked for. From M6:
@@ -32,6 +33,10 @@
 	$effect(() => {
 		error = '';
 		load();
+	});
+
+	$effect(() => {
+		if (alias) setTitle(alias.name);
 	});
 
 	function done(msg: string) {
@@ -87,28 +92,27 @@
 	{#if admin && alias.history}
 		<AliasHistory history={alias.history} {tz} />
 	{/if}
-	<MessageList {query} base={{ alias_id: String(alias.id), ignored: 'true' }} level={2} />
+	<div class="listbox"><MessageList {query} base={{ alias_id: String(alias.id), ignored: 'true' }} level={2} /></div>
 {/if}
 
 <style>
 	.about {
-		padding: 0 0.75rem 0.5rem;
-		border-bottom: 1px solid var(--border);
+		max-width: var(--measure);
 	}
 	.title {
 		display: flex;
 		align-items: center;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 	}
 	h1 {
-		margin: 0.75rem 0 0.5rem;
-		border-left: 0.4rem solid var(--agency);
-		padding-left: 0.4rem;
+		margin: 0 0 var(--space-md);
+		border-left: var(--agency-bar) solid var(--agency);
+		padding-left: var(--space-xs);
 	}
 	dl {
 		display: grid;
-		grid-template-columns: minmax(6rem, max-content) 1fr;
-		gap: 0.3rem 1rem;
+		grid-template-columns: minmax(var(--label-min), max-content) 1fr;
+		gap: var(--space-2xs) var(--space-lg);
 		margin: 0;
 	}
 	dt {
@@ -119,21 +123,28 @@
 		overflow-wrap: anywhere;
 	}
 	.mono {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 	}
 	.swatch {
 		display: inline-block;
-		width: 0.9rem;
-		height: 0.9rem;
-		border: 1px solid var(--border);
-		border-radius: 0.15rem;
-		vertical-align: -0.1rem;
-		margin-right: 0.4rem;
+		width: var(--swatch-size-small);
+		height: var(--swatch-size-small);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
+		vertical-align: middle;
+		margin-right: var(--space-xs);
+	}
+	.listbox {
+		margin-top: var(--space-xl);
+		background: var(--surface);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
 	}
 	.asks {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin: 0.5rem 0;
+		gap: var(--space-sm);
+		margin: var(--space-sm) 0;
 	}
 </style>
