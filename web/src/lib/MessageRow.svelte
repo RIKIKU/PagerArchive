@@ -190,6 +190,6 @@
 		padding: 0 var(--space-2xs);
 		border-radius: var(--radius-small);
 		background: var(--warn-bg);
-		color: var(--warn-fg);
+		color: #b3261e;
 	}
 </style>
