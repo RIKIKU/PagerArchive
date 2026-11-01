@@ -211,3 +211,242 @@ button:disabled {
 	background: var(--surface);
 	border-left: 4px solid var(--accent);
 }
+
+/* M13 prototypes (ADR 0015), throwaway: three looks for the owner to choose
+   from, used only by /prototype, which sets data-proto on the root. Each look
+   is a set of token values; light-dark() gives each colour's light and dark
+   value at once. The prototype's own theme switch is data-proto-theme, and
+   without it the look follows the system. Every colour pair used together
+   meets WCAG 2.1 AA contrast (web/tests/prototype.spec.ts measures them). */
+:root[data-proto] {
+	color-scheme: light dark;
+	--target-min-coarse: 2.75rem;
+	/* Controls are at least --target high and wide: larger on touch screens. */
+	--target: var(--target-min);
+	--focus-width: 3px;
+	--button-border: 1px;
+	--scrim: light-dark(#0000008c, #000000b3);
+	--icon-tile: #ffffff;
+	--font-page: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'Liberation Mono', Menlo, Consolas, monospace;
+}
+
+@media (pointer: coarse) {
+	:root[data-proto] {
+		--target: var(--target-min-coarse);
+	}
+}
+
+:root[data-proto][data-proto-theme='light'] {
+	color-scheme: light;
+}
+
+:root[data-proto][data-proto-theme='dark'] {
+	color-scheme: dark;
+}
+
+/* Ledger: warm paper and ink, a teal accent and a humanist typeface. An
+   Emergency row is tinted, with a red edge; other priorities are a dot and a
+   coloured word. Medium density. */
+:root[data-proto='ledger'] {
+	--bg: light-dark(#fbfaf7, #1a1814);
+	--surface: light-dark(#f2efe8, #211e19);
+	--surface-2: light-dark(#ffffff, #25221c);
+	--fg: light-dark(#1f1c17, #efe9df);
+	--muted: light-dark(#5e584d, #b3ab9c);
+	--border: light-dark(#e2ddd2, #3a362e);
+	--control-border: light-dark(#857d6f, #8c8474);
+	--accent: light-dark(#0b6b69, #62c6c0);
+	--accent-fg: light-dark(#ffffff, #0b1d1c);
+	--accent-hover: light-dark(#095856, #7dd3ce);
+	--accent-pressed: light-dark(#064341, #4fb0aa);
+	--accent-soft: light-dark(#dcefed, #1d3533);
+	--accent-soft-fg: light-dark(#06403e, #c2ebe8);
+	--hover: light-dark(#efebe2, #2b2721);
+	--focus: light-dark(#0b6b69, #62c6c0);
+	--highlight: light-dark(#fff0c2, #4a3f10);
+	--warn-bg: light-dark(#fbecd0, #3d2a00);
+	--warn-fg: light-dark(#6b3d00, #ffd58a);
+	--emergency-edge: light-dark(#c2261d, #ff7b70);
+	--emergency-dot: light-dark(#c2261d, #ff7b70);
+	--emergency-row: light-dark(#fcece9, #3b1f1b);
+	--emergency-row-hover: light-dark(#f8dfda, #48251f);
+	--emergency-badge-bg: transparent;
+	--emergency-badge-fg: light-dark(#a1201a, #ffaaa1);
+	--emergency-badge-border: transparent;
+	--nonemergency-edge: transparent;
+	--nonemergency-dot: light-dark(#b06800, #e9a743);
+	--nonemergency-row: var(--bg);
+	--nonemergency-row-hover: var(--hover);
+	--nonemergency-badge-bg: transparent;
+	--nonemergency-badge-fg: light-dark(#85500a, #f0bd6e);
+	--nonemergency-badge-border: transparent;
+	--admin-edge: transparent;
+	--admin-dot: light-dark(#5a5f99, #a9aee6);
+	--admin-row: var(--bg);
+	--admin-row-hover: var(--hover);
+	--admin-badge-bg: transparent;
+	--admin-badge-fg: light-dark(#4a4e85, #c2c6f2);
+	--admin-badge-border: transparent;
+	--plain-row: var(--bg);
+	--plain-row-hover: var(--hover);
+	--heartbeat-fg: var(--muted);
+	--heartbeat-border: transparent;
+	--font-ui: Seravek, 'Gill Sans Nova', Ubuntu, Calibri, 'DejaVu Sans', source-sans-pro, sans-serif;
+	--font-meta: var(--font-ui);
+	--text-page: 0.95rem;
+	--weight-strong: 650;
+	--radius: 0.375rem;
+	--radius-button: 0.375rem;
+	--radius-badge: 0.25rem;
+	--row-pad-y: 0.75rem;
+	--row-pad-x: 1rem;
+	--edge-width: 4px;
+	--badge-dot: inline-block;
+	--badge-case: none;
+	--badge-tracking: 0;
+	--badge-pad-x: 0;
+	--button-pad-x: 1rem;
+	--target-min: 2.5rem;
+	--icon-stroke: 1.75;
+	--menu-width: 16rem;
+	--menu-width-shrunk: 4.5rem;
+}
+
+/* Console: ink on white (or white on ink), no accent colour at all, square
+   corners and dense rows. Priority is the only colour: an edge down every
+   row and an outlined capital label, so the eye goes straight to it. */
+:root[data-proto='console'] {
+	--bg: light-dark(#ffffff, #141414);
+	--surface: light-dark(#f1f1f0, #1c1c1c);
+	--surface-2: light-dark(#fafaf9, #181818);
+	--fg: light-dark(#111111, #ededed);
+	--muted: light-dark(#545454, #a8a8a8);
+	--border: light-dark(#dcdcdc, #2f2f2f);
+	--control-border: light-dark(#767676, #8a8a8a);
+	--accent: light-dark(#111111, #f2f2f2);
+	--accent-fg: light-dark(#ffffff, #111111);
+	--accent-hover: light-dark(#363636, #cfcfcf);
+	--accent-pressed: light-dark(#000000, #b5b5b5);
+	--accent-soft: light-dark(#e6e6e6, #303030);
+	--accent-soft-fg: light-dark(#111111, #f2f2f2);
+	--hover: light-dark(#f2f2f2, #222222);
+	--focus: light-dark(#1d5bd6, #7ea8ff);
+	--highlight: light-dark(#fff3b0, #47400f);
+	--warn-bg: light-dark(#fff0d6, #3d2a00);
+	--warn-fg: light-dark(#6b3d00, #ffd58a);
+	--emergency-edge: light-dark(#d42020, #ff5c5c);
+	--emergency-dot: transparent;
+	--emergency-row: var(--bg);
+	--emergency-row-hover: var(--hover);
+	--emergency-badge-bg: transparent;
+	--emergency-badge-fg: light-dark(#b31818, #ff8585);
+	--emergency-badge-border: var(--emergency-edge);
+	--nonemergency-edge: light-dark(#c26700, #f2a33a);
+	--nonemergency-dot: transparent;
+	--nonemergency-row: var(--bg);
+	--nonemergency-row-hover: var(--hover);
+	--nonemergency-badge-bg: transparent;
+	--nonemergency-badge-fg: light-dark(#8a4a00, #f5b660);
+	--nonemergency-badge-border: var(--nonemergency-edge);
+	--admin-edge: light-dark(#2a6fb0, #6aa9e6);
+	--admin-dot: transparent;
+	--admin-row: var(--bg);
+	--admin-row-hover: var(--hover);
+	--admin-badge-bg: transparent;
+	--admin-badge-fg: light-dark(#1f5c94, #8fc0ee);
+	--admin-badge-border: var(--admin-edge);
+	--plain-row: var(--bg);
+	--plain-row-hover: var(--hover);
+	--heartbeat-fg: var(--muted);
+	--heartbeat-border: var(--control-border);
+	--font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+	--font-meta: var(--font-page);
+	--text-page: 0.9rem;
+	--weight-strong: 700;
+	--radius: 2px;
+	--radius-button: 2px;
+	--radius-badge: 2px;
+	--row-pad-y: 0.5rem;
+	--row-pad-x: 0.875rem;
+	--edge-width: 4px;
+	--badge-dot: none;
+	--badge-case: uppercase;
+	--badge-tracking: 0.06em;
+	--badge-pad-x: 0.35rem;
+	--button-pad-x: 0.875rem;
+	--target-min: 2.25rem;
+	--icon-stroke: 2;
+	--menu-width: 15rem;
+	--menu-width-shrunk: 4rem;
+}
+
+/* Harbour: airy, with larger type and more room, a forest-green accent and
+   soft tinted labels with a dot. Rows have no edge or tint: the label alone
+   carries priority, calm but unmistakable. */
+:root[data-proto='harbour'] {
+	--bg: light-dark(#f6f8f7, #0f1614);
+	--surface: light-dark(#ffffff, #151f1c);
+	--surface-2: light-dark(#ffffff, #192521);
+	--fg: light-dark(#13201b, #e4ece8);
+	--muted: light-dark(#4b5c55, #a3b4ad);
+	--border: light-dark(#d9e3df, #283833);
+	--control-border: light-dark(#73867f, #74897f);
+	--accent: light-dark(#1b6a46, #74d4a3);
+	--accent-fg: light-dark(#ffffff, #062619);
+	--accent-hover: light-dark(#155839, #8fdeb6);
+	--accent-pressed: light-dark(#0f452c, #5cc28e);
+	--accent-soft: light-dark(#dbeee4, #1c3a2d);
+	--accent-soft-fg: light-dark(#0d3a25, #bdeed3);
+	--hover: light-dark(#eaf1ee, #1b2925);
+	--focus: light-dark(#1b6a46, #74d4a3);
+	--highlight: light-dark(#fff3c4, #4a3f10);
+	--warn-bg: light-dark(#fdecd4, #45310f);
+	--warn-fg: light-dark(#6b3d00, #ffd08f);
+	--emergency-edge: transparent;
+	--emergency-dot: light-dark(#d0342a, #ff6f62);
+	--emergency-row: var(--bg);
+	--emergency-row-hover: var(--hover);
+	--emergency-badge-bg: light-dark(#fde4e1, #4b1f1b);
+	--emergency-badge-fg: light-dark(#9e1d16, #ffb7ae);
+	--emergency-badge-border: transparent;
+	--nonemergency-edge: transparent;
+	--nonemergency-dot: light-dark(#bb6c00, #f0a83f);
+	--nonemergency-row: var(--bg);
+	--nonemergency-row-hover: var(--hover);
+	--nonemergency-badge-bg: light-dark(#fcecd4, #45310f);
+	--nonemergency-badge-fg: light-dark(#7a4500, #ffd08f);
+	--nonemergency-badge-border: transparent;
+	--admin-edge: transparent;
+	--admin-dot: light-dark(#4964b5, #93a9ec);
+	--admin-row: var(--bg);
+	--admin-row-hover: var(--hover);
+	--admin-badge-bg: light-dark(#e4e9f8, #262f4b);
+	--admin-badge-fg: light-dark(#2c4382, #c6d2f6);
+	--admin-badge-border: transparent;
+	--plain-row: var(--bg);
+	--plain-row-hover: var(--hover);
+	--heartbeat-fg: var(--muted);
+	--heartbeat-border: var(--border);
+	--font-ui: 'Avenir Next', Avenir, Montserrat, Corbel, 'URW Gothic', source-sans-pro, sans-serif;
+	--font-meta: var(--font-ui);
+	--text-page: 1rem;
+	--text-xs: 0.85rem;
+	--text-sm: 0.9rem;
+	--text-md: 0.95rem;
+	--weight-strong: 600;
+	--radius: 0.625rem;
+	--radius-button: 0.625rem;
+	--radius-badge: 0.5rem;
+	--row-pad-y: 1rem;
+	--row-pad-x: 1.25rem;
+	--edge-width: 0px;
+	--badge-dot: inline-block;
+	--badge-case: none;
+	--badge-tracking: 0;
+	--badge-pad-x: 0.5rem;
+	--button-pad-x: 1.25rem;
+	--target-min: 2.75rem;
+	--icon-stroke: 1.5;
+	--menu-width: 17rem;
+	--menu-width-shrunk: 4.75rem;
+}

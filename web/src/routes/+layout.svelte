@@ -10,9 +10,13 @@
 	let meta: Meta | undefined = $state();
 	let theme: 'system' | 'light' | 'dark' = $state('system');
 
+	// The sign-in page works without a session, and the M13 prototypes
+	// (ADR 0015) are static pages with their own layout and no API calls.
+	const prototype = $derived(page.url.pathname.startsWith('/prototype'));
+	const signedOut = $derived(page.url.pathname.startsWith('/signin') || prototype);
+
 	onMount(() => {
-		// The sign-in page works without a session.
-		if (!page.url.pathname.startsWith('/signin')) api
+		if (!signedOut) api
 				.meta()
 				.then((m) => (meta = m))
 				.catch(() => {}); // 401 goes to the sign-in page
@@ -22,7 +26,7 @@
 		window.addEventListener('pagerarchive:meta', update);
 		// R67: the print sheet is kept per user (their ID is in its key).
 		let unfollow = () => {};
-		if (!page.url.pathname.startsWith('/signin')) api
+		if (!signedOut) api
 				.me()
 				.then((me) => (unfollow = loadSheet(me.id)))
 				.catch(() => {});
@@ -81,6 +85,9 @@
 	]);
 </script>
 
+{#if prototype}
+	{@render children()}
+{:else}
 <a class="skip" href="#main">Skip to content</a>
 <header class="top">
 	<a class="brand" href="/">PagerArchive</a>
@@ -127,6 +134,7 @@
 </main>
 {#if meta?.attribution}
 	<footer class="bottom">Address data: {meta.attribution}</footer>
+{/if}
 {/if}
 
 <style>
