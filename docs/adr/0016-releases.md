@@ -40,11 +40,11 @@ It's a separate, quick job (a minute) and not a step in another job, so its fail
 
 ### 4. The release, on main
 
-On a push to main, a new job, `release`, needs every check (the same eight jobs the publish jobs needed before). It runs only on a push to main. Its first step, `scripts/ci/release-plan.sh <commit>`, decides and publishes nothing. **Earlier releases** are the `v*` tags (fetched with `git fetch --tags`), other than one on this commit, which is a re-run's own tag:
+On a push to main, a new job, `release`, needs every check (the same eight jobs the publish jobs needed before). It runs only on a push to main. Its first step, `scripts/ci/release-plan.sh <commit>`, decides and publishes nothing. **The previous release** is the newest `v*` tag in the commit's history (`git tag -l 'v*' --merged <commit>`, after `git fetch --tags`), other than one on this commit, which is a re-run's own tag. A tag anywhere else, such as one on another branch, doesn't count. Both checks below use it (owner, 2026-11-02):
 
 - **Version and tag:** VERSION at the commit, tag `v<VERSION>`. If that tag exists on **another** commit, it fails: "Tag v… already exists, on …: … was released already, and a version is never reused. Nothing is published; raise VERSION in a new branch." Nothing has been published at that point: the tag, the release, the images and the module all come after it. If the tag is on **this** commit, it's a re-run of this release (below), and it goes on (the owner confirmed this reading, 2026-11-02).
-- **Higher than every earlier release** (SPEC 12.1, owner 2026-11-02): it fails if VERSION isn't higher than the newest earlier `v*` tag, by version: "VERSION is …, which isn't higher than the newest release, v…: every release is a new, higher version. Nothing is published; raise VERSION above … in a new branch." This doesn't depend on the branch check: nothing makes `versions` required before a merge, and none is added (owner, 2026-11-02).
-- **The module:** "changed" if `git diff --quiet <previous release> <commit> -- powershell/PagerArchive/` finds a difference, the previous release being the newest earlier `v*` tag merged into the commit. This is git on the full checkout, not a third-party action. It compares with the previous release, not the push's previous commit: if a merge's run fails and isn't re-run, the next merge still sees the module version the failed one raised (see the review below). If the module changed, the Gallery is asked for that version (`GET https://www.powershellgallery.com/api/v2/Packages(Id='PagerArchive',Version='<v>')`: 200 is there, 404 isn't, anything else fails the job, since it can't tell). The plan is `publish` only if the module changed and its version isn't on the Gallery. Otherwise it logs `module unchanged: the Gallery keeps <version>`, with the reason in brackets, and the release notes say `PowerShell module: unchanged; the Gallery keeps <version>.`
+- **Higher than every earlier release** (SPEC 12.1, owner 2026-11-02): it fails if VERSION isn't higher than the previous release's, by version: "VERSION is …, which isn't higher than the previous release, v…: every release is a new, higher version. Nothing is published; raise VERSION above … in a new branch." This doesn't depend on the branch check: nothing makes `versions` required before a merge, and none is added (owner, 2026-11-02).
+- **The module:** "changed" if `git diff --quiet <previous release> <commit> -- powershell/PagerArchive/` finds a difference. This is git on the full checkout, not a third-party action. It compares with the previous release, not the push's previous commit: if a merge's run fails and isn't re-run, the next merge still sees the module version the failed one raised (see the review below). If the module changed, the Gallery is asked for that version (`GET https://www.powershellgallery.com/api/v2/Packages(Id='PagerArchive',Version='<v>')`: 200 is there, 404 isn't, anything else fails the job, since it can't tell). The plan is `publish` only if the module changed and its version isn't on the Gallery. Otherwise it logs `module unchanged: the Gallery keeps <version>`, with the reason in brackets, and the release notes say `PowerShell module: unchanged; the Gallery keeps <version>.`
 - If there's no earlier release in the commit's history, the module counts as changed, and the Gallery check decides.
 
 The job then builds the client's binaries for linux/amd64 and linux/arm64 with `SHA256SUMS` (as the old `release-binaries` job did, which this job replaces), tags the commit with an annotated tag, `PagerArchive v<VERSION>`, by `github-actions[bot]`, pushes the tag with the workflow's `GITHUB_TOKEN`, and creates the GitHub release with the binaries and notes listing the images' version and the module's line from the plan. The job has `contents: write`; the workflow's default stays `contents: read`.
@@ -196,8 +196,8 @@ The Gallery's own answers at the time: 0.10.0 200, 0.12.1 404 (`FindPackagesById
 ## Consequences
 
 - Every branch that runs CI raises VERSION, even one that only changes tests or the workflow, because its merge is a release. A docs-only branch doesn't, and isn't released (ADR 0014).
-- Two branches open at once both raise VERSION from main's. The second to merge then fails `versions` on its next push (its VERSION is no longer higher than main's) and raises it again. Its pull request shows the failure only after main moves and the branch is pushed or re-run; a pull request's check doesn't re-run by itself when main moves. A merge that skipped that fails in `release` (not higher than the newest release) before publishing anything.
-- A merge whose release fails and isn't re-run isn't released, and its version is skipped. The next release includes its changes: the module is compared with the previous release, and VERSION only has to be higher than the newest tag.
+- Two branches open at once both raise VERSION from main's. The second to merge then fails `versions` on its next push (its VERSION is no longer higher than main's) and raises it again. Its pull request shows the failure only after main moves and the branch is pushed or re-run; a pull request's check doesn't re-run by itself when main moves. A merge that skipped that fails in `release` (not higher than the previous release) before publishing anything.
+- A merge whose release fails and isn't re-run isn't released, and its version is never used. The next release includes its changes: the module is compared with the previous release, and VERSION only has to be higher than it. The release notes don't list skipped versions: a version whose release failed was never released, and GitHub's releases list shows what exists (owner, 2026-11-02).
 
 ## The owner's answers (2026-11-02)
 
@@ -213,7 +213,7 @@ The first round's questions, answered in the review of 21cdc17:
 Main moved to 7008d55, which changed section 12.1 (VERSION higher than every earlier release's; the `MAJOR.MINOR` image tag; the module compared with the previous release). It was merged into the branch first (ac32c34), then 91ec415 made the four changes:
 
 1. **The module is compared with the previous release, not the previous push.** The first script compared with `github.event.before`. If a merge's run failed and wasn't re-run, the next merge compared with the failed one, so the module version that one raised was never published. The reviewer's case: A raises `ModuleVersion` to 0.13.0, B raises only VERSION, and `release-plan.sh A B` printed `module unchanged: the Gallery keeps 0.13.0`, though 0.13.0 isn't on the Gallery. The plan now compares with the newest earlier `v*` tag merged into the commit, and counts the module as changed when there's no such tag, so the Gallery decides. Nothing else used `github.event.before`, so the script takes the commit only.
-2. **VERSION must be higher than the newest earlier release**, or the plan fails before anything is published (section 4 above).
+2. **VERSION must be higher than the newest earlier release**, or the plan fails before anything is published (section 4 above). At first that meant every `v*` tag; the second review limited it to the tags in the commit's history.
 3. **Images are tagged `MAJOR.MINOR` too**: the plan outputs `major_minor` (`0.12` for 0.12.1), and both images' metadata steps list it.
 4. **A missing `PSGALLERY_API_KEY` fails `publish-powershell`** when the plan says publish: `::error::The PSGALLERY_API_KEY secret isn't set, so PagerArchive <version> can't be published: set the secret (Settings, Secrets and variables, Actions), then re-run this job.`
 
@@ -283,7 +283,47 @@ The same workflow as a push to `refs/heads/some-branch` listed only `ghcr.io/rik
 
 `actionlint` 1.7.12 on the revised workflow: no findings.
 
-## Questions for the owner
+**CI on f6201fb** (the review's changes and this section; the last commit of that push), run 41321332131: success. All 19 check and build jobs passed, `VERSION and the module's version are raised` among them (`VERSION: 0.12.1; main's: 0.12.0`, `Versions: OK`), and the images reported `pagerarchive 0.12.1` and `pagerarchive-client 0.12.1`. The release, the client image's publishing and the module's were skipped, as off main, and the server image job printed `published: false`. Afterwards there was no `v0.12.1` tag on GitHub (`git ls-remote --tags origin`), `gh release view v0.12.1` answered `release not found`, and the Gallery answered 404 for 0.12.1.
 
-1. **A failed release that isn't re-run skips its version.** If v0.13.0's run fails and the next merge says 0.13.1, 0.13.0 is never released, and 0.13.1's release includes its changes. Nothing marks the gap. Should the release notes list the versions skipped since the previous release?
-2. **Every `v*` tag counts as a release**, wherever it is: one made by hand on a branch would raise the bar for VERSION on main. Section 12.1 says nothing is tagged by hand, so the plan doesn't look further. Should it count only tags on main's history?
+## Second review (owner, 2026-11-02)
+
+The owner's answers to the questions after the first review:
+
+1. **Skipped versions aren't listed** in the release notes: a version whose release failed was never released, and the releases list shows what exists.
+2. **Only tags in the commit's history count**, for the VERSION check too, so both checks use the same releases.
+
+61cf63d makes the second change. `earlier_releases` lists only `git tag -l 'v*' --merged <commit>` (still without a tag on this commit), and the plan works out the previous release once and uses it for both checks. Its messages now say "the previous release" instead of "the newest release". The first answer needs no change.
+
+### Evidence
+
+A fresh scratch clone of f6201fb, its remote removed. A made-up v0.12.1 is on R. A made-up v0.20.0 is on S, a commit on another branch. M is on R's line with VERSION 0.13.0:
+
+```
+* 648b674 (HEAD -> releases-on-merge) M: on main's line, VERSION 0.13.0
+| * e1f7598 (tag: v0.20.0, side) S: a side branch, tagged by hand
+|/
+* 9aeb6c0 (tag: v0.12.1) R: this branch, as merged (VERSION 0.12.1)
+$ git tag -l "v*" --merged HEAD
+v0.10.0 v0.12.0 v0.12.1
+=== f6201fb's script (every v* tag):
+::error file=VERSION::VERSION is 0.13.0, which isn't higher than the newest release, v0.20.0: every release is a new, higher version. Nothing is published; raise VERSION above 0.20.0 in a new branch.
+exit 1
+=== now (tags in the commit's history):
+VERSION 0.13.0 is higher than the previous release, v0.12.1.
+module unchanged: the Gallery keeps 0.12.0 (powershell/PagerArchive/ didn't change since v0.12.1)
+version=0.13.0
+major_minor=0.13
+tag=v0.13.0
+module=unchanged
+module_version=0.12.0
+notes=PowerShell module: unchanged; the Gallery keeps 0.12.0.
+exit 0
+```
+
+The first review's cases still hold with the revised script, on the same clone:
+
+- A raises ModuleVersion to 0.13.0 and VERSION to 0.13.1, and its run fails (no tag). B raises only VERSION, to 0.13.2. The plan says `VERSION 0.13.2 is higher than the previous release, v0.12.1.`, then `module: publishing PagerArchive 0.13.0 (the module changed since v0.12.1 and 0.13.0 isn't on the Gallery yet)`.
+- With v0.13.2 tagged on B, a re-run of B's release: `Tag v0.13.2 is already on b016a92…: a re-run, finishing the release.`, and the same plan.
+- D, after B, with VERSION 0.13.1: `::error file=VERSION::VERSION is 0.13.1, which isn't higher than the previous release, v0.13.2: …`, exit 1.
+
+This branch's own merge, on 61cf63d: `VERSION 0.12.1 is higher than the previous release, v0.12.0.` and `module unchanged: the Gallery keeps 0.12.0 (the module changed since v0.12.0, but 0.12.0 is on the Gallery already)`. `actionlint` 1.7.12 on the workflow: no findings.
