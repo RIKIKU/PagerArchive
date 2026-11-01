@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+# Proof (to be reverted): a module change without a raised ModuleVersion.
 
 # Turns a CSV's ignore column ("true", "false", "1", "0", "yes", "no" or
 # empty) into on or off. A [switch] alone would turn any non-empty string,
