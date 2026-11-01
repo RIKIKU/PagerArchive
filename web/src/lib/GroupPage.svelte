@@ -42,7 +42,7 @@
 		padding: var(--space-lg);
 		background: var(--surface);
 		border: var(--border-width) solid var(--border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius);
 	}
 	li:hover {
 		background: var(--hover);
