@@ -114,8 +114,9 @@ LIMIT $4`
 // a75ColdStart stops the test database's container, drops the operating
 // system's page cache and starts the container again, as a reboot leaves them:
 // PostgreSQL's cache and the system's both cold. It returns when the database
-// accepts connections, having made none.
-func a75ColdStart(t *testing.T, container string) {
+// accepts connections, having made none, with the API's pool empty, as it is
+// when the API starts after a reboot.
+func a75ColdStart(t *testing.T, e *env, container string) {
 	t.Helper()
 	for _, cmd := range [][]string{
 		{"docker", "stop", container},
@@ -132,6 +133,7 @@ func a75ColdStart(t *testing.T, container string) {
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	e.st.Pool.Reset()
 }
 
 // A75. Search speed: 4,562,500 made-up pages, each of A75's searches lists
@@ -207,7 +209,7 @@ func TestA75SearchSpeed(t *testing.T) {
 			picked = []string{s.picked}
 		}
 		// The first run, straight after a restart with both caches cold.
-		a75ColdStart(t, container)
+		a75ColdStart(t, e, container)
 		t0 := time.Now()
 		var cold []int64
 		for _, m := range e.list(query) {

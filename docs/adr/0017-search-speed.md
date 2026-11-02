@@ -407,7 +407,9 @@ No warm search in A75, nor `SMOKE`, is slower. Some outside A75 are, and all sta
 
 ### A75 in CI
 
-`TestA75SearchSpeed` now runs each search's first run straight after `a75ColdStart`: `docker stop`, `sync; echo 3 > /proc/sys/vm/drop_caches`, `docker start`, then waits for `pg_isready`, which makes no connection to the database. It fails if an A75 search takes over 1 second or lists other pages than the query before M13a, then does the three warm runs as before. `PAGERARCHIVE_A75_CONTAINER` names the container: `job.services.postgres.id` in CI.
+`TestA75SearchSpeed` now runs each search's first run straight after `a75ColdStart`: `docker stop`, `sync; echo 3 > /proc/sys/vm/drop_caches`, `docker start`, then waits for `pg_isready`, which makes no connection to the database. It empties the API's connection pool too, as a reboot does, so the first run pays for its connection. It fails if an A75 search takes over 1 second or lists other pages than the query before M13a, then does the three warm runs as before. `PAGERARCHIVE_A75_CONTAINER` names the container: `job.services.postgres.id` in CI.
+
+Emptying the pool came from CI's first run (41544501188): the runner restarts the database in under a second, and pgx only checks a pooled connection that has been idle for over a second, so `hoses grass pump` got a dead one and a 500. cld01's restarts take longer. That's the test's restart, not a change in how the API behaves: an API that outlives a restart this quick can still fail one request, as it always could.
 
 The seed now spreads 1,079 of the newest pages through the table, one in every 4,228, 5 seconds apart, as live pages during an hour and a half's import. It holds the same 4,562,500 pages. Without this, the old behaviour passes A75 on a fast disk, and the check wouldn't be testing what it's for. A75's other runs and A76's speed check use the same seed.
 
