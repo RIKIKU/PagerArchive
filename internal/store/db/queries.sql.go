@@ -414,6 +414,39 @@ func (q *Queries) AliasIDByKey(ctx context.Context, patternKey string) (int64, e
 	return id, err
 }
 
+const aliasIDsNamed = `-- name: AliasIDsNamed :many
+SELECT id FROM aliases
+WHERE (cardinality($1::text[]) = 0 OR name ILIKE ANY($1::text[]))
+  AND (cardinality($2::text[]) = 0 OR name ILIKE ANY($2::text[]))
+`
+
+type AliasIDsNamedParams struct {
+	Aliases    []string
+	AliasLikes []string
+}
+
+// The aliases a search's alias: values name (SearchMessages' aliases and
+// alias_likes), so the search can use the index on messages.alias_id.
+func (q *Queries) AliasIDsNamed(ctx context.Context, arg AliasIDsNamedParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, aliasIDsNamed, arg.Aliases, arg.AliasLikes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
 SELECT pattern FROM aliases WHERE template_id = $1
 `
@@ -3349,83 +3382,103 @@ LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   -- R33a's text terms, each an ILIKE pattern found in the text or an extra
-  -- field: every one of q_all, or any one of q_any (the or: terms).
+  -- field: every one of q_all, or any one of q_any (the or: terms). The
+  -- trigram index on message_search_text() finds the candidates (R33b, ADR
+  -- 0017): q_index1 to 4 are up to four of q_all it can serve, one condition
+  -- each, and with q_any_index it serves the or: terms. Each term is then
+  -- matched in the text or one extra field, as before.
   AND ((cardinality($2::text[]) = 0 AND cardinality($3::text[]) = 0)
        OR (cardinality($2::text[]) > 0
+           AND ($4::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $4::text)
+           AND ($5::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $5::text)
+           AND ($6::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $6::text)
+           AND ($7::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $7::text)
            AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) AS term (p)
                            WHERE NOT (m.text ILIKE term.p
                                       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
-       OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS term (p)
-                  WHERE m.text ILIKE term.p
-                     OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
-  AND (cardinality($4::text[]) = 0 OR m.capcode = ANY($4::text[]))
-  AND (cardinality($5::text[]) = 0 OR a.name ILIKE ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR a.name ILIKE ANY($6::text[]))
-  AND (cardinality($7::bigint[]) = 0 OR m.alias_id = ANY($7::bigint[]))
-  AND (cardinality($8::text[]) = 0 OR t.agency ILIKE ANY($8::text[]))
-  AND (cardinality($9::text[]) = 0 OR t.agency ILIKE ANY($9::text[]))
-  AND (cardinality($10::text[]) = 0 OR upper(m.paging_group) = ANY($10::text[]))
-  AND (cardinality($11::text[]) = 0 OR m.paging_group ILIKE ANY($11::text[]))
-  AND (cardinality($12::text[]) = 0
-       OR ('none' = ANY($12::text[]) AND m.priority IS NULL)
-       OR m.priority = ANY($12::text[]))
-  AND (NOT $13::bool
-       OR COALESCE(m.event_type = ANY($14::text[])
-                   OR m.event_type LIKE ANY($15::text[]), false)
-       OR ($16::bool
-           AND NOT COALESCE(m.event_type = ANY($17::text[])
-                            OR m.event_type LIKE ANY($18::text[]), false)))
-  AND (cardinality($19::text[]) = 0 OR m.job_number = ANY($19::text[]))
-  AND ($20::timestamptz IS NULL OR m.sent_at >= $20)
-  AND ($21::timestamptz IS NULL OR m.sent_at < $21)
-  AND (NOT $22::bool OR m.alias_id IS NULL)
-  AND ($23::bool OR a.ignored IS NOT TRUE)
-  AND (NOT $24::bool OR m.parse_failed)
-  AND (NOT $25::bool OR m.address_unsplit)
-  AND (NOT $26::bool OR m.location_mismatch)
-  AND (cardinality($27::text[]) = 0
-       OR ('parse_failed' = ANY($27::text[]) AND m.parse_failed)
-       OR ('address_unsplit' = ANY($27::text[]) AND m.address_unsplit)
-       OR ('location_mismatch' = ANY($27::text[]) AND m.location_mismatch))
-  AND (NOT $28::bool OR m.location IS NOT NULL)
-  AND ($29::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($29, $30::bigint))
+       OR (cardinality($3::text[]) > 0
+           AND (NOT $8::bool OR message_search_text(m.text, m.extra) ILIKE ANY($3::text[]))
+           AND EXISTS (SELECT 1 FROM unnest($3::text[]) AS term (p)
+                       WHERE m.text ILIKE term.p
+                          OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
+  AND (cardinality($9::text[]) = 0 OR m.capcode = ANY($9::text[]))
+  AND (cardinality($10::text[]) = 0 OR a.name ILIKE ANY($10::text[]))
+  AND (cardinality($11::text[]) = 0 OR a.name ILIKE ANY($11::text[]))
+  -- The aliases those names match, looked up first (AliasIDsNamed; R33b,
+  -- ADR 0017), so the planner can find their pages by alias_id.
+  AND (NOT $12::bool OR m.alias_id = ANY($13::bigint[]))
+  AND (cardinality($14::bigint[]) = 0 OR m.alias_id = ANY($14::bigint[]))
+  AND (cardinality($15::text[]) = 0 OR t.agency ILIKE ANY($15::text[]))
+  AND (cardinality($16::text[]) = 0 OR t.agency ILIKE ANY($16::text[]))
+  AND (cardinality($17::text[]) = 0 OR upper(m.paging_group) = ANY($17::text[]))
+  AND (cardinality($18::text[]) = 0 OR m.paging_group ILIKE ANY($18::text[]))
+  AND (cardinality($19::text[]) = 0
+       OR ('none' = ANY($19::text[]) AND m.priority IS NULL)
+       OR m.priority = ANY($19::text[]))
+  AND (NOT $20::bool
+       OR COALESCE(m.event_type = ANY($21::text[])
+                   OR m.event_type LIKE ANY($22::text[]), false)
+       OR ($23::bool
+           AND NOT COALESCE(m.event_type = ANY($24::text[])
+                            OR m.event_type LIKE ANY($25::text[]), false)))
+  AND (cardinality($26::text[]) = 0 OR m.job_number = ANY($26::text[]))
+  AND ($27::timestamptz IS NULL OR m.sent_at >= $27)
+  AND ($28::timestamptz IS NULL OR m.sent_at < $28)
+  AND (NOT $29::bool OR m.alias_id IS NULL)
+  AND ($30::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $31::bool OR m.parse_failed)
+  AND (NOT $32::bool OR m.address_unsplit)
+  AND (NOT $33::bool OR m.location_mismatch)
+  AND (cardinality($34::text[]) = 0
+       OR ('parse_failed' = ANY($34::text[]) AND m.parse_failed)
+       OR ('address_unsplit' = ANY($34::text[]) AND m.address_unsplit)
+       OR ('location_mismatch' = ANY($34::text[]) AND m.location_mismatch))
+  AND (NOT $35::bool OR m.location IS NOT NULL)
+  AND ($36::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($36, $37::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $31::int
+LIMIT $38::int
 `
 
 type SearchMessagesParams struct {
-	OnlyIds          []int64
-	QAll             []string
-	QAny             []string
-	Capcodes         []string
-	Aliases          []string
-	AliasLikes       []string
-	AliasIds         []int64
-	Agencies         []string
-	AgencyLikes      []string
-	PagingGroups     []string
-	GroupLikes       []string
-	Priorities       []string
-	CatFilter        bool
-	CatCodes         []string
-	CatPrefixes      []string
-	CatOther         bool
-	AllCatCodes      []string
-	AllCatPrefixes   []string
-	JobNumbers       []string
-	SentFrom         *time.Time
-	SentTo           *time.Time
-	Unaliased        bool
-	IncludeIgnored   bool
-	ParseFailed      bool
-	AddressUnsplit   bool
-	LocationMismatch bool
-	Flags            []string
-	Located          bool
-	BeforeSent       *time.Time
-	BeforeID         *int64
-	MaxRows          int32
+	OnlyIds            []int64
+	QAll               []string
+	QAny               []string
+	QIndex1            *string
+	QIndex2            *string
+	QIndex3            *string
+	QIndex4            *string
+	QAnyIndex          bool
+	Capcodes           []string
+	Aliases            []string
+	AliasLikes         []string
+	AliasNamesResolved bool
+	AliasNameIds       []int64
+	AliasIds           []int64
+	Agencies           []string
+	AgencyLikes        []string
+	PagingGroups       []string
+	GroupLikes         []string
+	Priorities         []string
+	CatFilter          bool
+	CatCodes           []string
+	CatPrefixes        []string
+	CatOther           bool
+	AllCatCodes        []string
+	AllCatPrefixes     []string
+	JobNumbers         []string
+	SentFrom           *time.Time
+	SentTo             *time.Time
+	Unaliased          bool
+	IncludeIgnored     bool
+	ParseFailed        bool
+	AddressUnsplit     bool
+	LocationMismatch   bool
+	Flags              []string
+	Located            bool
+	BeforeSent         *time.Time
+	BeforeID           *int64
+	MaxRows            int32
 }
 
 type SearchMessagesRow struct {
@@ -3470,9 +3523,16 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.OnlyIds,
 		arg.QAll,
 		arg.QAny,
+		arg.QIndex1,
+		arg.QIndex2,
+		arg.QIndex3,
+		arg.QIndex4,
+		arg.QAnyIndex,
 		arg.Capcodes,
 		arg.Aliases,
 		arg.AliasLikes,
+		arg.AliasNamesResolved,
+		arg.AliasNameIds,
 		arg.AliasIds,
 		arg.Agencies,
 		arg.AgencyLikes,

@@ -89,6 +89,42 @@ jobs:
         run: |
           grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9|M12|FailureCauses|Radio|NoSquelch)|postgis:|^(ok|FAIL)' test.log || true
 
+  # A75: R33b's searches on 10 years of made-up pages (ADR 0017), each within
+  # 1 second and listing the same pages as the query before M13a. Its own
+  # job, as seeding 4,562,500 pages takes minutes.
+  search:
+    name: Search speed (A75)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: postgis/postgis:18-3.6
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PAGERARCHIVE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
+      PAGERARCHIVE_REQUIRE_DB: "1"
+      PAGERARCHIVE_A75: "1"
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Disk before
+        run: df -h /
+      - name: A75 on 4,562,500 made-up pages
+        run: go test -count=1 -v -timeout 35m -run TestA75SearchSpeed ./internal/acceptance/
+      - name: Disk after
+        if: always()
+        run: df -h /
+
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
     runs-on: ubuntu-24.04
@@ -406,7 +442,7 @@ jobs:
   # finds its own tag and release on this commit and finishes them.
   release:
     name: Release v<VERSION> (tag, GitHub release, client binaries)
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -479,7 +515,7 @@ jobs:
   # is skipped, so these run unless something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -522,7 +558,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:
