@@ -405,6 +405,26 @@ func TestM16OrderOfTheFile(t *testing.T) {
 	}
 }
 
+// More pages with one time than a batch holds: all stored, in one order, in
+// batches that fit in a transaction's locks.
+func TestM16ManyPagesAtOneTime(t *testing.T) {
+	e := setup(t)
+	at := e.now.Add(-time.Hour)
+	var lines []string
+	for i := range importer.BatchSize*2 + 50 {
+		lines = append(lines, importLine(at, "0100001", fmt.Sprintf("QDSAME TIME %04d", i), fmt.Sprintf("s%d", i)))
+	}
+	rand.New(rand.NewPCG(1, 76)).Shuffle(len(lines), func(i, j int) { lines[i], lines[j] = lines[j], lines[i] })
+	r := e.mustImport(lines...)
+	if r.Stored != importer.BatchSize*2+50 {
+		t.Errorf("stored %d, want %d", r.Stored, importer.BatchSize*2+50)
+	}
+	got := e.rows(`SELECT text FROM messages ORDER BY id`)
+	if !slices.IsSorted(got) {
+		t.Errorf("pages with one time weren't stored in order of their text: %v ...", got[:5])
+	}
+}
+
 // R83a, R19: merged with pages already stored, within 10 seconds either side,
 // by the earliest receive time (R21); later ones are new.
 func TestM16DeduplicatesAgainstStoredPages(t *testing.T) {

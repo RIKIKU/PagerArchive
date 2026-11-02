@@ -398,7 +398,7 @@ mutate "import: a refused line's reason is the decoder's error, which quotes the
 		return checked{}, err.Error()
 	}'
 mutate "import: the file's order decides (no sort)" internal/importer/importer.go go:TestM16OrderOfTheFile \
-	'WINDOW w AS (ORDER BY received_at, capcode COLLATE "C", text COLLATE "C", source_id COLLATE "C")' 'WINDOW w AS ()'
+	'ORDER BY received_at, capcode COLLATE "C", text COLLATE "C", source_id COLLATE "C"`, after, upto)' 'ORDER BY ctid`, after, upto)'
 mutate "import: a watch's catch-up sends imported pages" internal/store/db/queries.sql.go go:TestM16Quiet \
 	'SELECT DISTINCT message_id FROM receptions WHERE message_id > $1 ORDER BY message_id LIMIT $2::int' 'SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT $2::int'
 if command -v docker >/dev/null; then

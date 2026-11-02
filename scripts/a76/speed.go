@@ -58,6 +58,7 @@ func main() {
 	key := flag.String("key", "", "the live client's API key")
 	seed := flag.Int("seed", seeddata.A75Pages, "pages seeded first, as A75 does")
 	pages := flag.Int("pages", 200_000, "pages imported")
+	shuffle := flag.Bool("shuffle", false, "send the pages in random order (held in memory first)")
 	sample := flag.String("sample", "", "addresses to use, NUMBER STREET|LOCALITY per line")
 	out := flag.String("o", ".", "where the results go")
 	every := flag.Duration("every", 5*time.Second, "how often the client posts a live page")
@@ -104,7 +105,7 @@ func main() {
 	if *phase != "" {
 		die(os.WriteFile(*phase, []byte("import\n"), 0o644))
 	}
-	rates := runImport(command, *pages, *sample, *out)
+	rates := runImport(command, *pages, *shuffle, *sample, *out)
 	close(stop)
 	wg.Wait()
 	time.Sleep(10 * time.Second) // the last live page's delivery
@@ -236,7 +237,7 @@ var doneRe = regexp.MustCompile(`^(\d+) of (\d+) pages`)
 
 // runImport runs the command, streaming the pages to its standard input, and
 // notes how far it has got from its progress lines.
-func runImport(command []string, pages int, sample, out string) *rates {
+func runImport(command []string, pages int, shuffle bool, sample, out string) *rates {
 	addrs := readSample(sample)
 	cmd := exec.Command(command[0], command[1:]...)
 	stdin, err := cmd.StdinPipe()
@@ -256,9 +257,9 @@ func runImport(command []string, pages int, sample, out string) *rates {
 			elapsed := time.Since(rt.start)
 			fmt.Printf("[%6.0fs] %s\n", elapsed.Seconds(), line)
 			switch {
-			case strings.HasPrefix(line, "read ") && strings.Contains(line, "sorting"):
+			case strings.HasPrefix(line, "read ") && strings.Contains(line, "indexing"):
 				rt.read = elapsed
-			case strings.HasPrefix(line, "sorted "):
+			case strings.HasPrefix(line, "indexed "):
 				rt.sorted = elapsed
 			default:
 				if m := doneRe.FindStringSubmatch(line); m != nil {
@@ -276,9 +277,19 @@ func runImport(command []string, pages int, sample, out string) *rates {
 		// Evenly over 3,640 days, inside the default retention, ending an hour ago.
 		span := 3640 * 24 * time.Hour
 		end := time.Now().Add(-time.Hour)
+		var lines [][]byte
 		for i := 0; i < pages; i++ {
 			at := end.Add(-span + time.Duration(float64(span)*float64(i)/float64(pages)))
-			if _, err := w.Write(pageLine(r, i, at, addrs)); err != nil {
+			line := pageLine(r, i, at, addrs)
+			if shuffle {
+				lines = append(lines, line)
+			} else if _, err := w.Write(line); err != nil {
+				return
+			}
+		}
+		r.Shuffle(len(lines), func(i, j int) { lines[i], lines[j] = lines[j], lines[i] })
+		for _, line := range lines {
+			if _, err := w.Write(line); err != nil {
 				return
 			}
 		}
@@ -296,7 +307,7 @@ func runImport(command []string, pages int, sample, out string) *rates {
 
 func (rt *rates) print() {
 	fmt.Printf("--- the import's report\n%s", rt.report)
-	fmt.Printf("--- rate\nread %s, sorted by %s, finished at %s\n", rt.read.Round(time.Second), rt.sorted.Round(time.Second), rt.total.Round(time.Second))
+	fmt.Printf("--- rate\nread %s, indexed by %s, finished at %s\n", rt.read.Round(time.Second), rt.sorted.Round(time.Second), rt.total.Round(time.Second))
 	overall := float64(rt.pages) / rt.total.Seconds()
 	storing := float64(rt.pages) / (rt.total - rt.sorted).Seconds()
 	fmt.Printf("%d pages: %.0f a second overall, %.0f a second while storing\n", rt.pages, overall, storing)

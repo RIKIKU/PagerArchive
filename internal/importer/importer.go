@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"io"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -146,26 +147,29 @@ func (im *Importer) Run(ctx context.Context, r io.Reader) (Report, error) {
 	}
 
 	started := time.Now()
-	if err := im.stage(ctx, conn, r, &rep); err != nil {
-		return rep, err
-	}
-	fmt.Fprintf(im.Progress, "read %d lines in %s; sorting by time\n", rep.Lines, time.Since(started).Round(time.Second))
-	sorted := time.Now()
-	total, err := im.sort(ctx, conn, &rep)
+	n, err := im.stage(ctx, conn, r, &rep)
 	if err != nil {
 		return rep, err
 	}
-	fmt.Fprintf(im.Progress, "sorted %d pages in %s\n", total, time.Since(sorted).Round(time.Second))
+	fmt.Fprintf(im.Progress, "read %d lines in %s; indexing them by time\n", rep.Lines, time.Since(started).Round(time.Second))
+	indexed := time.Now()
+	total, size, err := im.index(ctx, conn, n, &rep)
+	if err != nil {
+		return rep, err
+	}
+	fmt.Fprintf(im.Progress, "indexed %d pages in %s, %s on the database's disk until the import ends\n", total, time.Since(indexed).Round(time.Second), size)
 	if err := im.store(ctx, conn, total, &rep); err != nil {
 		return rep, err
 	}
 	if im.DryRun {
 		return rep, nil
 	}
-	// Searches plan by these statistics (ADR 0017), and an import can change
-	// them more than autovacuum has caught up with.
-	if _, err := conn.Exec(ctx, `ANALYZE messages`); err != nil {
-		return rep, fmt.Errorf("statistics: %s", store.SafeError(err))
+	// Leave nothing to catch up. Searches plan by these statistics (ADR 0017),
+	// and straight after an import, before vacuum had run, a search took 17 s
+	// (ADR 0018). When the command returns, they meet R33b.
+	fmt.Fprintln(im.Progress, "vacuuming and analysing the messages")
+	if _, err := conn.Exec(ctx, `VACUUM (ANALYZE) messages`); err != nil {
+		return rep, fmt.Errorf("vacuum: %s", store.SafeError(err))
 	}
 	return rep, nil
 }
@@ -195,7 +199,6 @@ func (im *Importer) lock(ctx context.Context, conn *pgxpool.Conn) error {
 
 // staged is one page in the temporary table: redacted, never the raw text.
 type staged struct {
-	seq      int64
 	at       time.Time
 	prep     pipeline.Prepared
 	sourceID string // "" means none
@@ -203,22 +206,22 @@ type staged struct {
 
 // stage reads the file into import_lines. Only what Prepare returns reaches
 // the database, so a redacted detail never does (P1).
-func (im *Importer) stage(ctx context.Context, conn *pgxpool.Conn, r io.Reader, rep *Report) error {
+func (im *Importer) stage(ctx context.Context, conn *pgxpool.Conn, r io.Reader, rep *Report) (int64, error) {
 	if _, err := conn.Exec(ctx, `CREATE TEMP TABLE import_lines (
 		received_at timestamptz NOT NULL, capcode text NOT NULL, text text NOT NULL,
 		priority text NOT NULL, heartbeat boolean NOT NULL, source_id text NOT NULL)`); err != nil {
-		return fmt.Errorf("database: %s", store.SafeError(err))
+		return 0, fmt.Errorf("database: %s", store.SafeError(err))
 	}
 	src := &lineSource{im: im, r: bufio.NewReaderSize(r, maxLine+1), rep: rep, now: im.Now(), last: time.Now()}
-	_, err := conn.Conn().CopyFrom(ctx, pgx.Identifier{"import_lines"},
+	n, err := conn.Conn().CopyFrom(ctx, pgx.Identifier{"import_lines"},
 		[]string{"received_at", "capcode", "text", "priority", "heartbeat", "source_id"}, src)
 	if src.err != nil {
-		return src.err
+		return 0, src.err
 	}
 	if err != nil {
-		return fmt.Errorf("database: %s", store.SafeError(err))
+		return 0, fmt.Errorf("database: %s", store.SafeError(err))
 	}
-	return nil
+	return n, nil
 }
 
 // lineSource feeds the file to COPY, one checked line at a time.
@@ -361,87 +364,94 @@ func check(line []byte, now time.Time) (checked, string) {
 	return c, ""
 }
 
-// sort puts the staged pages in order, physically, and numbers them. The order
-// goes down to the text, so two pages with the same time are stored in the same
-// order whatever the file's order was (ADR 0018). It's one statement, and each
-// batch afterwards is one short query, so no snapshot is held for hours and
-// vacuum can run throughout. A dry run removes a repeated source ID here, which
-// a real run finds in its earlier batches.
-func (im *Importer) sort(ctx context.Context, conn *pgxpool.Conn, rep *Report) (int64, error) {
-	for _, sql := range []string{
-		`CREATE TEMP TABLE import_sorted AS
-		 SELECT row_number() OVER w AS seq, received_at, capcode, text, priority, heartbeat, source_id
-		 FROM import_lines
-		 WINDOW w AS (ORDER BY received_at, capcode COLLATE "C", text COLLATE "C", source_id COLLATE "C")
-		 ORDER BY seq`,
-		`DROP TABLE import_lines`,
-		`CREATE INDEX ON import_sorted (seq)`,
-	} {
+// index makes the staged pages readable in time order, without sorting them all:
+// a sort of a whole file writes it to disk twice more, in a burst that holds up
+// a live page's commit (ADR 0018). Each batch is one short query, so no snapshot
+// is held for hours and vacuum can run throughout. A dry run removes a repeated
+// source ID here, which a real run finds in its earlier batches.
+func (im *Importer) index(ctx context.Context, conn *pgxpool.Conn, staged int64, rep *Report) (int64, string, error) {
+	for _, sql := range []string{`CREATE INDEX ON import_lines (received_at)`, `ANALYZE import_lines`} {
 		if _, err := conn.Exec(ctx, sql); err != nil {
-			return 0, fmt.Errorf("sorting: %s", store.SafeError(err))
+			return 0, "", fmt.Errorf("indexing: %s", store.SafeError(err))
 		}
 	}
 	if im.DryRun {
-		tag, err := conn.Exec(ctx, `DELETE FROM import_sorted WHERE seq IN (
-			SELECT seq FROM (SELECT seq, row_number() OVER (PARTITION BY source_id ORDER BY seq) AS n
-			                 FROM import_sorted WHERE source_id <> '') r WHERE n > 1)`)
+		tag, err := conn.Exec(ctx, `DELETE FROM import_lines WHERE ctid IN (
+			SELECT ctid FROM (
+				SELECT ctid, row_number() OVER (PARTITION BY source_id ORDER BY received_at, capcode COLLATE "C", text COLLATE "C") AS n
+				FROM import_lines
+				WHERE source_id IN (SELECT source_id FROM import_lines WHERE source_id <> '' GROUP BY source_id HAVING count(*) > 1)) r
+			WHERE n > 1)`)
 		if err != nil {
-			return 0, fmt.Errorf("sorting: %s", store.SafeError(err))
+			return 0, "", fmt.Errorf("indexing: %s", store.SafeError(err))
 		}
 		rep.AlreadyImported += tag.RowsAffected()
+		staged -= tag.RowsAffected()
 	}
-	var n int64
-	if err := conn.QueryRow(ctx, `SELECT count(*) FROM import_sorted`).Scan(&n); err != nil {
-		return 0, fmt.Errorf("sorting: %s", store.SafeError(err))
+	var size string
+	if err := conn.QueryRow(ctx, `SELECT pg_size_pretty(pg_total_relation_size('import_lines'))`).Scan(&size); err != nil {
+		return 0, "", fmt.Errorf("indexing: %s", store.SafeError(err))
 	}
-	return n, nil
+	return staged, size, nil
 }
 
-// store takes the sorted pages in batches.
+// store takes the staged pages in time order, in batches.
 func (im *Importer) store(ctx context.Context, conn *pgxpool.Conn, total int64, rep *Report) error {
-	var after, done int64
+	var done int64
+	after := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 	started, last := time.Now(), time.Now()
 	dry := &dryRun{first: map[[32]byte]time.Time{}, copies: map[copyID]bool{}}
 	for {
-		batch, err := nextBatch(ctx, conn, after)
+		pages, err := nextPages(ctx, conn, after)
 		if err != nil {
-			return fmt.Errorf("reading the sorted pages: %s", store.SafeError(err))
+			return fmt.Errorf("reading the staged pages: %s", store.SafeError(err))
 		}
-		if len(batch) == 0 {
+		if len(pages) == 0 {
 			return nil
 		}
-		after = batch[len(batch)-1].seq
-		if im.DryRun {
-			err = im.checkBatch(ctx, batch, rep, dry)
-		} else {
-			err = im.storeBatch(ctx, batch, rep)
-		}
-		if err != nil {
-			return err
-		}
-		done += int64(len(batch))
-		if im.AfterBatch != nil {
-			if err := im.AfterBatch(done); err != nil {
+		after = pages[len(pages)-1].at
+		for batch := range slices.Chunk(pages, BatchSize) {
+			if im.DryRun {
+				err = im.checkBatch(ctx, batch, rep, dry)
+			} else {
+				err = im.storeBatch(ctx, batch, rep)
+			}
+			if err != nil {
 				return err
 			}
-		}
-		if time.Since(last) > 10*time.Second {
-			last = time.Now()
-			fmt.Fprintf(im.Progress, "%d of %d pages, %.0f a second\n", done, total, float64(done)/time.Since(started).Seconds())
+			done += int64(len(batch))
+			if im.AfterBatch != nil {
+				if err := im.AfterBatch(done); err != nil {
+					return err
+				}
+			}
+			if time.Since(last) > 10*time.Second {
+				last = time.Now()
+				fmt.Fprintf(im.Progress, "%d of %d pages, %.0f a second\n", done, total, float64(done)/time.Since(started).Seconds())
+			}
 		}
 	}
 }
 
-func nextBatch(ctx context.Context, conn *pgxpool.Conn, after int64) ([]staged, error) {
-	rows, err := conn.Query(ctx, `SELECT seq, received_at, capcode, text, priority, heartbeat, source_id
-		FROM import_sorted WHERE seq > $1 ORDER BY seq LIMIT $2`, after, BatchSize)
+// nextPages returns the next batch's worth of pages after a time, and every
+// other page with the last one's time. The order goes down to the text, so
+// pages with one time are stored in one order whatever the file's order was.
+func nextPages(ctx context.Context, conn *pgxpool.Conn, after time.Time) ([]staged, error) {
+	upto := time.Date(9999, 1, 1, 0, 0, 0, 0, time.UTC) // none that far on: the rest
+	err := conn.QueryRow(ctx, `SELECT received_at FROM import_lines WHERE received_at > $1 ORDER BY received_at OFFSET $2 LIMIT 1`, after, BatchSize-1).Scan(&upto)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx, `SELECT received_at, capcode, text, priority, heartbeat, source_id
+		FROM import_lines WHERE received_at > $1 AND received_at <= $2
+		ORDER BY received_at, capcode COLLATE "C", text COLLATE "C", source_id COLLATE "C"`, after, upto)
 	if err != nil {
 		return nil, err
 	}
 	return pgx.CollectRows(rows, func(row pgx.CollectableRow) (staged, error) {
 		var p staged
 		var priority string
-		err := row.Scan(&p.seq, &p.at, &p.prep.Capcode, &p.prep.Text, &priority, &p.prep.Heartbeat, &p.sourceID)
+		err := row.Scan(&p.at, &p.prep.Capcode, &p.prep.Text, &priority, &p.prep.Heartbeat, &p.sourceID)
 		p.prep.Priority = profile.Priority(priority)
 		p.at = p.at.UTC()
 		return p, err

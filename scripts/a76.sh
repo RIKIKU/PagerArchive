@@ -7,18 +7,19 @@
 # import, the API's peak is <= 256 MiB and api + db peaks sum to <= 1 GiB. The
 # API's figure includes the import, which runs in its container.
 #
-# usage: scripts/a76.sh [-s SEED] [-n PAGES] [-l LOCALITIES] [-o OUT]
-#   CI:       scripts/a76.sh                        (seed 4,562,500, import 200,000)
+# usage: scripts/a76.sh [-s SEED] [-n PAGES] [-l LOCALITIES] [-r] [-o OUT]
+#   -r  the file in random order, the import's hardest read
+#   CI:       scripts/a76.sh -r                     (seed 4,562,500, import 200,000)
 #   full run: scripts/a76.sh -s 0 -n 4562500 -l 3000 (a real-size address dataset)
 # needs: Docker with compose, Go, curl, awk. Uses 127.0.0.1:8080 and :55439, and
 # port 14321 on every address for the test webhook.
 set -eu
 cd "$(dirname "$0")/.."
 
-SEED=4562500 PAGES=200000 LOCALITIES=0 OUT=a76-results
-while getopts s:n:l:o: opt; do
+SEED=4562500 PAGES=200000 LOCALITIES=0 OUT=a76-results SHUFFLE=""
+while getopts s:n:l:o:r opt; do
 	case $opt in
-	s) SEED=$OPTARG ;; n) PAGES=$OPTARG ;; l) LOCALITIES=$OPTARG ;; o) OUT=$OPTARG ;; *) exit 2 ;;
+	s) SEED=$OPTARG ;; n) PAGES=$OPTARG ;; l) LOCALITIES=$OPTARG ;; o) OUT=$OPTARG ;; r) SHUFFLE=-shuffle ;; *) exit 2 ;;
 	esac
 done
 mkdir -p "$OUT"
@@ -95,7 +96,7 @@ SAMPLER=$!
 status=0
 # shellcheck disable=SC2086
 go run scripts/a76/speed.go -db "postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:${PA_A76_DB_PORT:-55439}/postgres?sslmode=disable" \
-	-key "$KEY" -seed "$SEED" -pages "$PAGES" -o "$OUT" -phase "$PHASE_FILE" $SAMPLE -- \
+	-key "$KEY" -seed "$SEED" -pages "$PAGES" -o "$OUT" -phase "$PHASE_FILE" $SHUFFLE $SAMPLE -- \
 	docker compose -f compose.yaml -f deploy/test/compose.yaml $STACK_OVERLAYS exec -T api pagerarchive import-messages - 2>&1 | tee "$OUT/a76-speed.txt" || status=1
 grep -q '^A76 speed: PASS$' "$OUT/a76-speed.txt" || status=1
 kill "$SAMPLER" 2>/dev/null || true
@@ -114,7 +115,7 @@ awk -F, '
 	}' "$OUT/a76-stats.csv" >"$OUT/a76-summary.txt" || status=1
 cat "$OUT/a76-summary.txt"
 stack_compose logs --no-color api db >"$OUT/a76-logs.txt" 2>&1 || true
-if grep -q 'FICTION\|0412' "$OUT/a76-logs.txt"; then
+if grep -qE 'FICTION|MADEUPTON|HEARTBEAT|0412 345|AGE: |SEX: ' "$OUT/a76-logs.txt"; then
 	echo "page text found in the logs" >&2
 	status=1
 fi
