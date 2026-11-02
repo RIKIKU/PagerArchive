@@ -158,6 +158,7 @@ Many clients post to one server. Each client records its own receive time. The s
   - **Suggestions:** as a value is typed, matching values are suggested for `alias:`, `agency:`, `group:`, `priority:`, `category:`, `is:` and `flag:`. There are none for `capcode:` or `job:`, which are too many to list and are only typed by someone who knows them (owner, 2026-10-20). Typing the start of a key suggests the key. A help control lists every key with an example.
   - **Accessibility:** the box follows the ARIA combobox pattern. Arrow keys move through suggestions, Enter picks one, Escape closes the list, and the number of suggestions is announced.
   - **Where it applies:** the search is kept in the page's address (back button, bookmarks, shared links). The map, the alias and capcode views and the job view follow it. Its look is part of the redesign.
+- **R33b. Search speed** (owner, 2026-11-02). With 3 years of pages at 1,500 a day, a search shows its first results within **1 second**. That includes a search that finds little or nothing, a search with several terms or `or:` terms (R33a), and a term found only in an extra field. This holds within the resource budget (section 8).
 - **R34.** A **job view** shows all messages for a job number.
 - **R35.** A **map** shows located messages, using **self-hosted map tiles** (e.g. an OpenStreetMap extract), so no third party sees what users view.
 - **R35a.** **Times** are stored in UTC and shown in the deployment's time zone (setting `TZ`, e.g. `Australia/Melbourne`), with en-AU style dates. English only. Report days and the retention cut-off use the same time zone. (Showing times in each browser's own time zone may come later.)
@@ -420,6 +421,12 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 - **A72. Albums.** **Given** user B, **when** B creates the album "Big storm" and adds 3 messages, **then** it appears under Albums in the menu with 3 messages; **when** user C or an admin asks the API for it, **then** it's refused; **when** a redaction rule is added that matches one of its messages, **then** after the nightly run the album shows that message redacted; **when** retention deletes 2 of its messages, **then** the album holds 1; **when** the last one is deleted, **then** the album is gone; **when** B deletes their account, **then** B's albums are gone.
 - **A73. Style tokens** (owner, 2026-11-02). **When** a test commit gives a component a hard-coded colour, size, spacing or corner radius, **then** CI fails and names the file and value. **When** Harbour's tokens are swapped for a test set with every value changed, **then** screenshots of every page change, and no page keeps a Harbour value.
 - **A74. Choosing a look.** **Given** user B on Harbour, **when** B chooses Console in the account menu on a PC, **then** the page changes to Console without reloading; **when** B then signs in on a phone, **then** the first paint is already Console, in the phone's light or dark mode; **when** user C signs in, **then** C still sees Harbour. Every page passes the axe check and WCAG AA contrast in both looks, light and dark, with screenshots of each as evidence.
+- **A75. Search speed** (owner, 2026-11-02). **Given** 1,642,500 made-up pages (3 years at 1,500 a day) in CI, **when** user B searches each of the following, **then** each returns its first page of results within 1 second, and lists the same pages as before the speed-up:
+  - one term that matches nothing;
+  - three terms that together match nothing;
+  - `"Smoke showing" or:"grass fire"`;
+  - a term found only in an extra field;
+  - a term with `alias:"Station 1"`.
 
 ## 10. Example profile (made-up network)
 
@@ -472,6 +479,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M11** | Print sheet for training: tick messages, print them as a pager shows them | A60 |
 | **M12** | Telemetry: OpenTelemetry traces, metrics and logs from the API and client; the example monitoring stack with its alerts (owner, 2026-10-30); radio health and the "radio stalled" alert (owner, 2026-10-31) | A62–A67 |
 | **M13** | UI redesign: side menu and icons, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01); every style value is a token (R82c, owner 2026-11-02) | A61, A68–A70, A73 |
+| **M13a** | Search speed, a fix after M13 (R33b) | A75 |
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 | **M15** | Looks: Console as a second look, chosen in the account menu and saved on the account (R82d) | A74 |
 
