@@ -330,6 +330,16 @@ For moving an existing archive into PagerArchive. Users aren't imported; aliases
 - **R83e. Dry run and report.** `--dry-run` reads and checks the whole file and stores nothing. Every run reports lines read, pages stored, duplicates merged, parse failures, pages skipped by retention, and refused lines by line number and reason. No report, log line or telemetry ever contains page text (P1, R70).
 - **R83f. Speed and budget.** The import stores at least **500 pages a second** while the app keeps serving users and live pages, within the resource budget (section 8). At that rate, 4.6 million pages take under 3 hours.
 
+### 7.22 Installing and upgrading (owner, 2026-11-02)
+- **R84. No checkout.** Running PagerArchive needs no copy of the source repository. A deployment holds `compose.yaml` and an `.env` example, both attached to every GitHub release, plus its own data: its network profile (mounted at runtime, section 6) and its map tiles. Everything else (Authentik's setup, the database's first-start scripts) comes inside the published images or in `compose.yaml` itself. The optional example monitoring stack is attached to the release the same way, with its dashboards and alert rules in its images.
+- **R84a. Upgrading is installing the latest release.** Upgrading from any earlier release is getting the new `compose.yaml` and running `docker compose pull && docker compose up -d`, and nothing else:
+  - migrations run when the API starts, and only go forward;
+  - a new setting has a safe default, or the app creates it on first start (secrets included) and keeps it in its own volume, so `.env` never needs editing for an upgrade;
+  - nothing is run by hand inside a container.
+
+  A release that can't meet this (for example, a new major version of PostgreSQL) puts "Upgrade steps" at the top of its release notes, and needs the owner's approval.
+- **R84b. Docs.** The install is: download the two files, fill in `.env`, then `docker compose up -d`. The upgrade is the two commands above. The `git pull` instructions go.
+
 ## 8. Constraints
 
 | Constraint | Because |
@@ -444,6 +454,8 @@ All checks use the **example profile** and the **standard test fixture** (sectio
   - **when** an import is stopped part-way and run again, **then** the result is the same as one full run.
 
   With 4,562,500 pages imported while user B searches and a client posts live pages, the import stores at least 500 pages a second, B's searches stay within R33b, every live page is stored and delivered on time (R51a), and the resource budget holds.
+- **A77. Upgrade from the previous release** (owner, 2026-11-02). In CI, on every branch: **given** the previous release's published images, started from that release's `compose.yaml` and `.env` example (a release from before M17, which has neither attached, is started from its tag's files), with made-up users, aliases, templates with icons, integrations and pages, **when** it's upgraded to this branch's images with this branch's `compose.yaml` and `docker compose pull && docker compose up -d` only, **then** every page, alias, template, icon and integration is still there, the migrations have run, a user signs in, and a new page is stored, found by search and delivered to an integration.
+- **A78. Install with no checkout** (owner, 2026-11-02). In CI, **given** an empty folder holding only the release's `compose.yaml`, its `.env` example filled in with test values, and the example profile and map, **when** `docker compose up -d` is run, **then** section 11's steps pass, and the folder holds no other file from the repository.
 
 ## 10. Example profile (made-up network)
 
@@ -500,6 +512,9 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M16** | Importing messages from an existing archive (R83–R83f), built straight after M13a, before M14 and M15, since going live needs it (owner, 2026-11-02) | A76 |
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 | **M15** | Looks: Console as a second look, chosen in the account menu and saved on the account (R82d) | A74 |
+| **M17** | Installing and upgrading with no checkout (R84–R84b), after M16 (owner, 2026-11-02) | A77, A78 |
+
+**Before the first production instance** (owner, 2026-11-02): M13a, M16 and M17 are done.
 
 ### 12.1 Releases (owner, 2026-11-01)
 - **Every merge into main is a release.** The branch sets the release's version in the `VERSION` file (a semantic version: a milestone raises the minor number, a fix the patch number). CI fails a branch whose `VERSION` isn't higher than main's, and the release fails before publishing anything if `VERSION` isn't higher than every earlier release's, so every merge is a new version (owner, 2026-11-02).
