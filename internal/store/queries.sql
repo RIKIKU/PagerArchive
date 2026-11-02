@@ -191,15 +191,25 @@ LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only_ids)::bigint[]))
   -- R33a's text terms, each an ILIKE pattern found in the text or an extra
-  -- field: every one of q_all, or any one of q_any (the or: terms).
+  -- field: every one of q_all, or any one of q_any (the or: terms). The
+  -- trigram index on message_search_text() finds the candidates (R33b, ADR
+  -- 0017): q_index1 to 4 are up to four of q_all it can serve, one condition
+  -- each, and with q_any_index it serves the or: terms. Each term is then
+  -- matched in the text or one extra field, as before.
   AND ((cardinality(sqlc.arg(q_all)::text[]) = 0 AND cardinality(sqlc.arg(q_any)::text[]) = 0)
        OR (cardinality(sqlc.arg(q_all)::text[]) > 0
+           AND (sqlc.narg(q_index1)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index1)::text)
+           AND (sqlc.narg(q_index2)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index2)::text)
+           AND (sqlc.narg(q_index3)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index3)::text)
+           AND (sqlc.narg(q_index4)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index4)::text)
            AND NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(q_all)::text[]) AS term (p)
                            WHERE NOT (m.text ILIKE term.p
                                       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
-       OR EXISTS (SELECT 1 FROM unnest(sqlc.arg(q_any)::text[]) AS term (p)
-                  WHERE m.text ILIKE term.p
-                     OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
+       OR (cardinality(sqlc.arg(q_any)::text[]) > 0
+           AND (NOT sqlc.arg(q_any_index)::bool OR message_search_text(m.text, m.extra) ILIKE ANY(sqlc.arg(q_any)::text[]))
+           AND EXISTS (SELECT 1 FROM unnest(sqlc.arg(q_any)::text[]) AS term (p)
+                       WHERE m.text ILIKE term.p
+                          OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
   AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
   AND (cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
   AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))

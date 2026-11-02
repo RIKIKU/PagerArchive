@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -193,6 +194,51 @@ func likeContains(vs []string) []string {
 	return out
 }
 
+// indexable reports whether the search index can find a term (ADR 0017): it
+// has a run of three letters or digits, so a trigram, and none of the
+// characters jsonb escapes when it writes an extra field (", \ and control
+// characters), so a value holding the term holds it as written there.
+func indexable(s string) bool {
+	return longestRun(s) >= 3 && !strings.ContainsFunc(s, func(r rune) bool { return r == '"' || r == '\\' || r < 0x20 })
+}
+
+// indexTerms picks up to four of the terms the index can find, as ILIKE
+// patterns, longest run of letters and digits first, as a longer one is
+// usually rarer. Every term is still matched field by field; these only let
+// the index find the candidates.
+func indexTerms(all []string) (a, b, c, d *string) {
+	type term struct {
+		pattern string
+		run     int
+	}
+	var ts []term
+	for _, s := range all {
+		if indexable(s) {
+			ts = append(ts, term{"%" + likeEscaper.Replace(s) + "%", longestRun(s)})
+		}
+	}
+	slices.SortStableFunc(ts, func(x, y term) int { return y.run - x.run })
+	out := make([]*string, 4)
+	for i := 0; i < len(ts) && i < 4; i++ {
+		out[i] = &ts[i].pattern
+	}
+	return out[0], out[1], out[2], out[3]
+}
+
+// longestRun is the length of a term's longest run of letters and digits.
+func longestRun(s string) int {
+	best, n := 0, 0
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			n++
+			best = max(best, n)
+		} else {
+			n = 0
+		}
+	}
+	return best
+}
+
 func upper(vs []string) []string {
 	out := make([]string, 0, len(vs))
 	for _, s := range vs {
@@ -260,6 +306,8 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 	terms := ParseText(f.Text)
 	p.QAll = likeContains(terms.All)
 	p.QAny = likeContains(terms.Any)
+	p.QIndex1, p.QIndex2, p.QIndex3, p.QIndex4 = indexTerms(terms.All)
+	p.QAnyIndex = len(terms.Any) > 0 && !slices.ContainsFunc(terms.Any, func(s string) bool { return !indexable(s) })
 	for _, name := range f.Category {
 		if name == "Other" {
 			p.CatOther = true

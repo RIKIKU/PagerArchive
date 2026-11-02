@@ -39,6 +39,11 @@ func Open(ctx context.Context, url string, tracer ...pgx.QueryTracer) (*Store, e
 	if len(tracer) > 0 {
 		cfg.ConnConfig.Tracer = tracer[0]
 	}
+	// Plan each query for its own values (R33b, ADR 0017). pgx prepares
+	// statements, and after five runs PostgreSQL may keep one generic plan,
+	// which can't use the search index for a rare term or skip a filter
+	// that isn't set.
+	cfg.ConnConfig.RuntimeParams["plan_cache_mode"] = "force_custom_plan"
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("database: %s", SafeError(err))

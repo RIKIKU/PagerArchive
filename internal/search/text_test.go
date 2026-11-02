@@ -70,3 +70,44 @@ func TestTooManyTerms(t *testing.T) {
 		t.Errorf("%d terms accepted", MaxTerms+1)
 	}
 }
+
+// R33b (ADR 0017): up to four terms the index can find go to it, longest run
+// of letters and digits first: a term needs a trigram, and none of the
+// characters jsonb escapes in an extra field. The or: terms go to it only if
+// it can find every one.
+func TestIndexTerms(t *testing.T) {
+	str := func(p *string) string {
+		if p == nil {
+			return "-"
+		}
+		return *p
+	}
+	tests := []struct {
+		text     string
+		want     string
+		anyIndex bool
+	}{
+		{"", "- - - -", false},
+		{"a bc 1:2", "- - - -", false},
+		{"smoke", "%smoke% - - -", false},
+		{`hoses "grass fire" pump`, "%hoses% %grass fire% %pump% -", false},
+		{"a b c ZZNOTHING", "%ZZNOTHING% - - -", false},
+		{"14:05 abc 50% x_yz", "%abc% - - -", false},
+		{"one three seventeen four fivefive", "%seventeen% %fivefive% %three% %four%", false},
+		{`5"hose back\slash tab` + "\t" + `x "unit` + "\x1f" + `crew" smoke`, "%smoke% %tab% - -", false},
+		{"or:alarm fire", "%fire% - - -", true},
+		{`or:alarm or:"grass fire"`, "- - - -", true},
+		{"or:alarm or:ab", "- - - -", false},
+		{`or:alarm or:5"hose`, "- - - -", false},
+	}
+	for _, tt := range tests {
+		p, err := Filter{Text: tt.text}.Params(nil, nil, 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got := strings.Join([]string{str(p.QIndex1), str(p.QIndex2), str(p.QIndex3), str(p.QIndex4)}, " ")
+		if got != tt.want || p.QAnyIndex != tt.anyIndex {
+			t.Errorf("%q: %s, or: terms %v; want %s, %v", tt.text, got, p.QAnyIndex, tt.want, tt.anyIndex)
+		}
+	}
+}

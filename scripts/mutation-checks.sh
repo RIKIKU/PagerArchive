@@ -1,8 +1,9 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11) and telemetry (M12): break one check at a time in a throwaway copy
-# of the repository, run the test that guards it, and show the test
-# failing. Every mutation must fail its test; the unmutated copy must pass.
+# (M11), telemetry (M12) and search (M13a): break one check at a time in a
+# throwaway copy of the repository, run the test that guards it, and show
+# the test failing. Every mutation must fail its test; the unmutated copy
+# must pass.
 #
 # usage: scripts/mutation-checks.sh
 # needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test); for the
@@ -25,7 +26,8 @@ survived=0
 # and restore. <test> is "go:<regexp>" (the acceptance checks),
 # "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
 # dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
-# "mon:<regexp>" (the example stack's checks: TestA65, TestA67) or
+# "mon:<regexp>" (the example stack's checks: TestA65, TestA67),
+# "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages) or
 # "stack:<regexp>" (the account checks against Authentik, through
 # scripts/stack-checks.sh with A23's first admin).
 #
@@ -76,6 +78,11 @@ mutate() {
 	pester:*)
 		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
 		printf '%s\n' "$out" | grep -E '\[-\]|Expected|Timed out' | head -4
+		;;
+	a75:*)
+		# A75 seeds 4,562,500 pages: longer than the other checks' limit.
+		out=$(PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run "${test#a75:}" ./internal/acceptance/ 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -12
 		;;
 	e2e:*)
 		out=$(sh scripts/e2e.sh --project=chromium -g "${test#e2e:}" 2>&1)
@@ -347,6 +354,15 @@ mutate "text terms: or: is ignored (an or: term is one more required term)" inte
 	'		if or {' '		if false && or {'
 mutate "text terms: quotes are ignored (a phrase is split into words)" internal/search/text.go unit:internal/search:TestParseText \
 	"		if i < len(s) && s[i] == '\"' {" '		if false {'
+# R33b's search speed (ADR 0017): each term is matched field by field,
+# whatever the index found; the index is what makes A75 fast, and the second
+# try with it is what makes terms that are never together fast.
+mutate "search: a term matches across two extra fields (the values joined)" internal/store/db/queries.sql.go go:TestSearchFieldBoundary \
+	'EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)' "(SELECT string_agg(e.value, '') FROM jsonb_each_text(m.extra) e) ILIKE term.p"
+mutate "search: the search index isn't built" internal/store/migrations/00013_search_speed.sql a75:TestA75SearchSpeed \
+	'CREATE INDEX CONCURRENTLY messages_search_trgm_idx ON messages USING gin (message_search_text(text, extra) gin_trgm_ops);' ''
+mutate "search: no second try with the index in time (the first try runs for an hour)" internal/store/search.go a75:TestA75SearchSpeed \
+	'const SearchFirstTry = 250 * time.Millisecond' 'const SearchFirstTry = time.Hour'
 mutate "the client logs why it stopped after telemetry has shut down" cmd/pagerarchive-client/main.go go:TestR73EveryClientLineExported \
 	'			log.Error("client stopped", "error", err.Error())
 			err = stopped{err}
@@ -361,8 +377,9 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73|TestSearchFieldBoundary' ./internal/acceptance/ 2>&1 | tail -20
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
+PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'
 [ ! -L web/node_modules ] || sh scripts/e2e.sh --project=chromium -g 'A60|print sheet|print page' 2>&1 | grep -E '^\s+[0-9]+ (passed|failed)'

@@ -3349,55 +3349,70 @@ LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   -- R33a's text terms, each an ILIKE pattern found in the text or an extra
-  -- field: every one of q_all, or any one of q_any (the or: terms).
+  -- field: every one of q_all, or any one of q_any (the or: terms). The
+  -- trigram index on message_search_text() finds the candidates (R33b, ADR
+  -- 0017): q_index1 to 4 are up to four of q_all it can serve, one condition
+  -- each, and with q_any_index it serves the or: terms. Each term is then
+  -- matched in the text or one extra field, as before.
   AND ((cardinality($2::text[]) = 0 AND cardinality($3::text[]) = 0)
        OR (cardinality($2::text[]) > 0
+           AND ($4::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $4::text)
+           AND ($5::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $5::text)
+           AND ($6::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $6::text)
+           AND ($7::text IS NULL OR message_search_text(m.text, m.extra) ILIKE $7::text)
            AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) AS term (p)
                            WHERE NOT (m.text ILIKE term.p
                                       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
-       OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS term (p)
-                  WHERE m.text ILIKE term.p
-                     OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
-  AND (cardinality($4::text[]) = 0 OR m.capcode = ANY($4::text[]))
-  AND (cardinality($5::text[]) = 0 OR a.name ILIKE ANY($5::text[]))
-  AND (cardinality($6::text[]) = 0 OR a.name ILIKE ANY($6::text[]))
-  AND (cardinality($7::bigint[]) = 0 OR m.alias_id = ANY($7::bigint[]))
-  AND (cardinality($8::text[]) = 0 OR t.agency ILIKE ANY($8::text[]))
-  AND (cardinality($9::text[]) = 0 OR t.agency ILIKE ANY($9::text[]))
-  AND (cardinality($10::text[]) = 0 OR upper(m.paging_group) = ANY($10::text[]))
-  AND (cardinality($11::text[]) = 0 OR m.paging_group ILIKE ANY($11::text[]))
-  AND (cardinality($12::text[]) = 0
-       OR ('none' = ANY($12::text[]) AND m.priority IS NULL)
-       OR m.priority = ANY($12::text[]))
-  AND (NOT $13::bool
-       OR COALESCE(m.event_type = ANY($14::text[])
-                   OR m.event_type LIKE ANY($15::text[]), false)
-       OR ($16::bool
-           AND NOT COALESCE(m.event_type = ANY($17::text[])
-                            OR m.event_type LIKE ANY($18::text[]), false)))
-  AND (cardinality($19::text[]) = 0 OR m.job_number = ANY($19::text[]))
-  AND ($20::timestamptz IS NULL OR m.sent_at >= $20)
-  AND ($21::timestamptz IS NULL OR m.sent_at < $21)
-  AND (NOT $22::bool OR m.alias_id IS NULL)
-  AND ($23::bool OR a.ignored IS NOT TRUE)
-  AND (NOT $24::bool OR m.parse_failed)
-  AND (NOT $25::bool OR m.address_unsplit)
-  AND (NOT $26::bool OR m.location_mismatch)
-  AND (cardinality($27::text[]) = 0
-       OR ('parse_failed' = ANY($27::text[]) AND m.parse_failed)
-       OR ('address_unsplit' = ANY($27::text[]) AND m.address_unsplit)
-       OR ('location_mismatch' = ANY($27::text[]) AND m.location_mismatch))
-  AND (NOT $28::bool OR m.location IS NOT NULL)
-  AND ($29::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($29, $30::bigint))
+       OR (cardinality($3::text[]) > 0
+           AND (NOT $8::bool OR message_search_text(m.text, m.extra) ILIKE ANY($3::text[]))
+           AND EXISTS (SELECT 1 FROM unnest($3::text[]) AS term (p)
+                       WHERE m.text ILIKE term.p
+                          OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
+  AND (cardinality($9::text[]) = 0 OR m.capcode = ANY($9::text[]))
+  AND (cardinality($10::text[]) = 0 OR a.name ILIKE ANY($10::text[]))
+  AND (cardinality($11::text[]) = 0 OR a.name ILIKE ANY($11::text[]))
+  AND (cardinality($12::bigint[]) = 0 OR m.alias_id = ANY($12::bigint[]))
+  AND (cardinality($13::text[]) = 0 OR t.agency ILIKE ANY($13::text[]))
+  AND (cardinality($14::text[]) = 0 OR t.agency ILIKE ANY($14::text[]))
+  AND (cardinality($15::text[]) = 0 OR upper(m.paging_group) = ANY($15::text[]))
+  AND (cardinality($16::text[]) = 0 OR m.paging_group ILIKE ANY($16::text[]))
+  AND (cardinality($17::text[]) = 0
+       OR ('none' = ANY($17::text[]) AND m.priority IS NULL)
+       OR m.priority = ANY($17::text[]))
+  AND (NOT $18::bool
+       OR COALESCE(m.event_type = ANY($19::text[])
+                   OR m.event_type LIKE ANY($20::text[]), false)
+       OR ($21::bool
+           AND NOT COALESCE(m.event_type = ANY($22::text[])
+                            OR m.event_type LIKE ANY($23::text[]), false)))
+  AND (cardinality($24::text[]) = 0 OR m.job_number = ANY($24::text[]))
+  AND ($25::timestamptz IS NULL OR m.sent_at >= $25)
+  AND ($26::timestamptz IS NULL OR m.sent_at < $26)
+  AND (NOT $27::bool OR m.alias_id IS NULL)
+  AND ($28::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $29::bool OR m.parse_failed)
+  AND (NOT $30::bool OR m.address_unsplit)
+  AND (NOT $31::bool OR m.location_mismatch)
+  AND (cardinality($32::text[]) = 0
+       OR ('parse_failed' = ANY($32::text[]) AND m.parse_failed)
+       OR ('address_unsplit' = ANY($32::text[]) AND m.address_unsplit)
+       OR ('location_mismatch' = ANY($32::text[]) AND m.location_mismatch))
+  AND (NOT $33::bool OR m.location IS NOT NULL)
+  AND ($34::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($34, $35::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $31::int
+LIMIT $36::int
 `
 
 type SearchMessagesParams struct {
 	OnlyIds          []int64
 	QAll             []string
 	QAny             []string
+	QIndex1          *string
+	QIndex2          *string
+	QIndex3          *string
+	QIndex4          *string
+	QAnyIndex        bool
 	Capcodes         []string
 	Aliases          []string
 	AliasLikes       []string
@@ -3470,6 +3485,11 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.OnlyIds,
 		arg.QAll,
 		arg.QAny,
+		arg.QIndex1,
+		arg.QIndex2,
+		arg.QIndex3,
+		arg.QIndex4,
+		arg.QAnyIndex,
 		arg.Capcodes,
 		arg.Aliases,
 		arg.AliasLikes,
