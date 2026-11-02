@@ -320,6 +320,16 @@ Reference apps chosen by the owner: Grafana (side menu, groups, breadcrumbs) and
 - **R82c. Everything is a token.** From M13, every value that styles the UI is a token in one place: colours, type sizes, spacing, corner radii, target sizes, and how each priority is shown (edge, tint, dot or label). Components use tokens only, and CI fails a component with a hard-coded value. A look is one set of these tokens, in light and dark, so a look can be added or changed without touching a component. M13 builds Harbour only (ADR 0015).
 - **R82d. Choosing a look.** Users choose between **Harbour** (the default) and **Console** (M13's second prototype, ADR 0015) in the account menu, beside Auto / Light / Dark. The look is **saved on the account**, so it follows the user to every browser and device. A change applies at once, without reloading, and a page never shows the default look first and then switches. Pages before sign-in use Harbour. Every look meets WCAG 2.1 AA in light and dark (section 8).
 
+### 7.21 Importing messages (owner, 2026-11-02)
+For moving an existing archive into PagerArchive. Users aren't imported; aliases come in through the alias import (R30, R63).
+- **R83. The import.** A server-only command, `pagerarchive import-messages <file>`, reads pages from a JSON Lines file, one page per line: `received_at` (RFC 3339, with its offset), `capcode`, `text`, and optionally `source_id` (the page's ID in the archive it came from). The format is documented with an example.
+- **R83a. The same path as a live page.** Each page goes through redaction (P1), cleaning (R17), parsing (R7), deduplication (R19) and job grouping, as if a client had sent it at its `received_at`. Duplicates in the file are merged by R19's 10-second rule, as live pages are. A page that fails to parse is still stored and shown in full (P2).
+- **R83b. Quiet.** Imported pages set off no integration (R47), live update (R32) or alert, and don't count as a receiver being alive (R39). They're recorded as received by "import", not by a client.
+- **R83c. Safe to repeat.** Importing the same file again stores nothing new: by `source_id` when it's given, otherwise by the dedup key and receive time. An import that stops part-way can be run again to finish.
+- **R83d. Retention.** Pages older than the retention period (R45) are skipped and counted, not stored.
+- **R83e. Dry run and report.** `--dry-run` reads and checks the whole file and stores nothing. Every run reports lines read, pages stored, duplicates merged, parse failures, pages skipped by retention, and refused lines by line number and reason. No report, log line or telemetry ever contains page text (P1, R70).
+- **R83f. Speed and budget.** The import stores at least **500 pages a second** while the app keeps serving users and live pages, within the resource budget (section 8). At that rate, 4.6 million pages take under 3 hours.
+
 ## 8. Constraints
 
 | Constraint | Because |
@@ -427,6 +437,13 @@ All checks use the **example profile** and the **standard test fixture** (sectio
   - `"Smoke showing" or:"grass fire"`;
   - a term found only in an extra field;
   - a term with `alias:"Station 1"`.
+- **A76. Importing messages** (owner, 2026-11-02). **Given** a made-up file of 10,000 pages from the example network that includes pages holding details the redaction rules remove, 20 pairs of duplicates 3 seconds apart, 5 pages older than the retention period, a page with no `source_id`, and 3 malformed lines, and a test integration selecting every page:
+  - **when** it's imported with `--dry-run`, **then** nothing is stored and the report lists the 3 malformed lines by number and reason, without their text;
+  - **when** it's imported, **then** 9,972 pages are stored (10,000, less 20 duplicates, 5 too old and 3 malformed), no stored page, log line or exported telemetry contains a redacted detail, the test integration receives nothing, no live update is sent, and no client's last-seen time changes;
+  - **when** it's imported again, **then** nothing new is stored;
+  - **when** an import is stopped part-way and run again, **then** the result is the same as one full run.
+
+  With 4,562,500 pages imported while user B searches and a client posts live pages, the import stores at least 500 pages a second, B's searches stay within R33b, every live page is stored and delivered on time (R51a), and the resource budget holds.
 
 ## 10. Example profile (made-up network)
 
@@ -480,6 +497,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M12** | Telemetry: OpenTelemetry traces, metrics and logs from the API and client; the example monitoring stack with its alerts (owner, 2026-10-30); radio health and the "radio stalled" alert (owner, 2026-10-31) | A62–A67 |
 | **M13** | UI redesign: side menu and icons, breadcrumbs, using the width and the phone layout (R77–R81a), and the single search box (R33a); the look and palette are chosen by the owner from prototypes (owner, 2026-11-01); every style value is a token (R82c, owner 2026-11-02) | A61, A68–A70, A73 |
 | **M13a** | Search speed, a fix after M13 (R33b) | A75 |
+| **M16** | Importing messages from an existing archive (R83–R83f), built straight after M13a, before M14 and M15, since going live needs it (owner, 2026-11-02) | A76 |
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 | **M15** | Looks: Console as a second look, chosen in the account menu and saved on the account (R82d) | A74 |
 
