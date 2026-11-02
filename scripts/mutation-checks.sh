@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11), telemetry (M12) and search (M13a): break one check at a time in a
-# throwaway copy of the repository, run the test that guards it, and show
+# (M11), telemetry (M12), search (M13a) and the import (M16): break one check
+# at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
 #
@@ -27,7 +27,8 @@ survived=0
 # "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
 # dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
 # "mon:<regexp>" (the example stack's checks: TestA65, TestA67),
-# "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages) or
+# "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages),
+# "a76:<regexp>" (A76's checks through the command, scripts/a76-checks.sh) or
 # "stack:<regexp>" (the account checks against Authentik, through
 # scripts/stack-checks.sh with A23's first admin).
 #
@@ -83,6 +84,10 @@ mutate() {
 		# A75 seeds 4,562,500 pages: longer than the other checks' limit.
 		out=$(PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run "${test#a75:}" ./internal/acceptance/ 2>&1)
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -12
+		;;
+	a76:*)
+		out=$(sh scripts/a76-checks.sh -run "${test#a76:}" 2>&1)
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | grep -vE ': map\[|: killed part-way|: telemetry exported' | head -6
 		;;
 	e2e:*)
 		out=$(sh scripts/e2e.sh --project=chromium -g "${test#e2e:}" 2>&1)
@@ -365,6 +370,61 @@ mutate "search: no second try with the index in time (the first try runs for an 
 	'const SearchFirstTry = 250 * time.Millisecond' 'const SearchFirstTry = time.Hour'
 mutate "search: the second try looks up alias: values with case" internal/store/db/queries.sql.go go:TestSearchSecondTryAliases \
 	'WHERE (cardinality($1::text[]) = 0 OR name ILIKE ANY($1::text[]))' 'WHERE (cardinality($1::text[]) = 0 OR name LIKE ANY($1::text[]))'
+# R83-R83e, the import (ADR 0018): quiet, redacted, safe to repeat, and no
+# line's text in anything it reports. The tests run with the live path's service
+# (TestM16*), and through the command (TestA76FileChecks).
+mutate "import: imported pages queue integration deliveries" internal/importer/importer.go go:TestM16Quiet \
+	'	quiet.OnStored = nil
+' ''
+mutate "import: redaction is skipped" internal/importer/importer.go go:TestM16SamePathAsALivePage \
+	'		if prep.Dropped {
+			s.rep.Ignored++' '		prep.Text = page.text
+		if prep.Dropped {
+			s.rep.Ignored++'
+mutate "import: source_id is ignored" internal/importer/importer.go go:TestM16SafeToRepeat \
+	'	for _, id := range found {
+		seen[id] = true
+	}
+' '	_ = found
+'
+mutate "import: a refused line's text is logged" internal/importer/importer.go go:TestM16RefusedLines \
+	'fmt.Fprintf(s.im.Report, "line %d: %s\n", s.rep.Lines, reason)' 'fmt.Fprintf(s.im.Report, "line %d: %s: %s\n", s.rep.Lines, reason, line)'
+mutate "import: a refused line's reason is the decoder's error, which quotes the line" internal/importer/importer.go go:TestM16RefusedLines \
+	'	at, err := time.Parse(time.RFC3339, *rec.ReceivedAt)
+	if err != nil {
+		return checked{}, reasonTime
+	}' '	at, err := time.Parse(time.RFC3339, *rec.ReceivedAt)
+	if err != nil {
+		return checked{}, err.Error()
+	}'
+mutate "import: the file's order decides (no sort)" internal/importer/importer.go go:TestM16OrderOfTheFile \
+	'ORDER BY received_at, capcode COLLATE "C", text COLLATE "C", source_id COLLATE "C"`, after, upto)' 'ORDER BY ctid`, after, upto)'
+mutate "import: a watch's catch-up sends imported pages" internal/store/db/queries.sql.go go:TestM16Quiet \
+	'SELECT DISTINCT message_id FROM receptions WHERE message_id > $1 ORDER BY message_id LIMIT $2::int' 'SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT $2::int'
+if command -v docker >/dev/null; then
+	mutate "import, through the command: imported pages queue integration deliveries" internal/importer/importer.go a76:TestA76FileChecks \
+		'	quiet.OnStored = nil
+' '	quiet.OnStored = func(ctx context.Context, q *db.Queries, id int64) error {
+		now := time.Now()
+		return q.InsertDelivery(ctx, db.InsertDeliveryParams{IntegrationID: 1, MessageID: id, Status: "pending", NextAttemptAt: &now})
+	}
+'
+	mutate "import, through the command: redaction is skipped" internal/importer/importer.go a76:TestA76FileChecks \
+		'		if prep.Dropped {
+			s.rep.Ignored++' '		prep.Text = page.text
+		if prep.Dropped {
+			s.rep.Ignored++'
+	mutate "import, through the command: source_id is ignored" internal/importer/importer.go a76:TestA76FileChecks \
+		'	for _, id := range found {
+		seen[id] = true
+	}
+' '	_ = found
+'
+	mutate "import, through the command: a refused line's text is logged" internal/importer/importer.go a76:TestA76FileChecks \
+		'fmt.Fprintf(s.im.Report, "line %d: %s\n", s.rep.Lines, reason)' 'fmt.Fprintf(s.im.Report, "line %d: %s: %s\n", s.rep.Lines, reason, line)'
+else
+	echo "=== the import's mutations through the command skipped: no Docker"
+fi
 mutate "the client logs why it stopped after telemetry has shut down" cmd/pagerarchive-client/main.go go:TestR73EveryClientLineExported \
 	'			log.Error("client stopped", "error", err.Error())
 			err = stopped{err}
@@ -379,7 +439,8 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases' ./internal/acceptance/ 2>&1 | tail -20
+! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'

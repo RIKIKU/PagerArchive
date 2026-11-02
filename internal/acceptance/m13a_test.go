@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/RIKIKU/PagerArchive/internal/search"
+	"github.com/RIKIKU/PagerArchive/internal/seeddata"
 )
 
 // R33b: text search reads the text and extra fields joined by a separator
@@ -107,23 +108,6 @@ WHERE ((cardinality($1::text[]) = 0 AND cardinality($2::text[]) = 0)
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT $4`
 
-// The made-up pages for A75: 10 years at 1,250 a day, newest first, from
-// Stations 1 to 4 in turn. Every page has extra fields; "TANKER9" is in one
-// page in 10,000, only in an extra field (Station 4's).
-const a75Seed = `
-INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, paging_group, alias_id, extra)
-SELECT a.pattern_key,
-       (ARRAY['@@','Hb','QD'])[1 + g % 3]
-         || (ARRAY['SMOKE FROM ROOF','CHECK HOSES TODAY','GRASS FIRE','STRUCTURE FIRE, SMOKE SHOWING','ROUTINE PUMP CHECK','MEET AT THE STATION'])[1 + (g * 7) % 6]
-         || ' ' || g || ' @ ' || (g % 900) || ' FICTION ST, MADEUPTON #STN' || (1 + g % 4),
-       (ARRAY['Emergency','Non-emergency','Admin'])[1 + g % 3],
-       now() - g * interval '69.12 seconds',
-       sha256(g::text::bytea), 'STN' || (1 + g % 4), a.id,
-       jsonb_build_object('unit', 'PUMPER ' || (g % 20),
-                          'crew', CASE WHEN g % 10000 = 7 THEN 'TANKER9' ELSE 'CREW ' || (g % 7) END)
-FROM generate_series(1, $1::int) g
-JOIN aliases a ON a.pattern_key = '010000' || (1 + g % 4)`
-
 // A75. Search speed: 4,562,500 made-up pages, each of A75's searches lists
 // its first page within 1 second, and the same pages as the query before
 // M13a. Run by CI's search-speed job (PAGERARCHIVE_A75=1); PAGERARCHIVE_A75_PAGES
@@ -132,36 +116,16 @@ func TestA75SearchSpeed(t *testing.T) {
 	if os.Getenv("PAGERARCHIVE_A75") != "1" {
 		t.Skip("set PAGERARCHIVE_A75=1: seeds 4,562,500 pages (CI's search-speed job)")
 	}
-	pages := 4_562_500
+	pages := seeddata.A75Pages
 	if v := os.Getenv("PAGERARCHIVE_A75_PAGES"); v != "" {
 		if pages, _ = strconv.Atoi(v); pages < 1 {
 			t.Fatalf("PAGERARCHIVE_A75_PAGES=%q", v)
 		}
 	}
 	e := setup(t)
-	// The search index as the migrations made it, built once after seeding:
-	// much faster than adding 4,562,500 pages to it one by one.
-	var def *string
-	if err := e.st.Pool.QueryRow(e.ctx, `SELECT pg_get_indexdef(to_regclass('messages_search_trgm_idx'))`).Scan(&def); err != nil {
-		t.Fatal(err)
-	}
-	if def != nil {
-		if _, err := e.st.Pool.Exec(e.ctx, `DROP INDEX messages_search_trgm_idx`); err != nil {
-			t.Fatal(err)
-		}
-	}
 	start := time.Now()
-	if _, err := e.st.Pool.Exec(e.ctx, a75Seed, pages); err != nil {
-		t.Fatal(err)
-	}
-	seeded := time.Since(start)
-	if def != nil {
-		if _, err := e.st.Pool.Exec(e.ctx, *def); err != nil {
-			t.Fatal(err)
-		}
-	}
-	built := time.Since(start) - seeded
-	if _, err := e.st.Pool.Exec(e.ctx, `VACUUM ANALYZE messages`); err != nil {
+	seeded, built, err := seeddata.Seed(e.ctx, e.st.Pool, pages)
+	if err != nil {
 		t.Fatal(err)
 	}
 	var n int

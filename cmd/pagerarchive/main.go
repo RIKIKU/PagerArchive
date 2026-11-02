@@ -3,6 +3,7 @@
 //	serve             run the API (default)
 //	validate-profile  check profiles and run golden tables, without a database
 //	client            add, revoke or list receiving clients
+//	import-messages   import pages from an existing archive
 //	version           print the version
 package main
 
@@ -80,6 +81,9 @@ commands:
   client add <id> [name]      add a receiving client and print its API key
   client revoke <id>          revoke a client's API key
   client list                 list clients
+  import-messages [--dry-run] F
+                              import pages from an existing archive, from a JSON
+                              Lines file or - for standard input (docs/import.md)
   version                     print the version
 
 Templates and aliases are managed in the browser or with the PagerArchive
@@ -132,7 +136,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = validateProfile(args, stdout, stderr)
 	case "client":
 		err = clientCmd(args, stdout)
-
+	case "import-messages":
+		err = importMessages(args, os.Stdin, stdout, stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "pagerarchive", version)
 	case "help", "-h", "--help":

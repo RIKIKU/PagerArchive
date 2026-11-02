@@ -125,6 +125,33 @@ jobs:
         if: always()
         run: df -h /
 
+  import:
+    name: Importing messages (A76)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: A76's file checks, through the command on the compose stack
+        run: sh scripts/a76-checks.sh
+      - name: Disk before
+        run: df -h /
+      - name: A76's speed, 200,000 pages in random order on top of 4,562,500 with live pages, then A75's searches
+        run: sh scripts/a76.sh -r -o a76-results
+      - name: Disk after
+        if: always()
+        run: df -h /
+      - name: Upload the rate, memory samples and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: a76-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a76-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
     runs-on: ubuntu-24.04
@@ -442,7 +469,7 @@ jobs:
   # finds its own tag and release on this commit and finishes them.
   release:
     name: Release v<VERSION> (tag, GitHub release, client binaries)
-    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -515,7 +542,7 @@ jobs:
   # is skipped, so these run unless something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -558,7 +585,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, search, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:

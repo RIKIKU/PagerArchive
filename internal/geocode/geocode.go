@@ -152,6 +152,15 @@ func SetLocationParams(id int64, r Result) db.SetLocationParams {
 
 const datasetHashKey = "dataset_hash"
 
+// Loaded reports whether this dataset is the one in the database.
+func Loaded(ctx context.Context, st *store.Store, hash string) (bool, error) {
+	old, err := st.GetSetting(ctx, datasetHashKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	return old == hash, err
+}
+
 // DatasetHash identifies a dataset file together with the street types that
 // normalise it, streaming the file so a large one isn't held in memory.
 func DatasetHash(path string, streetTypes map[string]string) (string, error) {

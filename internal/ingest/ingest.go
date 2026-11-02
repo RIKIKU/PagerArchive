@@ -28,6 +28,13 @@ import (
 // still be one transmission (R19).
 const DedupWindow = 10 * time.Second
 
+const (
+	// MaxFuture is how far ahead of the server's clock a receive time may be.
+	MaxFuture = 60 * time.Second
+	// MaxTextBytes caps a page's text. POCSAG pages are far shorter.
+	MaxTextBytes = 4096
+)
+
 // Page is one page as a client posted it.
 type Page struct {
 	Capcode    string // zero-padded, 7 digits
@@ -79,14 +86,55 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 
 	pctx, span := tr.Start(ctx, "ingest.parse") // alias, template, agency profile
 	defer span.End()                            // already ended, unless it failed
-	rows, err := s.Store.AliasesMatching(pctx, pg.Capcode)
+	cands, err := s.Candidates(pctx, s.Store.Queries, pg.Capcode)
 	if err != nil {
 		return "", 0, fmt.Errorf("aliases: %s", store.SafeError(err))
+	}
+	draft, err := s.Draft(prep, cands, pg)
+	if err != nil {
+		return "", 0, err
+	}
+	span.End()
+
+	var outcome Outcome
+	var id int64
+	ctx, span = tr.Start(ctx, "ingest.store")
+	defer span.End()
+	err = s.Store.InTx(ctx, func(q *db.Queries) error {
+		var err error
+		outcome, id, err = s.Save(ctx, q, draft, func(id int64) error {
+			return q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt})
+		})
+		return err
+	})
+	if err != nil {
+		return "", 0, fmt.Errorf("store page: %s", store.SafeError(err))
+	}
+	return outcome, id, nil
+}
+
+// Candidates are the aliases whose pattern matches a capcode.
+func (s *Service) Candidates(ctx context.Context, q *db.Queries, capcode string) ([]Candidate, error) {
+	rows, err := q.AliasesMatching(ctx, capcode)
+	if err != nil {
+		return nil, err
 	}
 	cands := make([]Candidate, len(rows))
 	for i, r := range rows {
 		cands[i] = Candidate{ID: r.ID, Pattern: r.Pattern, AgencyProfile: r.AgencyProfile}
 	}
+	return cands, nil
+}
+
+// Draft is a page after the network rules and parsing, ready for Save.
+type Draft struct {
+	Params     db.InsertMessageParams
+	Fields     Fields
+	ReceivedAt time.Time
+}
+
+// Draft parses a prepared page with the alias that wins among cands (R3, R27).
+func (s *Service) Draft(prep pipeline.Prepared, cands []Candidate, pg Page) (Draft, error) {
 	alias := BestAlias(cands)
 	var aliasID *int64
 	var agency *profile.Agency
@@ -97,56 +145,57 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 	parsed := pipeline.Parse(s.Network, agency, s.Streets, prep)
 	fields, err := FieldsOf(parsed)
 	if err != nil {
-		return "", 0, err
+		return Draft{}, err
 	}
 	params := messageParams(prep, fields, pg)
 	params.AliasID = aliasID
-	span.End()
+	return Draft{Params: params, Fields: fields, ReceivedAt: pg.ReceivedAt}, nil
+}
 
-	outcome, id := Stored, int64(0)
-	ctx, span = tr.Start(ctx, "ingest.store")
-	defer span.End()
-	err = s.Store.InTx(ctx, func(q *db.Queries) error {
-		// Serialise copies of the same page so two clients can't both insert it.
-		dctx, dspan := tr.Start(ctx, "ingest.dedup")
-		defer dspan.End()
-		if err := q.LockDedupKey(dctx, params.DedupKey); err != nil {
-			return err
-		}
-		dup, err := q.FindDuplicate(dctx, db.FindDuplicateParams{DedupKey: params.DedupKey, ReceivedAt: pg.ReceivedAt})
-		dspan.End()
-		switch {
-		case err == nil:
-			outcome, id = Duplicate, dup.ID
-			if err := q.KeepEarliestSentAt(ctx, db.KeepEarliestSentAtParams{ID: id, ReceivedAt: pg.ReceivedAt}); err != nil {
-				return err
-			}
-		case errors.Is(err, pgx.ErrNoRows):
-			if id, err = q.InsertMessage(ctx, params); err != nil {
-				return err
-			}
-			lctx, lspan := tr.Start(ctx, "ingest.locate")
-			err := Locate(lctx, s.Geo, q, id, fields)
-			lspan.End()
-			if err != nil {
-				return err
-			}
-			if err := q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt}); err != nil {
-				return err
-			}
-			if s.OnStored != nil {
-				return s.OnStored(ctx, q, id)
-			}
-			return nil
-		default:
-			return err
-		}
-		return q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt})
-	})
-	if err != nil {
-		return "", 0, fmt.Errorf("store page: %s", store.SafeError(err))
+// Save merges a page into the message it duplicates (R19, R21) or stores it
+// as a new one, in the caller's transaction. record notes who received this
+// copy: a client's reception, or an import's.
+func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(id int64) error) (Outcome, int64, error) {
+	tr := telemetry.Or(s.Tracer)
+	// Serialise copies of the same page so two clients can't both insert it.
+	dctx, dspan := tr.Start(ctx, "ingest.dedup")
+	defer dspan.End()
+	if err := q.LockDedupKey(dctx, d.Params.DedupKey); err != nil {
+		return "", 0, err
 	}
-	return outcome, id, nil
+	dup, err := q.FindDuplicate(dctx, db.FindDuplicateParams{DedupKey: d.Params.DedupKey, ReceivedAt: d.ReceivedAt})
+	dspan.End()
+	switch {
+	case err == nil:
+		if err := q.KeepEarliestSentAt(ctx, db.KeepEarliestSentAtParams{ID: dup.ID, ReceivedAt: d.ReceivedAt}); err != nil {
+			return "", 0, err
+		}
+		return Duplicate, dup.ID, record(dup.ID)
+	case errors.Is(err, pgx.ErrNoRows):
+		// Placed before it's stored, in one write: an update afterwards would
+		// write the page to every index twice.
+		lctx, lspan := tr.Start(ctx, "ingest.locate")
+		res, err := place(lctx, s.Geo, q, d.Fields)
+		lspan.End()
+		if err != nil {
+			return "", 0, err
+		}
+		loc := geocode.SetLocationParams(0, res)
+		d.Params.Lon, d.Params.Lat, d.Params.LocationSource, d.Params.LocationMismatch = loc.Lon, loc.Lat, loc.Source, loc.Mismatch
+		id, err := q.InsertMessage(ctx, d.Params)
+		if err != nil {
+			return "", 0, err
+		}
+		if err := record(id); err != nil {
+			return "", 0, err
+		}
+		if s.OnStored != nil {
+			return Stored, id, s.OnStored(ctx, q, id)
+		}
+		return Stored, id, nil
+	default:
+		return "", 0, err
+	}
 }
 
 // agencyFor resolves a template's agency profile name (R3). nil means text
@@ -286,17 +335,25 @@ func Locate(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, id int64,
 	if geo == nil {
 		return nil
 	}
+	res, err := place(ctx, geo, q, f)
+	if err != nil {
+		return err
+	}
+	return q.SetLocation(ctx, geocode.SetLocationParams(id, res))
+}
+
+// place finds where parsed fields go. geo nil places nothing.
+func place(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, f Fields) (geocode.Result, error) {
+	if geo == nil {
+		return geocode.Result{}, nil
+	}
 	val := func(p *string) string {
 		if p == nil {
 			return ""
 		}
 		return *p
 	}
-	res, err := geo.Locate(ctx, q, geocode.Input{Address: val(f.Address), Locality: val(f.Locality), Description: val(f.Description), GridRef: val(f.GridRef)})
-	if err != nil {
-		return err
-	}
-	return q.SetLocation(ctx, geocode.SetLocationParams(id, res))
+	return geo.Locate(ctx, q, geocode.Input{Address: val(f.Address), Locality: val(f.Locality), Description: val(f.Description), GridRef: val(f.GridRef)})
 }
 
 func nilIfEmpty(s string) *string {
