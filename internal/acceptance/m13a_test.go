@@ -102,6 +102,7 @@ WHERE ((cardinality($1::text[]) = 0 AND cardinality($2::text[]) = 0)
                   WHERE m.text ILIKE term.p
                      OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
   AND (cardinality($3::text[]) = 0 OR a.name ILIKE ANY($3::text[]))
+  AND (cardinality($5::text[]) = 0 OR a.name ILIKE ANY($5::text[]))
   AND a.ignored IS NOT TRUE
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT $4`
@@ -176,27 +177,38 @@ func TestA75SearchSpeed(t *testing.T) {
 	}
 	t.Logf("messages with its indexes %s, of which the search index %s; the database %s", table, index, database)
 
+	// alias is a typed alias: value (partial, quoted or not); picked is one
+	// picked from the suggestions (alias_like).
 	searches := []struct {
-		name  string
-		alias string
-		text  string
-		a75   bool
+		name          string
+		alias, picked string
+		text          string
+		a75           bool
 	}{
-		{"one term that matches nothing", "", "ZZNOTHING", true},
-		{"three terms that together match nothing", "", "hoses grass pump", true},
-		{`"Smoke showing" or:"grass fire"`, "", `"Smoke showing" or:"grass fire"`, true},
-		{"a term found only in an extra field", "", "tanker9", true},
-		{`a term with alias:"Station 1"`, "Station 1", "12345", true},
+		{"one term that matches nothing", "", "", "ZZNOTHING", true},
+		{"three terms that together match nothing", "", "", "hoses grass pump", true},
+		{`"Smoke showing" or:"grass fire"`, "", "", `"Smoke showing" or:"grass fire"`, true},
+		{"a term found only in an extra field", "", "", "tanker9", true},
+		{`a term with alias:"Station 1"`, "Station 1", "", "12345", true},
+		// The sixth (owner, 2026-11-02): a term in a quarter of the pages,
+		// none of them Station 1's.
+		{`alias:"Station 1", a term never in its pages`, "Station 1", "", "STN2", true},
+		{`the same with alias:sta`, "sta", "", "STN2", true},
+		{`the same with "Station 1" picked`, "", "Station 1", "STN2", true},
 		// Not A75's, for the record: common searches stay fast.
-		{"one term in a third of the pages", "", "SMOKE", false},
-		{`a common term with alias:"Station 1"`, "Station 1", "smoke", false},
+		{"one term in a third of the pages", "", "", "SMOKE", false},
+		{`a common term with alias:"Station 1"`, "Station 1", "", "smoke", false},
 	}
 	for _, s := range searches {
 		query := "q=" + url.QueryEscape(s.text)
-		var alias []string
+		var alias, picked []string
 		if s.alias != "" {
 			query += "&alias=" + url.QueryEscape(s.alias)
 			alias = []string{s.alias}
+		}
+		if s.picked != "" {
+			query += "&alias_like=" + url.QueryEscape(s.picked)
+			picked = []string{s.picked}
 		}
 		var got []int64
 		var times []time.Duration
@@ -211,12 +223,12 @@ func TestA75SearchSpeed(t *testing.T) {
 			}
 		}
 		slowest := slices.Max(times)
-		p, err := search.Filter{Text: s.text, Alias: alias}.Params(e.srv.Ingest.Network, nil, 50)
+		p, err := search.Filter{Text: s.text, Alias: alias, AliasLike: picked}.Params(e.srv.Ingest.Network, nil, 50)
 		if err != nil {
 			t.Fatal(err)
 		}
 		t0 := time.Now()
-		rows, err := e.st.Pool.Query(e.ctx, a75Reference, p.QAll, p.QAny, p.Aliases, 50)
+		rows, err := e.st.Pool.Query(e.ctx, a75Reference, p.QAll, p.QAny, p.Aliases, 50, p.AliasLikes)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -243,6 +255,55 @@ func TestA75SearchSpeed(t *testing.T) {
 		}
 		if s.a75 && slowest > time.Second {
 			t.Errorf("%s: %s, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
+		}
+	}
+}
+
+// R33b (ADR 0017): a search's second try, which also finds the alias:
+// values' pages by alias_id, lists the same pages as its first, for typed
+// alias: values (partial and quoted), picked ones, several, both kinds, and
+// a value that names no alias.
+func TestSearchSecondTryAliases(t *testing.T) {
+	e := setup(t)
+	for i, p := range []struct{ capcode, text string }{
+		{"0100001", "QDSMOKE SEEN AT STN1"},
+		{"0100001", "QDGRASS FIRE NEAR STN1"},
+		{"0100002", "QDSMOKE SEEN AT STN2"},
+		{"0100002", "QDGRASS FIRE NEAR STN2"},
+		{"0100003", "QDSMOKE SEEN AT STN3"},
+		{"0100004", "QDCHECK HOSES AT STN4"},
+		{"0999999", "QDSMOKE SEEN, NO ALIAS"},
+	} {
+		e.mustPost("a", p.capcode, p.text, e.now.Add(-time.Duration(i)*time.Minute))
+	}
+	shown := func(query string) string {
+		var got []string
+		for _, m := range e.list(query) {
+			got = append(got, strings.TrimPrefix(m.Text, "QD"))
+		}
+		slices.Sort(got)
+		return strings.Join(got, " | ")
+	}
+	q := func(text string) string { return "q=" + url.QueryEscape(text) }
+	tests := []struct{ query, want string }{
+		{q("STN2") + "&alias=" + url.QueryEscape("Station 1"), ""},
+		{q("STN2") + "&alias=sta", "GRASS FIRE NEAR STN2 | SMOKE SEEN AT STN2"},
+		{q("STN2") + "&alias_like=" + url.QueryEscape("Station 2"), "GRASS FIRE NEAR STN2 | SMOKE SEEN AT STN2"},
+		{q("STN2") + "&alias_like=" + url.QueryEscape("station"), ""}, // picked matches the whole name
+		{q("smoke") + "&alias=" + url.QueryEscape("Station 1") + "&alias=" + url.QueryEscape("Station 3"), "SMOKE SEEN AT STN1 | SMOKE SEEN AT STN3"},
+		{q("smoke") + "&alias=sta&alias_like=" + url.QueryEscape("Station 2"), "SMOKE SEEN AT STN2"},
+		{q("smoke") + "&alias=nowhere", ""},
+		{q("or:hoses or:grass") + "&alias=" + url.QueryEscape("Station 4"), "CHECK HOSES AT STN4"},
+		{q("smoke"), "SMOKE SEEN AT STN1 | SMOKE SEEN AT STN2 | SMOKE SEEN AT STN3 | SMOKE SEEN, NO ALIAS"},
+	}
+	for _, tt := range tests {
+		e.st.SecondTryOnly = false
+		first := shown(tt.query)
+		e.st.SecondTryOnly = true
+		second := shown(tt.query)
+		e.st.SecondTryOnly = false
+		if first != tt.want || second != tt.want {
+			t.Errorf("%s: first try %q, second try %q, want %q", tt.query, first, second, tt.want)
 		}
 	}
 }

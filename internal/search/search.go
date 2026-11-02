@@ -281,6 +281,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		Aliases:          likeContains(f.Alias),
 		AliasLikes:       orEmpty(f.AliasLike),
 		AliasIds:         orEmpty(f.AliasID),
+		AliasNameIds:     []int64{},
 		Agencies:         likeContains(f.Agency),
 		AgencyLikes:      orEmpty(f.AgencyLike),
 		PagingGroups:     upper(f.Group),

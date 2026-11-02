@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change.
+Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers".
 
 ## Context
 
@@ -48,6 +48,8 @@ So `store.SearchMessages` gives a search the index can serve 250 ms (`SearchFirs
 
 Searches also run with `jit = off`. The second try's plan has a high estimated cost, so PostgreSQL compiled it with JIT, which took 459 ms of its 586 ms. A search returns at most 50 rows and never gains from JIT.
 
+The second try also uses the `alias:` values (owner, 2026-11-02; see "The owner's answers"). Before it runs, `AliasIDsNamed` looks up the aliases the values name, and the query adds `m.alias_id = ANY(…)` for them. The names are still matched, so the pages listed are the same. The planner can then combine the alias's pages, from the index on `alias_id`, with the text index's pages. It also gets 32 MB of `work_mem`, for this query only. Each of the two sets is over a million pages for a common term and a common alias, and at the usual 4 MB PostgreSQL keeps such a set by heap page rather than by row. Every page holds rows of every station, so combining by page rules nothing out and it rechecked 3.1 million rows (2 s). By row, the combination is empty at once. The first try doesn't use the alias IDs: given them, the planner chose to combine the two sets for a common term too, and `alias:"Station 1" smoke` went from 5 ms to 3.4 s.
+
 ### 6. The migration
 
 `CREATE INDEX CONCURRENTLY`, so reads and writes go on while it builds; goose runs the migration outside a transaction (`-- +goose NO TRANSACTION`). If it fails part-way, the invalid index is dropped when it runs again. It ends with `ANALYZE messages`: the planner knows how common a term is from statistics on the index's expression, and only ANALYZE gathers them, from a sample. The API runs migrations when it starts, so it serves once the index is built: about 2 minutes for 4,562,500 pages on a spinning disk, and a second or two for the live copy's 55,000 (see "Evidence").
@@ -58,7 +60,7 @@ The index is derived from the text and extra fields alone. Retroactive redaction
 
 ### 8. A75 in CI
 
-A job of its own, "Search speed (A75)" (`TestA75SearchSpeed`, run when `PAGERARCHIVE_A75=1`). On a fresh database with the migrations applied, it seeds 4,562,500 made-up pages with one `INSERT … SELECT … generate_series`, not the API. It drops the search index while seeding and builds it again afterwards, from the definition the migration gave it (`pg_get_indexdef`): building it once is faster than adding 4.5 million pages to it one at a time. It runs each of A75's five searches three times through the API, and fails if any run takes over 1 second. For each, it runs the query from before M13a directly as the reference, and fails if the pages listed differ. Two common searches are run the same way, for the record. The release jobs wait for this job.
+A job of its own, "Search speed (A75)" (`TestA75SearchSpeed`, run when `PAGERARCHIVE_A75=1`). On a fresh database with the migrations applied, it seeds 4,562,500 made-up pages with one `INSERT … SELECT … generate_series`, not the API. It drops the search index while seeding and builds it again afterwards, from the definition the migration gave it (`pg_get_indexdef`): building it once is faster than adding 4.5 million pages to it one at a time. It runs each of A75's six searches (and two variants of the sixth) three times through the API, and fails if any run takes over 1 second. For each, it runs the query from before M13a directly as the reference, and fails if the pages listed differ. Two common searches are run the same way, for the record. The release jobs wait for this job.
 
 The made-up pages: 10 years at 1,250 a day, from Stations 1 to 4 in turn, in six phrasings (the same as ADR 0015's timings), each with two extra fields. `TANKER9` is an extra field's value in one page in 10,000 (457 pages, all Station 4's), never in the text. A75's searches:
 
@@ -69,6 +71,7 @@ The made-up pages: 10 years at 1,250 a day, from Stations 1 to 4 in turn, in six
 | `"Smoke showing" or:"grass fire"` | as written |
 | a term found only in an extra field | `tanker9` |
 | a term with `alias:"Station 1"` | `alias:"Station 1" 12345`: 35 pages |
+| the sixth (owner, 2026-11-02): a term in many pages but none of the alias's | `alias:"Station 1" STN2`, quoted; also partial, `alias:sta STN2`, and with "Station 1" picked from the suggestions (`alias_like`) |
 
 ## What was weighed
 
@@ -104,7 +107,7 @@ Median of five, then the slowest of five, in seconds; "same" compares the pages 
 | `or:zznothing or:tanker9` | 2.987 | 0.008 | 0.008 | 50 | yes |
 | `alias:"Station 1" STN2` (never together) | 16.657 | 5.834 | 6.329 | 0 | yes |
 
-The first run of each was within these too, apart from a cold first read: the slowest first run of an A75 search was 0.380 s. The last row isn't A75's. It's a term in a quarter of the pages, all of them other stations', with Station 1: see the questions below.
+The first run of each was within these too, apart from a cold first read: the slowest first run of an A75 search was 0.380 s. The last row was the question the owner answered with A75's sixth search: a term in a quarter of the pages, all of them other stations', with Station 1. "The owner's answers" has its timings since.
 
 ### Plans
 
@@ -180,6 +183,7 @@ The database container used 214 MiB after the timings (`docker stats`), with `sh
 - `TestNightlyRedactionReachesSearch`: a phone number stored, as if before its rule, in the text and in an extra field, found by search. After the nightly run, neither it nor part of it is found, and `CALL REDACTED` is.
 - `TestIndexTerms` (unit): which terms go to the index, and when the `or:` terms do.
 - `TestA75SearchSpeed`: A75, as above.
+- `TestSearchSecondTryAliases`: the second try (`SecondTryOnly`, for tests) lists the same pages as the first. That holds for `alias:` typed partial and quoted, picked, two of them, both kinds together, a value naming no alias, and `or:` terms with an alias.
 - The whole Go suite passes on cld01, A63 included.
 
 ### Mutations
@@ -189,6 +193,15 @@ Three more in `scripts/mutation-checks.sh`:
 - **a term matches across two extra fields**: the per-field condition replaced with one over the values joined. `TestSearchFieldBoundary` fails.
 - **the search index isn't built**: A75 fails on time.
 - **no second try in time** (`SearchFirstTry` an hour): A75's `hoses grass pump` fails on time.
+- **the second try looks up `alias:` values with case** (`LIKE` for `ILIKE` in `AliasIDsNamed`), added with the owner's answers. `TestSearchSecondTryAliases` fails:
+
+```
+m13a_test.go:306: q=STN2&alias=sta: first try "GRASS FIRE NEAR STN2 | SMOKE SEEN AT STN2", second try "", want "GRASS FIRE NEAR STN2 | SMOKE SEEN AT STN2"
+m13a_test.go:306: q=smoke&alias=sta&alias_like=Station+2: first try "SMOKE SEEN AT STN2", second try "", want "SMOKE SEEN AT STN2"
+--- FAIL: TestSearchSecondTryAliases (0.76s)
+```
+
+and passes unmutated (`ok … 0.866s`).
 
 Run on cld01, the three alone (the script's own `mutate`), abridged:
 
@@ -213,31 +226,62 @@ exit 0
 
 ### A75's job, timed on cld01
 
-`TestA75SearchSpeed` with `PAGERARCHIVE_A75=1` against a fresh PostGIS 18-3.6 container on cld01, as CI runs it: 512 s in all.
+`TestA75SearchSpeed` with `PAGERARCHIVE_A75=1` against a fresh PostGIS 18-3.6 container on cld01, as CI runs it, with the sixth search: 541 s in all.
 
 ```
-m13a_test.go:170: seeded 4562500 pages in 5m56s, built the search index in 1m8s, all with VACUUM ANALYZE in 7m28s
-m13a_test.go:177: messages with its indexes 2358 MB, of which the search index 364 MB; the database 2417 MB
-m13a_test.go:239: one term that matches nothing                0 listed, 21ms 2ms 2ms (slowest 21ms; the query before M13a 19.371s)
-m13a_test.go:239: three terms that together match nothing      0 listed, 384ms 376ms 375ms (slowest 384ms; the query before M13a 20.16s)
-m13a_test.go:239: "Smoke showing" or:"grass fire"             50 listed, 6ms 5ms 5ms (slowest 6ms; the query before M13a 1ms)
-m13a_test.go:239: a term found only in an extra field         50 listed, 12ms 9ms 8ms (slowest 12ms; the query before M13a 2.031s)
-m13a_test.go:239: a term with alias:"Station 1"               35 listed, 8ms 6ms 7ms (slowest 8ms; the query before M13a 18.63s)
-m13a_test.go:239: one term in a third of the pages            50 listed, 5ms 5ms 4ms (slowest 5ms; the query before M13a 2ms)
-m13a_test.go:239: a common term with alias:"Station 1"        50 listed, 5ms 4ms 4ms (slowest 5ms; the query before M13a 14ms)
---- PASS: TestA75SearchSpeed (510.61s)
+m13a_test.go:171: seeded 4562500 pages in 5m51s, built the search index in 1m9s, all with VACUUM ANALYZE in 7m24s
+m13a_test.go:178: messages with its indexes 2358 MB, of which the search index 364 MB; the database 2376 MB
+m13a_test.go:251: one term that matches nothing                0 listed, 5ms 2ms 2ms (slowest 5ms; the query before M13a 19.362s)
+m13a_test.go:251: three terms that together match nothing      0 listed, 381ms 380ms 375ms (slowest 381ms; the query before M13a 19.059s)
+m13a_test.go:251: "Smoke showing" or:"grass fire"             50 listed, 6ms 6ms 5ms (slowest 6ms; the query before M13a 1ms)
+m13a_test.go:251: a term found only in an extra field         50 listed, 12ms 9ms 7ms (slowest 12ms; the query before M13a 1.942s)
+m13a_test.go:251: a term with alias:"Station 1"               35 listed, 7ms 7ms 7ms (slowest 7ms; the query before M13a 18.414s)
+m13a_test.go:251: alias:"Station 1", a term never in its pages   0 listed, 433ms 412ms 409ms (slowest 433ms; the query before M13a 16.594s)
+m13a_test.go:251: the same with alias:sta                     50 listed, 5ms 5ms 4ms (slowest 5ms; the query before M13a 1ms)
+m13a_test.go:251: the same with "Station 1" picked             0 listed, 436ms 411ms 415ms (slowest 436ms; the query before M13a 16.115s)
+m13a_test.go:251: one term in a third of the pages            50 listed, 5ms 4ms 4ms (slowest 5ms; the query before M13a 1ms)
+m13a_test.go:251: a common term with alias:"Station 1"        50 listed, 4ms 5ms 4ms (slowest 5ms; the query before M13a 14ms)
+--- PASS: TestA75SearchSpeed (540.79s)
 ```
 
-The search index built in 68 s here, with nothing else running (the migration's concurrent build, beside the probes, took 132 s). The job's limit is 40 minutes, 35 for the test: GitHub's runners have faster disks than cld01. Its disk use is the database, 2.4 GB, plus PostgreSQL's write-ahead log (at most `max_wal_size`, 1 GB). The job prints `df -h /` before and after. Loki's 90% guard (A67, ADR 0014) is in the monitoring job, on another runner, so this job's disk use can't reach it. The CI run on the pushed commit is in the report on this branch.
+The search index built in 69 s here, with nothing else running (the migration's concurrent build, beside the probes, took 132 s). The job's limit is 40 minutes, 35 for the test: GitHub's runners have faster disks than cld01. Its disk use is the database, 2.4 GB, plus PostgreSQL's write-ahead log (at most `max_wal_size`, 1 GB). The job prints `df -h /` before and after. Loki's 90% guard (A67, ADR 0014) is in the monitoring job, on another runner, so this job's disk use can't reach it. On e9aad34 (run 41391763713), the job took 6 minutes on GitHub's runner. Seeding took 3 min 17 s and the index build 46 s; the slowest A75 search was 398 ms, and the disk went from 42% to 45% used. The CI run on the last commit pushed is in the report on this branch.
 
-## Questions for the owner
+## The owner's answers (2026-11-02)
 
-1. **A common term that the other filters rule out.** `alias:"Station 1" STN2` takes 5.8 s. `STN2` is in a quarter of the pages, all of them Station 2's, so none are Station 1's. The index finds 1.1 million pages with the term, and each is then checked for the alias. The same would happen with a street only another station attends, searched within one station. A75 doesn't include it, and R33b's "a search" could. Making it fast would take the alias in the index too: a GIN index on the alias and the text together (`btree_gin`). Then `alias:` and `capcode:` would match by id rather than by name, so the names would be looked up first. That's about another 400 MB of index on 4,562,500 pages. Should M13a do that, should it be its own change, or is this case outside R33b?
-2. **The API starts serving once the migration is done**: about 2 minutes for 3.1 million pages (the archive being migrated), going by the 132 s measured for 4,562,500 on cld01's spinning disk. Clients buffer their pages meanwhile. Is that acceptable for this upgrade, or should the index build in the background after the API starts (searches stay slow until it's done)?
+1. **A common term that the other filters rule out** (`alias:"Station 1" STN2`, 5.8 s). Try the cheap fix first: find the alias's pages by `alias_id` rather than by name. If that brings it under 1 second without a large new index, add it to A75 as a sixth search, with a partial alias and a quoted one, and a test. Otherwise record it as a known limit, to look at again after the real data is imported. It did: see decision 5 and below. No new index. A75's sixth search is `alias:"Station 1" STN2`, also run as `alias:sta STN2` and with "Station 1" picked.
+2. **The API waiting for the migration before it serves** (about 1.5 minutes on 3.1 million pages, with clients buffering) is fine. `docs/deploy.md`'s upgrade notes say so.
+
+What was tried, on the same 4,562,500 pages (median of five, seconds; the same pages in every run):
+
+| Search | e9aad34 | alias IDs in both tries | alias IDs and 32 MB in the second try only |
+|---|---|---|---|
+| `alias:"Station 1" STN2` | 5.895 | 2.469 | 0.429 |
+| "Station 1" picked, `STN2` | 5.811 | 2.366 | 0.441 |
+| `alias:"Station 1" alias:"Station 3" STN2` | 11.381 | 4.502 | 0.609 |
+| `alias:sta STN2` | 0.004 | 0.005 | 0.004 |
+| `alias:"Station 1" smoke` | 0.005 | **3.433** | 0.004 |
+| `alias:"Station 1"` (no text) | 0.003 | 0.003 | 0.003 |
+| the other A75 searches | as in the table above | | within 1 ms of it |
+
+With the alias IDs in both tries, the planner stopped reading in order for a common term with an alias (`alias:"Station 1" smoke`, 3.4 s). It also combined the alias's pages with the term's by heap page, as `work_mem` was too small to keep them by row, and so rechecked 3.1 million rows. Hence the second try only, with the memory. Its plan, now exact (178 ms in the database; no heap page read):
+
+```
+Limit (actual time=177.858..177.861 rows=0)
+  -> Bitmap Heap Scan on messages m (actual time=177.806..177.807 rows=0)
+       -> BitmapAnd (actual time=176.947..176.948 rows=0)
+            -> Bitmap Index Scan on messages_alias_idx (actual time=44.289..44.289 rows=1140625)
+                 Index Cond: ((alias_id = a.id) AND (alias_id = ANY ('{1}'::bigint[])))
+            -> Bitmap Index Scan on messages_search_trgm_idx (actual time=127.939..127.939 rows=1140625)
+                 Index Cond: (message_search_text(text, extra) ~~* '%STN2%'::text)
+```
+
+The 32 MB is for one query at a time, while it runs, and only for a search that has reached its second try. The database's steady state doesn't change, and A15 still passes (see the CI run in the report).
+
+No questions are open.
 
 ## Consequences
 
-- A search's first page comes within 1 second on 10 years of pages in every A75 case, and in milliseconds for most: about 0.4 s for terms that are each common but never together.
+- A search's first page comes within 1 second on 10 years of pages in every A75 case, and in milliseconds for most. Terms that are each common but never together take about 0.4 s, as does a common term never in the chosen alias's pages.
 - The pages listed are the same as before for every search: the per-field condition is unchanged, and the index only finds candidates.
-- One trigram index replaces another of the same size. The API's connections plan every query with its values. Searches run without JIT and, when the index can serve them, have a 250 ms first try.
+- One trigram index replaces another of the same size. The API's connections plan every query with its values. Searches run without JIT and, when the index can serve them, have a 250 ms first try. A second try looks up the `alias:` values' aliases first and has 32 MB of `work_mem` while it runs.
 - CI has one more job, A75's, which seeds 4,562,500 pages.

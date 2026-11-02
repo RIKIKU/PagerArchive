@@ -27,6 +27,9 @@ var migrations embed.FS
 type Store struct {
 	Pool *pgxpool.Pool
 	*db.Queries
+	// SecondTryOnly, for tests: a search the index can serve runs as its
+	// second try straight away (SearchMessages).
+	SecondTryOnly bool
 }
 
 // Open connects and applies pending migrations. A tracer, if given, traces

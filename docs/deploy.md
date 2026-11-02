@@ -254,3 +254,5 @@ docker compose exec db sh /docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh
 It's safe to run again, for example after changing the role's password.
 
 **From a version before template icons (M10)**: the migration drops the old `icon` text column of templates, which held icon names from CSV imports that nothing used. Back up the database first if you want to keep them (`docker compose exec db pg_dump -U postgres -Fc postgres > before-m10.dump`). Add each template's icon afterwards on **Admin → Templates**.
+
+**From a version before 0.13.1 (search speed, M13a)**: the migration builds the search index over every stored page, and the API starts serving once it's done. On a spinning disk that's about 2 minutes for 4.5 million pages, or 1.5 minutes for 3 million; a few thousand pages take a second or two. The build doesn't lock the messages table. Clients keep their pages in their buffers until the API is back, so nothing is lost. The owner accepted the wait (ADR 0017).

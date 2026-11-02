@@ -363,6 +363,8 @@ mutate "search: the search index isn't built" internal/store/migrations/00013_se
 	'CREATE INDEX CONCURRENTLY messages_search_trgm_idx ON messages USING gin (message_search_text(text, extra) gin_trgm_ops);' ''
 mutate "search: no second try with the index in time (the first try runs for an hour)" internal/store/search.go a75:TestA75SearchSpeed \
 	'const SearchFirstTry = 250 * time.Millisecond' 'const SearchFirstTry = time.Hour'
+mutate "search: the second try looks up alias: values with case" internal/store/db/queries.sql.go go:TestSearchSecondTryAliases \
+	'WHERE (cardinality($1::text[]) = 0 OR name ILIKE ANY($1::text[]))' 'WHERE (cardinality($1::text[]) = 0 OR name LIKE ANY($1::text[]))'
 mutate "the client logs why it stopped after telemetry has shut down" cmd/pagerarchive-client/main.go go:TestR73EveryClientLineExported \
 	'			log.Error("client stopped", "error", err.Error())
 			err = stopped{err}
@@ -377,7 +379,7 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73|TestSearchFieldBoundary' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases' ./internal/acceptance/ 2>&1 | tail -20
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'

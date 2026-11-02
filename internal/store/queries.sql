@@ -33,6 +33,13 @@ FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE sqlc.arg(capcode)::text LIKE a.pattern;
 
+-- name: AliasIDsNamed :many
+-- The aliases a search's alias: values name (SearchMessages' aliases and
+-- alias_likes), so the search can use the index on messages.alias_id.
+SELECT id FROM aliases
+WHERE (cardinality(sqlc.arg(aliases)::text[]) = 0 OR name ILIKE ANY(sqlc.arg(aliases)::text[]))
+  AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR name ILIKE ANY(sqlc.arg(alias_likes)::text[]));
+
 -- name: LockDedupKey :exec
 SELECT pg_advisory_xact_lock(hashtextextended(encode(sqlc.arg(dedup_key)::bytea, 'hex'), 0));
 
@@ -213,6 +220,9 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
   AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
   AND (cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
   AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))
+  -- The aliases those names match, looked up first (AliasIDsNamed; R33b,
+  -- ADR 0017), so the planner can find their pages by alias_id.
+  AND (NOT sqlc.arg(alias_names_resolved)::bool OR m.alias_id = ANY(sqlc.arg(alias_name_ids)::bigint[]))
   AND (cardinality(sqlc.arg(alias_ids)::bigint[]) = 0 OR m.alias_id = ANY(sqlc.arg(alias_ids)::bigint[]))
   AND (cardinality(sqlc.arg(agencies)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agencies)::text[]))
   AND (cardinality(sqlc.arg(agency_likes)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agency_likes)::text[]))
