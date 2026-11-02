@@ -6,12 +6,17 @@
 // matches every value containing it (alias:hill). The same key more than
 // once means any of them; different keys must all match.
 //
+// The text is terms (owner, 2026-11-02): each word, or each phrase in
+// quotes, must be in the page; an or: term is an alternative to all the
+// others together. The API splits the text into terms (internal/search), so
+// the text goes to it as typed, quotes and or: included.
+//
 // The search is kept in the page's address, one parameter per filter, so a
 // search can be bookmarked and shared, and the addresses from before the
 // single box (?job=…, ?capcode=…) still work. Those parameters are turned
 // into the API's here.
 
-export const keys = ['alias', 'agency', 'capcode', 'group', 'priority', 'category', 'job', 'is', 'flag'] as const;
+export const keys = ['alias', 'agency', 'capcode', 'group', 'priority', 'category', 'job', 'is', 'or', 'flag'] as const;
 export type Key = (typeof keys)[number];
 
 /** The keys this person can use: flag: is for admins only. */
@@ -27,6 +32,7 @@ export const examples: Record<Key, { example: string; what: string }> = {
 	category: { example: 'category:"Structure fire"', what: 'Pages of one event category.' },
 	job: { example: 'job:EX0000001', what: 'Pages of one job, exactly.' },
 	is: { example: 'is:unaliased', what: 'is:unaliased: capcodes with no alias. is:ignored: include ignored aliases.' },
+	or: { example: 'or:"grass fire"', what: 'Or pages with this instead of all the other words. To find "or:" itself, put it in quotes.' },
 	flag: { example: 'flag:parse_failed', what: 'parse_failed, address_unsplit or location_mismatch.' }
 };
 
@@ -130,14 +136,20 @@ export function parseBox(text: string, admin: boolean): Parsed {
 	const params = new URLSearchParams();
 	const free: string[] = [];
 	let problem = '';
+	// The text terms, as typed: a phrase keeps its quotes and or: its key, so
+	// the API reads the same terms (R33a).
+	const term = (v: string, quoted: boolean) => (quoted ? `"${v}"` : v);
 	for (const w of words(text, admin)) {
 		if (!w.key) {
-			if (w.value) free.push(w.value);
+			if (w.value) free.push(term(w.value, w.quoted));
 			continue;
 		}
 		const v = w.value.trim();
 		if (!v) continue;
 		switch (w.key) {
+			case 'or':
+				free.push(`or:${term(v, w.quoted)}`);
+				break;
 			case 'priority': {
 				const p = priorities.find((x) => x.toLowerCase() === v.toLowerCase().replace(/^nonemergency$/, 'non-emergency'));
 				if (p) params.append('priority', p);

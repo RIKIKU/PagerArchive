@@ -69,7 +69,7 @@
 			category: [...categories, 'Other']
 		};
 		if (fixed[key]) return setOptions(values(fixed[key]!).map((v) => ({ label: v, insert: `${key}:${show(v, exactKeys.includes(key))}` })));
-		if (!fromAPI.includes(key)) return close(); // capcode: and job: have none
+		if (!fromAPI.includes(key)) return close(); // capcode:, job: and or: have none
 		const mine = ++seq;
 		timer = setTimeout(async () => {
 			try {
@@ -179,9 +179,9 @@
 			<summary class="button ghost"><Icon name="help" />Help</summary>
 			<div class="panel">
 				<p id="{uid}-hint">
-					Type words to find pages containing them, and filters to narrow the search. A filter is a key and a value. A value with
-					spaces goes in quotes; in quotes it must match exactly, and without them it matches any value containing it. The same key
-					twice means either value.
+					Type words to find pages containing every one of them; words in quotes, such as "check hoses", must be together, in that
+					order. Filters narrow the search: a filter is a key and a value. A value with spaces goes in quotes; in quotes it must match
+					exactly, and without them it matches any value containing it. The same key twice means either value.
 				</p>
 				<ul class="keys">
 					{#each keysFor(admin) as k (k)}

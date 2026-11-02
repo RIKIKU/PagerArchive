@@ -2138,10 +2138,54 @@ test('A61 one search box', async ({ browser, request }, info) => {
 	await expect(list.locator('article', { hasText: marker })).toHaveCount(1);
 	for (const t of await list.locator('article p.text').allTextContents()) expect(t).toContain('14:05');
 
+	// Text terms and or: (owner, 2026-11-02). Other tests' pages can match the
+	// same words, so these carry a word of their own: those with it must be
+	// exactly A61's, and every page listed must keep the rule.
+	const tag = `TERMS${projectN(info)}${uniqueJob().slice(2)}`;
+	for (const [capcode, text] of [
+		['0100001', 'CHECK HOSES AT STATION, SMOKE SEEN'],
+		['0100001', 'CHECK HOSES TODAY'],
+		['0100001', 'HOSES CHECK, SMOKE SEEN'],
+		['0100001', 'STRUCTURE FIRE, SMOKE SHOWING'],
+		['0100002', 'GRASS FIRE'],
+		['0100002', 'MEET AT THE SIDE DOOR OR: THE GATE']
+	])
+		await post(request, capcode, `QD${text} ${tag}`);
+	const listed = async () => (await list.locator('article p.text').allTextContents()).map((t) => t.toUpperCase());
+	const has = (t: string, ...terms: string[]) => terms.every((w) => t.includes(w.toUpperCase()));
+	async function terms(search: string, want: string[], keeps: (text: string) => boolean) {
+		await box.fill(search);
+		await box.press('Enter');
+		await expect
+			.poll(async () => (await listed()).filter((t) => t.includes(tag)).map((t) => t.replace(` ${tag}`, '')).sort(), search)
+			.toEqual([...want].sort());
+		for (const t of await listed()) expect(keeps(t), `${search} listed: ${t}`).toBe(true);
+	}
+	await terms('"Check hoses" "Smoke"', ['CHECK HOSES AT STATION, SMOKE SEEN'], (t) => has(t, 'CHECK HOSES', 'SMOKE'));
+	await terms('hoses smoke', ['CHECK HOSES AT STATION, SMOKE SEEN', 'HOSES CHECK, SMOKE SEEN'], (t) => has(t, 'HOSES', 'SMOKE'));
+	await terms('"Smoke showing" or:"grass fire"', ['STRUCTURE FIRE, SMOKE SHOWING', 'GRASS FIRE'], (t) => has(t, 'SMOKE SHOWING') || has(t, 'GRASS FIRE'));
+	await terms(
+		'"Check hoses" "Smoke" or:"grass fire"',
+		['CHECK HOSES AT STATION, SMOKE SEEN', 'GRASS FIRE'],
+		(t) => has(t, 'CHECK HOSES', 'SMOKE') || has(t, 'GRASS FIRE')
+	);
+	await terms('alias:"Station 2" "Smoke showing" or:"grass fire"', ['GRASS FIRE'], (t) => has(t, 'SMOKE SHOWING') || has(t, 'GRASS FIRE'));
+	expect(new Set(await list.locator('article .who').allTextContents())).toEqual(new Set(['Station 2']));
+	await terms('"or:"', ['MEET AT THE SIDE DOOR OR: THE GATE'], (t) => has(t, 'OR:'));
+	await expect(page).toHaveURL(/\/\?q=%22or%3A%22$/);
+	// or: is a key: suggested as one, with no values of its own, and in the help.
+	await box.fill('o');
+	await expect(options).toHaveText(['or:']);
+	await box.fill('or:');
+	await expect(options).toHaveCount(0);
+	await expect(page.getByRole('search', { name: 'Search messages' }).locator('.keys')).toContainText('or:"grass fire"');
+
 	// A reload keeps the search.
+	await box.fill('"or:"');
+	await box.press('Enter');
 	await page.reload();
-	await expect(box).toHaveValue('14:05');
-	await expect(list.locator('article', { hasText: marker })).toHaveCount(1);
+	await expect(box).toHaveValue('"or:"');
+	await expect.poll(async () => (await listed()).filter((t) => t.includes(tag)).length).toBe(1);
 
 	// fl: no flag: for B, but an admin gets it; Escape closes the list.
 	await box.fill('fl');

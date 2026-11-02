@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -143,6 +144,53 @@ func TestSearchCriteria(t *testing.T) {
 	}
 	if code := e.getJSON("/api/v1/messages?category=Nope", nil); code != http.StatusBadRequest {
 		t.Errorf("bad category: %d", code)
+	}
+}
+
+// R33a's text terms (owner, 2026-11-02), with A61's made-up pages: every
+// term is required, a quoted phrase is one term, an or: term is an
+// alternative to the others together, and filters still apply to all.
+func TestSearchTextTerms(t *testing.T) {
+	e := setup(t)
+	pages := []struct{ capcode, text string }{
+		{"0100001", "QDCHECK HOSES AT STATION, SMOKE SEEN"},
+		{"0100001", "QDCHECK HOSES TODAY"},
+		{"0100001", "QDHOSES CHECK, SMOKE SEEN"},
+		{"0100001", "QDSTRUCTURE FIRE, SMOKE SHOWING"},
+		{"0100002", "QDGRASS FIRE"},
+		{"0100002", "QDMEET AT THE SIDE DOOR: 14:05"},
+	}
+	for i, p := range pages {
+		e.mustPost("a", p.capcode, p.text, e.now.Add(-time.Duration(i)*time.Minute))
+	}
+	shown := func(query string) string {
+		var got []string
+		for _, m := range e.list(query) {
+			got = append(got, strings.TrimPrefix(m.Text, "QD"))
+		}
+		slices.Sort(got)
+		return strings.Join(got, " | ")
+	}
+	q := func(text string) string { return "q=" + url.QueryEscape(text) }
+	tests := []struct{ query, want string }{
+		{q(`"Check hoses" "Smoke"`), "CHECK HOSES AT STATION, SMOKE SEEN"},
+		{q(`hoses smoke`), "CHECK HOSES AT STATION, SMOKE SEEN | HOSES CHECK, SMOKE SEEN"},
+		{q(`"Smoke showing" or:"grass fire"`), "GRASS FIRE | STRUCTURE FIRE, SMOKE SHOWING"},
+		{q(`"Check hoses" "Smoke" or:"grass fire"`), "CHECK HOSES AT STATION, SMOKE SEEN | GRASS FIRE"},
+		{"alias_like=" + url.QueryEscape("Station 2") + "&" + q(`"Smoke showing" or:"grass fire"`), "GRASS FIRE"},
+		{q(`"or:"`), "MEET AT THE SIDE DOOR: 14:05"},
+		{q(`14:05 door:`), "MEET AT THE SIDE DOOR: 14:05"},
+		{q(`"hoses check"`), "HOSES CHECK, SMOKE SEEN"},
+		{q(`smoke "grass`), ""},
+		{q(`or:today or:"side door"`), "CHECK HOSES TODAY | MEET AT THE SIDE DOOR: 14:05"},
+	}
+	for _, tt := range tests {
+		if got := shown(tt.query); got != tt.want {
+			t.Errorf("%s: %q, want %q", tt.query, got, tt.want)
+		}
+	}
+	if code := e.getJSON("/api/v1/messages?"+q(strings.Repeat("w ", 51)), nil); code != http.StatusBadRequest {
+		t.Errorf("51 terms: %d", code)
 	}
 }
 
