@@ -138,7 +138,7 @@ jobs:
         run: sh scripts/a76-checks.sh
       - name: Disk before
         run: df -h /
-      - name: A76's speed, 200,000 pages on top of 4,562,500, with searches and live pages
+      - name: A76's speed, 200,000 pages on top of 4,562,500 with live pages, then A75's searches
         run: sh scripts/a76.sh -o a76-results
       - name: Disk after
         if: always()

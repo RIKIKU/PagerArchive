@@ -1,11 +1,12 @@
 //go:build ignore
 
 // A76's speed (R83f), for scripts/a76.sh: pages made up as they're streamed to
-// `pagerarchive import-messages -`, while user B searches and a client posts
-// live pages. It prints the rate over time, the searches and the live pages,
-// and exits non-zero if the import is under 500 pages a second, a search is
-// over 1 second (R33b), or a live page is late (R32, R51a) or lost. The memory
-// budget is scripts/a76.sh's: it samples docker stats.
+// `pagerarchive import-messages -`, while a client posts live pages, then A75's
+// searches. It prints the rate over time, the live pages before and during the
+// import, and the searches, and exits non-zero if the import is under 500 pages
+// a second, a live page is late (R32, R51a) or lost, or a search after the
+// import is over 1 second (R33b). Searches during the import aren't timed
+// (R83f). The memory budget is scripts/a76.sh's: it samples docker stats.
 //
 //	usage: go run scripts/a76/speed.go -db URL -api URL -key KEY -seed N -pages N [-sample FILE] -o DIR -- docker compose ... exec -T api pagerarchive import-messages -
 package main
@@ -93,11 +94,12 @@ func main() {
 
 	stop := make(chan struct{})
 	var wg sync.WaitGroup
-	wg.Add(2)
-	searches := &searchLog{}
-	go func() { defer wg.Done(); searches.loop(*api, userB, stop) }()
+	wg.Add(1)
 	live := &liveLog{hook: hook, sse: sse}
 	go func() { defer wg.Done(); live.loop(*api, *key, *every, stop) }()
+	// A minute of live pages with no import, to compare with.
+	time.Sleep(time.Minute)
+	live.importStarts()
 
 	if *phase != "" {
 		die(os.WriteFile(*phase, []byte("import\n"), 0o644))
@@ -117,13 +119,13 @@ func main() {
 		'; the database ' || pg_size_pretty(pg_database_size(current_database()))`).Scan(&sizes))
 	fmt.Printf("messages before %d, after %d; import receptions %d\n%s\n", before, after, copies, sizes)
 	rates.print()
-	searches.print()
 	live.print()
 	var queued int64
 	die(pool.QueryRow(ctx, `SELECT count(*) FROM deliveries`).Scan(&queued))
 	if int(queued) != live.posted() {
 		fail("%d deliveries queued for %d live pages: the import queued some (R83b)", queued, live.posted())
 	}
+	checkSearches(ctx, pool, *api, userB)
 	if failed.Load() {
 		os.Exit(1)
 	}
@@ -319,74 +321,56 @@ func (rt *rates) print() {
 	}
 }
 
-// A75's searches, in turn, as user B.
-var a75Searches = []string{
-	"q=" + url.QueryEscape("ZZNOTHING"),
-	"q=" + url.QueryEscape("hoses grass pump"),
-	"q=" + url.QueryEscape(`"Smoke showing" or:"grass fire"`),
-	"q=" + url.QueryEscape("tanker9"),
-	"q=12345&alias=" + url.QueryEscape("Station 1"),
-	"q=STN2&alias=" + url.QueryEscape("Station 1"),
+// A75's searches (R33b), as TestA75SearchSpeed runs them, as user B.
+var a75Searches = []struct{ name, query string }{
+	{"one term that matches nothing", "q=" + url.QueryEscape("ZZNOTHING")},
+	{"three terms that together match nothing", "q=" + url.QueryEscape("hoses grass pump")},
+	{`"Smoke showing" or:"grass fire"`, "q=" + url.QueryEscape(`"Smoke showing" or:"grass fire"`)},
+	{"a term found only in an extra field", "q=" + url.QueryEscape("tanker9")},
+	{`a term with alias:"Station 1"`, "q=12345&alias=" + url.QueryEscape("Station 1")},
+	{`alias:"Station 1", a term never in its pages`, "q=STN2&alias=" + url.QueryEscape("Station 1")},
+	{"the same with alias:sta", "q=STN2&alias=sta"},
+	{`the same with "Station 1" picked`, "q=STN2&alias_like=" + url.QueryEscape("Station 1")},
 }
 
-type searchLog struct {
-	mu    sync.Mutex
-	times map[string][]time.Duration
-	bad   int
-}
-
-func (s *searchLog) loop(api, token string, stop <-chan struct{}) {
-	s.times = map[string][]time.Duration{}
-	for i := 0; ; i++ {
-		select {
-		case <-stop:
-			return
-		case <-time.After(time.Second):
-		}
-		q := a75Searches[i%len(a75Searches)]
-		req, _ := http.NewRequest(http.MethodGet, api+"/api/v1/messages?"+q, nil)
-		req.AddCookie(&http.Cookie{Name: "pa_session", Value: token})
-		t0 := time.Now()
-		resp, err := http.DefaultClient.Do(req)
-		if err == nil {
-			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
-		}
-		d := time.Since(t0)
-		s.mu.Lock()
-		if err != nil || resp.StatusCode != http.StatusOK {
-			s.bad++
-		}
-		s.times[q] = append(s.times[q], d)
-		s.mu.Unlock()
-	}
-}
-
-func (s *searchLog) print() {
-	fmt.Println("--- searches during the import")
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var worst time.Duration
-	total, over := 0, 0
-	for _, q := range a75Searches {
-		ts := s.times[q]
-		if len(ts) == 0 {
-			continue
-		}
-		slices.Sort(ts)
-		for _, d := range ts {
-			total++
-			if d > time.Second {
-				over++
+// checkSearches times A75's searches once the import has ended: straight away,
+// as the import ends with ANALYZE, so nothing has to catch up first (ADR 0018).
+// Searches during an import aren't timed (R83f).
+func checkSearches(ctx context.Context, pool *pgxpool.Pool, api, token string) {
+	var analyzed, autovacuumed string
+	var changed int64
+	die(pool.QueryRow(ctx, `SELECT COALESCE(to_char(last_analyze, 'HH24:MI:SS'), 'never'), COALESCE(to_char(last_autovacuum, 'HH24:MI:SS'), 'never'), n_mod_since_analyze
+		FROM pg_stat_user_tables WHERE relname = 'messages'`).Scan(&analyzed, &autovacuumed, &changed))
+	fmt.Printf("--- A75's searches after the import, at %s UTC (last ANALYZE %s, last autovacuum %s, changed since analysed %d)\n",
+		time.Now().UTC().Format("15:04:05"), analyzed, autovacuumed, changed)
+	for _, s := range a75Searches {
+		var each []string
+		var slowest time.Duration
+		listed := 0
+		for range 3 {
+			req, _ := http.NewRequest(http.MethodGet, api+"/api/v1/messages?"+s.query, nil)
+			req.AddCookie(&http.Cookie{Name: "pa_session", Value: token})
+			t0 := time.Now()
+			resp, err := http.DefaultClient.Do(req)
+			die(err)
+			var page struct {
+				Messages []json.RawMessage `json:"messages"`
 			}
+			err = json.NewDecoder(resp.Body).Decode(&page)
+			resp.Body.Close()
+			d := time.Since(t0)
+			die(err)
+			if resp.StatusCode != http.StatusOK {
+				fail("%s: status %d", s.name, resp.StatusCode)
+			}
+			listed = len(page.Messages)
+			slowest = max(slowest, d)
+			each = append(each, d.Round(time.Millisecond).String())
 		}
-		worst = max(worst, ts[len(ts)-1])
-		unq, _ := url.QueryUnescape(q)
-		fmt.Printf("  %-48s %5d runs, median %6s, slowest %s\n", unq, len(ts), ts[len(ts)/2].Round(time.Millisecond), ts[len(ts)-1].Round(time.Millisecond))
-	}
-	fmt.Printf("  %d searches, %d over 1 second, the slowest %s, %d failed\n", total, over, worst.Round(time.Millisecond), s.bad)
-	if over > 0 || s.bad > 0 || total == 0 {
-		fail("%d of %d searches over 1 second, %d failed (R33b)", over, total, s.bad)
+		fmt.Printf("  %-46s %3d listed, %s\n", s.name, listed, strings.Join(each, " "))
+		if slowest > time.Second {
+			fail("%s: %s after the import, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
+		}
 	}
 }
 
@@ -471,6 +455,7 @@ type liveLog struct {
 	hook, sse *marks
 	mu        sync.Mutex
 	pages     []livePage
+	before    int // how many came before the import
 }
 
 func (l *liveLog) loop(api, key string, every time.Duration, stop <-chan struct{}) {
@@ -504,13 +489,32 @@ func (l *liveLog) posted() int {
 	return len(l.pages)
 }
 
-func (l *liveLog) print() {
-	fmt.Println("--- live pages during the import")
+// importStarts notes where the pages before the import end, to compare with.
+func (l *liveLog) importStarts() {
 	l.mu.Lock()
 	defer l.mu.Unlock()
+	l.before = len(l.pages)
+}
+
+func (l *liveLog) print() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.report("before the import", l.pages[:l.before])
+	l.report("during the import", l.pages[l.before:])
+	fmt.Printf("  the integration's webhook got %d requests, the open list %d messages\n", l.hook.n, l.sse.n)
+	if l.hook.n != len(l.pages) {
+		fail("the webhook got %d requests for %d live pages: the import set it off (R83b)", l.hook.n, len(l.pages))
+	}
+	if l.sse.n != len(l.pages) {
+		fail("the open list got %d messages for %d live pages: the import sent live updates (R83b)", l.sse.n, len(l.pages))
+	}
+}
+
+func (l *liveLog) report(when string, pages []livePage) {
+	fmt.Println("--- live pages " + when)
 	var post, stream, hook []time.Duration
 	lost := 0
-	for _, p := range l.pages {
+	for _, p := range pages {
 		post = append(post, p.took)
 		if p.status != http.StatusOK {
 			lost++
@@ -535,23 +539,16 @@ func (l *liveLog) print() {
 			return
 		}
 		slices.Sort(ds)
-		fmt.Printf("  %-34s median %6s, slowest %s\n", name, ds[len(ds)/2].Round(time.Millisecond), ds[len(ds)-1].Round(time.Millisecond))
+		fmt.Printf("  %-34s median %6s, 99th percentile %6s, slowest %s\n", name, ds[len(ds)/2].Round(time.Millisecond), ds[len(ds)*99/100].Round(time.Millisecond), ds[len(ds)-1].Round(time.Millisecond))
 		if ds[len(ds)-1] > limit {
 			fail("%s: the slowest took %s, over %s (%s)", name, ds[len(ds)-1].Round(time.Millisecond), limit, spec)
 		}
 	}
-	fmt.Printf("  %d live pages posted, %d lost or refused\n", len(l.pages), lost)
+	fmt.Printf("  %d live pages posted, %d lost or refused\n", len(pages), lost)
 	show("post answered", post, 2*time.Second, "R32")
 	show("live update in an open list", stream, 2*time.Second, "R32")
 	show("delivered to the integration", hook, 5*time.Second, "R51a")
 	if lost > 0 {
 		fail("%d live pages lost or refused", lost)
-	}
-	fmt.Printf("  the integration's webhook got %d requests, the open list %d messages\n", l.hook.n, l.sse.n)
-	if l.hook.n != len(l.pages) {
-		fail("the webhook got %d requests for %d live pages: the import set it off (R83b)", l.hook.n, len(l.pages))
-	}
-	if l.sse.n != len(l.pages) {
-		fail("the open list got %d messages for %d live pages: the import sent live updates (R83b)", l.sse.n, len(l.pages))
 	}
 }

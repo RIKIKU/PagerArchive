@@ -1,8 +1,8 @@
 #!/bin/sh
 # A76's speed (R83f; ADR 0018): an import through `docker compose exec`, as a
-# deployment runs it, on the compose file's API and database, while user B
-# searches and a client posts live pages. scripts/a76/speed.go runs it and
-# checks the rate, the searches and live delivery. docker stats is sampled every
+# deployment runs it, on the compose file's API and database, while a client
+# posts live pages. scripts/a76/speed.go runs it and checks the rate and live
+# delivery, then A75's searches after it (R33b). docker stats is sampled every
 # 10 s into OUT/a76-stats.csv, by the same measure as A15. Pass: during the
 # import, the API's peak is <= 256 MiB and api + db peaks sum to <= 1 GiB. The
 # API's figure includes the import, which runs in its container.

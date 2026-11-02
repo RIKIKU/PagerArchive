@@ -468,12 +468,6 @@ func (im *Importer) storeBatch(ctx context.Context, batch []staged, rep *Report)
 		if _, err := tx.Exec(ctx, `SET LOCAL synchronous_commit = off`); err != nil {
 			return err
 		}
-		// Store.Open has each query planned for its values, for searches. These
-		// are lookups by key, and planning each costs more than the search
-		// index does (ADR 0018).
-		if _, err := tx.Exec(ctx, `SET LOCAL plan_cache_mode = auto`); err != nil {
-			return err
-		}
 		q := im.Store.Queries.WithTx(tx)
 		var err error
 		c, err = im.walk(ctx, q, batch, func(p staged, draft ingest.Draft) (ingest.Outcome, error) {

@@ -68,7 +68,9 @@ Stop one with `docker compose restart api`, which stops the API for a moment too
 
 ## While it runs
 
-The app keeps serving users and live pages, and the import stores at least 500 pages a second (R83f). So 3 million pages take under 2 hours, and 4.6 million under 3 hours. Reading and sorting the file comes first and takes a few minutes of that.
+Live pages keep being stored and delivered on time, and the import stores at least 500 pages a second (R83f). So 3 million pages take under 2 hours, and 4.6 million under 3 hours. Reading and sorting the file comes first and takes a few minutes of that.
+
+An import is a one-off, so **searches can be slow while it runs**: over a second now and then on a spinning disk, as they wait behind its writes. They're back to normal when it ends: it ends by updating the statistics they plan by, so nothing has to catch up.
 
 The first stage holds the file's pages, redacted, in a temporary table in the database, which goes when the command ends, however it ends. Have free disk of about **three times the file's size** for that, and about **1 KB per page** for what's stored.
 
