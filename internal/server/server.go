@@ -31,10 +31,10 @@ import (
 )
 
 // MaxFuture is how far ahead of the server's clock a receive time may be.
-const MaxFuture = 60 * time.Second
+const MaxFuture = ingest.MaxFuture
 
 // MaxTextBytes caps a page's text. POCSAG pages are far shorter.
-const MaxTextBytes = 4096
+const MaxTextBytes = ingest.MaxTextBytes
 
 // Server serves the API.
 type Server struct {

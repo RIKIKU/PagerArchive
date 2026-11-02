@@ -83,6 +83,12 @@ type Delivery struct {
 	UpdatedAt     time.Time
 }
 
+type ImportReception struct {
+	MessageID  int64
+	ReceivedAt time.Time
+	SourceID   *string
+}
+
 type Integration struct {
 	ID              int64
 	Uid             string

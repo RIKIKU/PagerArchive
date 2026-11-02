@@ -1,0 +1,10 @@
+# Test overlay for A76's speed (scripts/a76.sh): the database on a local port,
+# for the check's seed and counts, and the host reachable from the API, for the
+# test integration's webhook. Never for a deployment.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${PA_A76_DB_PORT:-55439}:5432"
+  api:
+    extra_hosts:
+      - host.docker.internal:host-gateway

@@ -263,6 +263,9 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		if err != nil {
 			return err
 		}
+		if err := j.forgetSourceIDs(ctx); err != nil {
+			return err
+		}
 		if err := j.Store.SetSetting(ctx, db.SetSettingParams{Key: redactionKey, Value: hash}); err != nil {
 			return fmt.Errorf("redaction setting: %s", store.SafeError(err))
 		}
@@ -310,6 +313,31 @@ func (j *Job) redactAll(ctx context.Context) (int64, error) {
 		changed += int64(len(ids))
 		if len(rows) < batch {
 			return changed, nil
+		}
+	}
+}
+
+// forgetSourceIDs drops the imported source IDs the rules now match (P1). The
+// copy stays, and is known by its message's dedup key and its receive time, as
+// one imported with no ID (ADR 0018).
+func (j *Job) forgetSourceIDs(ctx context.Context) error {
+	after := ""
+	for {
+		ids, err := j.Store.ImportSourceIDsAfter(ctx, db.ImportSourceIDsAfterParams{After: &after, Batch: batch})
+		if err != nil {
+			return fmt.Errorf("redaction: %s", store.SafeError(err))
+		}
+		for _, id := range ids {
+			after = id
+			if pipeline.Redact(j.Network, id) == id {
+				continue
+			}
+			if err := j.Store.ForgetImportSourceID(ctx, id); err != nil {
+				return fmt.Errorf("redaction: %s", store.SafeError(err))
+			}
+		}
+		if len(ids) < batch {
+			return nil
 		}
 	}
 }

@@ -57,9 +57,14 @@ LIMIT 1;
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id
+    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id,
+    location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+    CASE WHEN sqlc.narg(lon)::float8 IS NULL THEN NULL
+         ELSE ST_SetSRID(ST_MakePoint(sqlc.narg(lon)::float8, sqlc.narg(lat)::float8), 4326)::geography END,
+    sqlc.narg(location_source)::text,
+    sqlc.arg(location_mismatch)::bool
 )
 RETURNING id;
 
@@ -256,13 +261,51 @@ ORDER BY m.sent_at DESC, m.id DESC
 LIMIT sqlc.arg(max_rows)::int;
 
 -- name: LastMessageID :one
--- Where a live connection without after_id starts (ADR 0010 §2).
-SELECT COALESCE(max(id), 0)::bigint FROM messages;
+-- Where a live connection without after_id starts (ADR 0010 §2): the newest
+-- message a client sent. An imported page isn't a live update (R83b, ADR 0018).
+SELECT COALESCE(max(message_id), 0)::bigint FROM receptions;
 
 -- name: MessageIDsAfter :many
--- A live connection's catch-up (ADR 0010 §3): messages stored after one,
--- oldest first. IDs are assigned in the order pages are stored.
-SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT sqlc.arg(max_rows)::int;
+-- A live connection's catch-up (ADR 0010 §3): messages clients sent after one,
+-- oldest first. IDs are assigned in the order pages are stored. An imported
+-- page has no reception until a client also hears it (R83b, ADR 0018).
+SELECT DISTINCT message_id FROM receptions WHERE message_id > sqlc.arg(id) ORDER BY message_id LIMIT sqlc.arg(max_rows)::int;
+
+-- name: InsertImportReception :exec
+-- R83b: a copy read from an import file. Running a file again adds nothing.
+INSERT INTO import_receptions (message_id, received_at, source_id) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING;
+
+-- name: ImportedSourceIDs :many
+-- R83c: which of these source IDs an earlier import stored.
+SELECT source_id::text FROM import_receptions WHERE source_id = ANY(sqlc.arg(ids)::text[]);
+
+-- name: ImportSourceIDsAfter :many
+-- P1: the source IDs, in turn, for the nightly run to check against changed rules.
+SELECT i.source_id::text FROM import_receptions i WHERE i.source_id > sqlc.narg(after)::text ORDER BY i.source_id LIMIT sqlc.arg(batch)::int;
+
+-- name: ForgetImportSourceID :exec
+-- P1: a source ID the rules now match. The copy stays, with no ID.
+WITH gone AS (
+    DELETE FROM import_receptions i WHERE i.source_id = sqlc.arg(source_id)::text RETURNING i.message_id, i.received_at
+)
+INSERT INTO import_receptions (message_id, received_at)
+SELECT message_id, received_at FROM gone
+ON CONFLICT DO NOTHING;
+
+-- name: ImportedCopyExists :one
+-- R83c: whether an earlier import stored this copy of a page with no source
+-- ID, by its dedup key and receive time. A message's sent time is its earliest
+-- copy's (R21), and copies are seconds apart (R19): a day bounds the search.
+SELECT EXISTS (
+    SELECT 1
+    FROM messages m
+    JOIN import_receptions i ON i.message_id = m.id
+    WHERE m.dedup_key = sqlc.arg(dedup_key)
+      AND m.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '1 day' AND sqlc.arg(received_at)::timestamptz
+      AND i.received_at = sqlc.arg(received_at)::timestamptz
+      AND i.source_id IS NULL
+);
 
 -- name: UnaliasedCapcodes :many
 -- R33: capcodes with no alias, with message count and first- and last-seen times.
@@ -274,11 +317,16 @@ GROUP BY capcode
 ORDER BY max(sent_at) DESC;
 
 -- name: MessageReceptions :many
+-- An empty client_id is a copy from an import file (R83b, ADR 0018).
 SELECT r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = $1
-ORDER BY r.received_at, r.client_id;
+UNION ALL
+SELECT DISTINCT '', 'import', i.received_at
+FROM import_receptions i
+WHERE i.message_id = $1
+ORDER BY received_at, client_id;
 
 -- name: AliasByKey :one
 -- R27a: the alias for a normalised capcode or pattern, if any.
@@ -913,9 +961,14 @@ LEFT JOIN templates t ON t.id = a.template_id
 ORDER BY a.pattern;
 
 -- name: ReceptionsForMessages :many
--- R63a: each message's receive times, for a page of messages at once.
+-- R63a: each message's receive times, for a page of messages at once. An
+-- empty client_id is a copy from an import file (R83b, ADR 0018).
 SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = ANY(sqlc.arg(ids)::bigint[])
-ORDER BY r.message_id, r.received_at, r.client_id;
+UNION ALL
+SELECT DISTINCT i.message_id, '', 'import', i.received_at
+FROM import_receptions i
+WHERE i.message_id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY message_id, received_at, client_id;

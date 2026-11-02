@@ -216,6 +216,10 @@ docker compose exec db psql -U postgres -d authentik -tAc \
 
 Anything above 0 means its worker isn't picking up work. Restart Authentik as above.
 
+## Moving from an existing archive
+
+[Importing messages](import.md) stores pages from an older archive while the app keeps running: `docker compose exec -T api pagerarchive import-messages - < pages.jsonl`. Add your aliases first, so the pages parse.
+
 ## Backups
 
 Back up the `db` volume, which holds both databases. Messages that PagerArchive deletes (retention) can survive in your own backups.

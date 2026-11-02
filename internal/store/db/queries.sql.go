@@ -1797,6 +1797,21 @@ func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) 
 	return err
 }
 
+const forgetImportSourceID = `-- name: ForgetImportSourceID :exec
+WITH gone AS (
+    DELETE FROM import_receptions i WHERE i.source_id = $1::text RETURNING i.message_id, i.received_at
+)
+INSERT INTO import_receptions (message_id, received_at)
+SELECT message_id, received_at FROM gone
+ON CONFLICT DO NOTHING
+`
+
+// P1: a source ID the rules now match. The copy stays, with no ID.
+func (q *Queries) ForgetImportSourceID(ctx context.Context, sourceID string) error {
+	_, err := q.db.Exec(ctx, forgetImportSourceID, sourceID)
+	return err
+}
+
 const getSetting = `-- name: GetSetting :one
 SELECT value FROM settings WHERE key = $1
 `
@@ -1817,6 +1832,88 @@ func (q *Queries) IconBySHA256(ctx context.Context, iconSha256 *string) ([]byte,
 	var icon_png []byte
 	err := row.Scan(&icon_png)
 	return icon_png, err
+}
+
+const importSourceIDsAfter = `-- name: ImportSourceIDsAfter :many
+SELECT i.source_id::text FROM import_receptions i WHERE i.source_id > $1::text ORDER BY i.source_id LIMIT $2::int
+`
+
+type ImportSourceIDsAfterParams struct {
+	After *string
+	Batch int32
+}
+
+// P1: the source IDs, in turn, for the nightly run to check against changed rules.
+func (q *Queries) ImportSourceIDsAfter(ctx context.Context, arg ImportSourceIDsAfterParams) ([]string, error) {
+	rows, err := q.db.Query(ctx, importSourceIDsAfter, arg.After, arg.Batch)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var i_source_id string
+		if err := rows.Scan(&i_source_id); err != nil {
+			return nil, err
+		}
+		items = append(items, i_source_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const importedCopyExists = `-- name: ImportedCopyExists :one
+SELECT EXISTS (
+    SELECT 1
+    FROM messages m
+    JOIN import_receptions i ON i.message_id = m.id
+    WHERE m.dedup_key = $1
+      AND m.sent_at BETWEEN $2::timestamptz - interval '1 day' AND $2::timestamptz
+      AND i.received_at = $2::timestamptz
+      AND i.source_id IS NULL
+)
+`
+
+type ImportedCopyExistsParams struct {
+	DedupKey   []byte
+	ReceivedAt time.Time
+}
+
+// R83c: whether an earlier import stored this copy of a page with no source
+// ID, by its dedup key and receive time. A message's sent time is its earliest
+// copy's (R21), and copies are seconds apart (R19): a day bounds the search.
+func (q *Queries) ImportedCopyExists(ctx context.Context, arg ImportedCopyExistsParams) (bool, error) {
+	row := q.db.QueryRow(ctx, importedCopyExists, arg.DedupKey, arg.ReceivedAt)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
+const importedSourceIDs = `-- name: ImportedSourceIDs :many
+SELECT source_id::text FROM import_receptions WHERE source_id = ANY($1::text[])
+`
+
+// R83c: which of these source IDs an earlier import stored.
+func (q *Queries) ImportedSourceIDs(ctx context.Context, ids []string) ([]string, error) {
+	rows, err := q.db.Query(ctx, importedSourceIDs, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var source_id string
+		if err := rows.Scan(&source_id); err != nil {
+			return nil, err
+		}
+		items = append(items, source_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const insertAliasChange = `-- name: InsertAliasChange :one
@@ -1878,39 +1975,65 @@ func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) 
 	return err
 }
 
+const insertImportReception = `-- name: InsertImportReception :exec
+INSERT INTO import_receptions (message_id, received_at, source_id) VALUES ($1, $2, $3)
+ON CONFLICT DO NOTHING
+`
+
+type InsertImportReceptionParams struct {
+	MessageID  int64
+	ReceivedAt time.Time
+	SourceID   *string
+}
+
+// R83b: a copy read from an import file. Running a file again adds nothing.
+func (q *Queries) InsertImportReception(ctx context.Context, arg InsertImportReceptionParams) error {
+	_, err := q.db.Exec(ctx, insertImportReception, arg.MessageID, arg.ReceivedAt, arg.SourceID)
+	return err
+}
+
 const insertMessage = `-- name: InsertMessage :one
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id
+    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id,
+    location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+    CASE WHEN $22::float8 IS NULL THEN NULL
+         ELSE ST_SetSRID(ST_MakePoint($22::float8, $23::float8), 4326)::geography END,
+    $24::text,
+    $25::bool
 )
 RETURNING id
 `
 
 type InsertMessageParams struct {
-	Capcode        string
-	Text           string
-	Priority       *string
-	Heartbeat      bool
-	SentAt         time.Time
-	DedupKey       []byte
-	Format         *string
-	JobNumber      *string
-	EventType      *string
-	Description    *string
-	Address        *string
-	Locality       *string
-	GridRef        *string
-	PagingGroup    *string
-	Units          []string
-	Extra          []byte
-	ParseFailed    bool
-	AddressUnsplit bool
-	Function       *int16
-	Baud           *int32
-	AliasID        *int64
+	Capcode          string
+	Text             string
+	Priority         *string
+	Heartbeat        bool
+	SentAt           time.Time
+	DedupKey         []byte
+	Format           *string
+	JobNumber        *string
+	EventType        *string
+	Description      *string
+	Address          *string
+	Locality         *string
+	GridRef          *string
+	PagingGroup      *string
+	Units            []string
+	Extra            []byte
+	ParseFailed      bool
+	AddressUnsplit   bool
+	Function         *int16
+	Baud             *int32
+	AliasID          *int64
+	Lon              *float64
+	Lat              *float64
+	LocationSource   *string
+	LocationMismatch bool
 }
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (int64, error) {
@@ -1936,6 +2059,10 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 		arg.Function,
 		arg.Baud,
 		arg.AliasID,
+		arg.Lon,
+		arg.Lat,
+		arg.LocationSource,
+		arg.LocationMismatch,
 	)
 	var id int64
 	err := row.Scan(&id)
@@ -2306,10 +2433,11 @@ func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAt
 }
 
 const lastMessageID = `-- name: LastMessageID :one
-SELECT COALESCE(max(id), 0)::bigint FROM messages
+SELECT COALESCE(max(message_id), 0)::bigint FROM receptions
 `
 
-// Where a live connection without after_id starts (ADR 0010 §2).
+// Where a live connection without after_id starts (ADR 0010 §2): the newest
+// message a client sent. An imported page isn't a live update (R83b, ADR 0018).
 func (q *Queries) LastMessageID(ctx context.Context) (int64, error) {
 	row := q.db.QueryRow(ctx, lastMessageID)
 	var column_1 int64
@@ -2842,7 +2970,7 @@ func (q *Queries) MatchingIntegrations(ctx context.Context, arg MatchingIntegrat
 }
 
 const messageIDsAfter = `-- name: MessageIDsAfter :many
-SELECT id FROM messages WHERE id > $1 ORDER BY id LIMIT $2::int
+SELECT DISTINCT message_id FROM receptions WHERE message_id > $1 ORDER BY message_id LIMIT $2::int
 `
 
 type MessageIDsAfterParams struct {
@@ -2850,8 +2978,9 @@ type MessageIDsAfterParams struct {
 	MaxRows int32
 }
 
-// A live connection's catch-up (ADR 0010 §3): messages stored after one,
-// oldest first. IDs are assigned in the order pages are stored.
+// A live connection's catch-up (ADR 0010 §3): messages clients sent after one,
+// oldest first. IDs are assigned in the order pages are stored. An imported
+// page has no reception until a client also hears it (R83b, ADR 0018).
 func (q *Queries) MessageIDsAfter(ctx context.Context, arg MessageIDsAfterParams) ([]int64, error) {
 	rows, err := q.db.Query(ctx, messageIDsAfter, arg.ID, arg.MaxRows)
 	if err != nil {
@@ -2860,11 +2989,11 @@ func (q *Queries) MessageIDsAfter(ctx context.Context, arg MessageIDsAfterParams
 	defer rows.Close()
 	var items []int64
 	for rows.Next() {
-		var id int64
-		if err := rows.Scan(&id); err != nil {
+		var message_id int64
+		if err := rows.Scan(&message_id); err != nil {
 			return nil, err
 		}
-		items = append(items, id)
+		items = append(items, message_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2877,7 +3006,11 @@ SELECT r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = $1
-ORDER BY r.received_at, r.client_id
+UNION ALL
+SELECT DISTINCT '', 'import', i.received_at
+FROM import_receptions i
+WHERE i.message_id = $1
+ORDER BY received_at, client_id
 `
 
 type MessageReceptionsRow struct {
@@ -2886,6 +3019,7 @@ type MessageReceptionsRow struct {
 	ReceivedAt time.Time
 }
 
+// An empty client_id is a copy from an import file (R83b, ADR 0018).
 func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]MessageReceptionsRow, error) {
 	rows, err := q.db.Query(ctx, messageReceptions, messageID)
 	if err != nil {
@@ -3194,7 +3328,11 @@ SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = ANY($1::bigint[])
-ORDER BY r.message_id, r.received_at, r.client_id
+UNION ALL
+SELECT DISTINCT i.message_id, '', 'import', i.received_at
+FROM import_receptions i
+WHERE i.message_id = ANY($1::bigint[])
+ORDER BY message_id, received_at, client_id
 `
 
 type ReceptionsForMessagesRow struct {
@@ -3204,7 +3342,8 @@ type ReceptionsForMessagesRow struct {
 	ReceivedAt time.Time
 }
 
-// R63a: each message's receive times, for a page of messages at once.
+// R63a: each message's receive times, for a page of messages at once. An
+// empty client_id is a copy from an import file (R83b, ADR 0018).
 func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]ReceptionsForMessagesRow, error) {
 	rows, err := q.db.Query(ctx, receptionsForMessages, ids)
 	if err != nil {

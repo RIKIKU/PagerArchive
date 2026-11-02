@@ -283,7 +283,8 @@ func receptions(recs []db.MessageReceptionsRow, admin bool) []Reception {
 	names := map[string]string{}
 	for _, rc := range recs {
 		label := rc.ClientName
-		if !admin {
+		// A copy from an import file isn't a receiver (R83b), whoever asks.
+		if !admin && rc.ClientID != "" {
 			if _, seen := names[rc.ClientID]; !seen {
 				names[rc.ClientID] = fmt.Sprintf("Receiver %d", len(names)+1)
 			}
