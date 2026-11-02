@@ -68,11 +68,11 @@ Stop one with `docker compose restart api`, which stops the API for a moment too
 
 ## While it runs
 
-Live pages keep being stored and delivered on time, and the import stores at least 500 pages a second (R83f). So 3 million pages take under 2 hours, and 4.6 million under 3 hours. Reading and sorting the file comes first and takes a few minutes of that.
+Live pages keep being stored and delivered on time, and the import stores at least 500 pages a second (R83f). On a spinning disk it stored about 850 a second, so 3 million pages took about an hour. Reading the file comes first: about a minute for 4.5 million lines.
 
-An import is a one-off, so **searches can be slow while it runs**: over a second now and then on a spinning disk, as they wait behind its writes. They're back to normal when it ends: it ends by updating the statistics they plan by, so nothing has to catch up.
+An import is a one-off, so **searches can be slow while it runs**, as they wait behind its writes. It ends by vacuuming and analysing the messages, so when the command returns, nothing is left to catch up and searches are back to normal. The first time a search reads something that isn't in the disk cache, it can take longer (ADR 0018).
 
-The first stage holds the file's pages, redacted, in a temporary table in the database, which goes when the command ends, however it ends. Have free disk of about **three times the file's size** for that, and about **1 KB per page** for what's stored.
+The first stage holds the file's pages, redacted, in a temporary table in the database, which goes when the command ends, however it ends. Have free disk of about **the file's size** for that, and about **1 KB per page** for what's stored, with room for the write-ahead log's 1 GB.
 
 Reports, progress and logs never hold page text. The file itself does, unredacted. Delete it when you're done, and remember your shell's `> report.txt` holds only the report.
 

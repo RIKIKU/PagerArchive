@@ -10,7 +10,8 @@
 # usage: scripts/a76.sh [-s SEED] [-n PAGES] [-l LOCALITIES] [-r] [-o OUT]
 #   -r  the file in random order, the import's hardest read
 #   CI:       scripts/a76.sh -r                     (seed 4,562,500, import 200,000)
-#   full run: scripts/a76.sh -s 0 -n 4562500 -l 3000 (a real-size address dataset)
+#   full run: scripts/a76.sh -s 0 -n 4562500 -l 3000 -r (a real-size address dataset:
+#             1.5 hours on a spinning disk, and 1 GB of the host's memory for the file)
 # needs: Docker with compose, Go, curl, awk. Uses 127.0.0.1:8080 and :55439, and
 # port 14321 on every address for the test webhook.
 set -eu
