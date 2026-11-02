@@ -17,7 +17,16 @@
 //     stroke-dasharray, font-size, font-weight, font-family, letter-spacing,
 //     rx and ry; and width or height on an img or svg, unless from data.
 // A border's or outline's width written as thin, medium or thick fails as a
-// length does.
+// length does. A string in a style attribute's braces that holds
+// declarations itself (style={"color: #f00"}) is read as one.
+//
+// And script code, a component's <script> and every .ts file under src:
+// strings given to an element's style (el.style.color = …, .cssText = …,
+// .style.setProperty(…)), and the strings and numbers given to a map
+// style's colour, width, radius, size and font keys ('circle-radius',
+// 'text-font', clusterRadius). A value from a function or a variable
+// (token('--accent'), px('--map-stroke'), look.point) passes: it's read from
+// a token, or checked where it's written.
 // And src/app.css, where hard-coded values are allowed only as the value of
 // a token (a custom property, --name: value); its other rules use tokens
 // too. Selectors and @media, @container and @supports conditions aren't
@@ -110,14 +119,46 @@ function walk(node, visit) {
 	for (const [k, v] of Object.entries(node)) if (k !== 'parent' && v && typeof v === 'object') walk(v, visit);
 }
 
-/** The fixed values written in an expression: its strings, the text of its
- * template literals, and (numbers too) its numbers. */
+/** The fixed values an expression can produce: its strings, the text of its
+ * template literals, and (numbers too) its numbers, through arrays,
+ * conditionals and joins. A function's result or a property read
+ * (token('--accent'), look.clusters[1], m.colour) comes from elsewhere. */
 function literals(expr, numbers = false) {
 	const out = [];
-	walk(expr, (n) => {
-		if (n.type === 'Literal' && (typeof n.value === 'string' || (numbers && typeof n.value === 'number'))) out.push(String(n.value));
-		else if (n.type === 'TemplateElement' && (n.value.cooked ?? n.value.raw)) out.push(n.value.cooked ?? n.value.raw);
-	});
+	const visit = (n) => {
+		if (!n) return;
+		switch (n.type) {
+			case 'Literal':
+				if (typeof n.value === 'string' || (numbers && typeof n.value === 'number')) out.push(String(n.value));
+				break;
+			case 'TemplateLiteral':
+				for (const q of n.quasis) if (q.value.cooked ?? q.value.raw) out.push(q.value.cooked ?? q.value.raw);
+				n.expressions.forEach(visit);
+				break;
+			case 'ArrayExpression':
+				n.elements.forEach(visit);
+				break;
+			case 'ConditionalExpression':
+				visit(n.consequent);
+				visit(n.alternate);
+				break;
+			case 'LogicalExpression':
+			case 'BinaryExpression':
+				visit(n.left);
+				visit(n.right);
+				break;
+			case 'UnaryExpression':
+				if (n.operator === '-' && n.argument.type === 'Literal' && numbers) out.push(`-${n.argument.value}`);
+				break;
+			case 'TSAsExpression':
+			case 'TSSatisfiesExpression':
+			case 'TSNonNullExpression':
+			case 'ParenthesizedExpression':
+				visit(n.expression);
+				break;
+		}
+	};
+	visit(expr);
 	return out;
 }
 
@@ -128,6 +169,58 @@ const styleAttributes = new Set(['stroke-width', 'stroke-dasharray', 'font-size'
 // Values an attribute may hold without naming a colour or a size.
 const keywordOnly = /^(none|currentcolor|transparent|inherit|auto|context-fill|context-stroke)$/i;
 
+/** Check text that holds style declarations ("color: #f00; padding: 4px"). */
+function checkDeclarations(textValue, line, report, where) {
+	if (!textValue.includes(':')) return;
+	for (const [prop, val] of inline(textValue)) for (const q of problems(prop, val)) report(line, where(prop, val), q);
+}
+
+const kebab = (s) => s.replace(/[A-Z]/g, (c) => `-${c.toLowerCase()}`);
+const propName = (n) => (n.type === 'Identifier' ? n.name : n.type === 'Literal' && typeof n.value === 'string' ? n.value : null);
+// A map style's keys that set a look ('circle-radius', 'text-font',
+// 'circle-stroke-color', clusterRadius); British "colour" is data here.
+const styleKey = /(color|width|radius|size|font)/i;
+
+/**
+ * Script code (a component's <script>, a .ts file) that styles: strings
+ * given to an element's style (el.style.color = …, el.style.cssText = …),
+ * to style.setProperty(…), and the strings and numbers given to a map
+ * style's colour, width, radius, size and font keys. A value read from a
+ * token (token('--accent'), px('--map-stroke')) passes.
+ */
+function checkScript(program, text, offset, report) {
+	if (!program) return;
+	const line = (n) => lineOf(text, n.start - offset);
+	walk(program, (n) => {
+		if (n.type === 'AssignmentExpression' && n.left.type === 'MemberExpression') {
+			const target = n.left;
+			const name = target.computed ? propName(target.property) : target.property.name;
+			if (target.object.type === 'MemberExpression' && propName(target.object.property) === 'style' && name) {
+				// el.style.color = '#f00'; el.style.cssText = 'color: #f00'
+				for (const lit of literals(n.right)) {
+					if (name === 'cssText') checkDeclarations(lit, line(n), report, (p, v) => `style.cssText = "${p}: ${v}"`);
+					else for (const q of problems(kebab(name), lit)) report(line(n), `style.${name} = "${lit}"`, q);
+				}
+			} else if (name === 'style') {
+				for (const lit of literals(n.right)) checkDeclarations(lit, line(n), report, (p, v) => `style = "${p}: ${v}"`);
+			}
+		} else if (n.type === 'CallExpression' && n.callee.type === 'MemberExpression' && propName(n.callee.property) === 'setProperty') {
+			// el.style.setProperty('color', '#f00')
+			const prop = n.arguments[0] && n.arguments[0].type === 'Literal' ? String(n.arguments[0].value) : 'color';
+			for (const arg of n.arguments.slice(1)) for (const lit of literals(arg)) for (const q of problems(prop, lit)) report(line(n), `setProperty('${prop}', '${lit}')`, q);
+		} else if (n.type === 'Property' && !n.computed && styleKey.test(propName(n.key) ?? '') && !/colour/i.test(propName(n.key))) {
+			// 'circle-radius': 8, 'text-font': ['Noto Sans Medium'], 'circle-color': '#f00'
+			const key = propName(n.key);
+			for (const lit of literals(n.value, true)) {
+				if (/^-?\d*\.?\d+$/.test(lit)) {
+					if (parseFloat(lit) !== 0) report(line(n), `${key}: ${lit}`, `number ${lit}`);
+				} else if (/font/i.test(key)) report(line(n), `${key}: '${lit}'`, `font ${lit}`);
+				else for (const q of problems(key, lit)) report(line(n), `${key}: '${lit}'`, q);
+			}
+		}
+	});
+}
+
 // Tokens defined in app.css, and those a component sets itself from data
 // (style:--agency={…}): a var() naming anything else is a mistake.
 const defined = new Set();
@@ -137,8 +230,17 @@ function noteUses(name, line, value, where) {
 	for (const m of value.matchAll(/var\(\s*(--[\w-]+)/g)) uses.push({ name, line, token: m[1], where });
 }
 
+function checkTs(file, text, report) {
+	// Svelte's parser reads TypeScript too, inside a <script lang="ts">.
+	const open = '<script lang="ts">';
+	const ast = parse(`${open}${text}</script>`, { modern: true, filename: file });
+	checkScript(ast.instance?.content, text, open.length, report);
+}
+
 function checkSvelte(file, text, report, name) {
 	const ast = parse(text, { modern: true, filename: file });
+	checkScript(ast.instance?.content, text, 0, report);
+	checkScript(ast.module?.content, text, 0, report);
 	for (const d of declarations(ast.css)) {
 		// A custom property set in a component is a hard-coded value too.
 		for (const p of problems(d.property, d.value)) report(lineOf(text, d.start), `${d.property}: ${d.value.trim()}`, p);
@@ -167,6 +269,9 @@ function checkSvelte(file, text, report, name) {
 					for (const m of val.matchAll(/\u0000(\d+)\u0000/g))
 						for (const lit of literals(holes[Number(m[1])].expression)) for (const q of problems(prop, lit)) report(line, `style="${prop}: ${shown}"`, q);
 				}
+				// A string in the braces that holds declarations itself:
+				// style={"color: #f00"}, style={`padding: 4px`}.
+				for (const h of holes) for (const lit of literals(h.expression)) checkDeclarations(lit, line, report, (p, v) => `style={"${p}: ${v}"}`);
 			} else if (a.type === 'StyleDirective') {
 				for (const p of parts) for (const t of written(p)) for (const q of problems(a.name, t)) report(line, `style:${a.name}="${t}"`, q);
 			} else if (a.type === 'Attribute' && name === 'class') {
@@ -222,7 +327,7 @@ function checkCss(file, text, report, name) {
 function files(dir) {
 	return readdirSync(dir).flatMap((name) => {
 		const p = join(dir, name);
-		return statSync(p).isDirectory() ? files(p) : /\.(svelte|css)$/.test(name) ? [p] : [];
+		return statSync(p).isDirectory() ? files(p) : /\.(svelte|css|ts)$/.test(name) && !name.endsWith('.d.ts') ? [p] : [];
 	});
 }
 
@@ -237,6 +342,7 @@ for (const file of [tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
 	const target = targets.includes(file);
 	const report = (line, where, what) => target && found.push(`${name}:${line}: hard-coded ${what} in ${where}`);
 	if (file.endsWith('.svelte')) checkSvelte(file, text, report, name);
+	else if (file.endsWith('.ts')) checkTs(file, text, report);
 	else checkCss(file, text, report, name);
 }
 for (const u of uses) if (!defined.has(u.token)) found.push(`${u.name}:${u.line}: unknown token ${u.token} in ${u.where}`);

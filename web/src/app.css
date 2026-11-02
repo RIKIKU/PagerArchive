@@ -184,6 +184,18 @@
 	--sheet-height: 85dvh;
 	--map-height: min(65dvh, 40rem);
 	--map-min-height: 18rem;
+	/* The map's own drawing of messages (MapView reads these): a point, a
+	   cluster by size, the outline, an approximate location's ring, how near
+	   points join into a cluster, and the cluster's count in one of the map's
+	   own fonts (static/map/fonts). */
+	--map-point-radius: 8px;
+	--map-cluster-radius-small: 14px;
+	--map-cluster-radius-medium: 18px;
+	--map-cluster-radius-large: 24px;
+	--map-stroke: 2px;
+	--map-ring-stroke: 4px;
+	--map-cluster-distance: 36px;
+	--map-font: 'Noto Sans Medium';
 	--map-height-small: 16rem;
 	--swatch-size: 1.5rem;
 	--swatch-size-small: 0.9rem;
