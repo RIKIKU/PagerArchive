@@ -4,10 +4,12 @@
 	// is the agency name. The URL changes when the icon does, so the browser
 	// fetches each icon once and keeps it. In rows it's the size of the text
 	// beside it, just before the alias; large on the alias and detail views.
+	// Its drawn size is the tokens' (--tile-size), set before it loads, so it
+	// needs no width or height of its own (R82c).
 	let { src, alt, large = false }: { src: string; alt: string; large?: boolean } = $props();
 </script>
 
-<span class="tile" class:large><img {src} {alt} width="64" height="64" decoding="async" /></span>
+<span class="tile" class:large><img {src} {alt} decoding="async" /></span>
 
 <style>
 	.tile {

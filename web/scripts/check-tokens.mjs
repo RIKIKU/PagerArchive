@@ -6,11 +6,18 @@
 //
 // It reads, with Svelte's own parser, every .svelte file under src:
 //   - the <style> block: every declaration's value;
-//   - inline styles: style="…" attributes and style:property directives with
-//     a fixed value (style:--agency={m.colour} takes its value from data,
-//     not from the code, so it passes);
-//   - class strings: a class attribute's fixed text, for a colour or length
-//     written into a class name (a utility class such as "p-[4px]").
+//   - inline styles: style="…" attributes and style:property directives,
+//     their text and every string written in their expressions
+//     (style="color: {'#f00'}", style:color={x ? '#f00' : y});
+//     style:--agency={m.colour} takes its value from data, so it passes;
+//   - class strings: a class attribute's text and strings, for a colour or
+//     length written into a class name (a utility class such as "p-[4px]");
+//   - attributes that style: a colour in fill, stroke, stop-color, color and
+//     the other colour attributes; any value in stroke-width,
+//     stroke-dasharray, font-size, font-weight, font-family, letter-spacing,
+//     rx and ry; and width or height on an img or svg, unless from data.
+// A border's or outline's width written as thin, medium or thick fails as a
+// length does.
 // And src/app.css, where hard-coded values are allowed only as the value of
 // a token (a custom property, --name: value); its other rules use tokens
 // too. Selectors and @media, @container and @supports conditions aren't
@@ -64,6 +71,11 @@ export function problems(property, value) {
 	if (prop === 'font-weight' && rest.trim() !== '') out.push(`font weight ${v}`);
 	if (prop === 'line-height' && rest.trim() !== '' && rest.trim() !== 'normal') out.push(`line height ${v}`);
 	if (prop === 'z-index' && /\d/.test(rest) && rest.trim() !== '0') out.push(`z-index ${v}`);
+	// A border's or outline's width written as a keyword is a length too.
+	if (/^(border|outline|column-rule)(-|$)/.test(prop)) {
+		const k = rest.match(/(?<![\w-])(thin|medium|thick)(?![\w-])/i);
+		if (k) out.push(`width ${k[1]}`);
+	}
 	return out;
 }
 
@@ -98,6 +110,24 @@ function walk(node, visit) {
 	for (const [k, v] of Object.entries(node)) if (k !== 'parent' && v && typeof v === 'object') walk(v, visit);
 }
 
+/** The fixed values written in an expression: its strings, the text of its
+ * template literals, and (numbers too) its numbers. */
+function literals(expr, numbers = false) {
+	const out = [];
+	walk(expr, (n) => {
+		if (n.type === 'Literal' && (typeof n.value === 'string' || (numbers && typeof n.value === 'number'))) out.push(String(n.value));
+		else if (n.type === 'TemplateElement' && (n.value.cooked ?? n.value.raw)) out.push(n.value.cooked ?? n.value.raw);
+	});
+	return out;
+}
+
+// Attributes that draw in a colour (SVG's presentation attributes, and the
+// old HTML ones), and those that set a stroke, type or a corner's radius.
+const colourAttributes = new Set(['fill', 'stroke', 'stop-color', 'flood-color', 'lighting-color', 'color', 'bgcolor', 'background', 'text']);
+const styleAttributes = new Set(['stroke-width', 'stroke-dasharray', 'font-size', 'font-weight', 'font-family', 'letter-spacing', 'rx', 'ry']);
+// Values an attribute may hold without naming a colour or a size.
+const keywordOnly = /^(none|currentcolor|transparent|inherit|auto|context-fill|context-stroke)$/i;
+
 // Tokens defined in app.css, and those a component sets itself from data
 // (style:--agency={…}): a var() naming anything else is a mistake.
 const defined = new Set();
@@ -116,31 +146,59 @@ function checkSvelte(file, text, report, name) {
 	}
 	walk(ast.fragment, (n) => {
 		if (!n.attributes) return;
+		const element = (n.name ?? '').toLowerCase();
 		for (const a of n.attributes) {
 			if (a.type === 'StyleDirective' && a.name.startsWith('--')) defined.add(a.name);
 			const parts = Array.isArray(a.value) ? a.value : a.value && a.value !== true ? [a.value] : [];
-			const fixed = (p) => (p.type === 'Text' ? p.data : p.type === 'ExpressionTag' && p.expression.type === 'Literal' && typeof p.expression.value === 'string' ? p.expression.value : null);
-			if (a.type === 'Attribute' && a.name === 'style') {
-				for (const p of parts) {
-					const t = fixed(p);
-					if (t) for (const [prop, val] of inline(t)) for (const q of problems(prop, val)) report(lineOf(text, p.start), `style="${prop}: ${val}"`, q);
+			// What the code writes: the text, and every string in an expression
+			// ({x ? '#f00' : y}); what comes from data passes.
+			const written = (p) => (p.type === 'Text' ? [p.data] : p.type === 'ExpressionTag' ? literals(p.expression) : []);
+			const name = (a.name ?? '').toLowerCase();
+			const line = lineOf(text, a.start);
+			if (a.type === 'Attribute' && name === 'style') {
+				// The attribute as one text, each expression standing in for a
+				// placeholder, so a string inside braces is checked against the
+				// property it's the value of: style="color: {'#f00'}".
+				const holes = [];
+				const joined = parts.map((p) => (p.type === 'Text' ? p.data : `\u0000${holes.push(p) - 1}\u0000`)).join('');
+				for (const [prop, val] of inline(joined)) {
+					const shown = val.replace(/\u0000\d+\u0000/g, '{…}');
+					for (const q of problems(prop, val.replace(/\u0000\d+\u0000/g, ''))) report(line, `style="${prop}: ${shown}"`, q);
+					for (const m of val.matchAll(/\u0000(\d+)\u0000/g))
+						for (const lit of literals(holes[Number(m[1])].expression)) for (const q of problems(prop, lit)) report(line, `style="${prop}: ${shown}"`, q);
 				}
 			} else if (a.type === 'StyleDirective') {
+				for (const p of parts) for (const t of written(p)) for (const q of problems(a.name, t)) report(line, `style:${a.name}="${t}"`, q);
+			} else if (a.type === 'Attribute' && name === 'class') {
 				for (const p of parts) {
-					const t = fixed(p);
-					if (t !== null) for (const q of problems(a.name, t)) report(lineOf(text, a.start), `style:${a.name}="${t}"`, q);
-				}
-			} else if (a.type === 'Attribute' && a.name === 'class') {
-				for (const p of parts) {
-					const t = fixed(p);
-					if (!t) continue;
-					for (const word of t.split(/\s+/).filter(Boolean)) {
-						const q = [];
-						if (hex.test(word)) q.push(`colour ${word.match(hex)[0]}`);
-						for (const m of word.matchAll(new RegExp(`(\\d*\\.?\\d+)(${units})(?![a-z])`, 'gi'))) if (parseFloat(m[1]) !== 0) q.push(`length ${m[0]}`);
-						for (const x of q) report(lineOf(text, p.start), `class="${word}"`, x);
+					for (const t of written(p)) {
+						for (const word of t.split(/\s+/).filter(Boolean)) {
+							const q = [];
+							if (hex.test(word)) q.push(`colour ${word.match(hex)[0]}`);
+							for (const m of word.matchAll(new RegExp(`(\\d*\\.?\\d+)(${units})(?![a-z])`, 'gi'))) if (parseFloat(m[1]) !== 0) q.push(`length ${m[0]}`);
+							for (const x of q) report(line, `class="${word}"`, x);
+						}
 					}
 				}
+			} else if (a.type === 'Attribute' && colourAttributes.has(name)) {
+				// <rect fill="#ff0000">, <path stroke="red">: a colour that
+				// CSS never sees, so no token can change it.
+				for (const p of parts)
+					for (const t of written(p)) {
+						const v = t.trim();
+						if (!v || keywordOnly.test(v)) continue;
+						for (const q of problems('color', v)) report(line, `${name}="${v}"`, q);
+					}
+			} else if (a.type === 'Attribute' && styleAttributes.has(name)) {
+				for (const p of parts)
+					for (const t of p.type === 'ExpressionTag' ? literals(p.expression, true) : written(p))
+						if (t.trim() && !keywordOnly.test(t.trim())) report(line, `${name}="${t.trim()}"`, `${name} ${t.trim()}`);
+			} else if (a.type === 'Attribute' && (name === 'width' || name === 'height') && (element === 'img' || element === 'svg')) {
+				// A size the code writes on an image or a drawing; one from
+				// data (width={icon.width}) passes.
+				for (const p of parts)
+					for (const t of p.type === 'ExpressionTag' ? literals(p.expression, true) : written(p))
+						if (t.trim()) report(line, `<${element} ${name}="${t.trim()}">`, `size ${t.trim()}`);
 			}
 		}
 	});
