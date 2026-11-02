@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -30,6 +31,11 @@ type Store struct {
 	// SecondTryOnly, for tests: a search the index can serve runs as its
 	// second try straight away (SearchMessages).
 	SecondTryOnly bool
+	// BoundedTryOnly, for tests: the same with the bounded try, then the second
+	// if the bounded try doesn't find them all.
+	BoundedTryOnly bool
+	// FirstTry, for tests: how long a first try runs, if set.
+	FirstTry time.Duration
 }
 
 // Open connects and applies pending migrations. A tracer, if given, traces

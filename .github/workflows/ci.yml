@@ -90,8 +90,9 @@ jobs:
           grep -E '^ *--- (PASS|FAIL): Test(A[0-9]+|ExampleGolden|ClientAuth|Dedup|PostGIS|Presets|StandIns|Integration|Deactivation|LockedAccounts|M6|M7|Import|PowerShell|M9|M12|FailureCauses|Radio|NoSquelch)|postgis:|^(ok|FAIL)' test.log || true
 
   # A75: R33b's searches on 10 years of made-up pages (ADR 0017), each within
-  # 1 second and listing the same pages as the query before M13a. Its own
-  # job, as seeding 4,562,500 pages takes minutes.
+  # 1 second and listing the same pages as the query before M13a, including
+  # the first run after a restart with both caches cold. Its own job, as
+  # seeding 4,562,500 pages takes minutes.
   search:
     name: Search speed (A75)
     runs-on: ubuntu-24.04
@@ -120,6 +121,8 @@ jobs:
       - name: Disk before
         run: df -h /
       - name: A75 on 4,562,500 made-up pages
+        env:
+          PAGERARCHIVE_A75_CONTAINER: ${{ job.services.postgres.id }}
         run: go test -count=1 -v -timeout 35m -run TestA75SearchSpeed ./internal/acceptance/
       - name: Disk after
         if: always()
