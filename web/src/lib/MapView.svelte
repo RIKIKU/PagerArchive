@@ -39,14 +39,42 @@
 	maplibregl.setWorkerUrl(workerUrl);
 	let protocolAdded = false;
 
+	// A colour token as the browser draws it: tokens are written once for
+	// both themes, light-dark(…), which only an element's computed colour
+	// resolves (app.css).
 	function token(name: string): string {
-		return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		const probe = document.createElement('span');
+		probe.style.color = `var(${name})`;
+		probe.hidden = true;
+		document.documentElement.append(probe);
+		const colour = getComputedStyle(probe).color;
+		probe.remove();
+		return colour;
 	}
 
 	// A type-scale token in pixels, for text drawn by the map.
 	function rem(name: string): number {
-		return parseFloat(token(name)) * parseFloat(getComputedStyle(document.documentElement).fontSize);
+		return parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name)) * parseFloat(getComputedStyle(document.documentElement).fontSize);
 	}
+
+	// A size token in pixels (px, or rem times the root's font size).
+	function px(name: string): number {
+		const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return v.endsWith('rem') ? rem(name) : parseFloat(v);
+	}
+
+	// A font token, its quotes removed: the name of one of the map's own
+	// fonts (static/map/fonts).
+	function font(name: string): string {
+		return getComputedStyle(document.documentElement).getPropertyValue(name).trim().replace(/^['"]|['"]$/g, '');
+	}
+
+	// Clusters grow at these numbers of messages (data, not look).
+	const clusterSteps = [10, 50];
+
+	// What the messages are drawn with, from the tokens (R82c), kept on the
+	// map's element so a test can see the map follows them.
+	let drawn = $state('');
 
 	function dark(): boolean {
 		const t = document.documentElement.dataset.theme;
@@ -93,11 +121,22 @@
 
 	function addMessageLayers() {
 		if (!map) return;
+		const look = {
+			point: px('--map-point-radius'),
+			clusters: [px('--map-cluster-radius-small'), px('--map-cluster-radius-medium'), px('--map-cluster-radius-large')],
+			distance: px('--map-cluster-distance'),
+			stroke: px('--map-stroke'),
+			ring: px('--map-ring-stroke'),
+			font: font('--map-font'),
+			label: rem('--text-sm'),
+			colours: [token('--accent'), token('--bg'), token('--emergency-bg'), token('--nonemergency-bg'), token('--admin-bg')]
+		};
+		drawn = JSON.stringify(look);
 		map.addSource('messages', {
 			type: 'geojson',
 			data: geojson(),
 			cluster: !single,
-			clusterRadius: 36,
+			clusterRadius: look.distance,
 			clusterMaxZoom: 15
 		});
 		const fill = [
@@ -118,8 +157,8 @@
 			filter: ['has', 'point_count'],
 			paint: {
 				'circle-color': token('--accent'),
-				'circle-radius': ['step', ['get', 'point_count'], 14, 10, 18, 50, 24],
-				'circle-stroke-width': 2,
+				'circle-radius': ['step', ['get', 'point_count'], look.clusters[0], clusterSteps[0], look.clusters[1], clusterSteps[1], look.clusters[2]],
+				'circle-stroke-width': look.stroke,
 				'circle-stroke-color': token('--bg')
 			}
 		});
@@ -128,7 +167,7 @@
 			type: 'symbol',
 			source: 'messages',
 			filter: ['has', 'point_count'],
-			layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': ['Noto Sans Medium'], 'text-size': rem('--text-sm') },
+			layout: { 'text-field': ['get', 'point_count_abbreviated'], 'text-font': [look.font], 'text-size': look.label },
 			paint: { 'text-color': token('--bg') }
 		});
 		// An approximate location (the street's centroid) is drawn as a ring.
@@ -138,10 +177,10 @@
 			source: 'messages',
 			filter: ['!', ['has', 'point_count']],
 			paint: {
-				'circle-radius': 8,
+				'circle-radius': look.point,
 				'circle-color': ['case', ['get', 'approximate'], token('--bg'), fill],
 				'circle-stroke-color': fill,
-				'circle-stroke-width': ['case', ['get', 'approximate'], 4, 2]
+				'circle-stroke-width': ['case', ['get', 'approximate'], look.ring, look.stroke]
 			}
 		});
 	}
@@ -252,6 +291,7 @@
 		: 'Map of located messages. The same messages are listed below the map.'}
 	data-testid="map"
 	data-ready={unavailable ? 'unavailable' : ready}
+	data-drawn={drawn || undefined}
 >
 	{#if unavailable}
 		<p>
@@ -263,20 +303,22 @@
 
 <style>
 	.map {
-		height: min(65vh, 40rem);
-		min-height: 18rem;
-		border-bottom: 1px solid var(--border);
+		height: var(--map-height);
+		min-height: var(--map-min-height);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
 		background: var(--surface);
 	}
 	.single {
-		height: 16rem;
+		height: var(--map-height-small);
 		min-height: 0;
-		border: 1px solid var(--border);
-		border-radius: 0.3rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
 	}
 	.unavailable {
 		height: auto;
 		min-height: 0;
-		padding: 0.75rem;
+		padding: var(--space-md);
 	}
 </style>

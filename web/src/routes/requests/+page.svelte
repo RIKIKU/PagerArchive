@@ -107,13 +107,13 @@
 <style>
 	h2 {
 		font-size: var(--text-lg);
-		margin: 1.25rem 0.75rem 0.25rem;
+		margin: var(--space-xl) 0 var(--space-2xs);
 	}
 	.ok {
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.box,
 	.list {
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 </style>

@@ -6,12 +6,16 @@
 	import AliasHistory from '#lib/AliasHistory.svelte';
 	import RequestCard from '#lib/RequestCard.svelte';
 	import { refreshWaiting } from '#lib/waiting.svelte.ts';
+	import { setTitle } from '#lib/here.svelte.ts';
 
 	// R53: one alias in Administration: edit (at once, no review), delete
 	// (R55: its waiting requests close), its waiting requests and its
 	// history (R57).
 	let meta: Meta | undefined = $state();
 	let a: AdminAlias | undefined = $state();
+	$effect(() => {
+		if (a) setTitle(a.name);
+	});
 	let error = $state('');
 	let notice = $state(page.url.searchParams.has('added') ? 'Alias added.' : '');
 	let confirming = $state(false);
@@ -111,24 +115,24 @@
 
 <style>
 	.links {
-		margin: 0 0.75rem;
+		margin: 0;
 		font-size: var(--text-sm);
 	}
 	.ok {
-		margin: 0.5rem 0.75rem;
+		margin: var(--space-sm) 0;
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 1rem 0 0.25rem;
+		margin: var(--space-lg) 0 var(--space-2xs);
 	}
 	.danger-zone,
 	.requests {
-		margin: 0 0.75rem;
-		max-width: 44rem;
+		margin: 0;
+		max-width: var(--measure);
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 	}
 </style>

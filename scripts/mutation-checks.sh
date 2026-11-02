@@ -333,6 +333,20 @@ mutate "the executor retries any reply, not only transient ones" internal/stackt
 	'	return c.err != nil || c.status >= 500' '	return true'
 mutate "the executor resends a password or code without asking whether Authentik counted it" internal/stacktest/flow_test.go unit:internal/stacktest:TestOnlyTransientRepliesAreRetried \
 	'			if n := b.failures(); n != before {' '			if n := b.failures(); false {'
+mutate "the executor sends one request up to 10 times, not 3" internal/stacktest/flow_test.go unit:internal/stacktest:TestOnlyTransientRepliesAreRetried \
+	'const transientTries = 3' 'const transientTries = 10'
+mutate "any access-denied counts as the lock's refusal, whatever its message" internal/stacktest/outcome_test.go unit:internal/stacktest:TestRepliesThatAreNotAnswers \
+	'case c.Component == "ak-stage-access-denied" && strings.Contains(text, tooManyAttempts):' 'case c.Component == "ak-stage-access-denied":'
+# R33a's text terms (owner, 2026-11-02; ADR 0015): every term required, or:
+# an alternative, a quoted phrase one term.
+mutate "text terms: any one term is enough (AND made OR)" internal/search/search.go go:TestSearchTextTerms \
+	'	p.QAll = likeContains(terms.All)
+	p.QAny = likeContains(terms.Any)' '	p.QAll = []string{}
+	p.QAny = likeContains(append(terms.All, terms.Any...))'
+mutate "text terms: or: is ignored (an or: term is one more required term)" internal/search/text.go unit:internal/search:TestParseText \
+	'		if or {' '		if false && or {'
+mutate "text terms: quotes are ignored (a phrase is split into words)" internal/search/text.go unit:internal/search:TestParseText \
+	"		if i < len(s) && s[i] == '\"' {" '		if false {'
 mutate "the client logs why it stopped after telemetry has shut down" cmd/pagerarchive-client/main.go go:TestR73EveryClientLineExported \
 	'			log.Error("client stopped", "error", err.Error())
 			err = stopped{err}

@@ -335,61 +335,61 @@
 
 <style>
 	.integration-form {
-		margin: 0.75rem;
-		padding: 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: 0.4rem;
+		margin: var(--space-md) 0;
+		padding: var(--space-md);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-badge);
 		background: var(--surface);
-		max-width: 44rem;
+		max-width: var(--measure);
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 0 0 0.75rem;
+		margin: 0 0 var(--space-md);
 	}
 	fieldset {
-		border: 1px solid var(--border);
-		border-radius: 0.3rem;
-		margin: 0.75rem 0;
-		padding: 0.5rem 0.75rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
+		margin: var(--space-md) 0;
+		padding: var(--space-sm) var(--space-md);
 		min-width: 0;
 	}
 	fieldset.inner {
 		border: 0;
 		padding: 0;
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	legend {
-		font-weight: 600;
-		padding: 0 0.25rem;
+		font-weight: var(--weight-strong);
+		padding: 0 var(--space-2xs);
 	}
 	.field {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	.field label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-		gap: 0 0.75rem;
+		grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
+		gap: 0 var(--space-md);
 	}
 	.checks {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 1rem;
+		gap: var(--space-2xs) var(--space-lg);
 	}
 	/* One option per line, each radio directly under the one above. */
 	.stacked {
 		display: flex;
 		flex-direction: column;
 		align-items: flex-start;
-		gap: 0.35rem;
+		gap: var(--space-xs);
 	}
 	.check {
 		display: inline-flex;
 		align-items: baseline;
-		gap: 0.4rem;
+		gap: var(--space-xs);
 	}
 	.check input {
 		flex: none;
@@ -397,28 +397,28 @@
 	.help {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 	.help.warn {
 		color: var(--warn-fg);
 		background: var(--warn-bg);
-		padding: 0.25rem 0.5rem;
-		border-radius: 0.25rem;
+		padding: var(--space-2xs) var(--space-sm);
+		border-radius: var(--radius-small);
 	}
 	textarea {
 		font: inherit;
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 		font-size: var(--text-sm);
 		color: inherit;
 		background: var(--bg);
-		border: 1px solid var(--muted);
-		border-radius: 0.3rem;
-		padding: 0.35rem 0.5rem;
+		border: var(--border-width) solid var(--muted);
+		border-radius: var(--radius-small);
+		padding: var(--space-xs) var(--space-sm);
 		width: 100%;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 	}
 </style>

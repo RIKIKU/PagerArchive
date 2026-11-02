@@ -77,7 +77,7 @@
 	tree first shows everyone they invited, and everyone those people invited, so you can choose who to spare. Only an
 	admin can invite a deactivated person again.
 </p>
-<p class="invite"><a href="/account#invite">Invite someone</a> from your account page, like everyone else.</p>
+<p class="invite"><a href="/account/invite">Invite someone</a> from your account, like everyone else.</p>
 <div aria-live="polite">
 	{#if notice}<p class="ok" role="status">{notice}</p>{/if}
 </div>
@@ -151,31 +151,31 @@
 <style>
 	h2 {
 		font-size: var(--text-lg);
-		margin: 1.5rem 0.75rem 0.25rem;
+		margin: var(--space-2xl) 0 var(--space-2xs);
 	}
 	.ok {
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.invite {
-		margin: 0.5rem 0.75rem;
+		margin: var(--space-sm) 0;
 	}
 	.cards {
 		list-style: none;
 		padding: 0;
-		margin: 0 0.75rem;
+		margin: 0;
 	}
 	.cards li {
-		padding: 0.6rem 0;
-		border-bottom: 1px solid var(--border);
+		padding: var(--space-sm) 0;
+		border-bottom: var(--border-width) solid var(--border);
 	}
 	.head {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.25rem 0.5rem;
+		gap: var(--space-2xs) var(--space-sm);
 		align-items: center;
 	}
 	.who {
-		font-weight: 600;
+		font-weight: var(--weight-strong);
 		overflow-wrap: anywhere;
 	}
 	.off .who {
@@ -183,9 +183,9 @@
 	}
 	.tag {
 		font-size: var(--text-xs);
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0.5rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 var(--space-sm);
 	}
 	.tag.warn {
 		background: var(--warn-bg);
@@ -200,8 +200,8 @@
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.4rem;
+		gap: var(--space-xs);
 		align-items: center;
-		margin-top: 0.4rem;
+		margin-top: var(--space-xs);
 	}
 </style>

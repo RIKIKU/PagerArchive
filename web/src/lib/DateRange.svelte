@@ -64,7 +64,7 @@
 	label {
 		display: flex;
 		flex-direction: column;
-		gap: 0.15rem;
+		gap: var(--space-3xs);
 		font-size: var(--text-sm);
 		min-width: 0;
 	}

@@ -2,7 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { api, type CapcodeView, type Meta } from '#lib/api.ts';
-	import { criteria } from '#lib/filters.ts';
+	import { criteria } from '#lib/search.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import AliasHistory from '#lib/AliasHistory.svelte';
 	import MessageList from '#lib/MessageList.svelte';
@@ -45,7 +45,7 @@
 			{#if c.last_seen}<dt>Last seen</dt>
 				<dd><time datetime={isoAttr(c.last_seen)}>{dateTime(c.last_seen, tz)}</time></dd>{/if}
 		</dl>
-		<p><a href="/reports?capcode={c.capcode}">Report for this capcode</a></p>
+		<p><a href="/reports/capcode?capcode={c.capcode}">Report for this capcode</a></p>
 		{#if meta?.role === 'admin'}
 			<p><a class="button secondary" href="/admin/aliases?add={c.capcode}">Add an alias for this capcode</a></p>
 		{:else if meta}
@@ -55,21 +55,27 @@
 	{#if meta?.role === 'admin' && c.history?.length}
 		<AliasHistory history={c.history} {tz} />
 	{/if}
-	<MessageList {query} base={{ capcode: c.capcode, unaliased: 'true' }} level={2} />
+	<div class="listbox"><MessageList {query} base={{ capcode: c.capcode, unaliased: 'true' }} level={2} /></div>
 {/if}
 
 <style>
 	.about {
-		padding: 0 0.75rem 0.5rem;
-		border-bottom: 1px solid var(--border);
+		max-width: var(--measure);
 	}
 	h1 {
-		margin: 0.75rem 0 0.5rem;
+		margin: 0 0 var(--space-md);
+	}
+	.listbox {
+		margin-top: var(--space-xl);
+		background: var(--surface);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius);
+		overflow: hidden;
 	}
 	dl {
 		display: grid;
-		grid-template-columns: minmax(6rem, max-content) 1fr;
-		gap: 0.3rem 1rem;
+		grid-template-columns: minmax(var(--label-min), max-content) 1fr;
+		gap: var(--space-2xs) var(--space-lg);
 		margin: 0;
 	}
 	dt {

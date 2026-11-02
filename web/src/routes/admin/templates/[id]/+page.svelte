@@ -4,11 +4,15 @@
 	import { api, type AdminTemplate, type TemplateInput } from '#lib/api.ts';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import TemplateForm from '#lib/TemplateForm.svelte';
+	import { setTitle } from '#lib/here.svelte.ts';
 
 	// R64: one template in Administration: edit it (at once, for every alias
 	// using it), add, replace or remove its icon (R65), and delete it, which
 	// the server refuses while aliases use it.
 	let t: AdminTemplate | undefined = $state();
+	$effect(() => {
+		if (t) setTitle(t.name);
+	});
 	let profiles: string[] = $state([]);
 	let error = $state('');
 	let notice = $state(page.url.searchParams.has('added') ? 'Template added. You can add its icon below.' : '');
@@ -163,46 +167,46 @@
 
 <style>
 	.links {
-		margin: 0 0.75rem;
+		margin: 0;
 		font-size: var(--text-sm);
 	}
 	.ok {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 1rem 0 0.25rem;
+		margin: var(--space-lg) 0 var(--space-2xs);
 	}
 	.icon,
 	.danger-zone {
-		margin: 0 0.75rem;
-		max-width: 44rem;
+		margin: 0;
+		max-width: var(--measure);
 	}
 	.current {
 		display: flex;
 		align-items: center;
-		gap: 0.75rem;
-		margin: 0.25rem 0 0.75rem;
+		gap: var(--space-md);
+		margin: var(--space-2xs) 0 var(--space-md);
 	}
 	.none {
 		color: var(--muted);
 	}
 	label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	.help {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.2rem 0 0.25rem;
+		margin: var(--space-2xs) 0 var(--space-2xs);
 	}
 	.error {
-		padding: 0.25rem 0;
+		padding: var(--space-2xs) 0;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
+		gap: var(--space-sm);
+		margin-top: var(--space-sm);
 	}
 </style>

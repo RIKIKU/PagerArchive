@@ -859,7 +859,9 @@ func TestM12Metrics(t *testing.T) {
 			t.Errorf("/metrics lacks %q", want)
 		}
 	}
-	if strings.Contains(text, "SMOKE") || strings.Contains(text, "999999") || strings.Contains(text, "user") && strings.Contains(text, `user="`) {
+	// The message ID as a number of its own: a value such as
+	// process_cpu_seconds_total 0.41263099999999997 holds its digits by chance.
+	if strings.Contains(text, "SMOKE") || regexp.MustCompile(`(^|[^0-9.])999999([^0-9.]|$)`).MatchString(text) || strings.Contains(text, "user") && strings.Contains(text, `user="`) {
 		t.Error("/metrics carries a query, an ID or a user")
 	}
 	if !strings.HasSuffix(om, "# EOF\n") || !strings.Contains(om, "# TYPE pagerarchive_pages_received counter") ||

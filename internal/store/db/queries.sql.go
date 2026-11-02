@@ -3348,47 +3348,56 @@ FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
-  AND ($2::text IS NULL OR m.text ILIKE $2
-       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE $2))
-  AND (cardinality($3::text[]) = 0 OR m.capcode = ANY($3::text[]))
-  AND (cardinality($4::text[]) = 0 OR a.name ILIKE ANY($4::text[]))
+  -- R33a's text terms, each an ILIKE pattern found in the text or an extra
+  -- field: every one of q_all, or any one of q_any (the or: terms).
+  AND ((cardinality($2::text[]) = 0 AND cardinality($3::text[]) = 0)
+       OR (cardinality($2::text[]) > 0
+           AND NOT EXISTS (SELECT 1 FROM unnest($2::text[]) AS term (p)
+                           WHERE NOT (m.text ILIKE term.p
+                                      OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
+       OR EXISTS (SELECT 1 FROM unnest($3::text[]) AS term (p)
+                  WHERE m.text ILIKE term.p
+                     OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
+  AND (cardinality($4::text[]) = 0 OR m.capcode = ANY($4::text[]))
   AND (cardinality($5::text[]) = 0 OR a.name ILIKE ANY($5::text[]))
-  AND (cardinality($6::bigint[]) = 0 OR m.alias_id = ANY($6::bigint[]))
-  AND (cardinality($7::text[]) = 0 OR t.agency ILIKE ANY($7::text[]))
+  AND (cardinality($6::text[]) = 0 OR a.name ILIKE ANY($6::text[]))
+  AND (cardinality($7::bigint[]) = 0 OR m.alias_id = ANY($7::bigint[]))
   AND (cardinality($8::text[]) = 0 OR t.agency ILIKE ANY($8::text[]))
-  AND (cardinality($9::text[]) = 0 OR upper(m.paging_group) = ANY($9::text[]))
-  AND (cardinality($10::text[]) = 0 OR m.paging_group ILIKE ANY($10::text[]))
-  AND (cardinality($11::text[]) = 0
-       OR ('none' = ANY($11::text[]) AND m.priority IS NULL)
-       OR m.priority = ANY($11::text[]))
-  AND (NOT $12::bool
-       OR COALESCE(m.event_type = ANY($13::text[])
-                   OR m.event_type LIKE ANY($14::text[]), false)
-       OR ($15::bool
-           AND NOT COALESCE(m.event_type = ANY($16::text[])
-                            OR m.event_type LIKE ANY($17::text[]), false)))
-  AND (cardinality($18::text[]) = 0 OR m.job_number = ANY($18::text[]))
-  AND ($19::timestamptz IS NULL OR m.sent_at >= $19)
-  AND ($20::timestamptz IS NULL OR m.sent_at < $20)
-  AND (NOT $21::bool OR m.alias_id IS NULL)
-  AND ($22::bool OR a.ignored IS NOT TRUE)
-  AND (NOT $23::bool OR m.parse_failed)
-  AND (NOT $24::bool OR m.address_unsplit)
-  AND (NOT $25::bool OR m.location_mismatch)
-  AND (cardinality($26::text[]) = 0
-       OR ('parse_failed' = ANY($26::text[]) AND m.parse_failed)
-       OR ('address_unsplit' = ANY($26::text[]) AND m.address_unsplit)
-       OR ('location_mismatch' = ANY($26::text[]) AND m.location_mismatch))
-  AND (NOT $27::bool OR m.location IS NOT NULL)
-  AND ($28::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($28, $29::bigint))
+  AND (cardinality($9::text[]) = 0 OR t.agency ILIKE ANY($9::text[]))
+  AND (cardinality($10::text[]) = 0 OR upper(m.paging_group) = ANY($10::text[]))
+  AND (cardinality($11::text[]) = 0 OR m.paging_group ILIKE ANY($11::text[]))
+  AND (cardinality($12::text[]) = 0
+       OR ('none' = ANY($12::text[]) AND m.priority IS NULL)
+       OR m.priority = ANY($12::text[]))
+  AND (NOT $13::bool
+       OR COALESCE(m.event_type = ANY($14::text[])
+                   OR m.event_type LIKE ANY($15::text[]), false)
+       OR ($16::bool
+           AND NOT COALESCE(m.event_type = ANY($17::text[])
+                            OR m.event_type LIKE ANY($18::text[]), false)))
+  AND (cardinality($19::text[]) = 0 OR m.job_number = ANY($19::text[]))
+  AND ($20::timestamptz IS NULL OR m.sent_at >= $20)
+  AND ($21::timestamptz IS NULL OR m.sent_at < $21)
+  AND (NOT $22::bool OR m.alias_id IS NULL)
+  AND ($23::bool OR a.ignored IS NOT TRUE)
+  AND (NOT $24::bool OR m.parse_failed)
+  AND (NOT $25::bool OR m.address_unsplit)
+  AND (NOT $26::bool OR m.location_mismatch)
+  AND (cardinality($27::text[]) = 0
+       OR ('parse_failed' = ANY($27::text[]) AND m.parse_failed)
+       OR ('address_unsplit' = ANY($27::text[]) AND m.address_unsplit)
+       OR ('location_mismatch' = ANY($27::text[]) AND m.location_mismatch))
+  AND (NOT $28::bool OR m.location IS NOT NULL)
+  AND ($29::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($29, $30::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $30::int
+LIMIT $31::int
 `
 
 type SearchMessagesParams struct {
 	OnlyIds          []int64
-	Q                *string
+	QAll             []string
+	QAny             []string
 	Capcodes         []string
 	Aliases          []string
 	AliasLikes       []string
@@ -3459,7 +3468,8 @@ type SearchMessagesRow struct {
 func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) ([]SearchMessagesRow, error) {
 	rows, err := q.db.Query(ctx, searchMessages,
 		arg.OnlyIds,
-		arg.Q,
+		arg.QAll,
+		arg.QAny,
 		arg.Capcodes,
 		arg.Aliases,
 		arg.AliasLikes,
@@ -3786,6 +3796,98 @@ func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (Stree
 	var i StreetPointRow
 	err := row.Scan(&i.Lon, &i.Lat)
 	return i, err
+}
+
+const suggestAgencies = `-- name: SuggestAgencies :many
+SELECT DISTINCT agency FROM templates
+WHERE strpos(lower(agency), lower($1::text)) > 0
+ORDER BY agency
+LIMIT 10
+`
+
+// R33a: template agencies containing what was typed.
+func (q *Queries) SuggestAgencies(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestAgencies, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var agency string
+		if err := rows.Scan(&agency); err != nil {
+			return nil, err
+		}
+		items = append(items, agency)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const suggestAliasNames = `-- name: SuggestAliasNames :many
+SELECT DISTINCT name FROM aliases
+WHERE strpos(lower(name), lower($1::text)) > 0
+ORDER BY name
+LIMIT 10
+`
+
+// R33a: alias names containing what was typed, for the search box.
+func (q *Queries) SuggestAliasNames(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestAliasNames, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		items = append(items, name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const suggestPagingGroups = `-- name: SuggestPagingGroups :many
+WITH RECURSIVE g AS (
+    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
+    UNION ALL
+    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
+    FROM g WHERE g.grp IS NOT NULL
+)
+SELECT grp::text AS paging_group FROM g
+WHERE grp IS NOT NULL AND strpos(lower(grp), lower($1::text)) > 0
+ORDER BY grp
+LIMIT 10
+`
+
+// R33a: paging groups containing what was typed. The groups are few and the
+// messages many, so each distinct group is found with one step down
+// messages_group_idx (a loose index scan), not by reading every message.
+func (q *Queries) SuggestPagingGroups(ctx context.Context, q_ string) ([]string, error) {
+	rows, err := q.db.Query(ctx, suggestPagingGroups, q_)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var paging_group string
+		if err := rows.Scan(&paging_group); err != nil {
+			return nil, err
+		}
+		items = append(items, paging_group)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const templateByID = `-- name: TemplateByID :one

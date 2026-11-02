@@ -421,6 +421,37 @@ func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// suggestSearch offers values for the search box (R33a): the alias names,
+// agencies or paging groups containing q (key alias, agency or group), at
+// most 10, in order. The other keys' values are fixed or come from meta.
+func (s *Server) suggestSearch(w http.ResponseWriter, r *http.Request) {
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	var (
+		out []string
+		err error
+	)
+	switch key := r.URL.Query().Get("key"); key {
+	case "alias":
+		out, err = s.Store.SuggestAliasNames(r.Context(), q)
+	case "agency":
+		out, err = s.Store.SuggestAgencies(r.Context(), q)
+	case "group":
+		out, err = s.Store.SuggestPagingGroups(r.Context(), q)
+	default:
+		problem(w, http.StatusBadRequest, "key must be alias, agency or group")
+		return
+	}
+	if err != nil {
+		s.Log.Error("suggest", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	if out == nil {
+		out = []string{}
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
 // ClientStatus is a receiving client's status (admins only, R39).
 type ClientStatus struct {
 	ID         string     `json:"id"`

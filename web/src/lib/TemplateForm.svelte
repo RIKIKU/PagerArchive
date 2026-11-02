@@ -89,53 +89,53 @@
 
 <style>
 	.template-form {
-		margin: 0.75rem;
-		padding: 0.75rem;
-		border: 1px solid var(--border);
-		border-radius: 0.4rem;
+		margin: var(--space-md) 0;
+		padding: var(--space-md);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-badge);
 		background: var(--surface);
-		max-width: 44rem;
+		max-width: var(--measure);
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 0 0 0.5rem;
+		margin: 0 0 var(--space-sm);
 	}
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
-		gap: 0 0.75rem;
+		grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
+		gap: 0 var(--space-md);
 	}
 	.field {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	.field label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	.colour {
 		display: flex;
-		gap: 0.5rem;
+		gap: var(--space-sm);
 		align-items: center;
 	}
 	.swatch {
 		flex: none;
-		width: 1.5rem;
-		height: 1.5rem;
-		border: 1px solid var(--border);
-		border-radius: 0.2rem;
+		width: var(--swatch-size);
+		height: var(--swatch-size);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
 	}
 	.help {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.2rem 0 0.25rem;
+		margin: var(--space-2xs) 0 var(--space-2xs);
 	}
 	.error {
-		padding: 0.25rem 0;
+		padding: var(--space-2xs) 0;
 	}
 	.actions {
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.5rem;
-		margin-top: 0.5rem;
+		gap: var(--space-sm);
+		margin-top: var(--space-sm);
 	}
 </style>

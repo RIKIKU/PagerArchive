@@ -190,8 +190,16 @@ FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only_ids)::bigint[]))
-  AND (sqlc.narg(q)::text IS NULL OR m.text ILIKE sqlc.narg(q)
-       OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE sqlc.narg(q)))
+  -- R33a's text terms, each an ILIKE pattern found in the text or an extra
+  -- field: every one of q_all, or any one of q_any (the or: terms).
+  AND ((cardinality(sqlc.arg(q_all)::text[]) = 0 AND cardinality(sqlc.arg(q_any)::text[]) = 0)
+       OR (cardinality(sqlc.arg(q_all)::text[]) > 0
+           AND NOT EXISTS (SELECT 1 FROM unnest(sqlc.arg(q_all)::text[]) AS term (p)
+                           WHERE NOT (m.text ILIKE term.p
+                                      OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
+       OR EXISTS (SELECT 1 FROM unnest(sqlc.arg(q_any)::text[]) AS term (p)
+                  WHERE m.text ILIKE term.p
+                     OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)))
   AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
   AND (cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
   AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))
@@ -604,6 +612,35 @@ SELECT id, pattern, name FROM aliases
 WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0 OR strpos(pattern, sqlc.arg(q)::text) > 0
 ORDER BY lower(name), pattern
 LIMIT 20;
+
+-- name: SuggestAliasNames :many
+-- R33a: alias names containing what was typed, for the search box.
+SELECT DISTINCT name FROM aliases
+WHERE strpos(lower(name), lower(sqlc.arg(q)::text)) > 0
+ORDER BY name
+LIMIT 10;
+
+-- name: SuggestAgencies :many
+-- R33a: template agencies containing what was typed.
+SELECT DISTINCT agency FROM templates
+WHERE strpos(lower(agency), lower(sqlc.arg(q)::text)) > 0
+ORDER BY agency
+LIMIT 10;
+
+-- name: SuggestPagingGroups :many
+-- R33a: paging groups containing what was typed. The groups are few and the
+-- messages many, so each distinct group is found with one step down
+-- messages_group_idx (a loose index scan), not by reading every message.
+WITH RECURSIVE g AS (
+    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
+    UNION ALL
+    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
+    FROM g WHERE g.grp IS NOT NULL
+)
+SELECT grp::text AS paging_group FROM g
+WHERE grp IS NOT NULL AND strpos(lower(grp), lower(sqlc.arg(q)::text)) > 0
+ORDER BY grp
+LIMIT 10;
 
 -- name: ExactAliases :many
 -- R48: the aliases of exact capcodes (zero-padded), which select them.

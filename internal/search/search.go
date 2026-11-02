@@ -21,7 +21,7 @@ import (
 // several values matches any of them; different fields must all match
 // (R63a, ADR 0009 §8).
 type Filter struct {
-	Text       string   // case-insensitive substring of the text or an extra field
+	Text       string   // text terms (ParseText), each a case-insensitive substring of the text or an extra field
 	Capcode    []string // zero-padded capcodes
 	Alias      []string // substrings of the alias name
 	AliasLike  []string // case-insensitive LIKE patterns for the alias name
@@ -77,6 +77,9 @@ func values(v url.Values, key string) ([]string, error) {
 // values (R35a).
 func Parse(v url.Values, admin bool, loc *time.Location) (Filter, error) {
 	f := Filter{Text: strings.TrimSpace(v.Get("q"))}
+	if t := ParseText(f.Text); len(t.All)+len(t.Any) > MaxTerms {
+		return f, fmt.Errorf("q: at most %d search terms", MaxTerms)
+	}
 	for key, dst := range f.listParams() {
 		vs, err := values(v, key)
 		if err != nil {
@@ -253,10 +256,10 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		AllCatPrefixes:   []string{},
 		MaxRows:          int32(limit),
 	}
-	if f.Text != "" {
-		q := "%" + likeEscaper.Replace(f.Text) + "%"
-		p.Q = &q
-	}
+	// R33a: every term, or any or: term, each escaped for ILIKE.
+	terms := ParseText(f.Text)
+	p.QAll = likeContains(terms.All)
+	p.QAny = likeContains(terms.Any)
 	for _, name := range f.Category {
 		if name == "Other" {
 			p.CatOther = true

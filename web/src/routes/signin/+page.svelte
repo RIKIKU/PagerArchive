@@ -50,11 +50,11 @@
 
 <style>
 	.box {
-		margin: 0.75rem;
-		max-width: 36rem;
+		margin: var(--space-md) 0;
+		max-width: var(--measure-narrow);
 	}
 	h2 {
 		font-size: var(--text-lg);
-		margin: 1.5rem 0 0.25rem;
+		margin: var(--space-2xl) 0 var(--space-2xs);
 	}
 </style>

@@ -64,10 +64,11 @@ func hang(d time.Duration) func(http.ResponseWriter) {
 }
 
 const (
-	lockedReply   = `{"component": "ak-stage-access-denied", "error_message": "Too many wrong attempts for this account. Wait 15 minutes, then try again."}`
-	wrongReply    = `{"component": "ak-stage-authenticator-validate", "response_errors": {"code": [{"string": "Invalid Token. Please ensure the time on your device is accurate and try again."}]}}`
-	acceptedReply = `{"component": "ak-stage-prompt"}`
-	busyReply     = `{"detail": "A server error occurred."}`
+	lockedReply      = `{"component": "ak-stage-access-denied", "error_message": "Too many wrong attempts for this account. Wait 15 minutes, then try again."}`
+	otherDeniedReply = `{"component": "ak-stage-access-denied", "error_message": "Flow does not apply to current user."}`
+	wrongReply       = `{"component": "ak-stage-authenticator-validate", "response_errors": {"code": [{"string": "Invalid Token. Please ensure the time on your device is accurate and try again."}]}}`
+	acceptedReply    = `{"component": "ak-stage-prompt"}`
+	busyReply        = `{"detail": "A server error occurred."}`
 )
 
 // fakeBrowser is a browser whose Authentik is f.
@@ -93,6 +94,7 @@ func TestRepliesThatAreNotAnswers(t *testing.T) {
 		{"refused by the lock", status(200, lockedReply), "", ""},
 		{"accepted", status(200, acceptedReply), "SECURITY FAILURE", ""},
 		{"refused as wrong", status(200, wrongReply), "FAILED: the right code: refused as wrong", ""},
+		{"access denied for another reason: not the lock", status(200, otherDeniedReply), "", "not an answer to the attempt: ak-stage-access-denied Flow does not apply to current user."},
 		{"HTTP 500 with a JSON error", status(500, busyReply), "", `TEST ERROR: the right code: no answer, so nothing was checked: not a flow challenge: HTTP 500 "{\"detail\": \"A server error occurred.\"}"`},
 		{"HTTP 200 without a component", status(200, `{"detail": "Not found."}`), "", `not a flow challenge: HTTP 200 "{\"detail\": \"Not found.\"}"`},
 		{"HTTP 502 that isn't JSON", status(502, "<html>Bad Gateway</html>"), "", `not a flow challenge: HTTP 502 "<html>Bad Gateway</html>"`},
@@ -147,7 +149,7 @@ func TestOnlyTransientRepliesAreRetried(t *testing.T) {
 		{"a reply without a component, not retried", []func(http.ResponseWriter){status(200, `{"detail": "Not found."}`), status(200, lockedReply)}, nil, nil, 1, noAnswer},
 		{"502, then refused by the lock", []func(http.ResponseWriter){status(502, `{"error": "failed to connect to authentik backend"}`), status(200, lockedReply)}, nil, nil, 2, lockedOut},
 		{"no reply, then refused by the lock", []func(http.ResponseWriter){hang(time.Second), status(200, lockedReply)}, nil, nil, 2, lockedOut},
-		{"5xx every time: three tries, then no answer", []func(http.ResponseWriter){status(503, busyReply)}, nil, nil, transientTries, noAnswer},
+		{"5xx every time: three tries, then no answer", []func(http.ResponseWriter){status(503, busyReply)}, nil, nil, 3, noAnswer},
 		{"a code after a 502, not counted: resent, and acceptance stays acceptance", []func(http.ResponseWriter){status(502, busyReply), status(200, acceptedReply)},
 			map[string]any{"component": resetCodeStage, "code": "123456"}, counts{4}, 2, accepted},
 		{"a code after a 502, counted: not resent", []func(http.ResponseWriter){status(502, busyReply), status(200, wrongReply)},

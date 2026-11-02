@@ -155,11 +155,11 @@
 
 <style>
 	.field {
-		margin: 0.5rem 0;
+		margin: var(--space-sm) 0;
 	}
 	label {
 		display: block;
-		margin-bottom: 0.2rem;
+		margin-bottom: var(--space-2xs);
 	}
 	input {
 		width: 100%;
@@ -167,18 +167,18 @@
 	.chosen {
 		list-style: none;
 		padding: 0;
-		margin: 0 0 0.35rem;
+		margin: 0 0 var(--space-xs);
 		display: flex;
 		flex-wrap: wrap;
-		gap: 0.3rem;
+		gap: var(--space-2xs);
 	}
 	.chosen li {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.35rem;
-		border: 1px solid var(--border);
-		border-radius: 1rem;
-		padding: 0 0 0 0.6rem;
+		gap: var(--space-xs);
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-pill);
+		padding: 0 0 0 var(--space-sm);
 		background: var(--bg);
 		overflow-wrap: anywhere;
 	}
@@ -187,23 +187,23 @@
 		background: none;
 		color: var(--fg);
 		font-size: var(--text-lg);
-		line-height: 1;
-		padding: 0.2rem 0.5rem;
+		line-height: var(--leading-tight);
+		padding: var(--space-2xs) var(--space-sm);
 		min-height: 0;
 		cursor: pointer;
 	}
 	.options {
 		list-style: none;
 		padding: 0;
-		margin: 0.25rem 0 0;
-		max-height: 14rem;
+		margin: var(--space-2xs) 0 0;
+		max-height: var(--list-height);
 		overflow-y: auto;
-		border: 1px solid var(--border);
-		border-radius: 0.3rem;
+		border: var(--border-width) solid var(--border);
+		border-radius: var(--radius-small);
 		background: var(--bg);
 	}
 	.options li {
-		padding: 0.35rem 0.5rem;
+		padding: var(--space-xs) var(--space-sm);
 		cursor: pointer;
 		overflow-wrap: anywhere;
 	}
@@ -211,7 +211,7 @@
 		background: var(--highlight);
 	}
 	.mono {
-		font-family: var(--mono);
+		font-family: var(--font-mono);
 	}
 	.muted {
 		color: var(--muted);
@@ -220,6 +220,6 @@
 	.help {
 		color: var(--muted);
 		font-size: var(--text-sm);
-		margin: 0.25rem 0;
+		margin: var(--space-2xs) 0;
 	}
 </style>
