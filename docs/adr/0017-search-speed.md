@@ -343,7 +343,7 @@ Each was measured, cold and warm, on the same table with the newest pages spread
 | The same from 250 ms | **1.432**; 0.007 | 0.667; 0.005 | 0.582; 0.383 | 0.808; 0.436 |
 | **In turn** (this) | 0.447; 0.007 | 0.719; 0.005 | 0.546; 0.229 | 0.909; 0.284 |
 
-The last row's first figure is the first of the five runs above. The run before them, the first read of that copy after it stood idle, took 14.180 s: see "What this doesn't show".
+The last row's first figure is the first of the five runs above. An earlier run with this code, on the same copy, took 14.180 s: see "What this doesn't show".
 
 - **Trying the first try again straight away, for 250 ms**, wasn't built. It would add 250 ms to every search that ends at the second try (`hoses grass pump` 0.38 to 0.63 s warm) and to `alias:"Station 1" STN2` cold, already near 1 s.
 - **Running the tries side by side.** It looked best, as nothing is given up, but on a cold disk one try reading the table starves the other. A time trace of the bounded try beside the first shows it: the bounded try started at 279 ms, finished at 1,172 ms, and the first try finished only at 1,280 ms, having needed 450 ms alone. It's worse on a table stored newest first, where ordered reading goes forward and the kernel's readahead makes it very fast: there `alias:"Station 1" STN2` went to 10.1 and 11.5 s, as the bounded try waited for the first to read the whole table. It would also have needed a second connection from a pool of 4, cancelling on the server, and a limit on how many searches did it. In turn needs none of that.
@@ -402,8 +402,9 @@ No warm search in A75, nor `SMOKE`, is slower. Some outside A75 are, and all sta
 ### What this doesn't show
 
 - **The real import wasn't run again.** The owner asked for the seed instead (2026-11-03), as the cold start isn't only an import's. The seed reproduces the half-minute search, but it builds the search index once, where an import grows it. ADR 0018 measured `hoses grass pump` at 4.755 s and `alias:"Station 1" STN2` at 2.027 s cold on imported pages, and 0.514 and 1.104 s on seeded ones, which suggests that a grown index reads slower when cold. I haven't measured it, and this fix doesn't change it.
-- **`drop_caches` doesn't empty everything.** cld01 is a virtual machine, and its host's cache can't be dropped from inside it. Reads of 155,046 blocks in 1.2 s show that much was served from there. The one time a copy of the table was read after standing idle, its first run of `"Smoke showing" or:"grass fire"` took 14.180 s, then 0.085 s, and five runs after that took under 0.56 s. A real reboot of a real disk could therefore still overrun the limits and reach the second try. So this may not be the last word on a physically cold disk, which is question 1.
-- **The margin on a slow disk is small.** `alias:"Station 1" STN2` cold took 865, 931, 952 and 909 ms in A75 runs of this code on cld01, and once 1,081 ms, in a mutation run that doesn't change how it's answered. A75 can fail on noise on a disk like cld01's. CI's runner has a faster one: see the report on this branch. `alias:"Station 1" smoke`, not one of A75's, took 1,002 ms once, against 110 to 126 ms in other runs.
+- **`drop_caches` doesn't empty everything.** cld01 is a virtual machine, and its host's cache can't be dropped from inside it. Reads of 155,046 blocks in 1.2 s show that much was served from there.
+- **One run with the fix took 14.180 s.** It was `"Smoke showing" or:"grass fire"` after a cold restart, **with the fix**: the tries in turn, before the rule for values naming every alias, which doesn't apply to this search. That copy of the table hadn't been read for about ten minutes, while other copies were. Its next two runs took 0.085 and 0.007 s, and five more cold restarts gave 0.435 to 0.551 s with no timeouts. Why it took so long isn't known. The database's log for that moment wasn't kept, so which tries ran wasn't seen. The time matches the second try (11.5 to 17.3 s on old code), which this code reaches only after the first try has missed twice, so a disk slower than usual, perhaps from a read that missed the host's cache, is the likeliest reason. But it's a guess: the seeded copy, unread for a few minutes in the same timing run, showed nothing like it. So a real reboot of a real disk could still overrun the limits and reach the second try.
+- **The margin on a slow disk is small.** `alias:"Station 1" STN2` cold took 865, 931, 952, 909 and 891 ms in A75 runs of this code on cld01, and once 1,081 ms, in a mutation run that doesn't change how it's answered. A75 can fail on noise on a disk like cld01's. CI's runner has a faster one (below). `alias:"Station 1" smoke`, not one of A75's, took 1,002 ms once, against 107 to 126 ms in other runs.
 
 ### A75 in CI
 
@@ -411,7 +412,26 @@ No warm search in A75, nor `SMOKE`, is slower. Some outside A75 are, and all sta
 
 Emptying the pool came from CI's first run (41544501188): the runner restarts the database in under a second, and pgx only checks a pooled connection that has been idle for over a second, so `hoses grass pump` got a dead one and a 500. cld01's restarts take longer. That's the test's restart, not a change in how the API behaves: an API that outlives a restart this quick can still fail one request, as it always could.
 
-The seed now spreads 1,079 of the newest pages through the table, one in every 4,228, 5 seconds apart, as live pages during an hour and a half's import. It holds the same 4,562,500 pages. Without this, the old behaviour passes A75 on a fast disk, and the check wouldn't be testing what it's for. A75's other runs and A76's speed check use the same seed.
+The seed now spreads 1,079 of the newest pages through the table, one in every 4,228, 5 seconds apart, as live pages during an hour and a half's import. It holds the same 4,562,500 pages. Without this, the old behaviour passes A75 on cld01's disk bar one search, and the check wouldn't be testing what it's for. A75's other runs and A76's speed check use the same seed.
+
+A75 on b603e66, the same test on each, in milliseconds. CI is run 41547473824's job on GitHub's runner; cld01 is a fresh container on its spinning disk:
+
+| Search | CI, cold | CI, warm | cld01, cold | cld01, warm |
+|---|---|---|---|---|
+| **A75** `ZZNOTHING` | 40 | 2 2 2 | 475 | 3 2 2 |
+| **A75** `hoses grass pump` | 264 | 220 220 219 | 356 | 233 223 225 |
+| **A75** `"Smoke showing" or:"grass fire"` | 182 | 8 8 8 | 519 | 9 8 8 |
+| **A75** `tanker9` | 63 | 7 6 8 | 144 | 8 7 6 |
+| **A75** `alias:"Station 1" 12345` | 46 | 6 7 5 | 125 | 6 6 5 |
+| **A75** `alias:"Station 1" STN2` | 438 | 270 273 276 | 891 | 283 277 280 |
+| **A75** `alias:sta STN2` | 362 | 6 6 5 | 751 | 7 7 7 |
+| **A75** `STN2`, "Station 1" picked | 446 | 271 274 275 | 716 | 276 283 285 |
+| `SMOKE` | 46 | 3 4 3 | 106 | 3 4 3 |
+| `alias:"Station 1" smoke` | 45 | 3 4 3 | 107 | 4 3 4 |
+
+On CI the job took 6 min 42 s, of which the test 331 s: seeding 2 min 58 s, the index 45 s, all with `VACUUM ANALYZE` 3 min 50 s. The disk went from 42% to 45% used. On cld01 the test took 612 s. A76's job on the same run, A75's searches warm after its import: 1 to 8 ms, `hoses grass pump` 186 to 193 ms, the two searches `alias:"Station 1" STN2` and "Station 1" picked 220 to 229 ms.
+
+**CI may not catch a regression here; only the mutation on cld01 does.** Old behaviour fails A75 when a first try misses its limit, and CI's disk may be too fast for that: `"Smoke showing" or:"grass fire"` took 182 ms cold in all, under the old limit of 250 ms. So the old code could well pass A75 on CI's runner. That hasn't been tried there. It's the mutation in `scripts/mutation-checks.sh`, run by hand on cld01, that shows the check fails (13.2 and 11.0 s), and CI doesn't run that script. A75 in CI still fails if a search errors, lists other pages, or is over 1 second on the runner's disk. A change to the tries should be checked with that mutation on cld01.
 
 - `TestSearchBoundedTry`: the bounded try, and all the tries in turn with a 1 ms first try, list what the first try lists, in the same order. That covers pages at one time, pages each at its own time, a smaller and a larger page, the next page by its cursor, over 1,000 pages, and terms never together. The pages are stored oldest first, so the order the index finds them in isn't the search's.
 
@@ -446,13 +466,15 @@ ok  	github.com/RIKIKU/PagerArchive/internal/acceptance	2.524s
 
 The second is the brief's: the old behaviour back, and the cold-start check fails. With it, warm searches pass (`hoses grass pump` 381 ms), so it's the first run that catches it. The cold-start mutations also require that text in the failure, which caught the third in its first form: it broke the build, and failed for that. The last two first survived, against a test whose pages were stored newest first, so the test was strengthened.
 
-And `TestA75SearchSpeed` unmutated on cld01, from a fresh database each time, as in the table: passed in 615 s and 610 s.
+And `TestA75SearchSpeed` unmutated on cld01, from a fresh database each time, as in the table: passed in 615 s and 610 s, and in 612 s on b603e66.
 
 ### Questions for the owner
 
-1. **Do you want a warm-up as well, for a physically cold disk?** I haven't chosen one, as the cause was cheap to fix directly and A75 passes without it. But the idle copy's 14.18 s suggests a real reboot of a spinning disk could still reach the second try, and reading 1,079 scattered blocks takes about 9 s at 8 ms a read, whatever the search does. That only arises while the newest pages are spread, so until enough new pages have arrived after an import. If you'd like it, `pg_prewarm` with `autoprewarm` would need measuring as you described: how long it takes after a reboot on cld01, its memory against the budget, and searches while it runs. A75's wording would then change to match.
-2. **Shall I run the full import against this code?** About 1.5 hours, then the cold table. It would settle whether a grown index keeps `hoses grass pump` over 1 second cold on imported pages ("What this doesn't show"), which the seed can't. If it does, the likely answer is rebuilding the search index at the import's end, which I haven't tried.
-3. **Are the warm costs above acceptable?** A first try of 100 to 250 ms is now stopped and run again, and `or:` terms rarely together wait 500 ms: up to about 150 ms and 240 ms more, all under 1 second. A longer `SearchFirstTry` would spare most of them but take from the cold margin of `alias:"Station 1" STN2`, so I kept 100 ms. A75 and `SMOKE` aren't affected.
+Answered by the owner (2026-11-03).
+
+1. **Do you want a warm-up as well, for a physically cold disk?** I hadn't chosen one, as the cause was cheap to fix directly and A75 passes without it. But the 14.18 s run could mean a real reboot of a spinning disk still reaches the second try, and reading 1,079 scattered blocks takes about 9 s at 8 ms a read, whatever the search does. That only arises while the newest pages are spread, so until enough new pages have arrived after an import. **Answer: no warm-up for now.** A75's wording stays as it is.
+2. **Shall I run the full import against this code?** About 1.5 hours, then the cold table. It would settle whether a grown index keeps `hoses grass pump` over 1 second cold on imported pages ("What this doesn't show"), which the seed can't. If it does, the likely answer is rebuilding the search index at the import's end, which I haven't tried. **Answer: it waits for the rehearsal on the production host before go-live.**
+3. **Are the warm costs above acceptable?** A first try of 100 to 250 ms is now stopped and run again, and `or:` terms rarely together wait 500 ms: up to about 150 ms and 240 ms more, all under 1 second. A longer `SearchFirstTry` would spare most of them but take from the cold margin of `alias:"Station 1" STN2`, so I kept 100 ms. A75 and `SMOKE` aren't affected. **Answer: they're accepted.**
 
 ## Consequences
 

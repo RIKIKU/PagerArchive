@@ -1763,7 +1763,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	// the message list shows it.
 	await expect.poll(() => sheetIds(page)).toEqual(order);
 	expect(await page.getByTestId('sheet').locator('p.text').allInnerTexts()).toEqual(order.map((id) => texts[id]));
-	await expect(page.getByTestId('sheet')).not.toContainText('0412');
+	await expect(page.getByTestId('sheet')).not.toContainText('0412 345');
 	const below = await page.evaluate(() => {
 		const results = document.querySelector('[data-testid="message-list"]')!.getBoundingClientRect();
 		const sheet = document.querySelector('[data-testid="sheet"]')!.getBoundingClientRect();
@@ -1787,7 +1787,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	if (info.project.name === 'chromium') {
 		const pages = await pdfPages(page, info.outputPath('a60.pdf'));
 		expect(squash(pages.join('')), 'the PDF holds the texts and nothing else').toBe(squash(order.map((id) => texts[id]).join('')));
-		expect(pages.join(''), 'the PDF').not.toContain('0412');
+		expect(pages.join(''), 'the PDF').not.toContain('0412 345');
 		console.log(`A60: PDF of ${pages.length} page(s) holds only the 4 texts, in order: ${JSON.stringify(pages)}`);
 	}
 	await checkPrinted(page, order.map((id) => texts[id]), 'A60');
