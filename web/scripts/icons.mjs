@@ -32,6 +32,7 @@ const icons = {
 	aliases: 'tag',
 	retention: 'history',
 	waiting: 'list-check',
+	backups: 'cloud-check',
 	hosts: 'server',
 	search: 'search',
 	help: 'info-circle',
