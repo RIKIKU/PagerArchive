@@ -62,6 +62,17 @@ MAP_TILES_FILE=./map.pmtiles
 VARS
 fill_env "$DIR/.env" deploy/test/stack.vars "$WORK/vars"
 
+# After a failed browser run, what the stack's teardown would otherwise lose.
+# Made-up test data only. Which mail arrived, and what Authentik's worker did.
+show_why() {
+	echo "--- mail that reached the catcher:"
+	curl -s 'http://127.0.0.1:8025/api/v1/messages?limit=10' | grep -o '"Subject":"[^"]*"' || echo "(none)"
+	echo "--- the catcher's log:"
+	docker logs --tail 20 "$MAILPIT" 2>&1 || true
+	echo "--- Authentik's worker, its last lines:"
+	stack_compose logs --no-color --tail 60 authentik-worker 2>&1 | cut -c1-300 || true
+}
+
 # run_install <what> [a step right after up -d]: from `up -d` on an empty stack
 # to section 11's steps.
 run_install() {
@@ -77,7 +88,7 @@ run_install() {
 	key=$(stack_compose exec -T api /usr/local/bin/pagerarchive client add section11 "Section 11 client" | tail -n 1)
 	(cd web && PA_URL=http://localhost:8080 PA_MAILPIT_URL=http://localhost:8025 PA_OWNER_EMAIL="$INITIAL_ADMIN_EMAIL" \
 		PA_CLIENT_KEY="$key" PA_CLIENT_IMAGE=pagerarchive-client:stacktest PA_NETWORK="${COMPOSE_PROJECT_NAME}_default" \
-		npx playwright test tests/stack.spec.ts $PLAYWRIGHT_ARGS) || status=1
+		npx playwright test tests/stack.spec.ts $PLAYWRIGHT_ARGS) || { status=1; show_why; }
 
 	if listing "$DIR" | diff "$WORK/before" - >&2; then
 		echo "--- the folder holds what it did before up -d: $(wc -l <"$WORK/before") entries"

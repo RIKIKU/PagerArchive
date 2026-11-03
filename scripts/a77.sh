@@ -129,9 +129,13 @@ PA_STACK_PHASE=a77-seed go test -count=1 -v -run 'TestA77Seed' ./internal/stackt
 
 # As an install from before the role existed would be.
 stack_compose exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres -d authentik <<'SQL'
-DROP FUNCTION public.pagerarchive_locked_accounts();
-REVOKE CONNECT ON DATABASE authentik FROM pagerarchive_metrics;
-DROP ROLE pagerarchive_metrics;
+DROP FUNCTION IF EXISTS public.pagerarchive_locked_accounts();
+DO $$ BEGIN
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pagerarchive_metrics') THEN
+		REVOKE CONNECT ON DATABASE authentik FROM pagerarchive_metrics;
+		DROP ROLE pagerarchive_metrics;
+	END IF;
+END $$;
 SQL
 
 echo "=== A77: upgrading: this checkout's compose.yaml and archive, then pull and up"

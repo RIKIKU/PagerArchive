@@ -170,8 +170,6 @@ func getenv(name, def string) string {
 const (
 	builtinProfiles = "/usr/share/pagerarchive/example-profile"
 	builtinMap      = "/usr/share/pagerarchive/example-map.pmtiles"
-
-	exampleProfileWarning = "no network profile is mounted (PROFILES_DIR in .env): using the made-up example profile, whose redaction rules aren't your network's"
 )
 
 // mountedOr returns path, or def if what's at path is a character device:
@@ -209,7 +207,7 @@ func serve(stderr io.Writer) error {
 	// else happens (R1, A14).
 	profiles, example := profilesDir()
 	if example {
-		log.Warn(exampleProfileWarning)
+		log.Warn("no network profile is mounted (PROFILES_DIR in .env): using the made-up example profile, whose redaction rules aren't your network's")
 	}
 	set, err := profile.LoadDir(profiles)
 	if err != nil {
