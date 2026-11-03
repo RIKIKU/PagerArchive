@@ -66,13 +66,24 @@ copy_checkout() {
 		--exclude=a77-results . | (cd "$1" && tar -xf -)
 }
 
-# previous_from_release <tag>: its attached files, its images on GHCR.
+# previous_from_release <tag>: its attached files, its images on GHCR. A
+# release whose files were never attached (v0.15.0: the attach job was
+# skipped) gets them made from its tag by its own release-assets.sh, which is
+# what the attach job would have uploaded.
 previous_from_release() {
-	echo "=== A77: starting from $1's attached files"
 	mkdir -p "$WORK/previous"
-	for asset in $(sh scripts/ci/release-assets.sh --list); do
-		curl -fsSL -o "$WORK/previous/$asset" "https://github.com/RIKIKU/PagerArchive/releases/download/$1/$asset"
-	done
+	url=https://github.com/RIKIKU/PagerArchive/releases/download/$1
+	if curl -fsIL -o /dev/null "$url/compose.yaml"; then
+		echo "=== A77: starting from $1's attached files"
+		for asset in $(sh scripts/ci/release-assets.sh --list); do
+			curl -fsSL -o "$WORK/previous/$asset" "$url/$asset"
+		done
+	else
+		echo "=== A77: $1 has no attached files: making them from its tag"
+		mkdir -p "$WORK/previous-tag"
+		git archive "$1" | (cd "$WORK/previous-tag" && tar -xf -)
+		sh "$WORK/previous-tag/scripts/ci/release-assets.sh" "$WORK/previous"
+	fi
 	install_folder "$DIR" "$WORK/previous"
 }
 
