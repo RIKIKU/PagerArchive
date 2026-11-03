@@ -74,6 +74,7 @@ export const groups: Group[] = [
 			{ href: '/admin/requests', label: 'Alias requests', icon: 'waiting', desktopOnly: true, text: 'Requests from users for new aliases, changes and deletions, to approve or reject.' },
 			{ href: '/admin/clients', label: 'Receiving clients', icon: 'clients', desktopOnly: true, text: 'Which receivers are sending pages, and which have gone quiet.' },
 			{ href: '/admin/retention', label: 'Retention', icon: 'retention', desktopOnly: true, text: 'How long messages are kept, and the nightly clean-up.' },
+			{ href: '/admin/backups', label: 'Backups', icon: 'backups', desktopOnly: true, text: 'Whether the nightly backups are working, and the last good one.' },
 			{ href: '/admin/integration-hosts', label: 'Integration addresses', icon: 'hosts', desktopOnly: true, text: 'Private hosts and ranges that integrations may reach.' }
 		]
 	}

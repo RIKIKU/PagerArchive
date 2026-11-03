@@ -1,0 +1,17 @@
+# Test overlay for A80 (scripts/a80.sh), saved as the test folder's
+# compose.override.yaml, never for a deployment: a stand-in for pg_dump in the
+# backup service, which the test can hold open or have spoil its output; and a
+# fixed subnet, so the address of A77's webhook survives the stack being removed
+# and restored.
+services:
+  backup:
+    volumes:
+      - ./test-backup/pg_dump:/usr/local/bin/pg_dump:ro
+      - ${PA_TEST_CONTROL:?}:/test-control
+
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.30.80.0/24
+          gateway: 172.30.80.1

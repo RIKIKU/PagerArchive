@@ -107,6 +107,7 @@ serve reads its settings from the environment:
   ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
+  BACKUP_STATUS_FILE      the backup service's status file (default: no backups to report)
   MAP_TILES               path to a PMTiles map extract (default: no background map;
                           /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
@@ -387,16 +388,18 @@ func serve(stderr io.Writer) error {
 			ClientID: getenv("POWERSHELL_CLIENT_ID", "pagerarchive-powershell"),
 			HTTP:     auth.http,
 		},
-		AppURL:         auth.appURL,
-		AccountURL:     auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
-		UI:             web.Handler(),
-		Nightly:        job,
-		MapTiles:       mapTiles,
-		MapAttribution: os.Getenv("MAP_ATTRIBUTION"),
-		Integrations:   integ,
-		MetricsToken:   os.Getenv("METRICS_TOKEN"),
-		Locks:          locks,
-		Version:        version,
+		AppURL:           auth.appURL,
+		AccountURL:       auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
+		UI:               web.Handler(),
+		Nightly:          job,
+		BackupStatusFile: os.Getenv("BACKUP_STATUS_FILE"),
+		Started:          time.Now(),
+		MapTiles:         mapTiles,
+		MapAttribution:   os.Getenv("MAP_ATTRIBUTION"),
+		Integrations:     integ,
+		MetricsToken:     os.Getenv("METRICS_TOKEN"),
+		Locks:            locks,
+		Version:          version,
 	}
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}

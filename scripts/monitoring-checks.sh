@@ -1,8 +1,9 @@
 #!/bin/sh
-# A65 and A67 against the example monitoring stack itself (deploy/monitoring):
-# the API and its database from the compose file at the top (no Authentik:
-# neither check needs it), the monitoring stack joined to their network as a
-# deployment runs it, and a webhook contact point that the test receives on
+# A65, A67 and A80's alert against the example monitoring stack itself
+# (deploy/monitoring): the API, its database and the backup services from the
+# compose file at the top (no Authentik: none of these needs it), joined to the
+# stack's `monitoring` network by the override docs/monitoring.md gives (R76), as
+# a deployment runs it, and a webhook contact point that the test receives on
 # the host. A67's clients run in the client image on the API's network, with
 # a stand-in for rtl_fm (internal/radio/standin). Memory of the monitoring
 # stack's containers is sampled throughout, idle first and then during the
@@ -21,7 +22,8 @@
 #                   Playwright's Chromium)
 # PA_MON_RUN, if set, runs only the checks it matches (go test -run), e.g.
 # TestA67; mutation-checks.sh uses it.
-# needs: Docker with compose, Go, curl. Uses 127.0.0.1:18091, :13001, :14319,
+# needs: Docker with compose, Go, curl, and no network named monitoring (the
+# stack owns that name, on the whole host). Uses 127.0.0.1:18091, :13001, :14319,
 # :55437 and 0.0.0.0:18099 (the webhook, which Grafana reaches through the
 # Docker host's gateway).
 set -eu
@@ -43,13 +45,22 @@ while IFS= read -r line; do
 	[ -n "$set_already" ] || export "$line"
 done <deploy/test/stack.vars
 
+if docker network inspect monitoring >/dev/null 2>&1; then
+	echo "a network named monitoring already exists here: the stack owns that name" >&2
+	exit 1
+fi
+
 P=pa-mon-$$
+BACKUPS=$(mktemp -d)
+export BACKUP_DIR="$BACKUPS" BACKUP_UID="$(id -u)" BACKUP_GID="$(id -g)"
 export PAGERARCHIVE_VERSION=montest API_BIND=127.0.0.1:18091 AUTHENTIK_BIND=127.0.0.1:19091 MAILPIT_BIND=127.0.0.1:18026 PA_MON_DB_BIND=127.0.0.1:55437
 GRAFANA_ADMIN_PASSWORD=test-grafana-admin-password
-app() { docker compose -p "$P" -f compose.yaml -f deploy/test/compose.yaml -f deploy/monitoring/test/pagerarchive.yaml "$@"; }
 . ./scripts/install-lib.sh
 MONROOT=$(mktemp -d)
 MONDIR=$MONROOT/deploy/monitoring
+OVERRIDE=$MONROOT/pagerarchive-override.yaml
+APP_FILES="-f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml -f $OVERRIDE"
+app() { docker compose -p "$P" --project-directory "$PWD" $APP_FILES "$@"; }
 mon() { in_folder "$MONDIR" -p "$P-mon" "$@"; }
 
 SAMPLER=""
@@ -61,26 +72,25 @@ cleanup() {
 	mon logs --no-color >"$OUT/monitoring-stack.log" 2>&1 || true
 	app logs --no-color api >"$OUT/api.log" 2>&1 || true
 	if [ -z "${MON_KEEP:-}" ]; then
-		mon down -v --remove-orphans >/dev/null 2>&1 || true
+		# PagerArchive first: the stack can't remove its network while it's joined.
 		app down -v --remove-orphans >/dev/null 2>&1 || true
-		rm -rf "$MONROOT"
+		mon down -v --remove-orphans >/dev/null 2>&1 || true
+		rm -rf "$MONROOT" "$BACKUPS"
 	fi
 }
 trap cleanup EXIT
 
-echo "--- building the API and client images and rtl_fm's stand-in, starting the API and its database ($P)"
+# The override from the docs, as it's written there, without the list item's indent.
+awk '/<!-- monitoring:override -->/ { found = 1; next } found && /^ *```yaml/ { on = 1; next } on && /^ *```/ { exit } on { sub(/^   /, ""); print }' \
+	docs/monitoring.md >"$OVERRIDE"
+grep -q 'external: true' "$OVERRIDE" || { echo "no override example found in docs/monitoring.md" >&2; exit 1; }
+
+echo "--- building the API and client images and rtl_fm's stand-in ($P)"
 app build -q api
 docker build -q -f Dockerfile.client -t "pagerarchive-client:montest" . >/dev/null
 CGO_ENABLED=0 go build -o "$BIN/rtl_fm" ./internal/radio/standin
-export PA_MON_CLIENT_IMAGE=pagerarchive-client:montest PA_MON_STANDIN="$BIN/rtl_fm" PA_MON_NETWORK="${P}_default" \
-	PA_MON_API_ADDRESS=api:8080 PA_MON_LABEL="pagerarchive.montest=$P"
-app up -d db api >/dev/null 2>&1 || { app up -d db api; exit 1; }
-i=0
-until curl -sf http://127.0.0.1:18091/healthz >/dev/null; do
-	i=$((i + 1))
-	[ $i -gt 120 ] && { echo "API didn't start" >&2; app logs api | tail -20 >&2; exit 1; }
-	sleep 1
-done
+export PA_MON_CLIENT_IMAGE=pagerarchive-client:montest PA_MON_STANDIN="$BIN/rtl_fm" PA_MON_NETWORK=monitoring \
+	PA_MON_API_ADDRESS=pagerarchive:8080 PA_MON_LABEL="pagerarchive.montest=$P"
 
 # mon_up: `docker compose up -d` in the folder, and Grafana answering.
 mon_up() {
@@ -106,13 +116,30 @@ GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
 PA_METRICS_TOKEN=$METRICS_TOKEN
 GRAFANA_BIND=127.0.0.1:13001
 GRAFANA_ROOT_URL=http://127.0.0.1:13001
-PAGERARCHIVE_NETWORK=${P}_default
 VARS
 fill_env "$MONDIR/.env" "$MONROOT/vars"
 chmod -R a+rX "$MONROOT"
 listing "$MONROOT" >"$MONROOT.before"
 mon_up
 status=0
+
+# The stack first, as the docs say: PagerArchive's override needs its network.
+echo "--- PagerArchive joins the stack's network through the docs' override"
+cat "$OVERRIDE"
+app up -d db api backup backup-check >/dev/null 2>&1 || { app up -d db api backup backup-check; exit 1; }
+i=0
+until curl -sf http://127.0.0.1:18091/healthz >/dev/null; do
+	i=$((i + 1))
+	[ $i -gt 120 ] && { echo "API didn't start" >&2; app logs api | tail -20 >&2; exit 1; }
+	sleep 1
+done
+# There's no Authentik here, and a backup refuses a database with no tables.
+app exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres -d authentik -c 'CREATE TABLE a80_stand_in (id int)'
+# Only Alloy: what else other apps on the network could reach (R76).
+on_network=$(docker network inspect monitoring -f '{{range .Containers}}{{.Name}} {{end}}')
+echo "--- on the monitoring network: $on_network"
+case $on_network in *tempo* | *loki* | *prometheus* | *grafana*) echo "FAIL: more than Alloy is on the monitoring network" >&2; status=1 ;; esac
+case $on_network in *-db-*) echo "FAIL: PagerArchive's database is on the monitoring network" >&2; status=1 ;; esac
 if listing "$MONROOT" | diff "$MONROOT.before" - >&2; then
 	echo "--- the folder holds what it did before up -d"
 else
@@ -175,9 +202,12 @@ echo checks >"$PHASE_FILE"
 PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 \
 	PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" PA_MON_WEBHOOK_ADDR=0.0.0.0:18099 \
 	PA_MON_DB_URL="postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:55437/postgres?sslmode=disable" \
-	PA_MON_STOP_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml stop api" \
-	PA_MON_START_API="docker compose -p $P -f $PWD/compose.yaml -f $PWD/deploy/test/compose.yaml -f $PWD/deploy/monitoring/test/pagerarchive.yaml start api" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67}" ./internal/monitortest/ || status=1
+	PA_MON_STOP_API="docker compose -p $P --project-directory $PWD $APP_FILES stop api" \
+	PA_MON_START_API="docker compose -p $P --project-directory $PWD $APP_FILES start api" \
+	PA_MON_STOP_DB="docker compose -p $P --project-directory $PWD $APP_FILES stop db" \
+	PA_MON_START_DB="docker compose -p $P --project-directory $PWD $APP_FILES start db" \
+	PA_MON_BACKUP_NOW="docker compose -p $P --project-directory $PWD $APP_FILES exec -T backup pagerarchive-backup now" \
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then

@@ -168,6 +168,18 @@ func (s *stack) sh(t *testing.T, cmd string) {
 	}
 }
 
+func runQuiet(cmd string) error {
+	return exec.Command("sh", "-c", cmd).Run()
+}
+
+// runExpectingFailure is an error if cmd succeeds.
+func runExpectingFailure(cmd string) error {
+	if exec.Command("sh", "-c", cmd).Run() == nil {
+		return fmt.Errorf("%s succeeded", cmd)
+	}
+	return nil
+}
+
 // A65. Told when a client stops: with the example stack scraping
 // PagerArchive and two clients, moving one client's last message to 31
 // minutes ago (the test clock A32 uses: its last-seen time in the

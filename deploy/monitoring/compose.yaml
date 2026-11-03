@@ -5,17 +5,20 @@
 # Alloy, Tempo and Prometheus publish no such tag, so they name an exact version
 # (ADR 0019). The files come from the release's pagerarchive-config.tar.gz.
 #
-# It runs next to PagerArchive's own compose project and joins its network,
-# so Alloy can scrape the API's /metrics and the API can send it OTLP. In the
-# archive's deploy/monitoring folder, this file saved as compose.yaml and
-# monitoring-env.example as .env, with GRAFANA_ADMIN_PASSWORD and
+# It's a separate application that other apps can use too, so it owns a Docker
+# network named `monitoring`, and each app joins it with a compose.override.yaml
+# of its own (R76, docs/monitoring.md). That's how Alloy scrapes the API's
+# /metrics and the API sends it OTLP. Start this stack first: the network has to
+# exist. In the archive's deploy/monitoring folder, this file saved as
+# compose.yaml and monitoring-env.example as .env, with GRAFANA_ADMIN_PASSWORD and
 # PA_METRICS_TOKEN set:
 #
 #   docker compose up -d
 #
-# LAN only: Grafana's port is the only one published. Everything else talks
-# on the internal network. Receiving clients on other machines need Alloy's
-# OTLP port too: see docs/monitoring.md.
+# LAN only: Grafana's port is the only one published. Of this stack, only Alloy
+# is on `monitoring`; everything else talks on its own internal network.
+# Receiving clients on other machines need Alloy's OTLP port too: see
+# docs/monitoring.md.
 #
 # Each service's pagerarchive.config label is a hash of the files it mounts.
 # Compose doesn't notice a changed file, but a changed label makes `docker
@@ -34,12 +37,12 @@ services:
     environment:
       # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
       PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
-      # Where the API is, on PagerArchive's network.
-      PA_API_ADDRESS: ${PA_API_ADDRESS:-api:8080}
+      # Where the API is, on the monitoring network: the alias its override gives it.
+      PA_API_ADDRESS: ${PA_API_ADDRESS:-pagerarchive:8080}
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       - alloy:/var/lib/alloy
-    networks: [monitoring, pagerarchive]
+    networks: [internal, monitoring]
     depends_on: [tempo, loki, prometheus]
 
   tempo:
@@ -51,7 +54,7 @@ services:
     volumes:
       - ./tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
       - tempo:/var/tempo
-    networks: [monitoring]
+    networks: [internal]
 
   loki:
     image: grafana/loki:3.7
@@ -62,7 +65,7 @@ services:
     volumes:
       - ./loki/loki.yaml:/etc/loki/loki.yaml:ro
       - loki:/loki
-    networks: [monitoring]
+    networks: [internal]
 
   prometheus:
     image: prom/prometheus:v3.15.1
@@ -80,13 +83,13 @@ services:
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus:/prometheus
-    networks: [monitoring]
+    networks: [internal]
 
   grafana:
     image: grafana/grafana:13.2
     restart: unless-stopped
     labels:
-      pagerarchive.config: "95b728c673863fe2"
+      pagerarchive.config: "ed763d1930c193f1"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
@@ -114,18 +117,19 @@ services:
       - "${GRAFANA_BIND:-127.0.0.1:3000}:3000"
     # An internal network can't publish a port, so Grafana alone also joins
     # an ordinary one.
-    networks: [monitoring, grafana]
+    networks: [internal, grafana]
     depends_on: [tempo, loki, prometheus]
 
 networks:
   # No way out: Tempo, Loki and Prometheus reach nothing but each other.
-  monitoring:
+  internal:
     internal: true
   grafana:
-  # PagerArchive's own network: "pagerarchive_default" for its compose file.
-  pagerarchive:
-    external: true
-    name: ${PAGERARCHIVE_NETWORK:-pagerarchive_default}
+  # The one other apps join: not prefixed with this project's name, so their
+  # overrides can name it. Only Alloy is on it, so they can send it telemetry
+  # and be scraped, and nothing else here can be reached from them.
+  monitoring:
+    name: monitoring
 
 volumes:
   alloy:

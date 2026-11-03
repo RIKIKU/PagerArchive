@@ -78,6 +78,17 @@ export interface NightlyResult {
 	error?: string;
 }
 
+/** R86a: the nightly backups. "off" is a stack with no backup service. */
+export interface BackupStatus {
+	state: 'ok' | 'waiting' | 'failed' | 'overdue' | 'off';
+	last_run_at: string | null;
+	last_good_at: string | null;
+	last_good_night?: string;
+	last_good_bytes: number;
+	nights: number;
+	error?: string;
+}
+
 export interface Retention {
 	days: number;
 	default_days: number;
@@ -600,6 +611,7 @@ export const api = {
 	report: (capcode: string, from: string, to: string) =>
 		get<Report>(`/api/v1/reports/capcode?${new URLSearchParams({ capcode, from, to })}`),
 	retention: () => get<Retention>('/api/v1/admin/retention'),
+	backup: () => get<BackupStatus>('/api/v1/admin/backup'),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
 	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
 	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {

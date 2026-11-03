@@ -61,7 +61,7 @@ check_compose_image() {
 }
 
 # CONFIG_PATHS: what a deployment only gets by downloading a release's files.
-CONFIG_PATHS="compose.yaml deploy/monitoring/compose.yaml deploy/authentik deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo"
+CONFIG_PATHS="compose.yaml deploy/monitoring/compose.yaml deploy/authentik deploy/backup deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo"
 
 # previous_release <rev>: the newest v* tag in the commit's history, other
 # than one on the commit itself (a re-run's own tag). Empty if there's none.

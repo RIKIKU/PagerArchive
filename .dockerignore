@@ -3,6 +3,7 @@
 docs
 *.md
 *PRIVATE*
+backups
 .env
 *.env
 web/node_modules

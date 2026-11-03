@@ -261,6 +261,9 @@ func TestAdminOnlyData(t *testing.T) {
 	if code := e.getJSON("/api/v1/admin/clients", nil); code != http.StatusForbidden {
 		t.Errorf("user client status: %d", code)
 	}
+	if code := e.getJSON("/api/v1/admin/backup", nil); code != http.StatusForbidden {
+		t.Errorf("user backup status: %d", code)
+	}
 
 	e.as = e.admin
 	ms = e.list("parse_failed=true")
