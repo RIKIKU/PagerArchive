@@ -241,6 +241,11 @@ jobs:
         pwsh: ["7.6.0", newest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      # PowerShell's own telemetry goes through the default proxy, and once
+      # reached the stand-in proxy of Watch.Tests.ps1 before the test's request
+      # did (ADR 0019). It's read when pwsh starts, so it's set here, not in the test.
+      POWERSHELL_TELEMETRY_OPTOUT: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Install PowerShell ${{ matrix.pwsh }} and the test modules
@@ -354,6 +359,73 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # A77: from the previous release's attached files to this checkout's with
+  # `docker compose pull && docker compose up -d` only. Needs the v* tags.
+  upgrade:
+    name: Upgrade from the previous release (A77)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Get the release tags
+        run: git fetch --force --tags origin
+      - name: A77
+        run: sh scripts/a77.sh -o a77-results
+      - name: Upload the upgrade's output and logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: a77-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a77-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  # A78: an empty folder, the release's files, `docker compose up -d`, then
+  # section 11's steps in a browser, and again behind a proxy on an external
+  # network.
+  install:
+    name: Install with no checkout (A78)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --no-fund --no-audit
+      - name: Playwright's version
+        id: playwright
+        working-directory: web
+        run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: A78
+        run: sh scripts/a78.sh --project=chromium
+      - name: Upload Playwright report, screenshots and traces
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: a78-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   images:
     name: Images and client replay (${{ matrix.arch }})
     strategy:
@@ -429,12 +501,13 @@ jobs:
           path: a15-results/
           retention-days: 30
 
-  # A65 and A67 against the example monitoring stack itself (deploy/monitoring, R76):
+  # A78's install with no checkout, then A65 and A67, against the example
+  # monitoring stack itself (deploy/monitoring, R76):
   # Alloy, Tempo, Loki, Prometheus and Grafana scraping a real API, with a
   # webhook contact point the test receives, and (A67) clients in the client
   # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
-    name: Example monitoring stack (A65, A67)
+    name: Example monitoring stack (A78's install, A65, A67)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -449,7 +522,7 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
-      - name: A65 and A67 on the example monitoring stack
+      - name: The install with no checkout, A65 and A67 on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs
         if: always()
@@ -466,13 +539,14 @@ jobs:
   # history), or if v<VERSION> is already a tag on
   # another commit, so nothing is published. Otherwise this
   # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
-  # GitHub release with the client's binaries and checksums, and passes on
+  # GitHub release with the client's binaries and checksums, not yet marked the
+  # latest (attach-release-files does that), and passes on
   # whether the module is published. A tag pushed with GITHUB_TOKEN starts no
   # run, and the push trigger takes branches only anyway. Re-run, the job
   # finds its own tag and release on this commit and finishes them.
   release:
     name: Release v<VERSION> (tag, GitHub release, client binaries)
-    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -530,12 +604,13 @@ jobs:
             echo "PagerArchive $TAG, from $GITHUB_SHA."
             echo
             echo "- Images: \`ghcr.io/rikiku/pagerarchive:$VERSION\` and \`ghcr.io/rikiku/pagerarchive-client:$VERSION\` (amd64 and arm64)."
+            echo "- To install or upgrade: \`compose.yaml\`, \`env.example\` and \`pagerarchive-config.tar.gz\` (docs/deploy.md). The example monitoring stack: \`monitoring-compose.yaml\` and \`monitoring-env.example\` (docs/monitoring.md)."
             echo "- The client's binaries for linux/amd64 and linux/arm64, with \`SHA256SUMS\` (docs/client.md)."
             echo "- $MODULE_NOTES"
           } > notes.md
           cat notes.md
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --title "PagerArchive $TAG" --notes-file notes.md
+            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md
           gh release upload "$TAG" dist/* --clobber
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
@@ -545,7 +620,7 @@ jobs:
   # is skipped, so these run unless something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -588,7 +663,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, search, import, web, stack, stack-e2e, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:
@@ -680,6 +755,42 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
           docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+
+  # What a deployment needs (R84): only once this release's images are on GHCR,
+  # for anyone to pull, so an attached compose.yaml never names an image that
+  # isn't there yet (owner, 2026-11-03; ADR 0019). Only then does the release
+  # become the latest, so the docs' releases/latest/download links keep getting
+  # the previous release's files until this one's are all in place. Re-run after
+  # a failure, it finishes the job.
+  attach-release-files:
+    name: Attach the install and upgrade files, and make it the latest release
+    needs: [release, publish-server, publish-client-manifest]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release.outputs.tag }}
+      MAJOR_MINOR: ${{ needs.release.outputs.major_minor }}
+    steps:
+      - uses: actions/checkout@v5
+      # No docker login in this job: this is what anyone pulling sees.
+      - name: The release's images are on GHCR
+        run: |
+          docker manifest inspect "ghcr.io/rikiku/pagerarchive:$MAJOR_MINOR" >/dev/null
+          docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null
+      - name: The files for installing and upgrading
+        run: sh scripts/ci/release-assets.sh dist
+      - name: Attach them, check they're there, and make it the latest release
+        run: |
+          gh release upload "$TAG" dist/* --clobber
+          attached=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for asset in $(sh scripts/ci/release-assets.sh --list); do
+            printf '%s\n' "$attached" | grep -qx "$asset" || { echo "::error::$TAG has no $asset attached"; exit 1; }
+          done
+          gh release edit "$TAG" --latest
 
   # The PowerShell module on the PowerShell Gallery (R63): only from a release
   # whose plan said "publish" (powershell/PagerArchive/ changed since the

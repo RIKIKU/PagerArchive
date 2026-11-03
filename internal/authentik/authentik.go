@@ -131,7 +131,7 @@ func (c *Client) enrolmentFlowPK(ctx context.Context) (string, error) {
 		return "", err
 	}
 	if len(out.Results) != 1 {
-		return "", fmt.Errorf("enrolment flow %q not found: is deploy/authentik/blueprints/pagerarchive.yaml mounted?", EnrolmentFlow)
+		return "", fmt.Errorf("enrolment flow %q not found: is the release's deploy/authentik/blueprints/pagerarchive.yaml next to compose.yaml?", EnrolmentFlow)
 	}
 	c.flowPK = out.Results[0].PK
 	return c.flowPK, nil

@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-`deploy/monitoring` is a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, with data sources, three dashboards and three alert rules already set up. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, three dashboards and three alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -60,13 +60,15 @@ Nothing exported contains page text, search terms or other query values, redacte
 
 ## Starting the stack
 
-You need PagerArchive running from the compose file at the top of the repository (docs/deploy.md), with `METRICS_TOKEN` set in its `.env`.
+You need PagerArchive running ([Deploying the server](deploy.md)), with `METRICS_TOKEN` set in its `.env`.
 
-1. Go to the stack's folder and make its settings file:
+1. The stack's files are in the archive you unpacked for PagerArchive, under `deploy/monitoring`. From that folder (the one with PagerArchive's `compose.yaml`), get its compose file and settings file:
 
    ```sh
    cd deploy/monitoring
-   cp .env.example .env
+   base=https://github.com/RIKIKU/PagerArchive/releases/latest/download
+   curl -fL -o compose.yaml $base/monitoring-compose.yaml
+   curl -fL -o .env $base/monitoring-env.example
    ```
 
 2. In `.env`, set:
@@ -110,8 +112,16 @@ To turn telemetry off again, remove the line (or set `OTEL_SDK_DISABLED=true`) a
 
 A client on the **same machine** as the monitoring stack (in Docker on PagerArchive's network) uses `http://alloy:4318` too. A client on **another machine** (the Raspberry Pi by the antenna) needs Alloy's OTLP port published on the LAN:
 
-1. In the monitoring stack's `.env`, set `ALLOY_OTLP_BIND` to the server's LAN address and a port, e.g. `192.168.1.20:4318`.
-2. Start the stack with the extra file: `docker compose -f compose.yaml -f compose.clients.yaml up -d`.
+1. Next to the stack's `compose.yaml`, create a `compose.override.yaml` with the server's LAN address and a port. An upgrade leaves this file alone:
+
+   ```yaml
+   services:
+     alloy:
+       ports:
+         - "192.168.1.20:4318:4318"
+   ```
+
+2. Apply it: `docker compose up -d`.
 3. On the client, add to its settings:
 
    ```sh
@@ -129,7 +139,7 @@ The client sends its traces (each page from decode to the server's answer), its 
 
 ## The dashboards
 
-All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick; change the files, or save a copy under another name.
+All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
 
 **A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), integration deliveries and **failed delivery attempts by kind and cause**, and the log lines from pages and requests (click one for its trace).
 
@@ -186,7 +196,7 @@ Three alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`),
 
 ![A firing alert](monitoring/alert-firing.png)
 
-**The thresholds** are the numbers in `params:` in `rules.yaml`, in seconds: `[1800]` for "Client not receiving", `[120]` for "Radio stalled". Change them and restart Grafana (`docker compose restart grafana`). They're in the file because Grafana doesn't fill in settings inside an alert rule's query. "Radio stalled" can take up to one client metrics interval (`OTEL_METRIC_EXPORT_INTERVAL`) plus 30 s longer than its threshold to fire.
+**The thresholds** are the numbers in `params:` in `rules.yaml`, in seconds: `[1800]` for "Client not receiving", `[120]` for "Radio stalled". Change them and restart Grafana (`docker compose restart grafana`). An upgrade replaces this file, so change them again afterwards. They're in the file because Grafana doesn't fill in settings inside an alert rule's query. "Radio stalled" can take up to one client metrics interval (`OTEL_METRIC_EXPORT_INTERVAL`) plus 30 s longer than its threshold to fire.
 
 **Where alerts go.** Out of the box, **nowhere**: Grafana 13 starts with no contact point, and its default notification policy sends to one named `empty` that does nothing. The rules still fire and show in **Alerting → Alert rules**, but nobody is told until you add a contact point and make it the default policy's. Credentials stay in Grafana, never in the repository. In Grafana:
 
@@ -223,7 +233,7 @@ Measured on the test machine (`scripts/monitoring-checks.sh`, two runs on 2026-1
 | Prometheus | 40–44 MiB | 42–46 MiB | 85–94 MiB |
 | **All five** (sum of each one's peak) | **618–752 MiB** | **638–832 MiB** | **960–1,334 MiB** |
 
-Grafana is most of it, and varies most between runs. Plan on about 1 GB, more while someone has dashboards open. (These runs used Tempo 2.10.10. Tempo 3.1.1, now in `compose.yaml`, used about a quarter as much idle: 34 MiB against 127 MiB, measured side by side with nothing else running.)
+Grafana is most of it, and varies most between runs. Plan on about 1 GB, more while someone has dashboards open. (These runs used Tempo 2.10.10. Tempo 3.1.1, now in the stack's `compose.yaml`, used about a quarter as much idle: 34 MiB against 127 MiB, measured side by side with nothing else running.)
 
 **After an hour in use** (the test machine on 2026-10-31, Tempo 3.1.1: a PagerArchive with one receiving client posting a page every 30 s, both sending telemetry, and nobody looking at Grafana; sampled every minute for 65 minutes): all five used **845 MiB** at 60 minutes. Grafana 222 MiB, Alloy 278, Tempo 224, Prometheus 62, Loki 59. Tempo grew over the first 35 minutes, from 98 MiB, as it kept the newest traces, then stayed between 190 and 236 MiB. The others hardly moved.
 
@@ -260,11 +270,23 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 - **The API's log says "dropping telemetry":** it can't reach Alloy. Is the monitoring stack running? `docker compose ps` in `deploy/monitoring`.
 - **Traces and metrics but no new log lines:** Loki stops taking logs when the disk holding its data is more than 90% full, and says `disk usage exceeded threshold, throttling writes` once, then refuses every write (`docker compose logs loki | grep -c "Ingester is shutting down"` counts them; Alloy logs `Exporting failed. Dropping data.` for `otelcol.exporter.otlphttp.loki`). Lines sent meanwhile are lost. Free space on that disk, then `docker compose restart loki`.
 - **Few client log lines:** that's normal. A client logs when it starts, when it can't reach the API, and when it stops (with why); a page decoded or sent isn't a log line (it's a span and a metric).
-- **No client metrics:** the client needs `OTEL_EXPORTER_OTLP_ENDPOINT`, and a client on another machine needs `compose.clients.yaml` and a reachable `ALLOY_OTLP_BIND`. It sends metrics every `OTEL_METRIC_EXPORT_INTERVAL` (default a minute).
+- **No client metrics:** the client needs `OTEL_EXPORTER_OTLP_ENDPOINT`, and a client on another machine needs Alloy's port published and reachable (see [Pointing a receiving client at it](#pointing-a-receiving-client-at-it)). It sends metrics every `OTEL_METRIC_EXPORT_INTERVAL` (default a minute).
 - **Tempo logs `error calling scheduler` … `no jobs found`** about once a minute: its background worker asking for compaction or retention work when there is none. It's harmless.
 - **A trace from the last 30 seconds isn't found yet:** Tempo 3 leaves the newest 30 s out of searches (`query_end_cutoff`) while it's still being written. Wait a moment and search again.
 - **A span named `unnamed`:** the app saw a span name that isn't on its allowlist. Report it: it's a bug, and nothing private left with it.
 
 ## Upgrading the stack
 
-Each image is pinned by version and digest in `compose.yaml` (`grafana/grafana:13.2.5@sha256:...`), so `docker compose pull` never changes anything by surprise. To upgrade, change both the version and the digest (`docker buildx imagetools inspect grafana/grafana:<version>` shows the digest), read the release notes, and run `scripts/monitoring-checks.sh`, which checks the alerts end to end.
+From the folder with PagerArchive's `compose.yaml`, get the new release's archive, then the stack's compose file, and pull and start:
+
+```sh
+base=https://github.com/RIKIKU/PagerArchive/releases/latest/download
+curl -fL $base/pagerarchive-config.tar.gz | tar -xz
+cd deploy/monitoring
+curl -fL -o compose.yaml $base/monitoring-compose.yaml
+docker compose pull && docker compose up -d
+```
+
+`.env` and `compose.override.yaml` stay as they are, and so does the stack's data. `docker compose up -d` recreates the services whose image or files changed.
+
+A patch release of PagerArchive changes nothing here, so that's only needed when a new minor or major version comes out. In between, `docker compose pull && docker compose up -d` in this folder gets upstream's patches for Loki and Grafana, which are named by their major.minor tags. Alloy, Tempo and Prometheus publish no such tag, so they stay at the exact version in `compose.yaml` until a release changes it.

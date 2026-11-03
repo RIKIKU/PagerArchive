@@ -1,13 +1,34 @@
-# PagerArchive server stack (SPEC.md section 5). Copy .env.example to .env,
-# fill it in, then: docker compose up -d
+# PagerArchive server stack (SPEC.md section 5, R84). Attached to every
+# release, with env.example and pagerarchive-config.tar.gz: no other file from
+# the repository is needed. docs/deploy.md has the steps:
+#
+#   tar -xzf pagerarchive-config.tar.gz   # next to this file
+#   cp env.example .env                   # fill it in
+#   docker compose up -d
+#
+# Every image is named by its major.minor tag, so this gets patch releases:
+#
+#   docker compose pull && docker compose up -d
+#
+# A new minor or major version also needs that release's compose.yaml and
+# archive first.
+#
+# Don't edit this file, because an upgrade replaces it. Site-specific changes
+# go in a compose.override.yaml next to it (docs/deploy.md, "Your own changes").
 #
 # Your own reverse proxy (TLS) forwards APP_URL to `api` and AUTHENTIK_URL,
-# a separate subdomain, to `authentik-server` (R40). See docs/deploy.md.
+# a separate subdomain, to `authentik-server` (R40).
 name: pagerarchive
 
 x-authentik: &authentik
-  image: ghcr.io/goauthentik/server:2026.5.5
+  image: ghcr.io/goauthentik/server:2026.5
   restart: unless-stopped
+  # A hash of the files mounted below. Compose doesn't notice a changed file,
+  # but a changed label makes `docker compose up -d` recreate the container,
+  # so a release's new files take effect (R84a, ADR 0019). A test checks it
+  # and prints the right value.
+  labels:
+    pagerarchive.config: "03ce4ad13583afe2"
   environment:
     AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in .env}
     AUTHENTIK_POSTGRESQL__HOST: db
@@ -39,9 +60,14 @@ x-authentik: &authentik
     PA_APP_URL: ${APP_URL:?set APP_URL in .env}
     PA_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
     PA_AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:?set AUTHENTIK_API_TOKEN in .env}
+  # File by file, from the release's archive: a file a later release drops
+  # can't stay in use because it's still in the folder (ADR 0019).
   volumes:
-    - ./deploy/authentik/blueprints:/blueprints/pagerarchive:ro
-    - ./deploy/authentik/templates:/templates:ro
+    - ./deploy/authentik/blueprints/pagerarchive.yaml:/blueprints/pagerarchive/pagerarchive.yaml:ro
+    - ./deploy/authentik/templates/pagerarchive/code.html:/templates/pagerarchive/code.html:ro
+    - ./deploy/authentik/templates/pagerarchive/code.txt:/templates/pagerarchive/code.txt:ro
+    - ./deploy/authentik/templates/pagerarchive/invitation.html:/templates/pagerarchive/invitation.html:ro
+    - ./deploy/authentik/templates/pagerarchive/invitation.txt:/templates/pagerarchive/invitation.txt:ro
   depends_on:
     db:
       condition: service_healthy
@@ -58,16 +84,15 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       AUTHENTIK_DB_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
-      # The locked-accounts metric's role (deploy/postgres/20-pagerarchive-metrics.sh).
-      AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
     # P1: statement text (which can contain page text) is never logged.
     command: >-
       postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse
       -c shared_buffers=128MB -c work_mem=4MB -c max_connections=100
     volumes:
       - db:/var/lib/postgresql
+      # Runs once, when the volume is new, so it has no label: a change to it
+      # means nothing to a database that already exists.
       - ./deploy/postgres/10-authentik.sh:/docker-entrypoint-initdb.d/10-authentik.sh:ro
-      - ./deploy/postgres/20-pagerarchive-metrics.sh:/docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
       interval: 5s
@@ -84,8 +109,9 @@ services:
     command: worker
 
   api:
-    image: ghcr.io/rikiku/pagerarchive:${PAGERARCHIVE_VERSION:-latest}
-    build: .
+    # This minor version's image. `docker compose pull` gets its patch releases;
+    # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
+    image: ghcr.io/rikiku/pagerarchive:0.15
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
@@ -110,10 +136,11 @@ services:
       OTEL_RESOURCE_ATTRIBUTES: ${OTEL_RESOURCE_ATTRIBUTES:-}
       AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
     volumes:
-      - ${PROFILES_DIR:-./profiles/example}:/profiles:ro
-      # Your PMTiles map extract (docs/deploy.md). The default is the tiny
-      # made-up map that goes with the example profile.
-      - ${MAP_TILES_FILE:-./deploy/example-map/example-map.pmtiles}:/map/tiles.pmtiles:ro
+      # Your network's profile and your map extract. With neither set, /dev/null
+      # is mounted instead, and the API uses the made-up example built into
+      # its image, with a warning on every start for the profile (R84).
+      - ${PROFILES_DIR:-/dev/null}:/profiles:ro
+      - ${MAP_TILES_FILE:-/dev/null}:/map/tiles.pmtiles:ro
     ports:
       - "${API_BIND:-127.0.0.1:8080}:8080"
     depends_on:

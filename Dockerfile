@@ -16,6 +16,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/pagerarchive ./cmd
 
 FROM gcr.io/distroless/static-debian13:nonroot
 COPY --from=build /out/pagerarchive /usr/local/bin/pagerarchive
+# The made-up example, used when a deployment mounts no profile or map (R84).
+COPY --from=build /src/profiles/example /usr/share/pagerarchive/example-profile
+COPY --from=build /src/deploy/example-map/example-map.pmtiles /usr/share/pagerarchive/example-map.pmtiles
 EXPOSE 8080
 ENTRYPOINT ["/usr/local/bin/pagerarchive"]
 CMD ["serve"]

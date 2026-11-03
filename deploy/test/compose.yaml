@@ -1,7 +1,11 @@
-# Test overlay: a local mail catcher instead of a real mail server (SPEC.md
-# section 14). Used by CI and scripts/stack.sh, never in a real deployment:
+# Test overlay: the API's image built from this checkout, and a local mail
+# catcher instead of a real mail server (SPEC.md section 14). Used by CI and
+# the scripts, never in a real deployment:
 #   docker compose -f compose.yaml -f deploy/test/compose.yaml --env-file deploy/test/stack.vars up -d
 services:
+  api:
+    image: pagerarchive:${PAGERARCHIVE_VERSION:-stacktest}
+    build: .
   mailpit:
     image: axllent/mailpit:v1.31.5
     environment:

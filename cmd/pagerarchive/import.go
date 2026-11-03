@@ -50,7 +50,11 @@ func importMessages(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 		r = f
 	}
 
-	set, err := profile.LoadDir(getenv("PROFILES_DIR", "/profiles"))
+	profiles, example := profilesDir()
+	if example {
+		fmt.Fprintln(stderr, "warning: no network profile is mounted (PROFILES_DIR in .env): using the made-up example profile, whose redaction rules aren't your network's")
+	}
+	set, err := profile.LoadDir(profiles)
 	if err != nil {
 		return fmt.Errorf("invalid profile:\n%w", err)
 	}
