@@ -8,6 +8,8 @@
 .env
 *.env
 .secrets/
+# The default backup folder, should a stack run from a checkout.
+/backups/
 
 # Browser app build output and dependencies
 web/build/*

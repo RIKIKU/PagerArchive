@@ -7,6 +7,7 @@ The server stack runs with Docker Compose on a Linux host (amd64):
 | `api` | PagerArchive: the API, the browser app and the CLI |
 | `db` | PostgreSQL with PostGIS. Holds PagerArchive's database and Authentik's |
 | `authentik-server`, `authentik-worker` | [Authentik](https://goauthentik.io), which handles sign-in, invitations and emailed codes |
+| `backup`, `backup-check` | Nightly dumps of both databases, and their check (see [Backups](#backups)) |
 
 PagerArchive never sees passwords: people sign in on Authentik's pages, and Authentik sends the invitation and code emails. PagerArchive keeps the accounts, roles and who invited whom.
 
@@ -170,6 +171,8 @@ networks:
 
 Your proxy then forwards to `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000`. Use those aliases rather than `api`: other stacks on a shared network can have a service with that name too. Keep `default` in each list, or the containers lose the database. `docker compose up -d` applies a changed override.
 
+The [example monitoring stack](monitoring.md#starting-the-stack) joins the same way, with its own `monitoring` network. With both, `api` has all three networks under one `networks:`, and both networks are under the last.
+
 ## Privacy
 
 - No page text is ever written to the logs (SPEC.md P1).
@@ -232,13 +235,15 @@ scrape_configs:
       - targets: ["pager-host.lan:8080"]   # API_BIND
 ```
 
-An alert for a quiet receiver, for example: `pagerarchive_client_receiving == 0`.
+Alerts for a quiet receiver and for backups, for example: `pagerarchive_client_receiving == 0` and `pagerarchive_backup_failing == 1`.
+
+The backups' state is there too: when the last good one was, and whether they're failing (see [Backups](#backups)).
 
 Since M12, `/metrics` also has requests by route and status with their durations (and, for a scraper that asks for OpenMetrics, exemplars linking them to traces), the database pool, open live-update connections, and the Go runtime's memory and CPU. The names above are unchanged.
 
 ## Monitoring and telemetry
 
-The API and the receiving clients can also send traces and logs (and the clients metrics) over OTLP, and the release includes a ready-made Grafana stack (Alloy, Tempo, Loki, Prometheus, Grafana) with dashboards and alerts for a client that stops and an API that's unreachable. It's off until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Monitoring](monitoring.md).
+The API and the receiving clients can also send traces and logs (and the clients metrics) over OTLP, and the release includes a ready-made Grafana stack (Alloy, Tempo, Loki, Prometheus, Grafana) with dashboards and alerts for a client that stops, an API that's unreachable and a failing backup. It's off until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Monitoring](monitoring.md).
 
 ## When the database restarts
 
@@ -268,7 +273,69 @@ Anything above 0 means its worker isn't picking up work. Restart Authentik as ab
 
 ## Backups
 
-Back up the `db` volume, which holds both databases. Messages that PagerArchive deletes (retention) can survive in your own backups.
+Every night at `BACKUP_AT` (default `04:00`, in `TZ`, after the nightly run) the stack dumps PagerArchive's database and Authentik's into a folder, and keeps 14 days of them. There's nothing to install or schedule. Nothing leaves the host unless you copy it: see [Copying the folder off the host](#copying-the-folder-off-the-host).
+
+| Setting in `.env` | Default | What it is |
+|---|---|---|
+| `BACKUP_DIR` | `./backups`, next to `compose.yaml` | The folder |
+| `BACKUP_AT` | `04:00` | When each night's backup starts |
+| `BACKUP_KEEP_DAYS` | `14` | How many days are kept. Older nights are deleted, but only after a good backup, so failures never use up the good ones |
+| `BACKUP_UID`, `BACKUP_GID` | `0` | Who owns the files. They hold everything in both databases, so only that user and group can read them. Set `BACKUP_GID` to a group your file backup tool is in, or leave them if it runs as root |
+
+A night is four files:
+
+```text
+2026-11-03.pagerarchive.dump
+2026-11-03.authentik.dump
+2026-11-03.counts.tsv       each table's rows when the dump was taken
+2026-11-03.check            "ok", or what went wrong
+```
+
+**Safe to copy at any time.** Each file is written as `<name>.partial` and renamed when it's complete, so a file with one of those names is always whole. Tell your backup tool to skip `*.partial`, if it can. One it copies anyway is worth nothing and does no harm.
+
+**Each night's dumps are checked.** The `backup-check` container has no network and no passwords. It restores the dumps into a throwaway database of its own and compares every table's row count with the counts taken when the dump was. It needs free disk space for that about the size of your database, for the length of the check, on Docker's disk (the `backup-check` volume).
+
+**If something goes wrong,** admins see it in **Administration**, and on **Administration → Backups**: the last backup failed, or the last good one is more than 36 hours old. `/metrics` has `pagerarchive_backup_last_good_timestamp_seconds` and `pagerarchive_backup_failing`, and the [example monitoring stack](monitoring.md#alerts-and-where-they-go) alerts on it. `docker compose logs backup backup-check` says when each ran and how long it took. To try it now, or after fixing something: `docker compose exec backup pagerarchive-backup now`.
+
+**What it costs,** at 10 years of pages (4,562,500, a 2.4 GB database), measured on a fast test disk: about 30 s for the dumps and 4 minutes for the check, at about 290 MB in the folder per night, so about 4 GB for 14 nights. A restore takes about 4 minutes. Memory that can't be given back stays under 250 MB during the check, and the file cache on top is given back when anything needs it. A spinning disk will take longer, by an amount not yet measured.
+
+### What's in a backup
+
+Everything in both databases: pages, aliases, templates and icons, integrations, users and their sign-ins. Redacted details are never stored, so they aren't in a backup either (SPEC.md P1). A dump does hold everything else, Authentik's password hashes included, so treat the folder as you would the database.
+
+Not in a backup, so keep them yourself:
+
+- **`.env`.** You need its secrets to restore. `INTEGRATION_SECRETS_KEY` and `AUTHENTIK_SECRET_KEY` above all: without the first, every integration's secrets have to be entered again. Keep it apart from the dumps, or the dumps' integration secrets are no longer protected by it.
+- **Your profile and your map extract**, which you made and can make again.
+
+Messages that retention has deleted can survive in backups, for as long as you keep them, here and in any copies.
+
+### Restoring
+
+This restores a chosen night into an **empty install**: a new folder made as in [Install](#install), with your old `.env`, or the same folder after `docker compose down -v`, which deletes the database and not the backup folder. Put the backups where `BACKUP_DIR` says, and don't start the stack first:
+
+<!-- a80:restore -->
+```sh
+docker compose run --rm backup restore 2026-11-03
+```
+
+Without a date, it lists the nights. It starts the database, restores both dumps, and checks the row counts again. Then start everything:
+
+```sh
+docker compose up -d
+```
+
+Everything is as it was that night, and people sign in with the passwords they had then. It won't overwrite anything: if the install has tables in it, it stops and says so. It also refuses a night that failed its check, unless you add `--unchecked` after the date. Database migrations for a newer version run when the API starts, as for any upgrade, so a dump can go into a newer install, but not an older one.
+
+### Copying the folder off the host
+
+That's your job, and any tool that copies files will do. For example, to a NAS mounted at `/mnt/nas`, from cron on the host at 07:00, after the night's check:
+
+```sh
+0 7 * * * rsync -a --delete --exclude '*.partial' /opt/pagerarchive/backups/ /mnt/nas/pagerarchive-backups/
+```
+
+`--delete` makes the copy keep 14 days too. Leave it out to keep more there, and remember that deleted messages live on in whatever you keep.
 
 ## Images
 
@@ -285,17 +352,17 @@ PagerArchive's images are published to GitHub's container registry by CI, but on
 | `latest`, `main` | the newest build of `main` |
 | `sha-<commit>` | one exact build |
 
-`compose.yaml` names PagerArchive's image, and upstream's PostGIS and Authentik images, by their major.minor tags (`pagerarchive:0.15`), so the minor version you run is the `compose.yaml` you have, and `docker compose pull` gets every patch release. Keeping up with patches is your job: nothing pulls them for you. Nothing about versions goes in `.env`.
+`compose.yaml` names PagerArchive's image, and upstream's PostGIS and Authentik images, by their major.minor tags (`pagerarchive:0.16`), so the minor version you run is the `compose.yaml` you have, and `docker compose pull` gets every patch release. Keeping up with patches is your job: nothing pulls them for you. Nothing about versions goes in `.env`.
 
 ## Upgrading
 
-**A patch release** (0.15.0 to 0.15.1) needs only these two commands, from the folder with `compose.yaml`. Run them regularly, as patches often carry security fixes:
+**A patch release** (0.16.0 to 0.16.1) needs only these two commands, from the folder with `compose.yaml`. Run them regularly, as patches often carry security fixes:
 
 ```sh
 docker compose pull && docker compose up -d
 ```
 
-**A new minor or major version** (0.15 to 0.16) also needs that release's `compose.yaml` and archive first. Upgrades can skip releases:
+**A new minor or major version** (0.16 to 0.17) also needs that release's `compose.yaml` and archive first. Upgrades can skip releases:
 
 ```sh
 base=https://github.com/RIKIKU/PagerArchive/releases/latest/download

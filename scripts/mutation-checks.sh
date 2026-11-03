@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11), telemetry (M12), search (M13a), the import (M16) and installing and
-# upgrading (M17): break one check
+# (M11), telemetry (M12), search (M13a), the import (M16), installing and
+# upgrading (M17) and backups (M19): break one check
 # at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
@@ -37,7 +37,7 @@ survived=0
 # "a76:<regexp>" (A76's checks through the command, scripts/a76-checks.sh) or
 # "stack:<regexp>" (the account checks against Authentik, through
 # scripts/stack-checks.sh with A23's first admin) or "a77:" (the upgrade,
-# through scripts/a77.sh).
+# through scripts/a77.sh) or "a80:" (backups, through scripts/a80.sh).
 #
 # mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
 # replacements, in two files, as one mutation (M12).
@@ -80,7 +80,7 @@ mutate() {
 	mon:*)
 		out=$(PA_MON_RUN="${test#mon:}" sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
 		# What failed, not the steps that passed before it (their lines say "A65:" or "A67:").
-		printf '%s\n' "$out" | grep -E '^\s+a6[57]_test.go:[0-9]+: ' | grep -vE ': A6[57]: ' | head -4
+		printf '%s\n' "$out" | grep -E '^\s+a(6[57]|80)_test.go:[0-9]+: ' | grep -vE ': A(6[57]|80): ' | head -4
 		;;
 	stack:*)
 		out=$(PA_STACK_PART=accounts sh scripts/stack-checks.sh -run "TestA23FirstAdmin|${test#stack:}" 2>&1)
@@ -101,6 +101,10 @@ mutate() {
 		;;
 	a77:*)
 		out=$(sh scripts/a77.sh -o "$work/a77-results" 2>&1)
+		printf '%s\n' "$out" | grep -E '^FAIL: |^\s+a77_test.go:[0-9]+: ' | grep -vE ': A77: ' | head -6
+		;;
+	a80:*)
+		out=$(sh scripts/a80.sh -o "$work/a80-results" --project=chromium 2>&1)
 		printf '%s\n' "$out" | grep -E '^FAIL: |^\s+a77_test.go:[0-9]+: ' | grep -vE ': A77: ' | head -6
 		;;
 	e2e:*)
@@ -527,6 +531,21 @@ mutate "the metrics role is left for a hand step (the function)" internal/authen
 	}'
 mutate "the metrics role is left for a hand step (the API doesn't call it)" cmd/pagerarchive/main.go a77: \
 	'if err := authentik.EnsureLocksRole(ctx, dbURL, pw); err != nil {' 'if err := error(nil); err != nil {'
+
+# M19: backups (R86-R86c, A80).
+mutate "a dump is written straight to its final name" deploy/backup/backup.sh a80: \
+	'_db=$1 _partial=$DIR/$3.$2.dump.partial' '_db=$1 _partial=$DIR/$3.$2.dump'
+mutate "the check is skipped" deploy/backup/backup.sh a80: \
+	'_r=$(check_night "$_n")' '_r=ok'
+mutate "old dumps aren't deleted" deploy/backup/backup.sh a80: \
+	'prune "$_night"' ':'
+mutate "the restore leaves out Authentik's database" deploy/backup/backup.sh a80: \
+	'	for _pair in $DATABASES; do
+		_db=${_pair%%:*} _name=${_pair##*:}
+		if ! pg_restore -d' '	for _pair in postgres:pagerarchive; do
+		_db=${_pair%%:*} _name=${_pair##*:}
+		if ! pg_restore -d'
+
 if [ -n "${PA_MUT_ONLY:-}" ]; then
 	exit $survived
 fi
@@ -536,6 +555,7 @@ go test -count=1 -run 'TestR84|TestA79|TestVersion' . 2>&1 | tail -3
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'
+! command -v docker >/dev/null || sh scripts/a80.sh -o "$work/a80-results" --project=chromium 2>&1 | grep -E '^(ok|FAIL|=== A80 (passed|FAILED)|--- (PASS|FAIL))'
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'

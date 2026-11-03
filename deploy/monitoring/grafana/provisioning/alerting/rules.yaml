@@ -53,6 +53,43 @@ groups:
             connection: the "PagerArchive: clients" dashboard shows whether
             it still reads lines and whether its sends fail.
 
+      # R86a: the last backup failed, or the last good one is more than 36 hours
+      # old. The API works that out, as Administration shows the same thing.
+      # It clears after the next good backup. While the API is down there's no
+      # value: that's "API unreachable"'s job.
+      - uid: pa-backup-failing
+        title: Backup failing
+        condition: failing
+        data:
+          - refId: state
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: state
+              instant: true
+              range: false
+              expr: max(pagerarchive_backup_failing{job="pagerarchive"})
+          - refId: failing
+            datasourceUid: __expr__
+            model:
+              refId: failing
+              type: threshold
+              expression: state
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: critical
+        annotations:
+          summary: "The nightly backup failed, or the last good one is more than 36 hours old"
+          description: >-
+            Administration's Backups page says which and why, and when the last
+            good backup was. docs/deploy.md, "Backups".
+
       # R74a: a client running the radio has had no audio from rtl_fm for 2
       # minutes. rtl_fm runs without squelch, so a working dongle always
       # gives audio: none means the dongle is stuck, or the pipeline isn't

@@ -298,7 +298,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
@@ -753,7 +753,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -768,7 +768,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -776,6 +776,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Alias requests', 'Alias requests'],
 			['Receiving clients', 'Receiving clients'],
 			['Retention', 'Retention'],
+			['Backups', 'Backups'],
 			['Integration addresses', 'Integration addresses']
 		]) {
 			await screens.getByRole('link', { name: link }).click();
@@ -2219,7 +2220,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 		Tools: ['Print sheet', 'Unknown capcodes'],
 		Reports: ['Capcode report'],
 		Account: ['Profile', 'Integrations', 'My requests', 'Invite someone'],
-		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses']
+		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses']
 	};
 	for (const role of ['user', 'admin'] as const) {
 		const page = await (await signedIn(browser, role, desk)).newPage();
@@ -2419,7 +2420,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 			const more = page.getByRole('dialog', { name: 'More' });
 			await expect(more).toBeVisible();
 			for (const there of ['Unknown capcodes', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
-			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Integration addresses'])
+			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses'])
 				await expect(more.getByRole('link', { name: gone })).toHaveCount(0);
 			await expect(more.getByText(/set up|new integration/i)).toHaveCount(0);
 			await page.screenshot({ path: info.outputPath(`a70-more-${role}.png`) });

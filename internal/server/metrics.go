@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/backup"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
@@ -42,6 +43,21 @@ func (c *pageCounts) get(outcome string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n[outcome]
+}
+
+// backupStatus is the nightly backups' state now (R86a).
+func (s *Server) backupStatus() backup.Status {
+	return backup.Read(s.BackupStatusFile, s.Now(), s.Started)
+}
+
+// getBackup is GET /api/v1/admin/backup. With no status file set, the backups
+// aren't part of this deployment's stack, and the state says so.
+func (s *Server) getBackup(w http.ResponseWriter, r *http.Request) {
+	if s.BackupStatusFile == "" {
+		writeJSON(w, http.StatusOK, backup.Status{State: "off"})
+		return
+	}
+	writeJSON(w, http.StatusOK, s.backupStatus())
 }
 
 // metrics is the Prometheus endpoint for external monitoring (R52, A32).
@@ -154,6 +170,16 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 			m.family("pagerarchive_nightly_last_run_redacted", "gauge", "Messages the last nightly run redacted again (P1).")
 			m.sample("pagerarchive_nightly_last_run_redacted", nil, float64(last.Redacted))
 		}
+	}
+
+	if s.BackupStatusFile != "" {
+		b := s.backupStatus()
+		if b.LastGoodAt != nil {
+			m.family("pagerarchive_backup_last_good_timestamp_seconds", "gauge", "When the last good backup was made: dumped, restored and compared (R86a).")
+			m.sample("pagerarchive_backup_last_good_timestamp_seconds", nil, float64(b.LastGoodAt.Unix()))
+		}
+		m.family("pagerarchive_backup_failing", "gauge", "1 if the last backup failed, or the last good one is more than 36 hours old (R86a).")
+		m.sample("pagerarchive_backup_failing", nil, b2f(b.Failing()))
 	}
 
 	s.loadMetrics(m)

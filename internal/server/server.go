@@ -58,6 +58,10 @@ type Server struct {
 	UI http.Handler
 	// Nightly is the retention and redaction job (R45).
 	Nightly *nightly.Job
+	// BackupStatusFile is where the backup service says how it went ("" for a
+	// stack without one), and Started when this API started (R86a).
+	BackupStatusFile string
+	Started          time.Time
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
@@ -107,6 +111,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/reports/capcode":              s.capcodeReport,
 		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
+		"GET /api/v1/admin/backup":                 s.adminOnly(s.getBackup),
 		"GET /api/v1/stream":                       s.stream,
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,

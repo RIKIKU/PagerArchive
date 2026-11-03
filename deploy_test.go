@@ -22,6 +22,7 @@ type composeFile struct {
 	path     string // relative to the repository
 	Services map[string]struct {
 		Image   string            `yaml:"image"`
+		Network string            `yaml:"network_mode"`
 		Build   any               `yaml:"build"`
 		Labels  map[string]string `yaml:"labels"`
 		Volumes []string          `yaml:"volumes"`
@@ -136,7 +137,7 @@ func TestR84aComposeNamesThisRelease(t *testing.T) {
 // own data.
 func mountSource(t *testing.T, c composeFile, service, volume string) string {
 	t.Helper()
-	if strings.HasPrefix(volume, "${PROFILES_DIR:-") || strings.HasPrefix(volume, "${MAP_TILES_FILE:-") {
+	if strings.HasPrefix(volume, "${PROFILES_DIR:-") || strings.HasPrefix(volume, "${MAP_TILES_FILE:-") || strings.HasPrefix(volume, "${BACKUP_DIR:-") {
 		return ""
 	}
 	source, _, _ := strings.Cut(volume, ":")
@@ -337,5 +338,75 @@ func TestR84bInstallIsTheFilesAndEnv(t *testing.T) {
 		if bytes.Contains(data, []byte("git pull")) {
 			t.Errorf("%s still says git pull", doc)
 		}
+	}
+}
+
+// R86a, R86: the check has no network and no secrets, and only it and the backup
+// service see the folder; the API sees only the status volume, read-only, so a
+// compromised API can't read Authentik's password hashes from a dump.
+func TestR86aBackupServices(t *testing.T) {
+	c := composeFiles(t)[0]
+	check, ok := c.Services["backup-check"]
+	if !ok {
+		t.Fatal("no backup-check service")
+	}
+	if check.Network != "none" {
+		t.Errorf("backup-check's network_mode is %q, want none", check.Network)
+	}
+	data, err := os.ReadFile("compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &env); err != nil {
+		t.Fatal(err)
+	}
+	for k := range env.Services["backup-check"].Environment {
+		if strings.Contains(k, "PASSWORD") || strings.HasPrefix(k, "PG") {
+			t.Errorf("backup-check has %s: it needs no way into the database", k)
+		}
+	}
+	for name, s := range c.Services {
+		for _, v := range s.Volumes {
+			if strings.HasPrefix(v, "${BACKUP_DIR:-") && name != "backup" && name != "backup-check" {
+				t.Errorf("%s mounts the backup folder", name)
+			}
+			if strings.HasPrefix(v, "backup-status:") && name == "api" && !strings.HasSuffix(v, ":ro") {
+				t.Errorf("the API can write the backup status: %s", v)
+			}
+		}
+	}
+}
+
+// R76: the monitoring stack owns its network, under that name, and PagerArchive
+// doesn't appear in its compose file: the override joins them.
+func TestR76MonitoringOwnsItsNetwork(t *testing.T) {
+	data, err := os.ReadFile("deploy/monitoring/compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c struct {
+		Networks map[string]struct {
+			Name     string `yaml:"name"`
+			External bool   `yaml:"external"`
+		} `yaml:"networks"`
+	}
+	if err := yaml.Unmarshal(data, &c); err != nil {
+		t.Fatal(err)
+	}
+	if n, ok := c.Networks["monitoring"]; !ok || n.Name != "monitoring" || n.External {
+		t.Errorf("networks.monitoring is %+v, want name: monitoring, not external", n)
+	}
+	for key, n := range c.Networks {
+		if n.External {
+			t.Errorf("network %s is external: this stack joins nobody's network", key)
+		}
+	}
+	if bytes.Contains(data, []byte("PAGERARCHIVE_NETWORK")) {
+		t.Error("the stack's compose file still names PagerArchive's network")
 	}
 }

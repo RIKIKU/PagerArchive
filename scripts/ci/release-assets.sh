@@ -33,6 +33,6 @@ cp deploy/monitoring/compose.yaml "$out/monitoring-compose.yaml"
 cp deploy/monitoring/.env.example "$out/monitoring-env.example"
 # The same bytes from the same files, whoever builds it.
 tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=u+rwX,go+rX -cf - \
-	deploy/authentik deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana \
+	deploy/authentik deploy/backup deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana \
 	deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo |
 	gzip -n >"$out/pagerarchive-config.tar.gz"

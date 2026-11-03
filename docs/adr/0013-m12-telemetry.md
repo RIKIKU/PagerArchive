@@ -181,7 +181,7 @@ Metrics are sent every `OTEL_METRIC_EXPORT_INTERVAL` (the standard 60 s; the doc
 
 ### 9. The example monitoring stack (R76)
 
-`deploy/monitoring/compose.yaml`, a compose project of its own that joins PagerArchive's network (`PAGERARCHIVE_NETWORK`, default `pagerarchive_default`):
+`deploy/monitoring/compose.yaml`, a compose project of its own that joined PagerArchive's network (`PAGERARCHIVE_NETWORK`; since M19 the stack owns a `monitoring` network, and PagerArchive joins that: ADR 0020):
 
 | Service | Image (pinned by digest in the file) | Role |
 |---|---|---|

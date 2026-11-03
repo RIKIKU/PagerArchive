@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, three dashboards and three alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, three dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -60,7 +60,9 @@ Nothing exported contains page text, search terms or other query values, redacte
 
 ## Starting the stack
 
-You need PagerArchive running ([Deploying the server](deploy.md)), with `METRICS_TOKEN` set in its `.env`.
+The stack is a separate application that other apps can use too. It owns a Docker network named `monitoring`, as a reverse proxy owns its `proxy`, and each app joins that network with a `compose.override.yaml` of its own. So start the stack first.
+
+You need PagerArchive's folder ([Deploying the server](deploy.md)), with `METRICS_TOKEN` set in its `.env`.
 
 1. The stack's files are in the archive you unpacked for PagerArchive, under `deploy/monitoring`. From that folder (the one with PagerArchive's `compose.yaml`), get its compose file and settings file:
 
@@ -79,8 +81,6 @@ You need PagerArchive running ([Deploying the server](deploy.md)), with `METRICS
 
    Keep `.env` readable only by you (`chmod 600 .env`): it holds the admin password and the metrics token.
 
-   If you renamed PagerArchive's compose project, set `PAGERARCHIVE_NETWORK` to its network (`docker network ls` shows it: `<project>_default`).
-
 3. Start it:
 
    ```sh
@@ -90,11 +90,45 @@ You need PagerArchive running ([Deploying the server](deploy.md)), with `METRICS
 
    The first start takes a few minutes: Grafana sets up its database.
 
-4. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the three dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
+4. Join PagerArchive to the stack's network. In the folder with PagerArchive's `compose.yaml`, in its `compose.override.yaml` (see [Your own changes](deploy.md#your-own-changes), and merge this in if you already have one):
+
+   <!-- monitoring:override -->
+   ```yaml
+   services:
+     api:
+       networks:
+         default:
+         monitoring:
+           aliases: [pagerarchive]
+
+   networks:
+     monitoring:
+       external: true
+   ```
+
+   and run `docker compose up -d` there. Keep `default`, or the API loses the database. The alias is what Alloy scrapes (`PA_API_ADDRESS`, default `pagerarchive:8080`): other stacks on a shared network can have a service named `api` too. From now on the stack has to be there before PagerArchive starts, or Compose says `network monitoring declared as external, but could not be found`.
+
+5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the three dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
 
 Stop it with `docker compose down` (keeps the data) or `docker compose down -v` (deletes it).
 
-The stack is **LAN-only**: Grafana's port is the only one published. Tempo, Loki and Prometheus sit on an internal Docker network with no way out, and nothing in the stack calls home (usage reports, update checks and plugin downloads are switched off).
+The stack is **LAN-only**: Grafana's port is the only one published. Tempo, Loki and Prometheus sit on an internal Docker network with no way out, and nothing in the stack calls home (usage reports, update checks and plugin downloads are switched off). Of the stack, only Alloy is on the `monitoring` network, so an app that joins it can send telemetry and be scraped, and can't reach the stores or Grafana.
+
+**Another app** joins the same way, with its own override and an alias of its own, and needs a scrape target in `alloy/config.alloy`, or sends OTLP to `http://alloy:4318`.
+
+### If you made a network named `monitoring` by hand
+
+Until 0.16 the stack joined PagerArchive's network instead. If you made a `monitoring` network yourself to run it, Compose won't take over one it didn't make (`network monitoring was found but has incorrect label`). Switch once, after getting this release's stack files, from `deploy/monitoring`:
+
+```sh
+docker compose down                 # keeps the data
+docker network rm monitoring
+docker compose up -d
+```
+
+If `docker network rm` says the network has active endpoints, something else is still on it: `docker network inspect monitoring` shows what, so stop that first, as PagerArchive's `api` may be. Then `docker compose up -d` in PagerArchive's folder joins it again.
+
+If you ran the stack before, without any override, add the one above when you upgrade: `PAGERARCHIVE_NETWORK` is gone, and Alloy can't scrape the API until the API joins. The stack's old `pagerarchive-monitoring_monitoring` network is removed by `docker compose up -d --remove-orphans`, or stays unused and harmless.
 
 ## Pointing the API at it
 
@@ -104,7 +138,7 @@ In PagerArchive's `.env` (not the monitoring stack's), add:
 OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318
 ```
 
-and recreate the API: `docker compose up -d api`. The API reaches Alloy by name because the monitoring stack joined PagerArchive's network. Its log then says `telemetry on`, with `traces` and `logs` true and `metrics` false (`docker compose logs api | grep telemetry`). Its metrics stay on `/metrics`, which Alloy scrapes (R75); they're never pushed.
+and recreate the API: `docker compose up -d api`. The API reaches Alloy by name because of the override, which put it on the `monitoring` network. Its log then says `telemetry on`, with `traces` and `logs` true and `metrics` false (`docker compose logs api | grep telemetry`). Its metrics stay on `/metrics`, which Alloy scrapes (R75); they're never pushed.
 
 To turn telemetry off again, remove the line (or set `OTEL_SDK_DISABLED=true`) and recreate the API.
 
@@ -186,13 +220,15 @@ A client reading `multimon-ng` output on stdin has no radio of its own, so it re
 
 ## Alerts, and where they go
 
-Three alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
+Four alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
 
 | Rule | Fires when | Clears when |
 |---|---|---|
 | **Client not receiving** | a client has sent no page of any kind (heartbeats included) for more than 30 minutes (R39). One alert per client | the client is heard again |
 | **Radio stalled** | a client running the radio has had no audio from `rtl_fm` for more than 2 minutes, while it still reports: a stuck dongle, or the pipeline not running (R74a). One alert per client. A client that's switched off is "Client not receiving"'s job, not this one's | audio flows again |
 | **API unreachable** | Alloy's scrape of `/metrics` has failed for 30 s: the API is down, unreachable, or `METRICS_TOKEN` changed | the scrape works again |
+
+| **Backup failing** | the last nightly backup failed, or the last good one is more than 36 hours old (R86a; [Backups](deploy.md#backups)). It clears after the next good backup. The API works this out, so Administration shows the same thing, and the 36 hours aren't in `rules.yaml` |
 
 ![A firing alert](monitoring/alert-firing.png)
 
@@ -265,7 +301,7 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 
 ## When something doesn't show up
 
-- **No data at all in the client panels or "up" alerts firing:** Alloy can't scrape the API. Check `PA_METRICS_TOKEN` matches the API's `METRICS_TOKEN`, and `docker compose logs alloy`. `PAGERARCHIVE_NETWORK` must be PagerArchive's network.
+- **No data at all in the client panels or "up" alerts firing:** Alloy can't scrape the API. Check `PA_METRICS_TOKEN` matches the API's `METRICS_TOKEN`, and `docker compose logs alloy`. The API must be on the `monitoring` network, with the alias in `PA_API_ADDRESS` (`docker network inspect monitoring`; [the override](#starting-the-stack)).
 - **Metrics but no traces or logs:** `OTEL_EXPORTER_OTLP_ENDPOINT` isn't set on the API (after adding it, `docker compose up -d api` recreates the API with it). The API's log says `telemetry on` when it's set.
 - **The API's log says "dropping telemetry":** it can't reach Alloy. Is the monitoring stack running? `docker compose ps` in `deploy/monitoring`.
 - **Traces and metrics but no new log lines:** Loki stops taking logs when the disk holding its data is more than 90% full, and says `disk usage exceeded threshold, throttling writes` once, then refuses every write (`docker compose logs loki | grep -c "Ingester is shutting down"` counts them; Alloy logs `Exporting failed. Dropping data.` for `otelcol.exporter.otlphttp.loki`). Lines sent meanwhile are lost. Free space on that disk, then `docker compose restart loki`.

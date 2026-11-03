@@ -426,6 +426,51 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
+  # A80: nightly backups in a folder made from the release's files: the schedule,
+  # the check, the clock, a failure seen in a browser, and a restore into a new
+  # install. Its alert is in the monitoring job.
+  backups:
+    name: Backups (A80)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci --no-fund --no-audit
+      - name: Playwright's version
+        id: playwright
+        working-directory: web
+        run: echo "version=$(npx playwright --version | cut -d' ' -f2)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
+      - name: Install browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+      - name: A80
+        run: sh scripts/a80.sh -o a80-results --project=chromium
+      - name: Upload the logs, Playwright report and screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: a80-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            a80-results/
+            web/playwright-report/
+            web/test-results/
+          if-no-files-found: ignore
+          retention-days: 14
+
   images:
     name: Images and client replay (${{ matrix.arch }})
     strategy:
@@ -507,7 +552,7 @@ jobs:
   # webhook contact point the test receives, and (A67) clients in the client
   # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
-    name: Example monitoring stack (A78's install, A65, A67)
+    name: Example monitoring stack (A78's install, A65, A67, A80's alert)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -522,7 +567,7 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
-      - name: The install with no checkout, A65 and A67 on the example monitoring stack
+      - name: The install with no checkout, A65, A67 and A80's alert on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs
         if: always()
@@ -546,7 +591,7 @@ jobs:
   # finds its own tag and release on this commit and finishes them.
   release:
     name: Release v<VERSION> (tag, GitHub release, client binaries)
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -620,7 +665,7 @@ jobs:
   # is skipped, so these run unless something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -663,7 +708,7 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, images, budget, monitoring, powershell, versions, release]
+    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:
