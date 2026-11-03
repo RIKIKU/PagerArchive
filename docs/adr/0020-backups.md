@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: Proposed. The owner's brief for M19 of 2026-11-03: SPEC.md section 7.24 (R86-R86c), A80 and R76's `monitoring` network, on the branch `m19` from main at 452e41e. To be released as 0.16.0. Search, the import and the client don't change. **The PowerShell module doesn't change**, so its version stays.
+Status: Accepted (owner, 2026-11-04). The owner's brief for M19 of 2026-11-03: SPEC.md section 7.24 (R86-R86c), A80 and R76's `monitoring` network, on the branch `m19` from main at 452e41e. To be released as 0.16.0. Search, the import and the client don't change. **The PowerShell module doesn't change**, so its version stays.
 
 ## Context
 
@@ -114,3 +114,9 @@ On cld01 (Docker 29.8.2, Compose 5.6.0), and in CI:
 1. **The check's cost on the production disk.** It does a full restore each night. If it's too slow on the spinning disk, it could skip the indexes, at the cost of no longer proving them. Keep it full until there are real times?
 2. **Who reads the files?** The default owner is root with mode 640. If the host's file backup tool doesn't run as root, set `BACKUP_GID` to its group. Which is it on the production host?
 3. **The restore's first step.** It refuses an install that has any tables, so the steps are `down -v`, then restore, then `up -d`. Is that the right side to err on, given that `down -v` is itself destructive and the docs now tell people to run it?
+
+### The owner's answers (2026-11-04)
+
+1. The check stays a full restore, indexes included. Decide again if production's real times call for it.
+2. Nothing reads the files yet on the production host. `BACKUP_GID` is set when its file backup tool is set up.
+3. Restore refuses an install that has tables: `down -v` first is deliberate.
