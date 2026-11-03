@@ -765,7 +765,7 @@ jobs:
   attach-release-files:
     name: Attach the install and upgrade files, and make it the latest release
     needs: [release, publish-server, publish-client-manifest]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: ${{ !failure() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
