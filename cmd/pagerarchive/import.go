@@ -50,7 +50,11 @@ func importMessages(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 		r = f
 	}
 
-	set, err := profile.LoadDir(getenv("PROFILES_DIR", "/profiles"))
+	profiles, example := profilesDir()
+	if example {
+		fmt.Fprintln(stderr, "warning:", exampleProfileWarning)
+	}
+	set, err := profile.LoadDir(profiles)
 	if err != nil {
 		return fmt.Errorf("invalid profile:\n%w", err)
 	}

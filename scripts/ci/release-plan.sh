@@ -28,15 +28,6 @@ is_version "$version" || { fail VERSION "VERSION is '$version', not MAJOR.MINOR.
 tag=v$version
 commit=$(git rev-parse "$COMMIT^{commit}")
 
-# earlier_releases: the v* tags in the commit's history, newest version
-# first, other than any on this commit.
-earlier_releases() {
-	git tag -l 'v*' --sort=-v:refname --merged "$commit" | while read -r t; do
-		[ "$(git rev-parse "$t^{commit}")" != "$commit" ] && echo "$t"
-	done
-	return 0
-}
-
 if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
 	if [ "$tagged" != "$commit" ]; then
 		fail VERSION "Tag $tag already exists, on $tagged: $version was released already, and a version is never reused. Nothing is published; raise VERSION in a new branch."
@@ -45,7 +36,7 @@ if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
 	echo "Tag $tag is already on $commit: a re-run, finishing the release."
 fi
 
-previous=$(earlier_releases | head -n 1)
+previous=$(previous_release "$commit")
 if [ -n "$previous" ]; then
 	if ! higher "$version" "${previous#v}"; then
 		fail VERSION "VERSION is $version, which isn't higher than the previous release, $previous: every release is a new, higher version. Nothing is published; raise VERSION above ${previous#v} in a new branch."

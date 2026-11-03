@@ -32,6 +32,11 @@ stack_up() {
 		stack_compose ps
 		return 1
 	fi
+	stack_wait_ready
+}
+
+# Waits for Authentik, its blueprint and the API, however the stack was started.
+stack_wait_ready() {
 	start=$(date +%s)
 	# Authentik is ready, and has applied the PagerArchive blueprint, when the
 	# app's API token can see the enrolment flow.

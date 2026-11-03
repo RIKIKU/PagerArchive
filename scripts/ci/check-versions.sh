@@ -1,6 +1,7 @@
 #!/bin/sh
 # The version checks on a branch or pull request (SPEC.md 12.1 and R63, ADR 0016):
 #   - VERSION is MAJOR.MINOR.PATCH and higher than main's;
+#   - compose.yaml names that version's image (R84a);
 #   - if the branch changes powershell/PagerArchive/, the manifest's
 #     ModuleVersion is higher than main's.
 # Each failure says what to change. Needs main's history and the v* tags
@@ -22,6 +23,8 @@ if ! is_version "$version"; then
 elif [ -n "$main_version" ] && ! higher "$version" "$main_version"; then
 	fail VERSION "VERSION is $version, which isn't higher than main's $main_version: raise it (a milestone raises the minor number, a fix the patch number), so this merge is a new release."
 fi
+
+check_compose_image "$version"
 
 base=$(git merge-base "$MAIN" HEAD)
 if module_changed "$base" HEAD; then

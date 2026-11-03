@@ -1,32 +1,14 @@
-#!/bin/sh
-# The "accounts locked" metric (SPEC.md R52, R44a; ADR 0006, owner decision
-# Q1). Creates, in Authentik's database:
-#   - pagerarchive_locked_accounts(): the number of accounts the guessing
-#     protection has locked now, by the same rule as the
-#     pagerarchive-not-locked policy in deploy/authentik/blueprints. It
-#     returns only that count.
-#   - the role pagerarchive_metrics, which may connect and call that
-#     function, and read nothing else.
-#
-# Runs once when the data volume is new (after 10-authentik.sh). An existing
-# install runs it by hand, once (docs/deploy.md, "Upgrading"):
-#   docker compose exec db sh /docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh
-# It's safe to run again. Without AUTHENTIK_METRICS_DB_PASSWORD it does nothing.
-set -eu
-if [ -z "${AUTHENTIK_METRICS_DB_PASSWORD:-}" ]; then
-	echo "20-pagerarchive-metrics: AUTHENTIK_METRICS_DB_PASSWORD isn't set; skipped"
-	exit 0
-fi
-psql -v ON_ERROR_STOP=1 -v pw="$AUTHENTIK_METRICS_DB_PASSWORD" --username "${POSTGRES_USER:-postgres}" --dbname authentik <<'SQL'
-SELECT 'CREATE ROLE pagerarchive_metrics' WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'pagerarchive_metrics') \gexec
-ALTER ROLE pagerarchive_metrics LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE PASSWORD :'pw';
-GRANT CONNECT ON DATABASE authentik TO pagerarchive_metrics;
-
--- The same rule as the pagerarchive-not-locked policy: 5 failures within 15
--- minutes lock an account until 15 minutes after the fifth; a successful
--- sign-in starts the count again; 5 wrong enrolment codes on the account's
--- email device lock it too. PL/pgSQL, so Authentik's tables needn't exist
--- yet when this runs on a new install.
+-- The "accounts locked" metric (SPEC.md R52, R44a; ADR 0006, owner decision
+-- Q1), in Authentik's database. pagerarchive_locked_accounts() is the number
+-- of accounts the guessing protection has locked now, by the same rule as the
+-- pagerarchive-not-locked policy in deploy/authentik/blueprints. It returns
+-- only that count. The role pagerarchive_metrics may call it and read nothing
+-- else. The API runs this on every start (EnsureLocksRole).
+--
+-- The rule: 5 failures within 15 minutes lock an account until 15 minutes after
+-- the fifth; a successful sign-in starts the count again; 5 wrong enrolment
+-- codes on the account's email device lock it too. PL/pgSQL, so Authentik's
+-- tables needn't exist yet when this runs on a new install.
 CREATE OR REPLACE FUNCTION public.pagerarchive_locked_accounts() RETURNS integer
 LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $fn$
 DECLARE
@@ -83,5 +65,3 @@ $fn$;
 ALTER FUNCTION public.pagerarchive_locked_accounts() OWNER TO authentik;
 REVOKE ALL ON FUNCTION public.pagerarchive_locked_accounts() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pagerarchive_locked_accounts() TO pagerarchive_metrics;
-SQL
-echo "20-pagerarchive-metrics: role pagerarchive_metrics and pagerarchive_locked_accounts() ready"

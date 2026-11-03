@@ -92,3 +92,27 @@ func TestA54HelpListsNoTemplateOrAliasCommands(t *testing.T) {
 		}
 	}
 }
+
+// R84: /dev/null mounted in place of a deployment's file means the built-in
+// example. Anything else stays what it is, so a mistyped path in .env is an
+// error and never quietly the example.
+func TestMountedOr(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "map.pmtiles")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		path, want string
+		builtin    bool
+	}{
+		{"/dev/null", "built-in", true},
+		{file, file, false},
+		{dir, dir, false},
+		{filepath.Join(dir, "missing"), filepath.Join(dir, "missing"), false},
+	} {
+		if got, builtin := mountedOr(c.path, "built-in"); got != c.want || builtin != c.builtin {
+			t.Errorf("mountedOr(%s) = %s, %v; want %s, %v", c.path, got, builtin, c.want, c.builtin)
+		}
+	}
+}

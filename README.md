@@ -46,6 +46,8 @@ The account checks run against the full compose stack, with Authentik and a [Mai
 ```
 sh scripts/stack-checks.sh                 # A23-A28, A33 and the PowerShell module's A20, A21, A51-A55, A59 (needs pwsh)
 sh scripts/stack-e2e.sh --project=chromium # section 11 steps 2 and 3 in a browser
+sh scripts/a77.sh                          # A77 upgrade from the previous release
+sh scripts/a78.sh --project=chromium       # A78 install with no checkout, then behind a proxy on an external network
 sh scripts/a15.sh                          # A15 resource budget: one hour plus 10 idle minutes (CI: -m 5 -w 1 -i 2 -r 30000)
 ```
 

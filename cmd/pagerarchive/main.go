@@ -91,7 +91,8 @@ PowerShell module (docs/powershell.md), which uses the same API and rules.
 
 serve reads its settings from the environment:
   DATABASE_URL     PostgreSQL connection string (required)
-  PROFILES_DIR     directory of profile files (default /profiles)
+  PROFILES_DIR     directory of profile files (default /profiles; /dev/null mounted
+                   there means the example built into the image, with a warning)
   NETWORK_PROFILE  network profile name (default: the only one in PROFILES_DIR)
   LISTEN_ADDR      address to listen on (default :8080)
   TZ               deployment time zone, e.g. Australia/Melbourne (default UTC)
@@ -106,14 +107,16 @@ serve reads its settings from the environment:
   ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
-  MAP_TILES               path to a PMTiles map extract (default: no background map)
+  MAP_TILES               path to a PMTiles map extract (default: no background map;
+                          /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
   INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
                                (openssl rand -base64 32); without it integrations are off
   INTEGRATION_SECRETS_KEY_OLD  the previous key, only while rotating
   METRICS_TOKEN                bearer token for GET /metrics (default: metrics off)
   AUTHENTIK_METRICS_DB_PASSWORD  the pagerarchive_metrics role's password, for the
-                               locked-accounts metric (or AUTHENTIK_METRICS_DATABASE_URL)
+                               locked-accounts metric; the role is created on start
+                               (or AUTHENTIK_METRICS_DATABASE_URL, for one set up elsewhere)
   OTEL_EXPORTER_OTLP_ENDPOINT  where to send traces and logs over OTLP/HTTP, e.g.
                                http://alloy:4318 (default: telemetry off); the other
                                standard OTEL_* settings apply (docs/monitoring.md)
@@ -162,6 +165,32 @@ func getenv(name, def string) string {
 	return def
 }
 
+// The made-up example built into the server image (Dockerfile), for a
+// deployment that mounts no profile or map (R84).
+const (
+	builtinProfiles = "/usr/share/pagerarchive/example-profile"
+	builtinMap      = "/usr/share/pagerarchive/example-map.pmtiles"
+
+	exampleProfileWarning = "no network profile is mounted (PROFILES_DIR in .env): using the made-up example profile, whose redaction rules aren't your network's"
+)
+
+// mountedOr returns path, or def if what's at path is a character device:
+// compose.yaml mounts /dev/null there when .env names no file of the
+// deployment's own, since Compose can't leave a mount out. A path that's
+// missing or empty stays an error for the caller, so a mistyped setting never
+// falls back quietly. The bool says def was chosen.
+func mountedOr(path, def string) (string, bool) {
+	if fi, err := os.Stat(path); err == nil && fi.Mode()&os.ModeCharDevice != 0 {
+		return def, true
+	}
+	return path, false
+}
+
+// profilesDir is where the profiles are, and whether that's the built-in example.
+func profilesDir() (string, bool) {
+	return mountedOr(getenv("PROFILES_DIR", "/profiles"), builtinProfiles)
+}
+
 func serve(stderr io.Writer) error {
 	plain := slog.New(slog.NewJSONHandler(stderr, nil))
 	// Telemetry (R69-R75, docs/monitoring.md): off unless OTEL_* says where
@@ -178,7 +207,11 @@ func serve(stderr io.Writer) error {
 
 	// Profiles first: an invalid profile stops the server before anything
 	// else happens (R1, A14).
-	set, err := profile.LoadDir(getenv("PROFILES_DIR", "/profiles"))
+	profiles, example := profilesDir()
+	if example {
+		log.Warn(exampleProfileWarning)
+	}
+	set, err := profile.LoadDir(profiles)
 	if err != nil {
 		return fmt.Errorf("invalid profile:\n%w", err)
 	}
@@ -309,10 +342,18 @@ func serve(stderr io.Writer) error {
 		}
 		defer pool.Close()
 		locks = &authentik.Locks{Pool: pool}
+		// With its own URL, the role is someone else's to set up. A failure
+		// costs this one metric, so it doesn't stop the API.
+		if pw := os.Getenv("AUTHENTIK_METRICS_DB_PASSWORD"); pw != "" && os.Getenv("AUTHENTIK_METRICS_DATABASE_URL") == "" {
+			if err := authentik.EnsureLocksRole(ctx, dbURL, pw); err != nil {
+				log.Warn("the locked-accounts metric's role couldn't be set up", "error", store.SafeError(err))
+			}
+		}
 	}
 
 	mapTiles := os.Getenv("MAP_TILES")
 	if mapTiles != "" {
+		mapTiles, _ = mountedOr(mapTiles, builtinMap)
 		if _, err := os.Stat(mapTiles); err != nil {
 			return fmt.Errorf("MAP_TILES: %w", err)
 		}

@@ -50,3 +50,21 @@ fail() {
 	echo "FAIL: $2" >&2
 	failed=1
 }
+
+# check_compose_image <version>: compose.yaml names this release's image, the
+# only one of ours in it, so getting the file is the upgrade (R84a). Needs $failed.
+check_compose_image() {
+	_named=$(tr -d '\r' <compose.yaml | sed -n 's/^[[:space:]]*image:[[:space:]]*ghcr\.io\/rikiku\/pagerarchive:\(.*\)$/\1/p')
+	if [ "$_named" != "$1" ]; then
+		fail compose.yaml "compose.yaml's API image is ghcr.io/rikiku/pagerarchive:${_named:-(none)}, not this release's: set it to ghcr.io/rikiku/pagerarchive:$1."
+	fi
+}
+
+# previous_release <rev>: the newest v* tag in the commit's history, other
+# than one on the commit itself (a re-run's own tag). Empty if there's none.
+previous_release() {
+	_commit=$(git rev-parse "$1^{commit}")
+	git tag -l 'v*' --sort=-v:refname --merged "$_commit" | while read -r _t; do
+		[ "$(git rev-parse "$_t^{commit}")" != "$_commit" ] && echo "$_t"
+	done | head -n 1
+}

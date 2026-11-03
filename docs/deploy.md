@@ -10,22 +10,39 @@ The server stack runs with Docker Compose on a Linux host (amd64):
 
 PagerArchive never sees passwords: people sign in on Authentik's pages, and Authentik sends the invitation and code emails. PagerArchive keeps the accounts, roles and who invited whom.
 
+You don't need a copy of the source repository. A deployment is one folder holding the files attached to a [release](https://github.com/RIKIKU/PagerArchive/releases), your `.env`, and your own data.
+
 ## Before you start
 
 - **Two hostnames** behind your reverse proxy, which handles TLS: one for the app (e.g. `pager.example.org`) and one for Authentik (e.g. `auth.example.org`).
 - **An SMTP account** Authentik can send mail through.
-- **A profile directory** for your network (see [profiles](profiles.md)), with its **address dataset**. Without one, the made-up example profile is used.
-- **A map extract** of your area (see [Map](#map)). Without one, the made-up example map is used.
+- **Docker with Compose 2.24 or later.**
+- **A profile directory** for your network (see [profiles](profiles.md)), with its **address dataset**. Without one, the API uses the made-up example profile built into its image and warns on every start: its redaction rules aren't your network's, so details your network's rules would remove are stored (SPEC.md P1). Use it only to try PagerArchive out.
+- **A map extract** of your area (see [Map](#map)). Without one, the made-up example map built into the image is used.
 
-## Configure and start
+## Install
+
+Download three files from the latest release into an empty folder, unpack the archive, and fill in `.env`:
 
 ```sh
-cp .env.example .env
-# fill in .env: URLs, allowed domains, the first admin's address, secrets, SMTP
+mkdir pagerarchive && cd pagerarchive
+base=https://github.com/RIKIKU/PagerArchive/releases/latest/download
+curl -fLO $base/compose.yaml
+curl -fL -o .env $base/env.example
+curl -fL $base/pagerarchive-config.tar.gz | tar -xz
+chmod 600 .env
+# fill in .env: URLs, allowed domains, the first admin's address, secrets, SMTP,
+# and PROFILES_DIR and MAP_TILES_FILE if your profile and map are in this folder
 docker compose up -d
 ```
 
-The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows the containers as healthy when they're ready.
+| File | What it is |
+|---|---|
+| `compose.yaml` | The stack, naming this release's image and pinned versions of PostGIS and Authentik |
+| `.env` | Your settings, from `env.example` |
+| `deploy/` | From the archive: configuration for the third-party services, which run their upstream images unchanged. Don't edit these files, because an upgrade replaces them |
+
+The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows `db` as healthy, and the others as running. The app's sign-in works once Authentik has finished.
 
 **Set up the first admin before the app is reachable from the internet.** Add both hostnames to your reverse proxy (below) with the LAN-only lines (`allow` your LAN, `deny all`) left in, so only machines on your network can reach them. Then:
 
@@ -65,7 +82,7 @@ Authentik's own administrator (`akadmin`, signing in with `AUTHENTIK_ADMIN_EMAIL
 - **Keep Authentik's admin interface LAN-only** in your proxy (`/if/admin/` in the example below). Sign in at `AUTHENTIK_URL/if/admin/` from your LAN.
 - **Guessing protection** applies to akadmin as to everyone (below).
 
-Change PagerArchive's sign-in through the blueprint, not Authentik's admin pages, because the blueprint is re-applied on start.
+Don't change PagerArchive's sign-in on Authentik's admin pages, because the blueprint is re-applied on start.
 
 ### Guessing protection
 
@@ -73,14 +90,14 @@ After 5 wrong passwords or emailed codes for one account, Authentik refuses furt
 
 ## Reverse proxy
 
-Forward each hostname to its container: the app to `api:8080` and Authentik to `authentik-server:9000`, or to `API_BIND` and `AUTHENTIK_BIND` on the host. Two things matter:
+Forward each hostname to its container, or to `API_BIND` and `AUTHENTIK_BIND` on the host. A proxy in Docker can reach the containers directly over its own network (see [Your own changes](#your-own-changes)). Two things matter:
 
 - **The app** streams live updates with Server-Sent Events, so don't buffer them, and allow long-lived responses.
 - **Authentik** uses WebSockets.
 
 Both must receive the original `Host` header and `X-Forwarded-Proto`.
 
-An example for nginx (for instance linuxserver/swag's `proxy-confs`). Replace `192.168.0.0/16` with your LAN:
+An example for nginx (for instance linuxserver/swag's `proxy-confs`), with the proxy reaching the host's ports. Behind a proxy on a Docker network, use `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000` instead. Replace `192.168.0.0/16` with your LAN:
 
 ```nginx
 # pager.example.org
@@ -123,6 +140,35 @@ location /if/admin/ {
 Blocking `/if/admin/` hides the admin pages from the internet. It isn't the only safeguard, because Authentik's API is shared with the pages users need. That's why akadmin also needs a second factor.
 
 The `api` container reaches Authentik directly on the compose network (`AUTHENTIK_INTERNAL_URL`), so it doesn't depend on the proxy for that.
+
+## Your own changes
+
+Don't edit `compose.yaml`, because an upgrade replaces it. Put what's particular to your site in a `compose.override.yaml` next to it. Docker Compose reads that file by itself, and an upgrade leaves it alone.
+
+For example, if your reverse proxy runs in Docker on an existing network named `proxy`, this joins the app and Authentik to that network. The database stays off it. It also stops publishing their ports on the host, as the proxy no longer needs them:
+
+<!-- a78:override -->
+```yaml
+services:
+  api:
+    ports: !reset []
+    networks:
+      default:
+      proxy:
+        aliases: [pagerarchive]
+  authentik-server:
+    ports: !reset []
+    networks:
+      default:
+      proxy:
+        aliases: [pagerarchive-authentik]
+
+networks:
+  proxy:
+    external: true
+```
+
+Your proxy then forwards to `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000`. Use those aliases rather than `api`: other stacks on a shared network can have a service with that name too. Keep `default` in each list, or the containers lose the database. `docker compose up -d` applies a changed override.
 
 ## Privacy
 
@@ -173,7 +219,7 @@ Users forward new pages to their own systems from **Integrations**: a webhook, M
 `GET /metrics` on the `api` port gives Prometheus-format metrics (SPEC.md R52), for your own monitoring to alert on: each receiver's last-seen time and whether it's receiving (R39) or its clock is ahead, pages received by outcome, messages with each admin flag, integration deliveries by result (`delivered`, `failed`, `too_old`, `cancelled`), integrations by status, accounts locked by guessing protection, and the last nightly run. There is no page text in it, and receivers appear by client ID only.
 
 - **Set `METRICS_TOKEN`** in `.env` (`openssl rand -base64 36 | tr -d '/+='`). Without it, `/metrics` is off. Scrapes need it as a bearer token.
-- **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env` before the first start. Without it, that one metric is left out.
+- **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env`, and the API creates the role when it starts, or changes its password. Without it, that one metric is left out.
 - Scrape it on your LAN, and keep `/metrics` out of your reverse proxy's public locations.
 
 ```yaml
@@ -192,7 +238,7 @@ Since M12, `/metrics` also has requests by route and status with their durations
 
 ## Monitoring and telemetry
 
-The API and the receiving clients can also send traces and logs (and the clients metrics) over OTLP, and `deploy/monitoring` is a ready-made Grafana stack (Alloy, Tempo, Loki, Prometheus, Grafana) with dashboards and alerts for a client that stops and an API that's unreachable. It's off until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Monitoring](monitoring.md).
+The API and the receiving clients can also send traces and logs (and the clients metrics) over OTLP, and the release includes a ready-made Grafana stack (Alloy, Tempo, Loki, Prometheus, Grafana) with dashboards and alerts for a client that stops and an API that's unreachable. It's off until you set `OTEL_EXPORTER_OTLP_ENDPOINT`. See [Monitoring](monitoring.md).
 
 ## When the database restarts
 
@@ -226,7 +272,7 @@ Back up the `db` volume, which holds both databases. Messages that PagerArchive 
 
 ## Images
 
-Images are published to GitHub's container registry by CI, but only from a build whose checks all passed:
+PagerArchive's images are published to GitHub's container registry by CI, but only from a build whose checks all passed:
 
 | Image | Architectures |
 |---|---|
@@ -235,28 +281,23 @@ Images are published to GitHub's container registry by CI, but only from a build
 
 | Tag | Is |
 |---|---|
-| `latest`, `main` | the newest build of `main` |
 | `X.Y.Z`, `X.Y` | a release |
+| `latest`, `main` | the newest build of `main` |
 | `sha-<commit>` | one exact build |
 
-`compose.yaml` uses `latest` unless you set `PAGERARCHIVE_VERSION` (e.g. `PAGERARCHIVE_VERSION=sha-1a2b3c4` to pin one build).
+`compose.yaml` names its release's image, so the version you run is the `compose.yaml` you have. PostGIS and Authentik are upstream's images, pinned by version and digest. Nothing about versions goes in `.env`.
 
 ## Upgrading
 
-```sh
-git pull && docker compose pull && docker compose up -d
-```
-
-Database migrations run when the API starts. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)). Before moving Authentik to a new version, run `scripts/stack-checks.sh` from the repo against that version. That includes the locked-accounts metric, which reads Authentik's tables.
-
-**From a version before integrations (M5)**, add to `.env`: `INTEGRATION_SECRETS_KEY`, `METRICS_TOKEN` and `AUTHENTIK_METRICS_DB_PASSWORD` (see [Integrations](#integrations) and [Metrics](#metrics)). Then create the metrics role once, after `docker compose up -d`:
+Get the new release's `compose.yaml` and archive, then pull and start. Upgrades can skip releases:
 
 ```sh
-docker compose exec db sh /docker-entrypoint-initdb.d/20-pagerarchive-metrics.sh
+base=https://github.com/RIKIKU/PagerArchive/releases/latest/download
+curl -fLO $base/compose.yaml
+curl -fL $base/pagerarchive-config.tar.gz | tar -xz
+docker compose pull && docker compose up -d
 ```
 
-It's safe to run again, for example after changing the role's password.
+That's all: `.env` and `compose.override.yaml` stay as they are, and database migrations run when the API starts. A release can change a third-party service's files: `docker compose up -d` recreates that service, and leaves the others running. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)).
 
-**From a version before template icons (M10)**: the migration drops the old `icon` text column of templates, which held icon names from CSV imports that nothing used. Back up the database first if you want to keep them (`docker compose exec db pg_dump -U postgres -Fc postgres > before-m10.dump`). Add each template's icon afterwards on **Admin → Templates**.
-
-**From a version before 0.13.1 (search speed, M13a)**: the migration builds the search index over every stored page, and the API starts serving once it's done. On a spinning disk that's about 2 minutes for 4.5 million pages, or 1.5 minutes for 3 million; a few thousand pages take a second or two. The build doesn't lock the messages table. Clients keep their pages in their buffers until the API is back, so nothing is lost. The owner accepted the wait (ADR 0017).
+Before version 1.0.0, a release can break the upgrade. If so, its release notes start with "Upgrade steps". Read the notes before you upgrade.

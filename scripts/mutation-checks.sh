@@ -1,6 +1,7 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11), telemetry (M12), search (M13a) and the import (M16): break one check
+# (M11), telemetry (M12), search (M13a), the import (M16) and installing and
+# upgrading (M17): break one check
 # at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
@@ -15,6 +16,9 @@
 # with Pester 5.9.1 on PSModulePath; for the alert rule's, what
 # scripts/monitoring-checks.sh needs. Linux only: the module's checks are
 # the off-Windows ones.
+#
+# PA_MUT_ONLY, if set, runs only the mutations whose name matches it (grep -E),
+# and then none of the unmutated runs at the end.
 set -u
 src=$(cd "$(dirname "$0")/.." && pwd)
 work=$(mktemp -d)
@@ -32,7 +36,8 @@ survived=0
 # "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages),
 # "a76:<regexp>" (A76's checks through the command, scripts/a76-checks.sh) or
 # "stack:<regexp>" (the account checks against Authentik, through
-# scripts/stack-checks.sh with A23's first admin).
+# scripts/stack-checks.sh with A23's first admin) or "a77:" (the upgrade,
+# through scripts/a77.sh).
 #
 # mutate <name> <file> <test> <old> <new> <file2> <old2> <new2>: two
 # replacements, in two files, as one mutation (M12).
@@ -42,6 +47,9 @@ survived=0
 must=""
 mutate() {
 	name=$1 file=$2 test=$3 old=$4 new=$5 file2=${6:-} old2=${7:-} new2=${8:-}
+	if [ -n "${PA_MUT_ONLY:-}" ] && ! printf '%s\n' "$name" | grep -qE "$PA_MUT_ONLY"; then
+		return
+	fi
 	cp "$file" "$work/.orig"
 	[ -z "$file2" ] || cp "$file2" "$work/.orig2"
 	OLD=$old NEW=$new perl -0pi -e '$n = s/\Q$ENV{OLD}\E/$ENV{NEW}/g; END { exit($n ? 0 : 1) }' "$file" &&
@@ -90,6 +98,10 @@ mutate() {
 	a76:*)
 		out=$(sh scripts/a76-checks.sh -run "${test#a76:}" 2>&1)
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | grep -vE ': map\[|: killed part-way|: telemetry exported' | head -6
+		;;
+	a77:*)
+		out=$(sh scripts/a77.sh -o "$work/a77-results" 2>&1)
+		printf '%s\n' "$out" | grep -E '^FAIL: |^\s+a77_test.go:[0-9]+: ' | grep -vE ': A77: ' | head -6
 		;;
 	e2e:*)
 		out=$(sh scripts/e2e.sh --project=chromium -g "${test#e2e:}" 2>&1)
@@ -470,9 +482,47 @@ else
 	echo "=== the lock's mutation skipped: no Docker"
 fi
 
+# M17 (ADR 0019): installing and upgrading with no checkout.
+V=$(tr -d ' \r\n' <VERSION)
+mutate "compose.yaml pulls an upstream image that isn't pinned" compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
+	'postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4' 'postgis/postgis:18-3.6'
+mutate "compose.yaml pulls a pinned image that isn't ours or known upstream" compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
+	'image: postgis/postgis:18-3.6@' 'image: example.org/someone/postgis:18-3.6@'
+mutate "the monitoring stack pulls a project-built image instead of upstream's" deploy/monitoring/compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
+	'image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84' 'image: ghcr.io/rikiku/pagerarchive-grafana:13.2.5'
+mutate "the release doesn't attach compose.yaml (the script)" scripts/ci/release-assets.sh unit:.:TestR84ReleaseAttachesTheFiles \
+	'cp compose.yaml "$out/compose.yaml"' ':'
+mutate "the release doesn't attach compose.yaml (the job)" .github/workflows/ci.yml unit:.:TestR84ReleaseAttachesTheFiles \
+	'gh release upload "$TAG" dist/* --clobber' 'gh release upload "$TAG" dist/pagerarchive-client-* --clobber'
+mutate "the attached compose.yaml takes the image from latest" compose.yaml unit:.:TestR84aComposeNamesThisRelease \
+	"ghcr.io/rikiku/pagerarchive:$V" 'ghcr.io/rikiku/pagerarchive:latest'
+mutate "a file the stack mounts isn't in the archive" scripts/ci/release-assets.sh unit:.:TestR84MountsComeFromTheArchive \
+	'deploy/authentik deploy/postgres deploy/monitoring/alloy' 'deploy/postgres deploy/monitoring/alloy'
+mutate "a changed Authentik file doesn't recreate Authentik" deploy/authentik/blueprints/pagerarchive.yaml unit:.:TestR84aChangedConfigRecreatesItsService \
+	'LIMIT, WINDOW = 5, timedelta(minutes=15)' 'LIMIT, WINDOW = 4, timedelta(minutes=15)'
+mutate "a changed alert rule doesn't recreate Grafana" deploy/monitoring/grafana/provisioning/alerting/rules.yaml unit:.:TestR84aChangedConfigRecreatesItsService \
+	'[1800]' '[1801]'
+mutate "the example built into the image is used without the warning" cmd/pagerarchive/main.go a77: \
+	'		log.Warn(exampleProfileWarning)' '		_ = exampleProfileWarning'
+mutate "the metrics role is left for a hand step (the function)" internal/authentik/locks.go go:TestM17MetricsRoleOnStart \
+	'	if !exists {
+		if _, err := conn.Exec(ctx, `CREATE ROLE pagerarchive_metrics`); err != nil {
+			return err
+		}
+	}' '	if !exists {
+		return nil
+	}'
+mutate "the metrics role is left for a hand step (the API doesn't call it)" cmd/pagerarchive/main.go a77: \
+	'if err := authentik.EnsureLocksRole(ctx, dbURL, pw); err != nil {' 'if err := error(nil); err != nil {'
+if [ -n "${PA_MUT_ONLY:-}" ]; then
+	exit $survived
+fi
+
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
+go test -count=1 -run 'TestR84|TestVersion' . 2>&1 | tail -3
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
+! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'
 ! command -v docker >/dev/null || PA_STACK_PART=accounts sh scripts/stack-checks.sh -run 'TestA23FirstAdmin|TestA33' 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL))'

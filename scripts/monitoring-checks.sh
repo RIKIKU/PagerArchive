@@ -8,6 +8,11 @@
 # stack's containers is sampled throughout, idle first and then during the
 # checks.
 #
+# The monitoring stack is installed as a deployment does it (R84, A78): a folder
+# with only the release's archive, compose file and filled-in settings, and
+# only upstream's pinned images. It's checked like that before the test's own
+# overlay is added for the alert checks.
+#
 # usage: scripts/monitoring-checks.sh [-o OUT] [-s SCREENSHOTS]
 #   -o OUT          where the memory samples and summary go (default monitoring-results)
 #   -s SCREENSHOTS  also feed the stack test data and take screenshots of a
@@ -40,11 +45,12 @@ done <deploy/test/stack.vars
 
 P=pa-mon-$$
 export PAGERARCHIVE_VERSION=montest API_BIND=127.0.0.1:18091 AUTHENTIK_BIND=127.0.0.1:19091 MAILPIT_BIND=127.0.0.1:18026 PA_MON_DB_BIND=127.0.0.1:55437
-export PAGERARCHIVE_NETWORK="${P}_default" PA_METRICS_TOKEN="$METRICS_TOKEN" GRAFANA_ADMIN_PASSWORD=test-grafana-admin-password \
-	GRAFANA_BIND=127.0.0.1:13001 GRAFANA_ROOT_URL=http://127.0.0.1:13001 ALLOY_OTLP_BIND=127.0.0.1:14319 \
-	PA_ALERT_WEBHOOK_URL=http://host.docker.internal:18099/alert
+GRAFANA_ADMIN_PASSWORD=test-grafana-admin-password
 app() { docker compose -p "$P" -f compose.yaml -f deploy/test/compose.yaml -f deploy/monitoring/test/pagerarchive.yaml "$@"; }
-mon() { docker compose -p "$P-mon" -f deploy/monitoring/compose.yaml -f deploy/monitoring/test/compose.yaml "$@"; }
+. ./scripts/install-lib.sh
+MONROOT=$(mktemp -d)
+MONDIR=$MONROOT/deploy/monitoring
+mon() { in_folder "$MONDIR" -p "$P-mon" "$@"; }
 
 SAMPLER=""
 BIN=$(mktemp -d)
@@ -57,6 +63,7 @@ cleanup() {
 	if [ -z "${MON_KEEP:-}" ]; then
 		mon down -v --remove-orphans >/dev/null 2>&1 || true
 		app down -v --remove-orphans >/dev/null 2>&1 || true
+		rm -rf "$MONROOT"
 	fi
 }
 trap cleanup EXIT
@@ -75,17 +82,59 @@ until curl -sf http://127.0.0.1:18091/healthz >/dev/null; do
 	sleep 1
 done
 
-echo "--- starting the monitoring stack ($P-mon)"
-start=$(date +%s)
-if ! out=$(mon up -d 2>&1); then
-	printf '%s\n' "$out" | tail -n 30 >&2
-	exit 1
+# mon_up: `docker compose up -d` in the folder, and Grafana answering.
+mon_up() {
+	start=$(date +%s)
+	if ! out=$(mon up -d 2>&1); then
+		printf '%s\n' "$out" | tail -n 30 >&2
+		exit 1
+	fi
+	until curl -sf http://127.0.0.1:13001/api/health >/dev/null; do
+		[ $(($(date +%s) - start)) -gt 300 ] && { echo "Grafana didn't start" >&2; mon logs grafana | tail -20 >&2; exit 1; }
+		sleep 2
+	done
+	echo "--- monitoring stack ready after $(($(date +%s) - start)) s: $(mon ps --format '{{.Service}}' | sort | tr '\n' ' ')"
+}
+
+echo "--- installing the monitoring stack from the release's files, with no checkout ($P-mon)"
+sh scripts/ci/release-assets.sh "$MONROOT/assets"
+tar -xzf "$MONROOT/assets/pagerarchive-config.tar.gz" -C "$MONROOT"
+cp "$MONROOT/assets/monitoring-compose.yaml" "$MONDIR/compose.yaml"
+cp "$MONROOT/assets/monitoring-env.example" "$MONDIR/.env"
+cat >"$MONROOT/vars" <<VARS
+GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
+PA_METRICS_TOKEN=$METRICS_TOKEN
+GRAFANA_BIND=127.0.0.1:13001
+GRAFANA_ROOT_URL=http://127.0.0.1:13001
+PAGERARCHIVE_NETWORK=${P}_default
+VARS
+fill_env "$MONDIR/.env" "$MONROOT/vars"
+chmod -R a+rX "$MONROOT"
+listing "$MONROOT" >"$MONROOT.before"
+mon_up
+status=0
+if listing "$MONROOT" | diff "$MONROOT.before" - >&2; then
+	echo "--- the folder holds what it did before up -d"
+else
+	echo "FAIL: the folder changed" >&2
+	status=1
 fi
-until curl -sf http://127.0.0.1:13001/api/health >/dev/null; do
-	[ $(($(date +%s) - start)) -gt 300 ] && { echo "Grafana didn't start" >&2; mon logs grafana | tail -20 >&2; exit 1; }
-	sleep 2
-done
-echo "--- monitoring stack ready after $(($(date +%s) - start)) s: $(mon ps --format '{{.Service}}' | sort | tr '\n' ' ')"
+rm -f "$MONROOT.before"
+VERSION=none check_images "$P-mon" grafana/alloy grafana/tempo grafana/loki prom/prometheus grafana/grafana || status=1
+PA_MON_GRAFANA_URL=http://127.0.0.1:13001 PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" \
+	go test -count=1 -v -run TestA78MonitoringInstalled ./internal/monitortest/ || status=1
+
+# From here on, the test's own overlay: a webhook contact point and Alloy's OTLP port.
+cp deploy/monitoring/test/compose.yaml "$MONDIR/compose.override.yaml"
+mkdir -p "$MONDIR/test"
+cp deploy/monitoring/test/alerting-test.yaml "$MONDIR/test/"
+chmod -R a+rX "$MONDIR/test"
+cat >"$MONROOT/vars" <<VARS
+ALLOY_OTLP_BIND=127.0.0.1:14319
+PA_ALERT_WEBHOOK_URL=http://host.docker.internal:18099/alert
+VARS
+fill_env "$MONDIR/.env" "$MONROOT/vars"
+mon_up
 
 # Loki refuses every write above 90% disk use (its WAL's disk_full_threshold),
 # so A67 would find no client lines (ADR 0014): stop now if the disk is close.
@@ -123,7 +172,6 @@ echo "--- idle for 2 minutes (memory)"
 sleep 120
 echo checks >"$PHASE_FILE"
 
-status=0
 PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 \
 	PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" PA_MON_WEBHOOK_ADDR=0.0.0.0:18099 \
 	PA_MON_DB_URL="postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:55437/postgres?sslmode=disable" \
