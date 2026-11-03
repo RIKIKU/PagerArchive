@@ -306,6 +306,8 @@ API log lines checked: 18, page texts or email addresses found: 0
    The 17.4 s in the first full run looks like the same thing. ADR 0017's first try has 250 ms. When a cold disk makes it miss that, a search that's common and would have taken 7 ms goes to the second try, which reads a third of the table's pages from that same cold disk. The database's log shows the first try's timeout just before the slow run. So after a restart or a reboot, the first person to run a common search can wait half a minute, and the next person doesn't. A busy disk may do it too: that's the likeliest reason for the first full run's 17.4 s. So the second full run's clean result doesn't show it's gone, and A76's check of A75's searches could fail on a slow disk for this reason. It hasn't failed on CI's runners so far.
 
    Would you like a fix as its own milestone? The likely one is small: when the first try times out, try it once more for a little longer, now that it has warmed the cache, before going to the second try. Otherwise this is a known limit until after going live. Either way, one search after the real import will warm what the others need.
+
+   The owner asked for a fix (2026-11-03, A75): see ADR 0017, "The first search after a cold start".
 2. **Text over 4,096 bytes, and pages with no text, are refused**, with the API's limits. If the older archive holds longer pages, they're named in the report and not stored, which sits uneasily with P2. Raising the limit for imports is one line, and the dry run will say whether it matters.
 3. **A source ID a redaction rule matches isn't stored** (decision 6). Its page is, and repeats are still caught. Would you rather be told line by line?
 

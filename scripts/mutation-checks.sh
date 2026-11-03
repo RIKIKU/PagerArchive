@@ -6,7 +6,9 @@
 # must pass.
 #
 # usage: scripts/mutation-checks.sh
-# needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test); for the
+# needs: Go and PAGERARCHIVE_TEST_DATABASE_URL (as for go test), with
+# PAGERARCHIVE_A75_CONTAINER naming that database's container, and sudo with no
+# password, for A75's cold starts (they drop the host's page cache); for the
 # print sheet's browser checks, what scripts/e2e.sh needs (Docker, Node with
 # web/ dependencies installed, Playwright's Chromium), and no other e2e.sh
 # running; for the module's checks pwsh (PA_PWSH, default: pwsh on PATH)
@@ -83,7 +85,7 @@ mutate() {
 	a75:*)
 		# A75 seeds 4,562,500 pages: longer than the other checks' limit.
 		out=$(PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run "${test#a75:}" ./internal/acceptance/ 2>&1)
-		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -12
+		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: ' | head -24
 		;;
 	a76:*)
 		out=$(sh scripts/a76-checks.sh -run "${test#a76:}" 2>&1)
@@ -366,8 +368,38 @@ mutate "search: a term matches across two extra fields (the values joined)" inte
 	'EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p)' "(SELECT string_agg(e.value, '') FROM jsonb_each_text(m.extra) e) ILIKE term.p"
 mutate "search: the search index isn't built" internal/store/migrations/00013_search_speed.sql a75:TestA75SearchSpeed \
 	'CREATE INDEX CONCURRENTLY messages_search_trgm_idx ON messages USING gin (message_search_text(text, extra) gin_trgm_ops);' ''
-mutate "search: no second try with the index in time (the first try runs for an hour)" internal/store/search.go a75:TestA75SearchSpeed \
-	'const SearchFirstTry = 250 * time.Millisecond' 'const SearchFirstTry = time.Hour'
+mutate "search: no other try in time (the first try runs for an hour)" internal/store/search.go a75:TestA75SearchSpeed \
+	'SearchFirstTry = 100 * time.Millisecond' 'SearchFirstTry = time.Hour'
+# A first run after a cold start (A75): a first try the disk has held up isn't
+# given up for a try that reads a third of the table.
+must="the first run after a cold start took"
+mutate "search: a first try is given up at 250 ms for the second try, as before" internal/store/search.go a75:TestA75SearchSpeed \
+	'	if !s.SecondTryOnly {
+		rows, complete, err := s.searchBoundedTry(ctx, p)
+		if err != nil || complete {
+			return rows, err
+		}
+	}
+	if !s.SecondTryOnly && !s.BoundedTryOnly {
+		rows, err := s.searchFirstTry(ctx, p, searchFirstTryAgain)
+		if !searchTimedOut(ctx, err) {
+			return rows, err
+		}
+	}
+' '' internal/store/search.go '		return searchFirstTryOr
+	}
+	return SearchFirstTry' '		return 250 * time.Millisecond
+	}
+	return 250 * time.Millisecond'
+mutate "search: the bounded try keeps its order, so it reads every match" internal/store/search.go a75:TestA75SearchSpeed \
+	'strings.Replace(sql, searchOrderBy, "", 1)' 'strings.Replace(sql, searchOrderBy, searchOrderBy, 1)'
+mutate "search: alias: values that name every alias still go to the planner" internal/store/search.go a75:TestA75SearchSpeed \
+	'if len(ids) < aliases {' 'if len(ids) <= aliases {'
+must=""
+mutate "search: the bounded try's answer isn't in the search's order" internal/store/search.go go:TestSearchBoundedTry \
+	'if c := b.SentAt.Compare(a.SentAt); c != 0 {' 'if c := a.SentAt.Compare(b.SentAt); c != 0 {'
+mutate "search: the bounded try's stopped short answer counts as all of them" internal/store/search.go go:TestSearchBoundedTry \
+	'if err != nil || len(rows) >= searchBoundedRows {' 'if err != nil {'
 mutate "search: the second try looks up alias: values with case" internal/store/db/queries.sql.go go:TestSearchSecondTryAliases \
 	'WHERE (cardinality($1::text[]) = 0 OR name ILIKE ANY($1::text[]))' 'WHERE (cardinality($1::text[]) = 0 OR name LIKE ANY($1::text[]))'
 # R83-R83e, the import (ADR 0018): quiet, redacted, safe to repeat, and no
@@ -439,7 +471,7 @@ else
 fi
 
 echo "=== unmutated"
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 go test -count=1 ./internal/telemetry/ ./internal/integrations/ ./internal/radio/... ./internal/client/ ./internal/stacktest/ 2>&1 | tail -5
 PAGERARCHIVE_A75=1 go test -p 1 -count=1 -timeout 60m -v -run TestA75SearchSpeed ./internal/acceptance/ 2>&1 | grep -E '^(--- |ok|FAIL)|m13a_test.go'

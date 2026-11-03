@@ -1,8 +1,10 @@
 package acceptance
 
 import (
+	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"slices"
 	"strconv"
 	"strings"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/search"
 	"github.com/RIKIKU/PagerArchive/internal/seeddata"
+	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
 // R33b: text search reads the text and extra fields joined by a separator
@@ -108,13 +111,44 @@ WHERE ((cardinality($1::text[]) = 0 AND cardinality($2::text[]) = 0)
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT $4`
 
+// a75ColdStart stops the test database's container, drops the operating
+// system's page cache and starts the container again, as a reboot leaves them:
+// PostgreSQL's cache and the system's both cold. It returns when the database
+// accepts connections, having made none, with the API's pool empty, as it is
+// when the API starts after a reboot.
+func a75ColdStart(t *testing.T, e *env, container string) {
+	t.Helper()
+	for _, cmd := range [][]string{
+		{"docker", "stop", container},
+		{"sudo", "-n", "sh", "-c", "sync; echo 3 > /proc/sys/vm/drop_caches"},
+		{"docker", "start", container},
+	} {
+		if out, err := exec.Command(cmd[0], cmd[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("%v: %v\n%s", cmd, err, out)
+		}
+	}
+	for end := time.Now().Add(2 * time.Minute); exec.Command("docker", "exec", container, "pg_isready", "-q", "-h", "127.0.0.1").Run() != nil; {
+		if time.Now().After(end) {
+			t.Fatal("the database didn't start within 2 minutes")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	e.st.Pool.Reset()
+}
+
 // A75. Search speed: 4,562,500 made-up pages, each of A75's searches lists
 // its first page within 1 second, and the same pages as the query before
-// M13a. Run by CI's search-speed job (PAGERARCHIVE_A75=1); PAGERARCHIVE_A75_PAGES
-// sets a smaller number for a quick local try.
+// M13a. That counts its first run straight after a restart with both caches
+// cold, then three runs warm. Run by CI's search-speed job (PAGERARCHIVE_A75=1,
+// PAGERARCHIVE_A75_CONTAINER naming the test database's container, and sudo);
+// PAGERARCHIVE_A75_PAGES sets a smaller number for a quick local try.
 func TestA75SearchSpeed(t *testing.T) {
 	if os.Getenv("PAGERARCHIVE_A75") != "1" {
 		t.Skip("set PAGERARCHIVE_A75=1: seeds 4,562,500 pages (CI's search-speed job)")
+	}
+	container := os.Getenv("PAGERARCHIVE_A75_CONTAINER")
+	if container == "" {
+		t.Fatal("set PAGERARCHIVE_A75_CONTAINER: A75's cold starts restart the test database's container")
 	}
 	pages := seeddata.A75Pages
 	if v := os.Getenv("PAGERARCHIVE_A75_PAGES"); v != "" {
@@ -174,11 +208,19 @@ func TestA75SearchSpeed(t *testing.T) {
 			query += "&alias_like=" + url.QueryEscape(s.picked)
 			picked = []string{s.picked}
 		}
+		// The first run, straight after a restart with both caches cold.
+		a75ColdStart(t, e, container)
+		t0 := time.Now()
+		var cold []int64
+		for _, m := range e.list(query) {
+			cold = append(cold, m.ID)
+		}
+		coldTime := time.Since(t0)
 		var got []int64
 		var times []time.Duration
-		// Three times, unless one is already over the limit.
+		// Three times warm, unless one is already over the limit.
 		for len(times) < 3 && (len(times) == 0 || times[len(times)-1] <= time.Second) {
-			t0 := time.Now()
+			t0 = time.Now()
 			ms := e.list(query)
 			times = append(times, time.Since(t0))
 			got = got[:0]
@@ -191,7 +233,7 @@ func TestA75SearchSpeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t0 := time.Now()
+		t0 = time.Now()
 		rows, err := e.st.Pool.Query(e.ctx, a75Reference, p.QAll, p.QAny, p.Aliases, 50, p.AliasLikes)
 		if err != nil {
 			t.Fatal(err)
@@ -212,10 +254,16 @@ func TestA75SearchSpeed(t *testing.T) {
 		for _, d := range times {
 			each = append(each, d.Round(time.Millisecond).String())
 		}
-		t.Logf("%-42s %3d listed, %s (slowest %s; the query before M13a %s)", s.name, len(got),
+		t.Logf("%-42s %3d listed, cold %s, warm %s (slowest %s; the query before M13a %s)", s.name, len(got), coldTime.Round(time.Millisecond),
 			strings.Join(each, " "), slowest.Round(time.Millisecond), before.Round(time.Millisecond))
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: lists %v, the query before M13a %v", s.name, got, want)
+		}
+		if !slices.Equal(cold, want) {
+			t.Errorf("%s: after a cold start lists %v, the query before M13a %v", s.name, cold, want)
+		}
+		if s.a75 && coldTime > time.Second {
+			t.Errorf("%s: the first run after a cold start took %s, over 1 second (R33b)", s.name, coldTime.Round(time.Millisecond))
 		}
 		if s.a75 && slowest > time.Second {
 			t.Errorf("%s: %s, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
@@ -268,6 +316,67 @@ func TestSearchSecondTryAliases(t *testing.T) {
 		e.st.SecondTryOnly = false
 		if first != tt.want || second != tt.want {
 			t.Errorf("%s: first try %q, second try %q, want %q", tt.query, first, second, tt.want)
+		}
+	}
+}
+
+// R33b (ADR 0017): a search lists the same pages in the same order whichever
+// try answers it. The bounded try sorts what it finds itself, with the id
+// ordering pages at one time, and stops short with 1,000 pages or more. The
+// pages are stored oldest first, so the order the index finds them in isn't the
+// search's: the first 1,000 found aren't the newest.
+func TestSearchBoundedTry(t *testing.T) {
+	e := setup(t)
+	if _, err := e.st.Pool.Exec(e.ctx, `INSERT INTO messages (capcode, text, sent_at, dedup_key, extra)
+		SELECT '0100001', 'QD' || CASE WHEN g <= 60 THEN 'TIEPAGE ' WHEN g <= 120 THEN 'TIMEPAGE ' ELSE 'MANYPAGES ' END || g,
+		       $1::timestamptz - CASE WHEN g <= 60 THEN interval '0' ELSE (2000 - g) * interval '1 minute' END,
+		       sha256(('bounded' || g)::bytea), '{}'
+		FROM generate_series(1, 1220) g`, e.now); err != nil {
+		t.Fatal(err)
+	}
+	listed := func(query string) string {
+		var page server.MessagePage
+		if code := e.getJSON("/api/v1/messages?"+query, &page); code != http.StatusOK {
+			t.Fatalf("GET messages?%s: %d", query, code)
+		}
+		out := page.Next + ":"
+		for _, m := range page.Messages {
+			out += strconv.FormatInt(m.ID, 10) + " "
+		}
+		return out
+	}
+	q := func(text string) string { return "q=" + url.QueryEscape(text) }
+	var next server.MessagePage
+	if code := e.getJSON("/api/v1/messages?"+q("tiepage"), &next); code != http.StatusOK || next.Next == "" {
+		t.Fatalf("the first page of tiepage: %d, next %q", code, next.Next)
+	}
+	for _, query := range []string{
+		q("tiepage"),                // more than a page, all at one time
+		q("tiepage") + "&limit=3",   // a smaller page
+		q("tiepage") + "&limit=200", // all of them
+		q("tiepage") + "&before=" + url.QueryEscape(next.Next), // the next page
+		q("timepage"),              // each at its own time
+		q("timepage") + "&limit=3", // the newest of them
+		q("manypages"),             // too many for the bounded try
+		q("manypages") + "&limit=200",
+		q("tiepage 12"),
+		q("or:tiepage or:zznothing"),
+		q("tiepage manypages"), // never together
+	} {
+		e.st.BoundedTryOnly = false
+		want := listed(query)
+		e.st.BoundedTryOnly = true
+		got := listed(query)
+		e.st.BoundedTryOnly = false
+		if got != want {
+			t.Errorf("%s: the bounded try lists %q, the first try %q", query, got, want)
+		}
+		// Through the tries in turn, as a first try that misses goes.
+		e.st.FirstTry = time.Millisecond
+		turn := listed(query)
+		e.st.FirstTry = 0
+		if turn != want {
+			t.Errorf("%s: with a 1 ms first try it lists %q, the first try %q", query, turn, want)
 		}
 	}
 }
