@@ -504,7 +504,7 @@ mutate "a changed alert rule doesn't recreate Grafana" deploy/monitoring/grafana
 	'[1800]' '[1801]'
 mutate "the example built into the image is used without the warning" cmd/pagerarchive/main.go a77: \
 	'	if example {
-		log.Warn(' '	if false {
+		log.Warn(' '	if example && false {
 		log.Warn('
 mutate "the metrics role is left for a hand step (the function)" internal/authentik/locks.go go:TestM17MetricsRoleOnStart \
 	'	if !exists {
