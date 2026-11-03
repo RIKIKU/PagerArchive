@@ -76,21 +76,21 @@ in_folder() {
 }
 
 # check_images <project> <allowed name>...: every container runs PagerArchive's
-# image from the registry at $VERSION, or an allowed upstream image pinned by
-# version and digest (A78).
+# image from the registry at $IMAGE_TAG, or an allowed upstream image, with a
+# tag and no digest (R84, A78).
 check_images() {
 	_project=$1
 	shift
 	_bad=0
 	for _id in $(docker ps -aq --filter "label=com.docker.compose.project=$_project"); do
 		_image=$(docker inspect -f '{{.Config.Image}}' "$_id")
-		[ "$_image" != "$REGISTRY/rikiku/pagerarchive:$VERSION" ] || continue
+		[ "$_image" != "$REGISTRY/rikiku/pagerarchive:$IMAGE_TAG" ] || continue
 		_found=""
 		for _name in "$@"; do
-			case $_image in "$_name":*@sha256:*) _found=1 ;; esac
+			case $_image in *@*) ;; "$_name":*) _found=1 ;; esac
 		done
 		if [ -z "$_found" ]; then
-			echo "FAIL: a container runs $_image, which isn't ours or pinned upstream" >&2
+			echo "FAIL: a container runs $_image, which isn't ours or a known upstream one by its tag" >&2
 			_bad=1
 		fi
 	done

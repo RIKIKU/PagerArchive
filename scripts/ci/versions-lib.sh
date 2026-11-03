@@ -51,14 +51,17 @@ fail() {
 	failed=1
 }
 
-# check_compose_image <version>: compose.yaml names this release's image, the
-# only one of ours in it, so getting the file is the upgrade (R84a). Needs $failed.
+# check_compose_image <version>: compose.yaml names our image by this version's
+# MAJOR.MINOR, so `docker compose pull` gets its patch releases (R84). Needs $failed.
 check_compose_image() {
 	_named=$(tr -d '\r' <compose.yaml | sed -n 's/^[[:space:]]*image:[[:space:]]*ghcr\.io\/rikiku\/pagerarchive:\(.*\)$/\1/p')
-	if [ "$_named" != "$1" ]; then
-		fail compose.yaml "compose.yaml's API image is ghcr.io/rikiku/pagerarchive:${_named:-(none)}, not this release's: set it to ghcr.io/rikiku/pagerarchive:$1."
+	if [ "$_named" != "${1%.*}" ]; then
+		fail compose.yaml "compose.yaml's API image is ghcr.io/rikiku/pagerarchive:${_named:-(none)}, which isn't VERSION $1's minor version: set it to ghcr.io/rikiku/pagerarchive:${1%.*}."
 	fi
 }
+
+# CONFIG_PATHS: what a deployment only gets by downloading a release's files.
+CONFIG_PATHS="compose.yaml deploy/monitoring/compose.yaml deploy/authentik deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo"
 
 # previous_release <rev>: the newest v* tag in the commit's history, other
 # than one on the commit itself (a re-run's own tag). Empty if there's none.

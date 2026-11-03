@@ -17,6 +17,9 @@
 # GHCR. Before the upgrade the metrics role is dropped, so the API has to
 # create it again: nothing may be left for a hand step.
 #
+# Last comes a patch release (R84b): a newer image under the same tag, with
+# nothing in the folder changed, and pull and up again.
+#
 # usage: scripts/a77.sh [-o OUT]
 # needs: Docker with compose, Go, curl, git with the v* tags (for a real previous
 # release). Uses ports 8080, 9000, 8025, 14323 and 15000.
@@ -39,6 +42,7 @@ export ALLOWED_EMAIL_DOMAINS=example.com INITIAL_ADMIN_EMAIL=owner@example.org
 . ./scripts/install-lib.sh
 . ./scripts/ci/versions-lib.sh
 VERSION=$(tr -d ' \r\n' <VERSION)
+IMAGE_TAG=${VERSION%.*}
 WORK=$(mktemp -d)
 DIR=$WORK/deployment
 MAILPIT=pa-a77-mailpit-$$
@@ -56,6 +60,12 @@ trap cleanup EXIT
 
 registry_start
 
+copy_checkout() {
+	mkdir -p "$1"
+	tar -cf - --exclude=.git --exclude=web/node_modules --exclude=web/test-results --exclude=web/playwright-report \
+		--exclude=a77-results . | (cd "$1" && tar -xf -)
+}
+
 # previous_from_release <tag>: its attached files, its images on GHCR.
 previous_from_release() {
 	echo "=== A77: starting from $1's attached files"
@@ -71,11 +81,9 @@ previous_from_here() {
 	old=0.14.99
 	echo "=== A77: no earlier release has attached files: starting from one made from this checkout, $old"
 	src=$WORK/previous-src
-	mkdir -p "$src"
-	tar -cf - --exclude=.git --exclude=web/node_modules --exclude=web/test-results --exclude=web/playwright-report \
-		--exclude=a77-results . | (cd "$src" && tar -xf -)
+	copy_checkout "$src"
 	echo "$old" >"$src/VERSION"
-	sed -i "s#ghcr.io/rikiku/pagerarchive:$VERSION#ghcr.io/rikiku/pagerarchive:$old#" "$src/compose.yaml"
+	sed -i "s#ghcr.io/rikiku/pagerarchive:$IMAGE_TAG#ghcr.io/rikiku/pagerarchive:${old%.*}#" "$src/compose.yaml"
 	newest=$(ls "$src"/internal/store/migrations/*.sql | sort | tail -n 1)
 	rm "$newest"
 	echo "--- without the migration $(basename "$newest")"
@@ -83,7 +91,7 @@ previous_from_here() {
 	echo "# $MARKER" >>"$src/deploy/authentik/blueprints/pagerarchive.yaml"
 	sed -i -E 's/pagerarchive\.config: "[0-9a-f]+"/pagerarchive.config: "0000000000000001"/' "$src/compose.yaml"
 	sh "$src/scripts/ci/release-assets.sh" "$WORK/previous"
-	registry_publish "$src" "$old"
+	registry_publish "$src" "${old%.*}"
 	install_folder "$DIR" "$WORK/previous"
 	use_registry "$DIR/compose.yaml"
 	MADE_HERE=1
@@ -140,7 +148,7 @@ SQL
 
 echo "=== A77: upgrading: this checkout's compose.yaml and archive, then pull and up"
 sh scripts/ci/release-assets.sh "$WORK/assets"
-registry_publish . "$VERSION"
+registry_publish . "$IMAGE_TAG"
 cp "$WORK/assets/compose.yaml" "$DIR/compose.yaml"
 use_registry "$DIR/compose.yaml"
 tar -xzf "$WORK/assets/pagerarchive-config.tar.gz" -C "$DIR"
@@ -178,6 +186,19 @@ if [ "$n" -lt 1 ]; then
 fi
 echo "--- example profile warnings in the API's log since this container started: $n"
 stack_check_logs || status=1
+
+echo "=== A77: a patch release under the same tag: pull and up, nothing else"
+patch=$IMAGE_TAG.99
+copy_checkout "$WORK/patch-src"
+echo "$patch" >"$WORK/patch-src/VERSION"
+registry_publish "$WORK/patch-src" "$IMAGE_TAG"
+listing "$DIR" >"$WORK/before"
+(in_folder "$DIR" pull && in_folder "$DIR" up -d) 2>&1 | tee "$OUT/a77-patch.txt" | grep -E 'Recreate|Running' || true
+stack_wait_ready
+got=$(stack_compose exec -T api /usr/local/bin/pagerarchive version)
+echo "--- running: $got"
+[ "$got" = "pagerarchive $patch" ] || { echo "FAIL: the API is $got after a patch release" >&2; status=1; }
+listing "$DIR" | diff "$WORK/before" - >&2 || { echo "FAIL: a patch release changed the folder" >&2; status=1; }
 
 if [ "$status" -eq 0 ]; then echo "=== A77 passed"; else echo "=== A77 FAILED"; fi
 exit $status

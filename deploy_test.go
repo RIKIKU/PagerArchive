@@ -53,35 +53,61 @@ var upstream = []string{
 	"grafana/alloy", "grafana/tempo", "grafana/loki", "prom/prometheus", "grafana/grafana",
 }
 
-var pinned = regexp.MustCompile(`^([^:@]+(?::\d+)?[^:@]*):[^:@]+@sha256:[0-9a-f]{64}$`)
+// These publish no major.minor tag or anything else that moves only within a
+// minor version, so they name an exact version (R84; listed in ADR 0019).
+var noMinorTag = []string{"grafana/alloy", "grafana/tempo", "prom/prometheus"}
 
 const ourImage = "ghcr.io/rikiku/pagerarchive"
 
-// R84: every image is PagerArchive's own, or a known upstream one pinned by
-// version and digest, and nothing is built where it's deployed.
-func TestR84ImagesAreOursOrPinnedUpstream(t *testing.T) {
+var (
+	minorTag = regexp.MustCompile(`^v?\d+(\.\d+|-\d+\.\d+)$`)
+	exactTag = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+)
+
+// R84: every image is PagerArchive's own or a known upstream one, and nothing
+// is built where it's deployed.
+func TestR84ImagesAreOursOrKnownUpstream(t *testing.T) {
 	for _, c := range composeFiles(t) {
 		for name, s := range c.Services {
 			if s.Build != nil {
 				t.Errorf("%s: %s has a build: a deployment has nothing to build from", c.path, name)
 			}
-			if strings.HasPrefix(s.Image, ourImage+":") {
-				continue
-			}
-			m := pinned.FindStringSubmatch(s.Image)
-			if m == nil {
-				t.Errorf("%s: %s's image %q isn't pinned by version and digest", c.path, name, s.Image)
-			} else if !slices.Contains(upstream, m[1]) {
+			image, _, _ := strings.Cut(s.Image, "@")
+			repo, _, _ := strings.Cut(image, ":")
+			if repo != ourImage && !slices.Contains(upstream, repo) {
 				t.Errorf("%s: %s's image %q isn't ours or a known upstream one", c.path, name, s.Image)
 			}
 		}
 	}
 }
 
-// R84a: compose.yaml names this release's image, so getting the file is the
-// upgrade, and no setting in .env.example pins a version.
+// R84, A79: every image is named by a major.minor tag, so `docker compose pull`
+// gets patches: no patch number and no digest, and nothing that moves further
+// than a minor version. Only images with no such tag may name an exact version.
+func TestA79ImagesAreNamedByMajorMinor(t *testing.T) {
+	for _, c := range composeFiles(t) {
+		for name, s := range c.Services {
+			if strings.Contains(s.Image, "@") {
+				t.Errorf("%s: %s's image %q has a digest: name it by its major.minor tag", c.path, name, s.Image)
+				continue
+			}
+			repo, tag, _ := strings.Cut(s.Image, ":")
+			switch {
+			case slices.Contains(noMinorTag, repo):
+				if !exactTag.MatchString(tag) {
+					t.Errorf("%s: %s's image %q: %s publishes no major.minor tag, so name an exact version", c.path, name, s.Image, repo)
+				}
+			case !minorTag.MatchString(tag):
+				t.Errorf("%s: %s's image %q isn't named by a major.minor tag: no patch number, no latest", c.path, name, s.Image)
+			}
+		}
+	}
+}
+
+// R84: compose.yaml names this release's minor version of our image, so its
+// patch releases need no new file, and no setting in .env.example pins a version.
 func TestR84aComposeNamesThisRelease(t *testing.T) {
-	want := ourImage + ":" + Version
+	want := ourImage + ":" + Version[:strings.LastIndex(Version, ".")]
 	found := 0
 	for _, c := range composeFiles(t) {
 		for name, s := range c.Services {
@@ -240,12 +266,14 @@ func TestR84ReleaseAttachesTheFiles(t *testing.T) {
 		t.Errorf("the release's files have no archive: %v", err)
 	}
 
+	type job struct {
+		Needs []string `yaml:"needs"`
+		Steps []struct {
+			Run string `yaml:"run"`
+		} `yaml:"steps"`
+	}
 	var ci struct {
-		Jobs map[string]struct {
-			Steps []struct {
-				Run string `yaml:"run"`
-			} `yaml:"steps"`
-		} `yaml:"jobs"`
+		Jobs map[string]job `yaml:"jobs"`
 	}
 	data, err := os.ReadFile(".github/workflows/ci.yml")
 	if err != nil {
@@ -254,14 +282,31 @@ func TestR84ReleaseAttachesTheFiles(t *testing.T) {
 	if err := yaml.Unmarshal(data, &ci); err != nil {
 		t.Fatal(err)
 	}
-	var run strings.Builder
-	for _, s := range ci.Jobs["release"].Steps {
-		run.WriteString(s.Run + "\n")
-	}
-	for _, want := range []string{"sh scripts/ci/release-assets.sh dist", `gh release upload "$TAG" dist/*`, "release-assets.sh --list"} {
-		if !strings.Contains(run.String(), want) {
-			t.Errorf("the release job doesn't run %q", want)
+	runs := func(j job) string {
+		var run strings.Builder
+		for _, s := range j.Steps {
+			run.WriteString(s.Run + "\n")
 		}
+		return run.String()
+	}
+	attach := ci.Jobs["attach-release-files"]
+	for _, want := range []string{"sh scripts/ci/release-assets.sh dist", `gh release upload "$TAG" dist/*`, "release-assets.sh --list", `gh release edit "$TAG" --latest`} {
+		if !strings.Contains(runs(attach), want) {
+			t.Errorf("attach-release-files doesn't run %q", want)
+		}
+	}
+	// Only once the images are there, and the release isn't the latest before then.
+	for _, need := range []string{"release", "publish-server", "publish-client-manifest"} {
+		if !slices.Contains(attach.Needs, need) {
+			t.Errorf("attach-release-files doesn't wait for %s: an attached compose.yaml could name an image that isn't on GHCR yet", need)
+		}
+	}
+	release := runs(ci.Jobs["release"])
+	if strings.Contains(release, "release-assets.sh") {
+		t.Error("the release job attaches the files, before the images are published")
+	}
+	if !strings.Contains(release, "--latest=false") {
+		t.Error("the release is the latest before its files are attached: the docs' download links would find none")
 	}
 }
 

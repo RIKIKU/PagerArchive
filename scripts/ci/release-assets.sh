@@ -2,7 +2,7 @@
 # Writes the files every release attaches (SPEC.md R84, ADR 0019) to a folder.
 # The files are the repository's own, unchanged, so what's attached is what
 # the checks ran. A77, A78 and the monitoring stack's check install from this
-# folder too. It fails if compose.yaml doesn't name this release's image.
+# folder too. It fails if compose.yaml doesn't name this minor version's image.
 #
 #   compose.yaml                 PagerArchive's stack
 #   env.example                  its settings (GitHub renames a file starting with a dot)

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-03). The owner's brief for M17 and decisions of 2026-11-03: SPEC.md section 7.22 (R84-R84b), A77, A78, on the branch `m17` from main at a82793a. Released as 0.15.0. The UI, the search, the import and the PowerShell module don't change.
+Status: Accepted (owner, 2026-11-03). The owner's brief for M17 and decisions of 2026-11-03: SPEC.md section 7.22 (R84-R84b), A77, A78, and A79's last sentence, on the branch `m17` with main at 19561c2. Released as 0.15.0. The UI, the search, the import and the PowerShell module don't change.
 
 ## Context
 
@@ -10,7 +10,8 @@ Running PagerArchive needed a checkout: `compose.yaml` mounted repo files, and t
 
 The owner's decisions, which replaced the first plan of thin images and a setup container:
 
-- Third-party services run their upstream images unchanged, pinned by version and digest. The project never publishes its own builds of them.
+- Third-party services run their upstream images unchanged. The project never publishes its own builds of them.
+- `compose.yaml` names every image by its major.minor tag, with no patch number and no digest, so `docker compose pull` gets patches. This replaced pinning by version and digest.
 - Their configuration is one archive attached to each release, unpacked next to `compose.yaml`.
 - PagerArchive's own setup is in its image: the API creates what it needs on start, the metrics role included. Authentik's database and role are Authentik's setup, so they stay a first-start script in the archive.
 - Before 1.0.0, a release may break the upgrade if its notes give "Upgrade steps".
@@ -27,7 +28,9 @@ The owner's decisions, which replaced the first plan of thin images and a setup 
 | `monitoring-compose.yaml` | `deploy/monitoring/compose.yaml` | The example monitoring stack |
 | `monitoring-env.example` | `deploy/monitoring/.env.example` | Its settings |
 
-`scripts/ci/release-assets.sh` writes them, and A77, A78 and the monitoring check install from its output, so what's tested is what's attached. The release job fails if any of them isn't on the release after uploading.
+`scripts/ci/release-assets.sh` writes them, and A77, A78 and the monitoring check install from its output, so what's tested is what's attached.
+
+**Attached only once the images are on GHCR** (owner, 2026-11-03). The `attach-release-files` job runs after the publish jobs. With no sign-in, as anyone pulling would be, it checks both images are there, attaches the files, and fails if any is missing. The release job creates the release with `--latest=false`, and this job makes it the latest as its last step. Without that, the docs' `releases/latest/download` links would find no files for those few minutes. They keep getting the previous release's until this one is complete. A branch's A77 that starts during those minutes fails on the missing files, and a re-run passes.
 
 **`env.example`, not `.env.example`.** GitHub renames an asset whose name starts with a dot.
 
@@ -35,11 +38,32 @@ The owner's decisions, which replaced the first plan of thin images and a setup 
 
 ### 2. The file in the repo and the file attached are the same file
 
-Not generated. The API's image is written in `compose.yaml` as `ghcr.io/rikiku/pagerarchive:0.15.0`, and no setting in `.env` can change it, so a stale setting can't quietly hold a deployment back after an upgrade.
+Not generated. The API's image is written in `compose.yaml` as `ghcr.io/rikiku/pagerarchive:0.15`, and no setting in `.env` can change it, so a stale setting can't quietly hold a deployment back after an upgrade.
 
 - **Why:** there's no generating step that could break only at release time, what's tagged is byte for byte what's attached, and anyone can read a release's file in the repo.
-- **Cost:** every release raises the version in `compose.yaml` as well as `VERSION`, and two branches can conflict on that line. `check-versions.sh`, `release-assets.sh` and a test each fail with the line to write. Since the third-party images are upstream's, it's one line.
+- **Cost:** a release that raises the minor version raises `compose.yaml`'s tag too. `check-versions.sh`, `release-assets.sh` and a test each fail with the line to write.
 - **Building for tests:** `compose.yaml` has no `build:`, because a deployment has nothing to build from. `deploy/test/compose.yaml` adds it for the test stacks.
+
+### 2a. Image tags
+
+Every image is named by its major.minor tag (R84), which `TestA79ImagesAreNamedByMajorMinor` checks: no patch number, no digest, and no `latest`.
+
+| Image | Tag | What moves |
+|---|---|---|
+| `ghcr.io/rikiku/pagerarchive` | `0.15` | Our patch releases |
+| `postgis/postgis` | `18-3.6` | Within PostgreSQL 18 and PostGIS 3.6 |
+| `ghcr.io/goauthentik/server` | `2026.5` | Authentik's patches |
+| `grafana/loki` | `3.7` | Loki's patches |
+| `grafana/grafana` | `13.2` | Grafana's patches |
+| `grafana/alloy` | `v1.21.3` | **Nothing: exact version** |
+| `grafana/tempo` | `3.1.1` | **Nothing: exact version** |
+| `prom/prometheus` | `v3.15.1` | **Nothing: exact version** |
+
+**The three exceptions.** R84 asks for the nearest tag that moves only within a minor version. On 2026-11-03, Alloy, Tempo and Prometheus publish none: only exact versions, plus `latest`, and for Prometheus `v3`, which all cross minor versions. So they name an exact version, the test lists them, and they get patches only when a release changes `compose.yaml`. M18's checks (R85b) look for new minor versions, so patches of these three aren't covered yet: see "Questions for the owner".
+
+**A patch release changes no deployment file.** R84b says it needs only pull and up, so `check-versions.sh` fails a branch whose version is a patch of main's if it changes `compose.yaml` or the archive's files. That has to be a new minor version. The owner didn't ask for this check; without it, the docs' promise could quietly stop being true.
+
+**What moving tags cost.** CI and a deployment can run different patches of an upstream image, and CI's result is only for what was current at its run. A patch of Authentik could change a table `pagerarchive_locked_accounts()` reads, or something the blueprint uses, with no release of ours. The locked-accounts metric would be the first to show it. R85b's checks don't cover that.
 
 ### 3. A changed file takes effect through a label
 
@@ -95,7 +119,13 @@ A77 starts from the previous release's attached files, and v0.14.1 has none. So 
 
 The script also drops the metrics role before upgrading, so the API has to create it, on any previous release.
 
-### 10. The client
+Its last step is a patch release: a newer image under the same tag in the throwaway registry, with nothing in the folder changed, then pull and up. It checks the API's reported version moved and the folder didn't change.
+
+### 10. A failure in the PowerShell module's proxy test
+
+On CI run 41574856977, `Watch.Tests.ps1`'s stand-in proxy received `CONNECT dc.services.visualstudio.com:443` before the test's own request. The test sets the proxy inside the `pwsh` running Pester, and that process's own telemetry goes through it. CI's `powershell` job now sets `POWERSHELL_TELEMETRY_OPTOUT=1`, in the job because PowerShell reads it when it starts, too early for the test to set. The module doesn't change.
+
+### 11. The client
 
 Installing the client uses no file from the repo: it's the published image, or the binaries attached to the release (`docs/client.md`). Nothing changes.
 
@@ -103,16 +133,27 @@ Installing the client uses no file from the repo: it's the published image, or t
 
 On cld01 (Docker 29.8.2, Compose 5.6.0), and in CI:
 
-- **A77** (`sh scripts/a77.sh`), from a release made from the checkout, 0.14.99 without migration 14. `db` stayed `Running`, and only `api` and Authentik's two containers were recreated. The admin and the user signed in with their old passwords, and 5 pages, the alias, the template with its icon, the integration and both users were unchanged. Migrations reached 14, the metrics role was back, and a new page was stored, parsed (job EX0000077), found by search and delivered to the integration set up before the upgrade.
-- **A78** (`sh scripts/a78.sh --project=chromium`), both ways: section 11's steps in a browser, the folder unchanged, only our image and the pinned upstream ones running. Behind nginx on the external `proxy` network, no port was published and the database was out of the proxy's reach.
-- **The monitoring stack** (`sh scripts/monitoring-checks.sh`), from a folder with no checkout: 3 dashboards, 3 alert rules and 3 data sources, then A65 and A67 passed. Memory: 691 MiB idle and 868 MiB during the checks, sum of each container's peak.
-- **Mutations** (`PA_MUT_ONLY=... sh scripts/mutation-checks.sh`): the 12 M17 mutations each fail a test. The rest of the script, and its unmutated runs, weren't run for this milestone, because nothing they guard changed.
+- **A77** (`sh scripts/a77.sh`), from a release made from the checkout, 0.14.99 without migration 14. The admin and the user signed in with their old passwords, and 5 pages, the alias, the template with its icon, the integration and both users were unchanged. Migrations reached 14, the metrics role was back, and a new page was stored, parsed (job EX0000077), found by search and delivered to the integration set up before the upgrade. The patch step moved the API to 0.15.99 and recreated only `api`.
+- **A78** (`sh scripts/a78.sh --project=chromium`), both ways: section 11's steps in a browser, the folder unchanged, only our image and the named upstream ones running. Behind nginx on the external `proxy` network, no port was published and the database was out of the proxy's reach.
+- **Compose 2.32.4**, the production host's version: A77 and A78 also pass with it, on cld01, through a copy of the scripts calling that binary for the folder's commands.
+- **The monitoring stack** (`sh scripts/monitoring-checks.sh`), from a folder with no checkout: 3 dashboards, 3 alert rules and 3 data sources, then A65 and A67 passed. Memory on an earlier run: 691 MiB idle and 868 MiB during the checks, sum of each container's peak.
+- **Mutations** (`PA_MUT_ONLY=... sh scripts/mutation-checks.sh`): the 17 M17 mutations each fail a test. The rest of the script, and its unmutated runs, weren't run for this milestone, because nothing they guard changed.
 
-**One failure not explained.** On CI run 41569199675, A78's second install failed: `no "code" email to owner@example.test`. Authentik's page said the token had been sent, and no mail reached the catcher within the test's 30 s. The same step passed in A78's first install on that run, in both installs on cld01, and in both on the next CI run. That run kept no worker log, so whether the mail was late or lost isn't known. `scripts/a78.sh` now prints the mail received and the worker's log after a failed browser run. The test's limit wasn't raised, so it would show if it comes back.
+### The missed email
+
+On CI run 41569199675, A78's second install failed: `no "code" email to owner@example.test`. Authentik's page said the token had been sent, and no mail reached the catcher within the test's 30 s. That run kept no worker log.
+
+The owner asked for about 20 repeats. On cld01, 20 fresh installs behind the proxy, one straight after another, all passed, and no mail was lost. From Authentik queuing the first mail to its arrival, on the 19 iterations measured: usually 0.3 to 0.9 s, five between 2 and 3 s, and one 8.24 s, on an otherwise idle machine.
+
+**Not explained.** The spread fits a busy worker on a loaded CI runner going past 30 s, but nothing shows that, or rules out a lost mail. The repeats didn't reproduce it, and cld01 is faster than a runner. So, as the owner said for an unclear cause, nothing was changed. The test's limit stays at 30 s, and `scripts/a78.sh` prints the mail received and the worker's log if it fails again.
 
 ## Questions for the owner
 
-1. **Upgrade steps in release notes.** R84a says a breaking release puts "Upgrade steps" at the top of its notes, but the notes are generated by the release job, and SPEC 12.1 says nothing is released by hand. Editing the notes after the release works today. Do you want a file in the branch that the job puts at the top?
-2. **`latest` in the download links.** The docs use `releases/latest/download`, which always gets the newest release. Between the release job and the publish job finishing (a few minutes), `compose.yaml` can name an image that isn't on GHCR yet, and `docker compose pull` fails until it is. Nothing breaks, and running it again works. Is that acceptable, or should the assets be attached after publishing?
-3. **Compose 2.24 or later.** The first production host needs it for the override's `!reset`. Is that fine for that host?
-4. **A78's one missed email** (see "Evidence"). If it comes back, the new output should show why. Do you want it looked into further before the first production instance, for example by repeating A78 until it fails?
+1. **Patches for Alloy, Tempo and Prometheus.** They have no tag that moves within a minor version, so they stay at an exact version until a release changes it, and M18's checks only look for new minor versions. Should M18's third-party check also open a pull request for their patches?
+
+The owner's answers to the earlier questions (2026-11-03):
+
+- **The missed email:** repeated about 20 times; see "Evidence".
+- **"Upgrade steps" in release notes:** add a file for them when a release first needs one.
+- **Assets and images:** assets attach only once the images are on GHCR (section 1).
+- **Compose 2.24 or later:** fine; the production host has 2.32.4.

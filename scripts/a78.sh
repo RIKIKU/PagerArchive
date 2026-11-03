@@ -3,7 +3,7 @@
 # only what a release attaches, filled in with test values, plus the example
 # profile and map. `docker compose up -d`, then section 11's steps in a browser.
 # The folder must end up with nothing new in it, and no image other than ours
-# and the pinned upstream ones may run. Then the same again with the
+# and the named upstream ones may run. Then the same again with the
 # compose.override.yaml from docs/deploy.md, behind a reverse proxy container on
 # an external network named `proxy`.
 #
@@ -20,6 +20,7 @@ export COMPOSE_PROJECT_NAME="pa-a78-$$"
 . ./scripts/stack-lib.sh
 . ./scripts/install-lib.sh
 VERSION=$(tr -d ' \r\n' <VERSION)
+IMAGE_TAG=${VERSION%.*}
 WORK=$(mktemp -d)
 DIR=$WORK/deployment
 MAILPIT=pa-a78-mailpit-$$
@@ -48,7 +49,7 @@ echo "--- the release's files, and this checkout's image in the throwaway regist
 sh scripts/ci/release-assets.sh "$WORK/assets"
 ls -l "$WORK/assets"
 registry_start
-registry_publish . "$VERSION"
+registry_publish . "$IMAGE_TAG"
 docker build -q -f Dockerfile.client -t pagerarchive-client:stacktest . >/dev/null
 
 install_folder "$DIR" "$WORK/assets"
@@ -97,7 +98,7 @@ run_install() {
 		status=1
 	fi
 	if check_images "$COMPOSE_PROJECT_NAME" postgis/postgis ghcr.io/goauthentik/server; then
-		echo "--- images: ours from the registry, and pinned upstream: $(stack_compose config --images | sort -u | tr '\n' ' ')"
+		echo "--- images: ours from the registry, and upstream's: $(stack_compose config --images | sort -u | tr '\n' ' ')"
 	else
 		status=1
 	fi

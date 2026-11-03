@@ -38,7 +38,7 @@ docker compose up -d
 
 | File | What it is |
 |---|---|
-| `compose.yaml` | The stack, naming this release's image and pinned versions of PostGIS and Authentik |
+| `compose.yaml` | The stack, naming PagerArchive, PostGIS and Authentik by their major.minor tags, so `docker compose pull` gets patch releases |
 | `.env` | Your settings, from `env.example` |
 | `deploy/` | From the archive: configuration for the third-party services, which run their upstream images unchanged. Don't edit these files, because an upgrade replaces them |
 
@@ -285,11 +285,17 @@ PagerArchive's images are published to GitHub's container registry by CI, but on
 | `latest`, `main` | the newest build of `main` |
 | `sha-<commit>` | one exact build |
 
-`compose.yaml` names its release's image, so the version you run is the `compose.yaml` you have. PostGIS and Authentik are upstream's images, pinned by version and digest. Nothing about versions goes in `.env`.
+`compose.yaml` names PagerArchive's image, and upstream's PostGIS and Authentik images, by their major.minor tags (`pagerarchive:0.15`), so the minor version you run is the `compose.yaml` you have, and `docker compose pull` gets every patch release. Keeping up with patches is your job: nothing pulls them for you. Nothing about versions goes in `.env`.
 
 ## Upgrading
 
-Get the new release's `compose.yaml` and archive, then pull and start. Upgrades can skip releases:
+**A patch release** (0.15.0 to 0.15.1) needs only these two commands, from the folder with `compose.yaml`. Run them regularly, as patches often carry security fixes:
+
+```sh
+docker compose pull && docker compose up -d
+```
+
+**A new minor or major version** (0.15 to 0.16) also needs that release's `compose.yaml` and archive first. Upgrades can skip releases:
 
 ```sh
 base=https://github.com/RIKIKU/PagerArchive/releases/latest/download

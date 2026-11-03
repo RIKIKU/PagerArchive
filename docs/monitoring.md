@@ -287,4 +287,6 @@ curl -fL -o compose.yaml $base/monitoring-compose.yaml
 docker compose pull && docker compose up -d
 ```
 
-`.env` and `compose.override.yaml` stay as they are, and so does the stack's data. Each image is upstream's, pinned by version and digest in `compose.yaml`, so `docker compose pull` never changes anything by surprise. `docker compose up -d` recreates the services whose image or files the release changed.
+`.env` and `compose.override.yaml` stay as they are, and so does the stack's data. `docker compose up -d` recreates the services whose image or files changed.
+
+A patch release of PagerArchive changes nothing here, so that's only needed when a new minor or major version comes out. In between, `docker compose pull && docker compose up -d` in this folder gets upstream's patches for Loki and Grafana, which are named by their major.minor tags. Alloy, Tempo and Prometheus publish no such tag, so they stay at the exact version in `compose.yaml` until a release changes it.

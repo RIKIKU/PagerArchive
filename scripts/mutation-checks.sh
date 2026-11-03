@@ -87,7 +87,7 @@ mutate() {
 		printf '%s\n' "$out" | grep -E '^\s+[a-z0-9_]+_test.go:[0-9]+: (SECURITY FAILURE|FAILED|TEST ERROR)' | head -4
 		;;
 	pester:*)
-		out=$("$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
+		out=$(POWERSHELL_TELEMETRY_OPTOUT=1 "$PA_PWSH" -NoProfile -NonInteractive -File powershell/tests/Invoke-Tests.ps1 -Path "${test#pester:}" 2>&1)
 		printf '%s\n' "$out" | grep -E '\[-\]|Expected|Timed out' | head -4
 		;;
 	a75:*)
@@ -484,16 +484,27 @@ fi
 
 # M17 (ADR 0019): installing and upgrading with no checkout.
 V=$(tr -d ' \r\n' <VERSION)
-mutate "compose.yaml pulls an upstream image that isn't pinned" compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
-	'postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4' 'postgis/postgis:18-3.6'
-mutate "compose.yaml pulls a pinned image that isn't ours or known upstream" compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
-	'image: postgis/postgis:18-3.6@' 'image: example.org/someone/postgis:18-3.6@'
-mutate "the monitoring stack pulls a project-built image instead of upstream's" deploy/monitoring/compose.yaml unit:.:TestR84ImagesAreOursOrPinnedUpstream \
-	'image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84' 'image: ghcr.io/rikiku/pagerarchive-grafana:13.2.5'
+V=${V%.*}
+mutate "compose.yaml pulls an image that isn't ours or known upstream" compose.yaml unit:.:TestR84ImagesAreOursOrKnownUpstream \
+	'image: postgis/postgis:18-3.6' 'image: example.org/someone/postgis:18-3.6'
+mutate "the monitoring stack pulls a project-built image instead of upstream's" deploy/monitoring/compose.yaml unit:.:TestR84ImagesAreOursOrKnownUpstream \
+	'image: grafana/grafana:13.2' 'image: ghcr.io/rikiku/pagerarchive-grafana:13.2'
+mutate "an upstream image has a patch number" compose.yaml unit:.:TestA79ImagesAreNamedByMajorMinor \
+	'ghcr.io/goauthentik/server:2026.5' 'ghcr.io/goauthentik/server:2026.5.5'
+mutate "our image has a patch number" compose.yaml unit:.:TestA79ImagesAreNamedByMajorMinor \
+	"ghcr.io/rikiku/pagerarchive:$V" "ghcr.io/rikiku/pagerarchive:$V.0"
+mutate "an image has a digest" compose.yaml unit:.:TestA79ImagesAreNamedByMajorMinor \
+	'postgis/postgis:18-3.6' 'postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4'
+mutate "an image moves further than a minor version" deploy/monitoring/compose.yaml unit:.:TestA79ImagesAreNamedByMajorMinor \
+	'grafana/grafana:13.2' 'grafana/grafana:latest'
 mutate "the release doesn't attach compose.yaml (the script)" scripts/ci/release-assets.sh unit:.:TestR84ReleaseAttachesTheFiles \
 	'cp compose.yaml "$out/compose.yaml"' ':'
 mutate "the release doesn't attach compose.yaml (the job)" .github/workflows/ci.yml unit:.:TestR84ReleaseAttachesTheFiles \
 	'gh release upload "$TAG" dist/* --clobber' 'gh release upload "$TAG" dist/pagerarchive-client-* --clobber'
+mutate "the files are attached before the images are on GHCR" .github/workflows/ci.yml unit:.:TestR84ReleaseAttachesTheFiles \
+	'needs: [release, publish-server, publish-client-manifest]' 'needs: [release]'
+mutate "the release is the latest before its files are attached" .github/workflows/ci.yml unit:.:TestR84ReleaseAttachesTheFiles \
+	'--verify-tag --latest=false --title' '--verify-tag --title'
 mutate "the attached compose.yaml takes the image from latest" compose.yaml unit:.:TestR84aComposeNamesThisRelease \
 	"ghcr.io/rikiku/pagerarchive:$V" 'ghcr.io/rikiku/pagerarchive:latest'
 mutate "a file the stack mounts isn't in the archive" scripts/ci/release-assets.sh unit:.:TestR84MountsComeFromTheArchive \
@@ -521,7 +532,7 @@ if [ -n "${PA_MUT_ONLY:-}" ]; then
 fi
 
 echo "=== unmutated"
-go test -count=1 -run 'TestR84|TestVersion' . 2>&1 | tail -3
+go test -count=1 -run 'TestR84|TestA79|TestVersion' . 2>&1 | tail -3
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'

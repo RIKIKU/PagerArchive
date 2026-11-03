@@ -1,7 +1,9 @@
 #!/bin/sh
 # The version checks on a branch or pull request (SPEC.md 12.1 and R63, ADR 0016):
 #   - VERSION is MAJOR.MINOR.PATCH and higher than main's;
-#   - compose.yaml names that version's image (R84a);
+#   - compose.yaml names that version's minor version's image (R84);
+#   - a patch version changes none of what a deployment downloads, since a patch
+#     release needs only pull and up (R84b);
 #   - if the branch changes powershell/PagerArchive/, the manifest's
 #     ModuleVersion is higher than main's.
 # Each failure says what to change. Needs main's history and the v* tags
@@ -27,6 +29,10 @@ fi
 check_compose_image "$version"
 
 base=$(git merge-base "$MAIN" HEAD)
+# shellcheck disable=SC2086
+if [ "${version%.*}" = "${main_version%.*}" ] && ! git diff --quiet "$base" HEAD -- $CONFIG_PATHS; then
+	fail compose.yaml "This branch changes compose.yaml or the configuration archive's files, but VERSION $version is a patch of main's $main_version, and a patch release needs only pull and up (R84b): raise the minor number, and the API's image in compose.yaml."
+fi
 if module_changed "$base" HEAD; then
 	module_version=$(module_version_at HEAD)
 	main_module_version=$(module_version_at "$MAIN")

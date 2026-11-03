@@ -6,9 +6,12 @@
 #   cp env.example .env                   # fill it in
 #   docker compose up -d
 #
-# Upgrading is getting the newer release's compose.yaml and archive, then:
+# Every image is named by its major.minor tag, so this gets patch releases:
 #
 #   docker compose pull && docker compose up -d
+#
+# A new minor or major version also needs that release's compose.yaml and
+# archive first.
 #
 # Don't edit this file, because an upgrade replaces it. Site-specific changes
 # go in a compose.override.yaml next to it (docs/deploy.md, "Your own changes").
@@ -18,7 +21,7 @@
 name: pagerarchive
 
 x-authentik: &authentik
-  image: ghcr.io/goauthentik/server:2026.5.5@sha256:50a833c48a714709f15d4f8846ec6b81a41d0d6a6bd2975087dfed3000d0d72e
+  image: ghcr.io/goauthentik/server:2026.5
   restart: unless-stopped
   # A hash of the files mounted below. Compose doesn't notice a changed file,
   # but a changed label makes `docker compose up -d` recreate the container,
@@ -76,7 +79,7 @@ x-authentik: &authentik
 
 services:
   db:
-    image: postgis/postgis:18-3.6@sha256:4a43e3c3e5d55b9208240fc71db543b79c638766280c625a425bd0a2390989c4
+    image: postgis/postgis:18-3.6
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -106,9 +109,9 @@ services:
     command: worker
 
   api:
-    # This release's image. Getting the next release's compose.yaml is what
-    # moves a deployment to the next version (R84a).
-    image: ghcr.io/rikiku/pagerarchive:0.15.0
+    # This minor version's image. `docker compose pull` gets its patch releases;
+    # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
+    image: ghcr.io/rikiku/pagerarchive:0.15
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable

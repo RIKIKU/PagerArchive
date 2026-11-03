@@ -10,7 +10,7 @@
 #
 # The monitoring stack is installed as a deployment does it (R84, A78): a folder
 # with only the release's archive, compose file and filled-in settings, and
-# only upstream's pinned images. It's checked like that before the test's own
+# only upstream's images. It's checked like that before the test's own
 # overlay is added for the alert checks.
 #
 # usage: scripts/monitoring-checks.sh [-o OUT] [-s SCREENSHOTS]
@@ -120,7 +120,7 @@ else
 	status=1
 fi
 rm -f "$MONROOT.before"
-VERSION=none check_images "$P-mon" grafana/alloy grafana/tempo grafana/loki prom/prometheus grafana/grafana || status=1
+IMAGE_TAG=none check_images "$P-mon" grafana/alloy grafana/tempo grafana/loki prom/prometheus grafana/grafana || status=1
 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" \
 	go test -count=1 -v -run TestA78MonitoringInstalled ./internal/monitortest/ || status=1
 

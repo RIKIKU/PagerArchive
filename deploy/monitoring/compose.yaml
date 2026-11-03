@@ -1,8 +1,9 @@
 # Example monitoring stack for PagerArchive (SPEC.md R76, docs/monitoring.md):
 # Grafana Alloy collects, Tempo keeps traces, Loki logs, Prometheus metrics,
 # and Grafana shows them, with dashboards and alert rules provisioned from
-# the files here. Upstream's images, unchanged, pinned by version and digest
-# (R84); the files come from the release's pagerarchive-config.tar.gz.
+# the files here. Upstream's images, unchanged, by their major.minor tags (R84).
+# Alloy, Tempo and Prometheus publish no such tag, so they name an exact version
+# (ADR 0019). The files come from the release's pagerarchive-config.tar.gz.
 #
 # It runs next to PagerArchive's own compose project and joins its network,
 # so Alloy can scrape the API's /metrics and the API can send it OTLP. In the
@@ -25,7 +26,7 @@ name: pagerarchive-monitoring
 
 services:
   alloy:
-    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    image: grafana/alloy:v1.21.3
     restart: unless-stopped
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:
@@ -42,7 +43,7 @@ services:
     depends_on: [tempo, loki, prometheus]
 
   tempo:
-    image: grafana/tempo:3.1.1@sha256:64e2fbd56d9c2b3412a4b430a58ea59e91a670b1e75f920a0c702213ad145044
+    image: grafana/tempo:3.1.1
     restart: unless-stopped
     command: [-config.file=/etc/tempo/tempo.yaml]
     labels:
@@ -53,7 +54,7 @@ services:
     networks: [monitoring]
 
   loki:
-    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    image: grafana/loki:3.7
     restart: unless-stopped
     command: [-config.file=/etc/loki/loki.yaml]
     labels:
@@ -64,7 +65,7 @@ services:
     networks: [monitoring]
 
   prometheus:
-    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    image: prom/prometheus:v3.15.1
     restart: unless-stopped
     command:
       - --config.file=/etc/prometheus/prometheus.yml
@@ -82,7 +83,7 @@ services:
     networks: [monitoring]
 
   grafana:
-    image: grafana/grafana:13.2.5@sha256:9f7aa1e1e3246aade5792d35a738049f7f32f89cd51d1956cf426a4e86268a84
+    image: grafana/grafana:13.2
     restart: unless-stopped
     labels:
       pagerarchive.config: "95b728c673863fe2"

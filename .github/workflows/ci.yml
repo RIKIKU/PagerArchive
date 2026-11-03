@@ -241,6 +241,11 @@ jobs:
         pwsh: ["7.6.0", newest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
+    env:
+      # PowerShell's own telemetry goes through the default proxy, and once
+      # reached the stand-in proxy of Watch.Tests.ps1 before the test's request
+      # did (ADR 0019). It's read when pwsh starts, so it's set here, not in the test.
+      POWERSHELL_TELEMETRY_OPTOUT: "1"
     steps:
       - uses: actions/checkout@v5
       - name: Install PowerShell ${{ matrix.pwsh }} and the test modules
@@ -534,8 +539,8 @@ jobs:
   # history), or if v<VERSION> is already a tag on
   # another commit, so nothing is published. Otherwise this
   # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
-  # GitHub release with the client's binaries and checksums and the files a
-  # deployment needs (R84, scripts/ci/release-assets.sh), and passes on
+  # GitHub release with the client's binaries and checksums, not yet marked the
+  # latest (attach-release-files does that), and passes on
   # whether the module is published. A tag pushed with GITHUB_TOKEN starts no
   # run, and the push trigger takes branches only anyway. Re-run, the job
   # finds its own tag and release on this commit and finishes them.
@@ -576,9 +581,6 @@ jobs:
               -o "dist/pagerarchive-client-$TAG-linux-$arch" ./cmd/pagerarchive-client
           done
           (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
-      # What a deployment needs (R84): this commit's own files, unchanged.
-      - name: The files for installing and upgrading
-        run: sh scripts/ci/release-assets.sh dist
       - name: Tag the commit
         env:
           TAG: ${{ steps.plan.outputs.tag }}
@@ -608,12 +610,8 @@ jobs:
           } > notes.md
           cat notes.md
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --title "PagerArchive $TAG" --notes-file notes.md
+            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md
           gh release upload "$TAG" dist/* --clobber
-          attached=$(gh release view "$TAG" --json assets --jq '.assets[].name')
-          for asset in $(sh scripts/ci/release-assets.sh --list); do
-            printf '%s\n' "$attached" | grep -qx "$asset" || { echo "::error::$TAG has no $asset attached"; exit 1; }
-          done
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
   # 2026-10-13): a release (a push to main) -> <VERSION>, its MAJOR.MINOR,
@@ -757,6 +755,42 @@ jobs:
           docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
           docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+
+  # What a deployment needs (R84): only once this release's images are on GHCR,
+  # for anyone to pull, so an attached compose.yaml never names an image that
+  # isn't there yet (owner, 2026-11-03; ADR 0019). Only then does the release
+  # become the latest, so the docs' releases/latest/download links keep getting
+  # the previous release's files until this one's are all in place. Re-run after
+  # a failure, it finishes the job.
+  attach-release-files:
+    name: Attach the install and upgrade files, and make it the latest release
+    needs: [release, publish-server, publish-client-manifest]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ needs.release.outputs.tag }}
+      MAJOR_MINOR: ${{ needs.release.outputs.major_minor }}
+    steps:
+      - uses: actions/checkout@v5
+      # No docker login in this job: this is what anyone pulling sees.
+      - name: The release's images are on GHCR
+        run: |
+          docker manifest inspect "ghcr.io/rikiku/pagerarchive:$MAJOR_MINOR" >/dev/null
+          docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null
+      - name: The files for installing and upgrading
+        run: sh scripts/ci/release-assets.sh dist
+      - name: Attach them, check they're there, and make it the latest release
+        run: |
+          gh release upload "$TAG" dist/* --clobber
+          attached=$(gh release view "$TAG" --json assets --jq '.assets[].name')
+          for asset in $(sh scripts/ci/release-assets.sh --list); do
+            printf '%s\n' "$attached" | grep -qx "$asset" || { echo "::error::$TAG has no $asset attached"; exit 1; }
+          done
+          gh release edit "$TAG" --latest
 
   # The PowerShell module on the PowerShell Gallery (R63): only from a release
   # whose plan said "publish" (powershell/PagerArchive/ changed since the
