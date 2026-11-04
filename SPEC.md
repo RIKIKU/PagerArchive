@@ -319,6 +319,7 @@ Reference apps chosen by the owner: Grafana (side menu, groups, breadcrumbs) and
 ### 7.20 Looks (owner, 2026-11-02)
 - **R82c. Everything is a token.** From M13, every value that styles the UI is a token in one place: colours, type sizes, spacing, corner radii, target sizes, and how each priority is shown (edge, tint, dot or label). Components use tokens only, and CI fails a component with a hard-coded value. A look is one set of these tokens, in light and dark, so a look can be added or changed without touching a component. M13 builds Harbour only (ADR 0015).
 - **R82d. Choosing a look.** Users choose between **Harbour** (the default) and **Console** (M13's second prototype, ADR 0015) in the account menu, beside Auto / Light / Dark. The look is **saved on the account**, so it follows the user to every browser and device. A change applies at once, without reloading, and a page never shows the default look first and then switches. Pages before sign-in use Harbour. Every look meets WCAG 2.1 AA in light and dark (section 8).
+- **R82e. The favicon.** The app has a favicon, a white pager on a rounded square of Harbour's accent green, that's visible before sign-in: loading it needs no session (owner, 2026-11-05).
 
 ### 7.21 Importing messages (owner, 2026-11-02)
 For moving an existing archive into PagerArchive. Users aren't imported; aliases come in through the alias import (R30, R63).

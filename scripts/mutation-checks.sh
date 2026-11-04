@@ -1,6 +1,6 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11), telemetry (M12), search (M13a), the import (M16), installing and
+# (M11), the favicon (R82e), telemetry (M12), search (M13a), the import (M16), installing and
 # upgrading (M17) and backups (M19): break one check
 # at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
@@ -217,8 +217,21 @@ if [ -d "$src/web/node_modules" ] && command -v docker >/dev/null; then
 		.top,
 ' '		.skip,
 '
+	# R82e: the favicon, before sign-in.
+	mutate "the favicon needs a session" internal/server/server.go 'e2e:R82e' \
+		'handle("/", s.UI)' 'handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := r.Cookie("pa_session"); err != nil && strings.Contains(r.URL.Path, "favicon") {
+				http.Error(w, "sign in", http.StatusUnauthorized)
+				return
+			}
+			s.UI.ServeHTTP(w, r)
+		}))'
+	mutate "the favicon link names a file that isn't there, so the app's page answers 200" web/src/app.html 'e2e:R82e' \
+		'href="/favicon.svg"' 'href="/favicon-gone.svg"'
+	mutate "the favicon link is relative, so it breaks on a deep page" web/src/app.html 'e2e:R82e' \
+		'href="/favicon.svg"' 'href="favicon.svg"'
 else
-	echo "=== the print sheet's browser mutations skipped: no web/node_modules or no Docker"
+	echo "=== the browser mutations skipped: no web/node_modules or no Docker"
 fi
 
 if [ -n "$PA_PWSH" ]; then

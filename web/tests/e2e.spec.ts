@@ -215,6 +215,54 @@ test('R44 signed-out visitors on a new install see first-admin set-up', async ({
 	await page.context().close();
 });
 
+// R82e: the favicon loads before sign-in. From the root URL with no session,
+// on the way to the sign-in page, and from a deep page (a relative link would
+// break there). A file that isn't there still answers 200, with the app's page
+// for the browser's router, so the content type is what proves it.
+test('R82e the favicon loads before sign-in, from the root URL', async ({ browser, page }) => {
+	const icons: [string, string, number | null][] = [
+		['head link[rel="icon"][type="image/svg+xml"]', 'image/svg+xml', null],
+		['head link[rel="icon"][type="image/png"]', 'image/png', 32],
+		['head link[rel="apple-touch-icon"]', 'image/png', 180]
+	];
+	const ctx = await browser.newContext();
+	const out = await ctx.newPage();
+	await out.goto('/');
+	await expect(out).toHaveURL(/\/signin/);
+	expect((await ctx.cookies()).map((c) => c.name)).not.toContain('pa_session');
+	const root = await (await ctx.request.get(`${URL}/`)).text();
+	const head = root.slice(0, root.indexOf('</head>'));
+
+	await page.goto('/account/profile');
+	await expect(page.getByRole('heading', { level: 1, name: 'Your account' })).toBeVisible();
+
+	for (const [link, type, size] of icons) {
+		await expect(out.locator(link)).toHaveCount(1);
+		const resolved = (from: Page) => from.locator(link).evaluate((l) => (l as HTMLLinkElement).href);
+		const href = await resolved(out);
+		expect(head).toContain(`href="${new globalThis.URL(href).pathname}"`);
+		for (const from of [out, page]) {
+			// Unsigned: this context has no session, whichever page's link it is.
+			const res = await ctx.request.get(await resolved(from));
+			expect(res.status(), `${href} from ${from.url()}`).toBe(200);
+			expect(res.headers()['content-type']).toBe(type);
+			if (size) {
+				const png = await res.body();
+				expect([png.readUInt32BE(16), png.readUInt32BE(20)]).toEqual([size, size]);
+			}
+		}
+		// The sign-in page's Content-Security-Policy lets the browser show it.
+		const shown = await out.evaluate(async (src) => {
+			const img = new Image();
+			img.src = src;
+			await img.decode();
+			return img.naturalWidth > 0;
+		}, href);
+		expect(shown).toBe(true);
+	}
+	await ctx.close();
+});
+
 // R44 screens: the account page shows who you are and who invited you; the
 // users page lists users for admins, with their inviter.
 test('account and users pages', async ({ page, browser }) => {
