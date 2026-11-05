@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,5 +69,46 @@ func TestClientThroughInternalURL(t *testing.T) {
 	}
 	if got := c.EnrolmentURL("inv-1"); got != "https://auth.example.org/if/flow/pagerarchive-enrolment/?itoken=inv-1" {
 		t.Errorf("EnrolmentURL: %s", got)
+	}
+}
+
+// R44c: holders are matched as the sign-in form matches, ignoring case; partial
+// matches don't count; every page is read.
+func TestEmailHolders(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("search") != "owner@example.org" {
+			t.Errorf("search: %q", r.URL.RawQuery)
+		}
+		if r.URL.Query().Get("page") == "1" {
+			_, _ = w.Write([]byte(`{"pagination":{"next":2},"results":[{"email":"Owner@Example.org","is_superuser":true},{"email":"coowner@example.org"}]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"pagination":{"next":0},"results":[{"email":"owner@example.org","is_superuser":false}]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &Client{URL: u, Token: "tok", HTTP: srv.Client()}
+	got, err := c.EmailHolders(context.Background(), "owner@example.org")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Count != 2 || !got.Administrator {
+		t.Errorf("holders: %+v", got)
+	}
+}
+
+// R73: a failed request's error doesn't quote the URL, whose query holds the
+// address.
+func TestErrorsLeaveOutTheQuery(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	u, _ := url.Parse(srv.URL)
+	srv.Close() // nothing listens there now
+	c := &Client{URL: u, Token: "tok", HTTP: &http.Client{}}
+	_, err := c.EmailHolders(context.Background(), "owner@example.org")
+	if err == nil {
+		t.Fatal("no error from a closed server")
+	}
+	if strings.Contains(err.Error(), "example.org") || strings.Contains(err.Error(), "owner") {
+		t.Errorf("the address is in the error: %v", err)
 	}
 }
