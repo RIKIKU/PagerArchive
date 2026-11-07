@@ -341,6 +341,29 @@ func TestR84bInstallIsTheFilesAndEnv(t *testing.T) {
 	}
 }
 
+// R44c: the example .env mustn't invite one address for the first admin and
+// Authentik's administrator, and says why.
+func TestR44cExampleAddressesDiffer(t *testing.T) {
+	data, err := os.ReadFile(".env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	value := func(key string) string {
+		m := regexp.MustCompile(`(?m)^` + key + `=(.*)$`).FindSubmatch(data)
+		if m == nil || len(m[1]) == 0 {
+			t.Fatalf(".env.example has no example %s", key)
+		}
+		return strings.TrimSpace(string(m[1]))
+	}
+	first, admin := value("INITIAL_ADMIN_EMAIL"), value("AUTHENTIK_ADMIN_EMAIL")
+	if strings.EqualFold(first, admin) {
+		t.Errorf(".env.example gives INITIAL_ADMIN_EMAIL and AUTHENTIK_ADMIN_EMAIL the same address, %s: they must differ (R44c)", first)
+	}
+	if !bytes.Contains(bytes.ToLower(data), []byte("must differ")) {
+		t.Error(".env.example doesn't say the two addresses must differ")
+	}
+}
+
 // R86a, R86: the check has no network and no secrets, and only it and the backup
 // service see the folder; the API sees only the status volume, read-only, so a
 // compromised API can't read Authentik's password hashes from a dump.

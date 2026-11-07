@@ -67,6 +67,46 @@ stack_wait_ready() {
 	echo "--- stack ready after $(($(date +%s) - start)) s"
 }
 
+# R44c. stack_api_says <text> <seconds>: the API's current container logs it.
+stack_api_says() {
+	_end=$(($(date +%s) + $2))
+	until stack_compose logs --no-color api 2>/dev/null | grep -qF "$1"; do
+		[ "$(date +%s)" -lt "$_end" ] || return 1
+		sleep 2
+	done
+}
+
+ADDRESS_SHARED="address is also held by another account in Authentik"
+ADDRESS_OK="address isn't held by another account in Authentik"
+
+# stack_check_address_warning warn|none <what>: the API asked Authentik about
+# the first admin's address, and warned or didn't, without saying the address.
+stack_check_address_warning() {
+	if [ "$1" = warn ]; then _want=$ADDRESS_SHARED _other=$ADDRESS_OK; else _want=$ADDRESS_OK _other=$ADDRESS_SHARED; fi
+	if ! stack_api_says "$_want" 60; then
+		echo "FAIL: $2: the API didn't log \"$_want\"" >&2
+		return 1
+	fi
+	_logs=$(stack_compose logs --no-color api)
+	if printf '%s' "$_logs" | grep -qF "$_other"; then
+		echo "FAIL: $2: the API logged \"$_other\"" >&2
+		return 1
+	fi
+	if printf '%s' "$_logs" | grep -qiE '@example\.(com|org|test)'; then
+		echo "FAIL: $2: an email address in the API log" >&2
+		return 1
+	fi
+	echo "--- R44c: $2: the API logged \"$_want\", without the address"
+}
+
+# stack_set_akadmin_address <address>: the fix in docs/deploy.md, as written there.
+stack_set_akadmin_address() {
+	_fix=$(awk '/<!-- r44c:fix -->/ { found = 1; next } found && /^```sh/ { on = 1; next } on && /^```/ { exit } on' docs/deploy.md)
+	[ -n "$_fix" ] || { echo "FAIL: no fix for two accounts with one address in docs/deploy.md" >&2; return 1; }
+	_fix=$(printf '%s\n' "$_fix" | sed -e 's/^docker compose exec /stack_compose exec -T /' -e "s/authentik-admin@example\.org/$1/")
+	eval "$_fix" >/dev/null 2>&1
+}
+
 # P1 and privacy: no page text and no email address in the API's log.
 stack_check_logs() {
 	logs=$(stack_compose logs --no-color api)

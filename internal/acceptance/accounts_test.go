@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -92,6 +93,19 @@ func (d *fakeDir) UserByUsername(_ context.Context, username string) (string, bo
 		}
 	}
 	return "", false, nil
+}
+
+func (d *fakeDir) EmailHolders(_ context.Context, address string) (accounts.EmailHolders, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	var holders accounts.EmailHolders
+	for _, u := range d.users {
+		if strings.EqualFold(u.email, address) {
+			holders.Count++
+			holders.Administrator = holders.Administrator || u.username == "akadmin"
+		}
+	}
+	return holders, nil
 }
 
 // enrol is the enrolment flow: the invitation must exist and not have
@@ -644,6 +658,33 @@ func TestFirstAdminSetUp(t *testing.T) {
 	}
 	if _, err := e.acc.FirstAdminEnrolment(e.ctx); err == nil {
 		t.Error("set-up still offered after the first admin enrolled")
+	}
+}
+
+// R44c: enrolment can't make a second account with the address of an account
+// already in Authentik: set-up is refused with the reason, and no link made.
+func TestR44cFirstAdminAddressAlreadyHeld(t *testing.T) {
+	e := setup(t)
+	e.acc.InitialAdmin = "owner@example.org"
+	if _, err := e.st.Pool.Exec(e.ctx, "UPDATE users SET role = 'user'"); err != nil {
+		t.Fatal(err)
+	}
+	e.dir.mu.Lock()
+	e.dir.users["akadmin-subject"] = &fakeUser{username: "akadmin", email: "Owner@Example.org", active: true}
+	e.dir.mu.Unlock()
+	var refusal *accounts.Error
+	if _, err := e.acc.FirstAdminEnrolment(e.ctx); !errors.As(err, &refusal) || refusal.Code != "address_shared" {
+		t.Fatalf("set-up with the address already held: %v", err)
+	}
+	if n := len(e.dir.invites); n != 0 {
+		t.Errorf("%d set-up invitations made", n)
+	}
+	// With akadmin moved to another address, set-up goes ahead.
+	e.dir.mu.Lock()
+	e.dir.users["akadmin-subject"].email = "authentik-admin@example.org"
+	e.dir.mu.Unlock()
+	if _, err := e.acc.FirstAdminEnrolment(e.ctx); err != nil {
+		t.Fatalf("set-up with akadmin on another address: %v", err)
 	}
 }
 

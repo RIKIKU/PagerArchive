@@ -135,6 +135,14 @@ Authentik's own superusers (`akadmin`) sign in through the same public sign-in f
 - **A second factor for superusers.** The sign-in flow has an extra stage that applies only to them: a TOTP app, passkey or recovery codes, with a TOTP app set up on first sign-in. PagerArchive users never see it.
 - **Deployment guidance.** `docs/deploy.md` keeps `/if/admin/` LAN-only in the proxy example. It also says to set up the first admin while both hostnames are still LAN-only, then open the app.
 
+### 11. One address, two accounts (R44c; owner, 2026-11-05)
+
+On the first production install, `INITIAL_ADMIN_EMAIL` and `AUTHENTIK_ADMIN_EMAIL` held one address. The identification stages match by email and take the first match, so the first admin's sign-in reached `akadmin`. The fix ships as a patch release, so it changes neither `compose.yaml` nor the blueprint.
+
+The API can't compare the two settings, because it doesn't get `AUTHENTIK_ADMIN_EMAIL`, and that setting says nothing about an existing install anyway: Authentik's bootstrap blueprint only uses it when making the account (`state: created`). So it asks Authentik, with the search on the users API, and compares results ignoring case, as the stages do. It asks beside the start-up, not before it, for up to 10 minutes, because Authentik can take that long on a first start.
+
+Considered: only warning. Chosen: also refuse first-admin set-up while another account holds the address, in the app, after the leftovers of an abandoned enrolment are cleared. It needs Authentik at that point anyway, so it adds no new way to fail, and it stops a new install reaching the broken state. An expression policy on the enrolment flow would also catch invitations, but it's a blueprint change, so not for a patch. Invitations aren't checked: an invitation to `akadmin`'s address remains possible, and is the operator's own choice of address.
+
 ## Consequences
 
 - Deactivation is immediate and doesn't depend on Authentik being up. Authentik is synced right after.

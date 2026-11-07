@@ -106,6 +106,7 @@ run_install() {
 		echo "FAIL: the API says it's on the example profile, with PROFILES_DIR set" >&2
 		status=1
 	fi
+	stack_check_address_warning none "the release's different addresses" || status=1
 	stack_check_logs || status=1
 	stop_stack
 }

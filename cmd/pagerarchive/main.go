@@ -106,6 +106,7 @@ serve reads its settings from the environment:
   POWERSHELL_CLIENT_ID    the PowerShell module's Authentik client (default pagerarchive-powershell)
   ALLOWED_EMAIL_DOMAINS   domains invitations may go to, comma-separated (required)
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
+                          (must differ from Authentik.s administrator.s: R44c)
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
   BACKUP_STATUS_FILE      the backup service's status file (default: no backups to report)
   MAP_TILES               path to a PMTiles map extract (default: no background map;
@@ -294,6 +295,7 @@ func serve(stderr io.Writer) error {
 		Now: time.Now, Log: log, CloseLive: hub.CloseUsers,
 	}
 	go expireSessions(ctx, st, log)
+	go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)
 
 	at, err := nightly.ParseAt(getenv("NIGHTLY_AT", "03:00"))
 	if err != nil {
@@ -537,6 +539,13 @@ func authConfig() (authSettings, error) {
 	}
 	return a, nil
 }
+
+// Authentik can take minutes to answer on a first start, and the API doesn't
+// wait for it: the address check (R44c) keeps asking for 10 minutes.
+const (
+	adminAddressCheckEvery = 5 * time.Second
+	adminAddressCheckTries = 120
+)
 
 // authentikMetricsURL is the connection for the locked-accounts metric:
 // AUTHENTIK_METRICS_DATABASE_URL, or else DATABASE_URL's server with the

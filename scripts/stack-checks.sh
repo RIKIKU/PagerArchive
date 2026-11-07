@@ -49,7 +49,43 @@ export PA_STACK_CLIENT_KEY
 export PA_STACK_PWSH="${PA_STACK_PWSH:-$(command -v pwsh || true)}"
 export PA_STACK_PS_MODULES="${PA_STACK_PS_MODULES:-${PSModulePath:-}}"
 status=0
+
+# R44c, before anyone has enrolled: different addresses don't warn. The same
+# address (in other case, as Authentik's forms match) warns, and set-up is refused.
+if [ "$part" = all ] || [ "$part" = accounts ]; then
+	stack_check_address_warning none "different addresses" || status=1
+	shared=$(printf '%s' "$AUTHENTIK_ADMIN_EMAIL" | tr '[:lower:]' '[:upper:]')
+	(export INITIAL_ADMIN_EMAIL="$shared"; stack_compose up -d api >/dev/null 2>&1)
+	stack_wait_api
+	stack_check_address_warning warn "the same address, before enrolment" || status=1
+	if ! curl -s -X POST -H 'Sec-Fetch-Site: same-origin' http://127.0.0.1:8080/auth/first-admin | grep -q 'error=address_shared'; then
+		echo "FAIL: first-admin set-up wasn't refused with the address shared" >&2
+		status=1
+	fi
+	stack_compose up -d api >/dev/null 2>&1
+	stack_wait_api
+fi
+
 PA_STACK_PHASE=first go test -count=1 -v ./internal/stacktest/ "$@" || status=1
+
+# R44c, the state the first production install was in: the first admin has
+# enrolled, and akadmin holds their address. Then the fix from docs/deploy.md.
+if [ "$part" = all ] || [ "$part" = accounts ]; then
+	if stack_set_akadmin_address "$INITIAL_ADMIN_EMAIL"; then
+		stack_compose up -d --force-recreate api >/dev/null 2>&1
+		stack_wait_api
+		stack_check_address_warning warn "two accounts with one address" || status=1
+	else
+		status=1
+	fi
+	if stack_set_akadmin_address "$AUTHENTIK_ADMIN_EMAIL"; then
+		stack_compose up -d --force-recreate api >/dev/null 2>&1
+		stack_wait_api
+		stack_check_address_warning none "after the fix in docs/deploy.md" || status=1
+	else
+		status=1
+	fi
+fi
 
 echo "--- restarting the API with INITIAL_ADMIN_EMAIL=second@example.org"
 (export INITIAL_ADMIN_EMAIL=second@example.org; stack_compose up -d api >/dev/null 2>&1)

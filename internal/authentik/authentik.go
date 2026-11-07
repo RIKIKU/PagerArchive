@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,6 +100,11 @@ func (c *Client) do(ctx context.Context, op, method, path string, body, out any,
 	}
 	resp, err := c.HTTP.Do(req)
 	if err != nil {
+		// An http.Client error quotes the URL, whose query can hold an address.
+		var ue *url.Error
+		if errors.As(err, &ue) {
+			err = ue.Err
+		}
 		return 0, fmt.Errorf("%s: %w", op, err)
 	}
 	defer resp.Body.Close()
@@ -213,4 +219,34 @@ func (c *Client) UserByUsername(ctx context.Context, username string) (string, b
 		return "", false, nil
 	}
 	return strconv.FormatInt(out.Results[0].PK, 10), true, nil
+}
+
+// EmailHolders finds who holds an address. The identification stages match
+// ignoring case and take the oldest match (R44c), so the search's results are
+// compared the same way. Its results also hold partial matches.
+func (c *Client) EmailHolders(ctx context.Context, address string) (accounts.EmailHolders, error) {
+	var holders accounts.EmailHolders
+	for page := 1; page != 0; {
+		var out struct {
+			Pagination struct {
+				Next int `json:"next"`
+			} `json:"pagination"`
+			Results []struct {
+				Email       string `json:"email"`
+				IsSuperuser bool   `json:"is_superuser"`
+			} `json:"results"`
+		}
+		q := url.Values{"search": {address}, "include_groups": {"false"}, "page": {strconv.Itoa(page)}}
+		if _, err := c.do(ctx, "find address", http.MethodGet, "/api/v3/core/users/?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
+			return accounts.EmailHolders{}, err
+		}
+		for _, u := range out.Results {
+			if strings.EqualFold(u.Email, address) {
+				holders.Count++
+				holders.Administrator = holders.Administrator || u.IsSuperuser
+			}
+		}
+		page = out.Pagination.Next
+	}
+	return holders, nil
 }

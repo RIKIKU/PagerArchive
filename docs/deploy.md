@@ -47,7 +47,7 @@ The first start takes a minute or two while Authentik sets up its database and a
 
 **Set up the first admin before the app is reachable from the internet.** Add both hostnames to your reverse proxy (below) with the LAN-only lines (`allow` your LAN, `deny all`) left in, so only machines on your network can reach them. Then:
 
-1. **Create the first admin** from a machine on your LAN. Open the app and choose **Set up the first admin**. Only the address in `INITIAL_ADMIN_EMAIL` can finish, by entering the code emailed to it. It doesn't have to be in `ALLOWED_EMAIL_DOMAINS`. Once an admin exists, this option disappears and the setting is ignored.
+1. **Create the first admin** from a machine on your LAN. Open the app and choose **Set up the first admin**. Only the address in `INITIAL_ADMIN_EMAIL` can finish, by entering the code emailed to it. It doesn't have to be in `ALLOWED_EMAIL_DOMAINS`. It must differ from `AUTHENTIK_ADMIN_EMAIL`, or this is refused ([why](#two-accounts-with-one-address)). Once an admin exists, this option disappears and the setting is ignored.
 2. **Open the app to the internet**: remove the LAN-only lines from both hostnames' `location /` blocks. Leave them on Authentik's admin interface (`/if/admin/`).
 3. **Invite people** from **Account**. Invitations go to addresses in `ALLOWED_EMAIL_DOMAINS` only, work once, and expire after 7 days. Each person sets a password and confirms their address with an emailed code.
 4. **Add receiving clients** with the CLI (see [the client](client.md)). `pagerarchive` on the server keeps only the jobs that need the server: `serve`, `validate-profile`, `client` and `version`. A client key can post pages, and pages can fire integrations, so creating one needs a shell on the server. Everything else an admin does from a command line goes through the [PowerShell module](powershell.md).
@@ -84,6 +84,32 @@ Authentik's own administrator (`akadmin`, signing in with `AUTHENTIK_ADMIN_EMAIL
 - **Guessing protection** applies to akadmin as to everyone (below).
 
 Don't change PagerArchive's sign-in on Authentik's admin pages, because the blueprint is re-applied on start.
+
+#### Two accounts with one address
+
+`AUTHENTIK_ADMIN_EMAIL` and `INITIAL_ADMIN_EMAIL` must differ (SPEC.md R44c), as in `.env.example`: for example `authentik-admin@example.org` and `you@example.org`. Authentik's administrator's address needn't receive mail, so one that exists nowhere is fine.
+
+Authentik's sign-in and password-reset forms take an address and find one account, the older one if two hold it. That is `akadmin`, whose account Authentik makes on its first start. If the first admin has the same address:
+
+- the sign-in form says username `akadmin`, and the first admin's password always fails, even after they change it from inside a session;
+- forgot-password says "no (allowed) MFA authenticator configured", because `akadmin` has no email device.
+
+So the API asks Authentik on every start, and warns if another account holds `INITIAL_ADMIN_EMAIL`: "first admin's address is also held by another account in Authentik". While there's no admin yet, **Set up the first admin** is refused for the same reason.
+
+**The fix: give `akadmin` a different address, in Authentik.** Changing `AUTHENTIK_ADMIN_EMAIL` in `.env` isn't enough, because Authentik only reads it when it first makes the account. Either run this on the server, with the new address in place of the example:
+
+<!-- r44c:fix -->
+```sh
+docker compose exec authentik-worker ak shell -c "from authentik.core.models import User; u = User.objects.get(username='akadmin'); u.email = 'authentik-admin@example.org'; u.save()"
+```
+
+or sign in at `AUTHENTIK_URL/if/admin/` from your LAN, with the shared address and `AUTHENTIK_ADMIN_PASSWORD` (and your second factor, which the first sign-in asks you to set up), and change the address under **Directory**, **Users**, `akadmin`, **Edit**.
+
+Then:
+
+1. Put the same new address in `AUTHENTIK_ADMIN_EMAIL` in `.env`, so the file says what's true.
+2. Run `docker compose restart api`, and check that `docker compose logs --since 1m api` doesn't show the warning.
+3. Sign in from another browser with the first admin's address and password. If you've forgotten the password, forgot-password now works. From now on, `akadmin` signs in with its new address. The failed attempts counted against `akadmin`, so it may be locked for up to 15 minutes (below).
 
 ### Guessing protection
 

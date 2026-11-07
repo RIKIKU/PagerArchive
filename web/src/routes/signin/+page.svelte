@@ -11,6 +11,8 @@
 		invitation_expired: 'Your invitation expired before you finished enrolling. Ask for a new one.',
 		admin_exists: 'PagerArchive already has an admin. Ask an existing user for an invitation.',
 		no_first_admin: "First-admin set-up isn't available.",
+		address_shared:
+			"The first admin's address is already held by another account in Authentik, such as its administrator. Whoever runs this deployment needs to give that account a different address (docs/deploy.md).",
 		directory_unavailable: "The sign-in service couldn't be reached. Try again shortly.",
 		expired: 'The sign-in took too long or was interrupted. Try again.',
 		refused: 'Sign-in was cancelled.',

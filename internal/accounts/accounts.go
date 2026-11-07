@@ -61,6 +61,15 @@ type Directory interface {
 	DeleteUser(ctx context.Context, subject string) error
 	// UserByUsername finds a user's subject by username.
 	UserByUsername(ctx context.Context, username string) (subject string, found bool, err error)
+	// EmailHolders finds who holds an address, matched as the sign-in form
+	// matches it, ignoring case.
+	EmailHolders(ctx context.Context, address string) (EmailHolders, error)
+}
+
+// EmailHolders is who holds an address in the identity provider.
+type EmailHolders struct {
+	Count         int
+	Administrator bool // one of them is an Authentik administrator (akadmin)
 }
 
 // DirectoryInvitation is what the identity provider needs to know.
@@ -307,6 +316,15 @@ func (s *Service) FirstAdminEnrolment(ctx context.Context) (string, error) {
 		stale = append(stale, more...)
 		if err := s.clearStaleDirectoryUser(ctx, q, e.Key, nil); err != nil {
 			return err
+		}
+		// R44c: enrolling would make a second account with this address, and
+		// the sign-in form finds only the older one.
+		holders, err := s.Dir.EmailHolders(ctx, e.Address)
+		if err != nil {
+			return s.unavailable("look up address", err)
+		}
+		if holders.Count > 0 {
+			return refuse(http.StatusConflict, "address_shared", "The first admin's address is already held by another account in Authentik, such as its administrator. Give that account a different address: see docs/deploy.md.")
 		}
 		inv, err := q.CreateInvitation(ctx, db.CreateInvitationParams{
 			Email: &e.Address, EmailKey: &e.Key, FirstAdmin: true, ExpiresAt: s.now().Add(FirstAdminLifetime),

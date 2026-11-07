@@ -27,10 +27,13 @@ async function mail(request: APIRequestContext, address: string, subject: string
 	throw new Error(`no "${subject}" email to ${address}`);
 }
 
+/** The password enrol sets for someone of this name. */
+const passwordOf = (name: string) => `correct horse ${name.toLowerCase()} staple`;
+
 /** Fills in Authentik's enrolment pages: name and password, then the emailed code. */
 async function enrol(page: Page, request: APIRequestContext, email: string, name: string) {
 	const since = new Date(Date.now() - 2000);
-	const password = `correct horse ${name.toLowerCase()} staple`;
+	const password = passwordOf(name);
 	await page.locator('input[name="name"]').fill(name);
 	await page.locator('input[name="password"]').fill(password);
 	await page.locator('input[name="password_repeat"]').fill(password);
@@ -38,6 +41,18 @@ async function enrol(page: Page, request: APIRequestContext, email: string, name
 	const code = /\b\d{6}\b/.exec(await mail(request, email, 'code', since))?.[0];
 	expect(code, 'code in the email').toBeTruthy();
 	await page.locator('input[name="code"]').fill(code!);
+	await page.locator('button[type="submit"]').click();
+}
+
+/**
+ * Answers one of Authentik's flow pages. The page redraws while its loading
+ * overlay is up, which empties a field filled in before that.
+ */
+async function answer(page: Page, field: string, value: string) {
+	const input = page.locator(`input[name="${field}"]`);
+	await expect(input).toBeVisible({ timeout: 30_000 });
+	await expect(page.locator('ak-loading-overlay')).toHaveCount(0, { timeout: 30_000 });
+	await input.fill(value);
 	await page.locator('button[type="submit"]').click();
 }
 
@@ -66,7 +81,29 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	const visitor = await (await browser.newContext()).newPage();
 	await visitor.goto('/');
 	await visitor.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+
+	// R44c, A78: from that visitor's fresh browser, the first admin signs in
+	// with the address and password they enrolled with, and is the admin.
+	await answer(visitor, 'uidField', OWNER);
+	await answer(visitor, 'password', passwordOf('Owner Person'));
+	await visitor.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await expect(visitor.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
+	await visitor.goto('/account/profile');
+	await expect(visitor.locator('dl')).toContainText(OWNER);
 	await visitor.context().close();
+
+	// R44c, A78: from another fresh browser, forgot-password reaches the code
+	// step for that account, and the code goes to their address.
+	const forgetful = await (await browser.newContext()).newPage();
+	await forgetful.goto('/');
+	await forgetful.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+	await forgetful.getByRole('link', { name: /forgot/i }).click();
+	const resetAsked = new Date(Date.now() - 2000);
+	await answer(forgetful, 'uidField', OWNER);
+	await expect(forgetful.locator('input[name="code"]')).toBeVisible();
+	expect(/\b\d{6}\b/.exec(await mail(request, OWNER, 'code', resetAsked))?.[0], 'code in the reset email').toBeTruthy();
+	await forgetful.context().close();
+	console.log('R44c: a fresh browser signed in as the first admin; forgot-password reached the code step for that account');
 
 	// The admin invites the test user.
 	const tester = `tester@${DOMAIN}`;

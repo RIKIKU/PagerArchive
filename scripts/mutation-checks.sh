@@ -1,6 +1,6 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
-# (M11), telemetry (M12), search (M13a), the import (M16), installing and
+# (M11), the favicon (R82e), telemetry (M12), search (M13a), the import (M16), installing and
 # upgrading (M17) and backups (M19): break one check
 # at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
@@ -217,8 +217,21 @@ if [ -d "$src/web/node_modules" ] && command -v docker >/dev/null; then
 		.top,
 ' '		.skip,
 '
+	# R82e: the favicon, before sign-in.
+	mutate "the favicon needs a session" internal/server/server.go 'e2e:R82e' \
+		'handle("/", s.UI)' 'handle("/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if _, err := r.Cookie("pa_session"); err != nil && strings.Contains(r.URL.Path, "favicon") {
+				http.Error(w, "sign in", http.StatusUnauthorized)
+				return
+			}
+			s.UI.ServeHTTP(w, r)
+		}))'
+	mutate "the favicon link names a file that isn't there, so the app's page answers 200" web/src/app.html 'e2e:R82e' \
+		'href="/favicon.svg"' 'href="/favicon-gone.svg"'
+	mutate "the favicon link is relative, so it breaks on a deep page" web/src/app.html 'e2e:R82e' \
+		'href="/favicon.svg"' 'href="favicon.svg"'
 else
-	echo "=== the print sheet's browser mutations skipped: no web/node_modules or no Docker"
+	echo "=== the browser mutations skipped: no web/node_modules or no Docker"
 fi
 
 if [ -n "$PA_PWSH" ]; then
@@ -532,6 +545,20 @@ mutate "the metrics role is left for a hand step (the function)" internal/authen
 mutate "the metrics role is left for a hand step (the API doesn't call it)" cmd/pagerarchive/main.go a77: \
 	'if err := authentik.EnsureLocksRole(ctx, dbURL, pw); err != nil {' 'if err := error(nil); err != nil {'
 
+# R44c: the first admin's address and Authentik's administrator's differ.
+mutate "env.example gives both accounts one address" .env.example unit:.:TestR44cExampleAddressesDiffer \
+	'AUTHENTIK_ADMIN_EMAIL=authentik-admin@example.org' 'AUTHENTIK_ADMIN_EMAIL=you@example.org'
+mutate "the warning is removed (the check)" internal/accounts/first_admin_address.go unit:internal/accounts:TestR44cFirstAdminAddressWarning \
+	's.Log.Warn("first' '_ = ("first'
+mutate "the warning is removed (the API doesn't call it)" cmd/pagerarchive/main.go stack:TestA23FirstAdmin \
+	'go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)' '_, _ = adminAddressCheckEvery, adminAddressCheckTries'
+mutate "the check matches an address's case exactly" internal/authentik/authentik.go unit:internal/authentik:TestEmailHolders \
+	'strings.EqualFold(u.Email, address)' 'u.Email == address'
+mutate "an error quotes the address" internal/authentik/authentik.go unit:internal/authentik:TestErrorsLeaveOutTheQuery \
+	'			err = ue.Err' '			_ = ue.Err'
+mutate "enrolment makes the duplicate" internal/accounts/accounts.go go:TestR44cFirstAdminAddressAlreadyHeld \
+	'if holders.Count > 0' 'if false && holders.Count > 0'
+
 # M19: backups (R86-R86c, A80).
 mutate "a dump is written straight to its final name" deploy/backup/backup.sh a80: \
 	'_db=$1 _partial=$DIR/$3.$2.dump.partial' '_db=$1 _partial=$DIR/$3.$2.dump'
@@ -551,8 +578,9 @@ if [ -n "${PA_MUT_ONLY:-}" ]; then
 fi
 
 echo "=== unmutated"
-go test -count=1 -run 'TestR84|TestA79|TestVersion' . 2>&1 | tail -3
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
+go test -count=1 -run 'TestR84|TestR44c|TestA79|TestVersion' . 2>&1 | tail -3
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
+go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery' ./internal/accounts/ ./internal/authentik/ 2>&1 | tail -3
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/a80.sh -o "$work/a80-results" --project=chromium 2>&1 | grep -E '^(ok|FAIL|=== A80 (passed|FAILED)|--- (PASS|FAIL))'
