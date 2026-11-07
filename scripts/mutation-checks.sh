@@ -549,7 +549,7 @@ mutate "the metrics role is left for a hand step (the API doesn't call it)" cmd/
 mutate "env.example gives both accounts one address" .env.example unit:.:TestR44cExampleAddressesDiffer \
 	'AUTHENTIK_ADMIN_EMAIL=authentik-admin@example.org' 'AUTHENTIK_ADMIN_EMAIL=you@example.org'
 mutate "the warning is removed (the check)" internal/accounts/first_admin_address.go unit:internal/accounts:TestR44cFirstAdminAddressWarning \
-	'			s.Log.Warn(firstAdminAddressShared)' '			_ = firstAdminAddressShared'
+	's.Log.Warn("first' '_ = ("first'
 mutate "the warning is removed (the API doesn't call it)" cmd/pagerarchive/main.go stack:TestA23FirstAdmin \
 	'go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)' '_, _ = adminAddressCheckEvery, adminAddressCheckTries'
 mutate "the check matches an address's case exactly" internal/authentik/authentik.go unit:internal/authentik:TestEmailHolders \
