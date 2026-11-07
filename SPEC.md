@@ -355,6 +355,7 @@ For moving an existing archive into PagerArchive. Users aren't imported; aliases
 - **R86. Nightly backups.** Every night, PagerArchive's database and Authentik's are each dumped to a folder the deployment mounts, with nothing to install or schedule by hand: the stack in `compose.yaml` does it. Dumps are kept for **14 days** by default (a setting), and older ones are deleted. A dump is written under a temporary name and renamed when complete, so a file backup tool copying the folder at any time never takes a partial one.
 - **R86a. Checked, and failures are seen.** Each night's dumps are restored into a throwaway database with no network and compared (tables and row counts). The time of the last good backup is in R52's metrics, and an admin sees in Administration when the last backup failed or is more than 36 hours old. The example monitoring stack alerts on it.
 - **R86b. Restore.** One documented command restores a chosen night's dumps into an empty install, after which everything is as it was then: pages, aliases, templates and icons, integrations, users and their sign-ins.
+- **R86d. Backups on the dashboard** (owner, 2026-11-07; M18). The example monitoring stack shows backups on a dashboard: time since the last good backup (coloured by age), whether the last one is failing, and each night's dump size, dump time and check time. The backup job reports those three as metrics (R52), so the check's growth with the archive can be seen.
 - **R86c. Off the host.** Copying the backup folder to another machine (a NAS, cloud storage) is the deployment's job. The docs give an example. The dumps hold only what the databases hold, so P1 holds: no redacted detail is in a backup.
 
 ## 8. Constraints
@@ -533,7 +534,7 @@ Build in milestones. Each one ends with its own acceptance checks passing, plus 
 | **M14** | Year scrubber and albums (R81b–R82b) | A71, A72 |
 | **M15** | Looks: Console as a second look, chosen in the account menu and saved on the account (R82d) | A74 |
 | **M17** | Installing and upgrading with no checkout (R84–R84b), after M16 (owner, 2026-11-02) | A77, A78 |
-| **M18** | Maintenance: base images daily, libraries monthly, third-party versions weekly (R85–R85c), soon after the first production instance (owner, 2026-11-03) | A79 |
+| **M18** | Maintenance: base images daily, libraries monthly, third-party versions weekly (R85–R85c), and backups on the dashboard (R86d), soon after the first production instance (owner, 2026-11-03) | A79 |
 | **M19** | Backups (R86–R86c), before the first production instance (owner, 2026-11-03) | A80 |
 
 **Before the first production instance** (owner, 2026-11-02): M13a, M16, M17 and M19 (owner, 2026-11-03) are done.
