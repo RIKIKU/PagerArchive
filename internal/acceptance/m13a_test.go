@@ -168,12 +168,14 @@ func TestA75SearchSpeed(t *testing.T) {
 	}
 	t.Logf("seeded %d pages in %s, built the search index in %s, all with VACUUM ANALYZE in %s", n,
 		seeded.Round(time.Second), built.Round(time.Second), time.Since(start).Round(time.Second))
-	var table, index, database string
+	var table, index, bigrams, alias, database string
 	if err := e.st.Pool.QueryRow(e.ctx, `SELECT pg_size_pretty(pg_total_relation_size('messages')),
-		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_trgm_idx'))), 'missing'), pg_size_pretty(pg_database_size(current_database()))`).Scan(&table, &index, &database); err != nil {
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_trgm_idx'))), 'missing'),
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_bigrams_idx'))), 'missing'),
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_alias_sent_idx'))), 'missing'), pg_size_pretty(pg_database_size(current_database()))`).Scan(&table, &index, &bigrams, &alias, &database); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("messages with its indexes %s, of which the search index %s; the database %s", table, index, database)
+	t.Logf("messages with its indexes %s, of which the search index %s, the short terms' %s, the alias's %s; the database %s", table, index, bigrams, alias, database)
 
 	// alias is a typed alias: value (partial, quoted or not); picked is one
 	// picked from the suggestions (alias_like).
@@ -193,9 +195,16 @@ func TestA75SearchSpeed(t *testing.T) {
 		{`alias:"Station 1", a term never in its pages`, "Station 1", "", "STN2", true},
 		{`the same with alias:sta`, "sta", "", "STN2", true},
 		{`the same with "Station 1" picked`, "", "Station 1", "STN2", true},
+		// Production's (owner, 2026-11-08): a common term with the busy
+		// alias, in a third of its 80,000 pages, and a map reference typed
+		// without quotes, three terms too short for the trigram index.
+		{`a common term with alias:"Station 5", the busy alias`, "Station 5", "", "fire", true},
+		{"a map reference typed without quotes", "", "", "m 23 b4", true},
 		// Not A75's, for the record: common searches stay fast.
 		{"one term in a third of the pages", "", "", "SMOKE", false},
 		{`a common term with alias:"Station 1"`, "Station 1", "", "smoke", false},
+		{`a common term with alias:"Unit 0001", a small alias`, "Unit 0001", "", "smoke", false},
+		{"two short terms in most pages", "", "", "st 12", false},
 	}
 	for _, s := range searches {
 		query := "q=" + url.QueryEscape(s.text)
