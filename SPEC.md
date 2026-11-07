@@ -464,8 +464,11 @@ All checks use the **example profile** and the **standard test fixture** (sectio
   - three terms that together match nothing;
   - `"Smoke showing" or:"grass fire"`;
   - a term found only in an extra field;
-  - a term with `alias:"Station 1"`.
-  The first run of each counts: it also holds straight after the database restarts with its caches cold (the operating system's and PostgreSQL's), as after a reboot (owner, 2026-11-03).
+  - a term with `alias:"Station 1"`;
+  - a common term with `alias:"..."` for an alias holding 80,000 of the pages, with at least 20,000 of them matching (production's busiest alias, scaled to 10 years; owner, 2026-11-08);
+  - the example network's map reference typed without quotes, as three terms of one or two characters (`m 23 b4`; owner, 2026-11-08).
+
+  The made-up pages hold that alias, and map references in a realistic share of the pages (section 10). The first run of each counts: it also holds straight after the database restarts with its caches cold (the operating system's and PostgreSQL's), as after a reboot (owner, 2026-11-03).
 - **A76. Importing messages** (owner, 2026-11-02). **Given** a made-up file of 10,000 pages from the example network that includes pages holding details the redaction rules remove, 20 pairs of duplicates 3 seconds apart, 5 pages older than the retention period, a page with no `source_id`, and 3 malformed lines, and a test integration selecting every page:
   - **when** it's imported with `--dry-run`, **then** nothing is stored and the report lists the 3 malformed lines by number and reason, without their text;
   - **when** it's imported, **then** 9,972 pages are stored (10,000, less 20 duplicates, 5 too old and 3 malformed), no stored page, log line or exported telemetry contains a redacted detail, the test integration receives nothing, no live update is sent, and no client's last-seen time changes;
@@ -488,6 +491,8 @@ All checks use the **example profile** and the **standard test fixture** (sectio
 1. `emergency` (Emergency only): `<job> <type> <description> @ <address>, <locality> [GRID <6 digits>] [UNITS <unit> …] #<group>`
 2. `follow-up` (Non-emergency only): `RE <job> <free text> #<group>`
 3. `freeform` (Admin and Non-emergency only): anything (text-only format). An Emergency page that matches neither format 1 nor 2 is `parse_failed`.
+
+An Emergency page's description may end with a **map reference**: a page and square of a made-up map book, written `M <page> <square>` (`SMOKE FROM ROOF M 23 B4`; owner, 2026-11-08). It isn't a field of its own. It stays in the description and is found by text search.
 
 **Standard test fixture** (loaded before every acceptance check): template **"Example Fire"** (agency "Example Fire Service", agency profile `example-fire`), and aliases `0100001` "Station 1", `0100002` "Station 2", `0100003` "Station 3" and `0100004` "Station 4", all using that template. Capcode `0999999` has no alias.
 
