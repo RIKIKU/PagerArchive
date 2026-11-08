@@ -410,7 +410,7 @@ mutate "search: a first try is given up at 250 ms for the second try, as before"
 		}
 	}
 	if !s.SecondTryOnly && !s.BoundedTryOnly {
-		rows, err := s.searchFirstTry(ctx, p, searchFirstTryAgain)
+		rows, err := s.searchFirstTry(ctx, first, searchFirstTryAgain)
 		if !searchTimedOut(ctx, err) {
 			return rows, err
 		}
@@ -422,8 +422,28 @@ mutate "search: a first try is given up at 250 ms for the second try, as before"
 	return 250 * time.Millisecond'
 mutate "search: the bounded try keeps its order, so it reads every match" internal/store/search.go a75:TestA75SearchSpeed \
 	'strings.Replace(sql, searchOrderBy, "", 1)' 'strings.Replace(sql, searchOrderBy, searchOrderBy, 1)'
-mutate "search: alias: values that name every alias still go to the planner" internal/store/search.go a75:TestA75SearchSpeed \
-	'if len(ids) < aliases {' 'if len(ids) <= aliases {'
+mutate "search: alias: values that name most of the pages still go to the bounded and second tries" internal/store/search.go a75:TestA75SearchSpeed \
+	'	if most {
+		p.AliasNamesResolved, p.AliasNameIds = false, []int64{}
+	}
+' ''
+mutate "search: the first try matches alias: values that name most of the pages by name" internal/store/search.go a75:TestA75SearchSpeed \
+	'first.AliasNamesByID = most && len(p.AliasNameIds) > 1' 'first.AliasNamesByID = false'
+must="the busy alias"
+mutate "search: one alias isn't given to the first try, so it reads all its pages" internal/store/search.go a75:TestA75SearchSpeed \
+	'	case p.AliasNamesResolved && len(p.AliasNameIds) == 1:
+		first.OnlyAliasID = &p.AliasNameIds[0]
+' ''
+must="a map reference typed without quotes"
+mutate "search: terms too short for a trigram aren't given to the bigram index" internal/search/search.go a75:TestA75SearchSpeed \
+	'p.QShort = shortTerms(terms.All)' 'p.QShort = []string{}'
+mutate "search: the bigram index isn't built" internal/store/migrations/00015_search_alias_short_terms.sql a75:TestA75SearchSpeed \
+	'CREATE INDEX CONCURRENTLY messages_search_bigrams_idx ON messages USING gin (message_search_bigrams(text, extra));' ''
+must=""
+mutate "search: the bigrams keep their case, so a term in other case isn't found" internal/store/migrations/00015_search_alias_short_terms.sql go:TestSearchShortTerms \
+	'FROM lower(s) AS l,' 'FROM (SELECT s) AS x (l),'
+mutate "search: a short term goes to the bigram index as its ILIKE pattern" internal/search/search.go go:TestSearchShortTerms \
+	'p.QShort = shortTerms(terms.All)' 'p.QShort = likeContains(shortTerms(terms.All))'
 must=""
 mutate "search: the bounded try's answer isn't in the search's order" internal/store/search.go go:TestSearchBoundedTry \
 	'if c := b.SentAt.Compare(a.SentAt); c != 0 {' 'if c := a.SentAt.Compare(b.SentAt); c != 0 {'
@@ -579,7 +599,7 @@ fi
 
 echo "=== unmutated"
 go test -count=1 -run 'TestR84|TestR44c|TestA79|TestVersion' . 2>&1 | tail -3
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
 go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery' ./internal/accounts/ ./internal/authentik/ 2>&1 | tail -3
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'

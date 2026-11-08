@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section.
+Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms".
 
 ## Context
 
@@ -476,6 +476,133 @@ Answered by the owner (2026-11-03).
 2. **Shall I run the full import against this code?** About 1.5 hours, then the cold table. It would settle whether a grown index keeps `hoses grass pump` over 1 second cold on imported pages ("What this doesn't show"), which the seed can't. If it does, the likely answer is rebuilding the search index at the import's end, which I haven't tried. **Answer: it waits for the rehearsal on the production host before go-live.**
 3. **Are the warm costs above acceptable?** A first try of 100 to 250 ms is now stopped and run again, and `or:` terms rarely together wait 500 ms: up to about 150 ms and 240 ms more, all under 1 second. A longer `SearchFirstTry` would spare most of them but take from the cold margin of `alias:"Station 1" STN2`, so I kept 100 ms. A75 and `SMOKE` aren't affected. **Answer: they're accepted.**
 
+## A busy alias and short terms (fix-search, 2026-11-08)
+
+The owner's brief: on the first real install (3.1 million pages over 7 years), two searches took seconds. A common term (`FIRE`) with `alias:"..."` for an alias holding about 58,000 pages, 21,000 of them matching, took 4.1 to 4.2 s cold and 830 ms warm. A map reference typed without quotes, three short terms, took about 3 s even warm. A75 gained both (SPEC.md, owner 2026-11-08). The fix had to be a patch, 0.16.2: no change to `compose.yaml` or the configuration archive. The UI, the client, the module and the search syntax don't change, and nor do the pages listed.
+
+### The made-up pages
+
+A75's seed held neither case, so CI passed. It now has:
+
+- **Station 5**, one page in 57: 80,000 pages, production's busiest alias's share (58,000 of 3.1 million) over 10 years. They take the six phrasings in turn, so 26,661 hold `FIRE`. The search is `alias:"Station 5" fire`.
+- **2,000 units**, `Unit 0001` to `Unit 2000`, sharing one page in 10, about 230 each. Without them the busy alias passed on main (0.86 s cold, 27 ms warm). The cause wasn't the alias's pages but how many aliases there are. The planner reaches an alias's pages through the join on its name, and it guesses each alias holds 1/n of the pages, n being the number of aliases. With 5 aliases that's a fifth, so it reads the newest pages in order. With 2,005 it's 2,275 pages, so it starts from the alias and reads all 80,000 of its pages through `messages_alias_idx` to sort them, as on production. With 405 aliases the plan depended on the statistics' sample, and `alias:"Station 1" smoke` went that way instead. A real network has many aliases, so I chose 2,000. Production has 2,285 (owner, 2026-11-08).
+- **A map reference** in one page in 9, all Emergency, at the end of the description (section 10): `M <page> <square>`, a page of 600 and a square of 16 columns by 30 rows, at random. The search is `m 23 b4`. The pages holding all three terms, 104 of them, are spread over the 10 years, the newest 19 days old: few, as production's 3 s warm says. `m` is in every page (`MADEUPTON`).
+
+The units changed one older A75 search. `alias:sta` used to name every alias, which ADR 0017's rule kept from the planner. It now names five of 2,005 aliases, holding 90% of the pages, and failed on main: 12.5 s cold, 5.4 s warm (below).
+
+### The causes
+
+**One alias.** As above: through the join on the alias's name, the planner can't know which alias it is, so it can't use its statistics. It guesses 1/n of the pages, starts from the alias, and reads and sorts every one of its pages. On main, `alias:"Station 5" fire` took 9.6 s cold and 1.09 s warm. `alias:"Station 1" smoke`, an alias holding a quarter of the pages, took 11.1 s cold and 3.9 s warm.
+
+**Several aliases holding most of the pages.** The same guess, five times over, so the first try starts from the aliases and reads 4 million pages. And the bounded try is given their IDs, so it may combine most of the index on `alias_id` with the text's pages (decision 5's "values that name every alias"). On main `alias:sta STN2` took 1.6 s cold with 405 aliases, and 12.5 s cold and 5.4 s warm with 2,005.
+
+**Short terms.** A trigram index can't find a term of fewer than three letters or digits: it has no trigram. When no term has one, the search reads the newest pages in order, so a search matching few pages reads them all: 11.3 s cold and 10.9 s warm for `m 23 b4`.
+
+### The fix
+
+1. **One alias goes to the first try by its ID** (`only_alias_id`), from the lookup the bounded try already made, now made first. A new index, `messages_alias_sent_idx` on `(alias_id, sent_at DESC)`, lets the planner read that alias's pages newest first and stop at a page of results, using its statistics for that alias. Only the first try gets it (and a search with no index term, which has only the one try). The bounded and second tries are as they were, and still use `messages_alias_idx`. That index holds each alias once, with its pages, so it's a fifth of the new one's size (28 MB against 141 MB), and a bitmap read from it cold is faster. In a first version that dropped it, `alias:"Station 1" STN2` took 1.9 s cold. The alias view's `alias_id`, when it's one alias, is given the same way.
+2. **Several aliases holding most of the pages**, by the planner's own estimate (`EXPLAIN` of `alias_id = ANY(…)` against `reltuples`, over half), are the other way round. The bounded and second tries aren't given them, which generalises "values that name every alias". The first try selects them by ID alone (`alias_names_by_id`), not by name. It looks them up in its own transaction, at `REPEATABLE READ`, so they are exactly the aliases the names match in the snapshot the search reads. The names then aren't matched in the query, and the planner can't start from them. The pages listed are the same by construction.
+3. **Short terms go to a bigram index** (`messages_search_bigrams_idx`, migration 00015). It's a GIN index on `message_search_bigrams(text, extra)`: the distinct two-character substrings of `lower(message_search_text(text, extra))`. A term found in the text or one extra field, case aside, is found in the expression too (as in decision 2, unless it holds a character jsonb escapes). So every two-character substring of the lower-cased term is in the page's list. ILIKE compares through `lower()` in a UTF-8 database, so `lower()` here matches what it matches. The query adds `message_search_bigrams(…) @> search_terms_bigrams(q_short)`, a necessary condition. Each term is still matched field by field, so the pages listed are the same. `search_terms_bigrams` of a constant is worked out when the query is planned, so the planner sees the values and uses the expression's element statistics. `message_search_bigrams` has a high `COST`, so a plan reading pages in order checks it after every other condition. Only searches whose terms have no trigram at all use it (`search.shortTerms`): each term of two characters or more, without the characters jsonb escapes. A search with a trigram term is as it was. They take the same tries as a search the trigram index serves.
+
+### What was weighed
+
+- **Raising `shared_buffers`.** Ruled out by the owner: after a reboot the operating system's cache is cold too.
+- **One index on the alias and the text together** (`btree_gin`). It finds the exact pages, 26,661 for `alias:"Station 5" fire`, but they all have to be read and sorted for the newest 50: about as many heap reads as today. Not built.
+- **Giving the first try every alias's ID, as `ANY`.** Decision 5 measured it: the planner combined the alias's and the term's pages for a common term (`alias:"Station 1" smoke` 3.4 s). And with the names still matched, it can still start from the aliases. One ID as an equality, with the new index, reads in order. Several are given by ID only when they hold most of the pages, where combining makes no sense.
+- **Giving the alias only to the first try's second run** (step 3, after the bounded try has shown the terms are common). It was measured, cold, five runs each, in milliseconds:
+
+  | | main | this fix (first try) | step 3 only |
+  |---|---|---|---|
+  | `alias:"Station 1" STN2` | 595 to 662 | 665 to 736 | 596 to 627 |
+  | `alias:"Station 5" fire` | 8,710 to 10,238 | 103 to 163 | 413 to 499 |
+  | `alias:"Station 1" smoke` | about 10,900 | 67 to 76 | 822 to 905 |
+
+  The first try, reading the alias's pages in order, takes about 70 ms more cold when the term is in none of them: it runs out its 100 ms either way, but the bounded try after it is slower. Step 3 only would leave that search as it was, but every common term with an alias would pay the 100 ms first try and a bounded try, warm as well as cold. **The owner chose the first try (2026-11-08).** This is the one search measured as slower, cold only (below).
+- **Treating adjacent short terms as a phrase.** It lists other pages: a page with `M`, `23` and `B4` apart isn't found, and A75 asks for the same pages. Trying the phrase first doesn't help either, as the rest still need every page read.
+- **Making the trigram index find short terms.** It can't. `%b4%` gives no trigram, and the trigrams that hold `b4` in a page (`xb4`, `b4x`) have any letter or digit, in any script, in place of `x`.
+- **A trigram index on the text with every character doubled** (`b4` becomes `bb44`, which has trigrams). Also exact, but about twice the entries of a bigram list, and every candidate rechecked by rewriting its text. Not built.
+- **Single characters** have no bigram either. A search of only one-character terms reads every page, as before. None is in A75, and a lone letter or digit is in almost every page anyway.
+
+### Costs
+
+On A75's 4,562,500 pages (cld01, from `pg_relation_size` in A75's log):
+
+| | before | after |
+|---|---|---|
+| `messages_search_bigrams_idx` | | 370 MB |
+| `messages_alias_sent_idx` | | 141 MB |
+| `messages`, with every index | 2,373 MB | 2,884 MB (+22%) |
+
+- **The migration.** On a copy of the seeded pages with main's schema (405 aliases, as it then was), the API's first start ran 00015 in **8 min 6 s** on cld01's spinning disk. Building the bigram index is most of it: seeding builds the two GIN indexes in 8 min 4 s, against 1 min 8 s for the trigram index alone. Production's 3.1 million pages should take about 5 to 6 minutes. Reads and writes go on during the build (`CONCURRENTLY`, as decision 6), but the API serves only once its migrations are done (decision 6). So during the upgrade it doesn't store pages. Clients hold them in memory and retry (R15), and an integration skips a page that reaches it more than 5 minutes late (R51a). See "Questions for the owner".
+- **Importing (A76's 500 pages a second).** Each page stored adds its bigrams to the GIN index, through its pending list. See "A75 and A76 in CI" for the rate.
+- **Memory.** No change in steady state. The index build uses `maintenance_work_mem` (PostgreSQL's default, 64 MB) while it runs.
+- **Every search with `alias:` values** makes the lookup first (it was made before the bounded try), and with several aliases one `EXPLAIN` more, under 1 ms warm.
+
+### Timings, before and after
+
+A75 on cld01's spinning disk, `TestA75SearchSpeed` from a fresh database each time, with the seed above: main's code with this branch's seed and searches (30b67d9), against this branch (e04e89f). Cold is the first run after a restart with both caches cold; warm is the three runs after it. Milliseconds unless shown; over 1 second in bold:
+
+| Search | Main, cold | Fix, cold | Main, warm | Fix, warm |
+|---|---|---|---|---|
+| **A75** `ZZNOTHING` | 601 | 340 | 4 3 3 | 3 3 2 |
+| **A75** `hoses grass pump` | 420 | 374 | 226 226 225 | 231 226 227 |
+| **A75** `"Smoke showing" or:"grass fire"` | 540 | 533 | 10 8 8 | 10 10 10 |
+| **A75** `tanker9` | 202 | 230 | 8 7 9 | 9 7 7 |
+| **A75** `alias:"Station 1" 12345` | 301 | 215 | 116 115 113 | 9 8 8 |
+| **A75** `alias:"Station 1" STN2` | 660 | 760 | 283 280 283 | 279 284 285 |
+| **A75** `alias:sta STN2` | **12,451** | 751 | **5,391** | 10 10 10 |
+| **A75** `STN2`, "Station 1" picked | 652 | 784 | 294 287 279 | 274 278 280 |
+| **A75** `alias:"Station 5" fire` (busy alias) | **9,578** | 704 | **1,090** | 6 6 6 |
+| **A75** `m 23 b4` (map reference) | **11,286** | 244 | **10,874** | 8 6 7 |
+| `SMOKE` | 127 | 138 | 4 4 4 | 3 3 4 |
+| `alias:"Station 1" smoke` | **11,065** | 130 | **3,868** | 5 5 4 |
+| `alias:"Unit 0001" smoke` (a small alias) | 141 | 220 | 7 5 6 | 6 5 5 |
+| `st 12` (two short terms in most pages) | 132 | 161 | 4 3 3 | 9 9 8 |
+
+The pages listed are the same as the query before M13a's in every row, cold and warm (A75 checks it). Single cold runs vary by 100 to 300 ms between runs on cld01: `ZZNOTHING` took 317 to 601, the busy alias 159 to 704 in four runs of the fix. The direct comparison is the table under "What was weighed", five cold runs each, through the store, on one database: there `alias:"Station 1" STN2` is the one search slower, by about 70 ms. Warm, `st 12` takes 9 ms against 4: two short terms in most pages now take the tries, and the first answers. Every A75 search's cold run on cld01 was under 1 second in the four runs of the fix but one, a version that gave the bounded try the alias too (1,007 ms for `alias:"Station 1" STN2`).
+
+### A75 and A76 in CI
+
+CI run 42440766086 on e04e89f, every job passed. A75's job on GitHub's runner, in milliseconds:
+
+| Search | Cold | Warm |
+|---|---|---|
+| **A75** `ZZNOTHING` | 50 | 2 1 1 |
+| **A75** `hoses grass pump` | 678 | 215 302 207 |
+| **A75** `"Smoke showing" or:"grass fire"` | 384 | 7 5 6 |
+| **A75** `tanker9` | 75 | 5 5 5 |
+| **A75** `alias:"Station 1" 12345` | 57 | 6 5 5 |
+| **A75** `alias:"Station 1" STN2` | 520 | 239 244 243 |
+| **A75** `alias:sta STN2` | 482 | 7 6 6 |
+| **A75** `STN2`, "Station 1" picked | 715 | 239 278 242 |
+| **A75** `alias:"Station 5" fire` | 99 | 3 4 3 |
+| **A75** `m 23 b4` | 208 | 5 5 4 |
+| `SMOKE` | 55 | 3 2 3 |
+| `alias:"Station 1" smoke` | 78 | 3 3 3 |
+| `alias:"Unit 0001" smoke` | 85 | 4 4 3 |
+| `st 12` | 196 | 6 6 6 |
+
+Seeding took 3 min 7 s and the two GIN indexes 5 min 2 s: 8 min 23 s with `VACUUM ANALYZE`, within the job's 35 minutes. The tables with every index came to 2,884 MB.
+
+A76's job: 200,000 pages imported in random order on top of the 4,562,500, with live pages, at **1,050 pages a second** (1,063 while storing), against 963 on main's last run (the runner varies by that much), so the bigram index's cost to an import doesn't show at A76's 500. Live posts answered in 4 ms at the median, 129 ms at most. A75's searches after it, warm: 1 to 9 ms, `hoses grass pump` 210 to 216 ms, the two never-together Station 1 searches 251 to 280 ms.
+
+### Mutations
+
+Five new in `scripts/mutation-checks.sh`, and three changed to follow the code (the first try's second run, and the two rules for aliases holding most of the pages, which replace "values that name every alias"):
+
+- one alias isn't given to the first try (A75, the busy alias);
+- short terms aren't given to the bigram index, and the bigram index isn't built (A75, the map reference);
+- the bigrams keep their case (`TestSearchShortTerms`);
+- a short term goes to the bigram index as its ILIKE pattern, `%` and all (`TestSearchShortTerms`);
+- several aliases holding most of the pages still go to the bounded and second tries, and the first try matches them by name (A75, `alias:sta`).
+
+`TestSearchShortTerms` lists the same pages through every try for short terms in the text or one extra field, in other case (non-ASCII too), with a typed `%` or `_`, and never across two fields. `TestSearchSecondTryAliases` covers alias: values that name most of the pages, through the first try's lookup by ID. The A75 mutations each seed again, about 18 minutes each on cld01. Their run there was still going when this was written.
+
+### Questions for the owner
+
+1. **How many aliases does production have?** The seed's 2,005 decide how the planner guesses (above). A count would show whether that's realistic. **Answer (owner, 2026-11-08): 2,285.** The seed's 2,005 is close enough to be realistic.
+2. **Is a 5 to 6 minute pause on upgrade acceptable for a patch?** While 00015 builds the bigram index, the API doesn't serve. Pages are held by the clients (R15), but an integration skips any older than 5 minutes when they arrive (R51a). Letting the API serve while it builds would be a change to how migrations run, not made here. **Answer (owner, 2026-11-08): not this time.** No receiving client is registered with PagerArchive before cutover (the old system takes the live pages), so no page arrives during the migration and no integration can miss one. After cutover, a long migration would need planning.
+
 ## Consequences
 
 - A search's first page comes within 1 second on 10 years of pages in every A75 case, including its first run after a cold start, on cld01's disk with a small margin (see "What this doesn't show"), and in milliseconds for most when warm. Terms that are each common but never together take about 0.25 s warm, and a common term never in the chosen alias's pages about 0.3 s.
@@ -484,3 +611,7 @@ Answered by the owner (2026-11-03).
 - A first try of 100 to 250 ms now costs up to about 150 ms more, warm, as it's stopped and run again.
 - CI has one more job, A75's, which seeds 4,562,500 pages, and now restarts its database and drops the runner's page cache before each search.
 - The search query's `ORDER BY` line is matched as text to run it unordered (`searchOrderBy`). If sqlc's output changes, the bounded try would sort every match, and A75's cold check fails, by a mutation above.
+- From 0.16.2 (fix-search): a search for one alias reads that alias's pages newest first in its first try (`messages_alias_sent_idx`). Several aliases holding most of the pages are selected by ID in the first try and aren't given to the bounded and second tries. Terms too short for a trigram are found through `messages_search_bigrams_idx`, when no term has a trigram. A search of only one-character terms still reads every page.
+- The two indexes add about 511 MB at A75's size (22%), and the upgrade to 0.16.2 builds them before the API serves: about 8 minutes for 4,562,500 pages on a spinning disk.
+- A single-alias search whose term is in none of the alias's pages is about 70 ms slower cold (0.62 to 0.70 s on cld01), and the same warm. The owner accepted it (2026-11-08).
+- A75's seed has 2,005 aliases, and its searches include the busy alias and the map reference. Its seeding builds two GIN indexes, which takes about 7 minutes more.

@@ -62,6 +62,62 @@ func TestSearchFieldBoundary(t *testing.T) {
 	}
 }
 
+// R33b (ADR 0017): terms too short for a trigram, which the bigram index
+// finds, list the pages they did before it, whichever try answers: anywhere
+// in the text or one extra field, case ignored (non-ASCII letters too), a
+// typed % or _ as itself, never across two fields.
+func TestSearchShortTerms(t *testing.T) {
+	e := setup(t)
+	for i, text := range []string{
+		"@@EX0000101 HSF1 SMOKE FROM ROOF 1 M 23 B4 @ 12 FICTION ST, MADEUPTON #STN1",
+		"QDB4 THEN 23",
+		"QDMAP 2 3 B 4",
+		"QDCHECK PANEL",
+		"QDPANEL ÉB ÄÖ",
+		"QD50% OFF",
+		"QD4_5 AND 405",
+	} {
+		e.mustPost("a", "0100001", text, e.now.Add(-time.Duration(i)*time.Minute))
+	}
+	if _, err := e.st.Pool.Exec(e.ctx, `UPDATE messages SET extra = '{"grid": "M 23 B4", "unit": "K"}' WHERE text = 'QDCHECK PANEL'`); err != nil {
+		t.Fatal(err)
+	}
+	shown := func(text string) string {
+		var got []string
+		for _, m := range e.list("q=" + url.QueryEscape(text)) {
+			got = append(got, strings.TrimPrefix(m.Text, "QD"))
+		}
+		slices.Sort(got)
+		return strings.Join(got, " | ")
+	}
+	ref := "@@EX0000101 HSF1 SMOKE FROM ROOF 1 M 23 B4 @ 12 FICTION ST, MADEUPTON #STN1"
+	tests := []struct{ text, want string }{
+		{"m 23 b4", ref + " | CHECK PANEL"},            // in the text, or all in one extra field
+		{"b4 23", ref + " | B4 THEN 23 | CHECK PANEL"}, // in any order
+		{"m 23 b4 smoke", ref},                         // with a longer term, as before
+		{"23 b4 zz", ""},                               // one of them nowhere
+		{"b k", ref + " | CHECK PANEL"},                // single letters: no bigram, as before
+		{"4k", ""},                                     // across two extra fields
+		{"lk", ""},                                     // across the text and an extra field
+		{"éb äö", "PANEL ÉB ÄÖ"},                       // case ignored
+		{"0%", "50% OFF"},                              // a typed % as itself
+		{"4_", "4_5 AND 405"},                          // and _
+		{"0_", ""},                                     // not as a wildcard
+	}
+	for _, tt := range tests {
+		for _, mode := range []string{"first", "1 ms first try", "bounded", "second"} {
+			e.st.FirstTry, e.st.BoundedTryOnly, e.st.SecondTryOnly = 0, mode == "bounded", mode == "second"
+			if mode == "1 ms first try" {
+				e.st.FirstTry = time.Millisecond
+			}
+			if got := shown(tt.text); got != tt.want {
+				t.Errorf("%q, %s: %q, want %q", tt.text, mode, got, tt.want)
+			}
+		}
+	}
+	e.st.FirstTry, e.st.BoundedTryOnly, e.st.SecondTryOnly = 0, false, false
+}
+
 // R33b and P1: a value the nightly run redacts is no longer found by search,
 // in the text or an extra field: the search index is derived from them, so
 // it follows the redaction in the same run.
@@ -168,12 +224,14 @@ func TestA75SearchSpeed(t *testing.T) {
 	}
 	t.Logf("seeded %d pages in %s, built the search index in %s, all with VACUUM ANALYZE in %s", n,
 		seeded.Round(time.Second), built.Round(time.Second), time.Since(start).Round(time.Second))
-	var table, index, database string
+	var table, index, bigrams, alias, database string
 	if err := e.st.Pool.QueryRow(e.ctx, `SELECT pg_size_pretty(pg_total_relation_size('messages')),
-		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_trgm_idx'))), 'missing'), pg_size_pretty(pg_database_size(current_database()))`).Scan(&table, &index, &database); err != nil {
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_trgm_idx'))), 'missing'),
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_search_bigrams_idx'))), 'missing'),
+		COALESCE(pg_size_pretty(pg_relation_size(to_regclass('messages_alias_sent_idx'))), 'missing'), pg_size_pretty(pg_database_size(current_database()))`).Scan(&table, &index, &bigrams, &alias, &database); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("messages with its indexes %s, of which the search index %s; the database %s", table, index, database)
+	t.Logf("messages with its indexes %s, of which the search index %s, the short terms' %s, the alias's %s; the database %s", table, index, bigrams, alias, database)
 
 	// alias is a typed alias: value (partial, quoted or not); picked is one
 	// picked from the suggestions (alias_like).
@@ -193,9 +251,16 @@ func TestA75SearchSpeed(t *testing.T) {
 		{`alias:"Station 1", a term never in its pages`, "Station 1", "", "STN2", true},
 		{`the same with alias:sta`, "sta", "", "STN2", true},
 		{`the same with "Station 1" picked`, "", "Station 1", "STN2", true},
+		// Production's (owner, 2026-11-08): a common term with the busy
+		// alias, in a third of its 80,000 pages, and a map reference typed
+		// without quotes, three terms too short for the trigram index.
+		{`a common term with alias:"Station 5", the busy alias`, "Station 5", "", "fire", true},
+		{"a map reference typed without quotes", "", "", "m 23 b4", true},
 		// Not A75's, for the record: common searches stay fast.
 		{"one term in a third of the pages", "", "", "SMOKE", false},
 		{`a common term with alias:"Station 1"`, "Station 1", "", "smoke", false},
+		{`a common term with alias:"Unit 0001", a small alias`, "Unit 0001", "", "smoke", false},
+		{"two short terms in most pages", "", "", "st 12", false},
 	}
 	for _, s := range searches {
 		query := "q=" + url.QueryEscape(s.text)
