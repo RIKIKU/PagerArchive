@@ -89,29 +89,35 @@ func (s *Server) deleteMe(w http.ResponseWriter, r *http.Request) {
 
 // Invitation is an invitation as its inviter (or an admin) sees it.
 type Invitation struct {
-	ID        int64      `json:"id"`
-	Email     string     `json:"email"`
-	Status    string     `json:"status"` // pending, expired, used or cancelled
+	ID    int64  `json:"id"`
+	Email string `json:"email"`
+	// pending, expired, link_lost (Authentik no longer has its link, though
+	// nobody used or cancelled it: ADR 0021), used or cancelled. Pending,
+	// expired and link_lost can be resent (R43d).
+	Status    string     `json:"status"`
 	CreatedAt time.Time  `json:"created_at"`
+	ResentAt  *time.Time `json:"resent_at"`
 	ExpiresAt time.Time  `json:"expires_at"`
 	UsedAt    *time.Time `json:"used_at"`
-	InvitedBy string     `json:"invited_by"` // admins' list only
+	InvitedBy string     `json:"invited_by"` // admins' lists only
 	Reinvite  bool       `json:"reinvite"`   // an admin's re-invitation of a deactivated user
 }
 
-func (s *Server) invitationStatus(status string, expires time.Time) string {
-	if status == "pending" && !expires.After(s.Now()) {
+func (s *Server) invitationStatus(status string, expires time.Time, linkLost *time.Time) string {
+	switch {
+	case status != "pending":
+		return status
+	case !expires.After(s.Now()):
 		return "expired"
+	case linkLost != nil:
+		return "link_lost"
 	}
 	return status
 }
 
-func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request, mine bool) {
-	var inviter *int64
-	if mine {
-		id := currentUser(r).ID
-		inviter = &id
-	}
+// listInvitations lists one inviter's invitations, or everyone's (inviter
+// nil). Admins' lists say who sent each.
+func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request, inviter *int64, showInviter bool) {
 	rows, err := s.Store.ListInvitations(r.Context(), inviter)
 	if err != nil {
 		s.Log.Error("invitations", "error", store.SafeError(err))
@@ -120,9 +126,9 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request, mine bo
 	}
 	out := []Invitation{}
 	for _, i := range rows {
-		inv := Invitation{ID: i.ID, Email: deref(i.Email), Status: s.invitationStatus(i.Status, i.ExpiresAt),
-			CreatedAt: i.CreatedAt.UTC(), ExpiresAt: i.ExpiresAt.UTC(), UsedAt: i.UsedAt, Reinvite: i.Reactivates != nil}
-		if !mine {
+		inv := Invitation{ID: i.ID, Email: deref(i.Email), Status: s.invitationStatus(i.Status, i.ExpiresAt, i.LinkLostAt),
+			CreatedAt: i.CreatedAt.UTC(), ResentAt: i.ResentAt, ExpiresAt: i.ExpiresAt.UTC(), UsedAt: i.UsedAt, Reinvite: i.Reactivates != nil}
+		if showInviter {
 			inv.InvitedBy = "first-admin set-up"
 			if i.InvitedBy != nil {
 				status := "active"
@@ -138,11 +144,22 @@ func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request, mine bo
 }
 
 func (s *Server) myInvitations(w http.ResponseWriter, r *http.Request) {
-	s.listInvitations(w, r, true)
+	id := currentUser(r).ID
+	s.listInvitations(w, r, &id, false)
 }
 
 func (s *Server) allInvitations(w http.ResponseWriter, r *http.Request) {
-	s.listInvitations(w, r, false)
+	s.listInvitations(w, r, nil, true)
+}
+
+// userInvitations is one user's invitations, on their page in
+// Administration (R43d).
+func (s *Server) userInvitations(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	s.listInvitations(w, r, &id, true)
 }
 
 // InviteRequest is the body of POST /api/v1/invitations.
@@ -163,6 +180,22 @@ func (s *Server) invite(w http.ResponseWriter, r *http.Request) {
 	s.Log.Info("invitation sent", "by", currentUser(r).ID, "invitation", inv.ID)
 	writeJSON(w, http.StatusCreated, Invitation{ID: inv.ID, Email: deref(inv.Email), Status: "pending",
 		CreatedAt: inv.CreatedAt.UTC(), ExpiresAt: inv.ExpiresAt.UTC(), Reinvite: inv.Reactivates != nil})
+}
+
+// resendInvitation sends a waiting or expired invitation again, with a new
+// link and a new 7 days (R43d): the inviter's own, or any for an admin.
+func (s *Server) resendInvitation(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	inv, err := s.Accounts.Resend(r.Context(), currentUser(r), id)
+	if err != nil {
+		s.accountsError(w, r, "resend invitation", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, Invitation{ID: inv.ID, Email: deref(inv.Email), Status: "pending",
+		CreatedAt: inv.CreatedAt.UTC(), ResentAt: inv.ResentAt, ExpiresAt: inv.ExpiresAt.UTC(), Reinvite: inv.Reactivates != nil})
 }
 
 func (s *Server) cancelInvitation(w http.ResponseWriter, r *http.Request) {

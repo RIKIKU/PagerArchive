@@ -49,14 +49,14 @@ The first start takes a minute or two while Authentik sets up its database and a
 
 1. **Create the first admin** from a machine on your LAN. Open the app and choose **Set up the first admin**. Only the address in `INITIAL_ADMIN_EMAIL` can finish, by entering the code emailed to it. It doesn't have to be in `ALLOWED_EMAIL_DOMAINS`. It must differ from `AUTHENTIK_ADMIN_EMAIL`, or this is refused ([why](#two-accounts-with-one-address)). Once an admin exists, this option disappears and the setting is ignored.
 2. **Open the app to the internet**: remove the LAN-only lines from both hostnames' `location /` blocks. Leave them on Authentik's admin interface (`/if/admin/`).
-3. **Invite people** from **Account**. Invitations go to addresses in `ALLOWED_EMAIL_DOMAINS` only, work once, and expire after 7 days. Each person sets a password and confirms their address with an emailed code.
+3. **Invite people** from **Account**. Invitations go to addresses in `ALLOWED_EMAIL_DOMAINS` only, and work until the person joins, for 7 days. Opening the link uses nothing up, so a mail provider's link scanner can't spoil it. Each person sets a password and confirms their address with an emailed code. An invitation that expired, or whose email went astray, can be **resent** by its inviter or an admin: a new link for 7 days, and the old one stops working.
 4. **Add receiving clients** with the CLI (see [the client](client.md)). `pagerarchive` on the server keeps only the jobs that need the server: `serve`, `validate-profile`, `client` and `version`. A client key can post pages, and pages can fire integrations, so creating one needs a shell on the server. Everything else an admin does from a command line goes through the [PowerShell module](powershell.md).
 
    ```sh
    docker compose exec api pagerarchive client add shed "Shed receiver"
    ```
 
-Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once.
+Admin screens are under the header's **Admin** link (admins only). Admins manage users on **Users**: they can deactivate someone, reactivate, and promote or demote admins. Each user's page shows their invite tree and the invitations they sent, which admins can resend or cancel. Deactivating a whole tree first shows a preview, where admins can spare anyone, or a whole branch, and give a reason. People marked **trusted** start spared. Each tree deactivation is recorded on the pages of the people in it. Deactivation signs people out at once.
 
 ### Templates and icons
 

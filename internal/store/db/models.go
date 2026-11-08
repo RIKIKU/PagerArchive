@@ -134,6 +134,8 @@ type Invitation struct {
 	UsedBy      *int64
 	UsedAt      *time.Time
 	CancelledAt *time.Time
+	ResentAt    *time.Time
+	LinkLostAt  *time.Time
 }
 
 type Locality struct {

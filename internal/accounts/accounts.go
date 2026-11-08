@@ -46,9 +46,13 @@ const (
 
 // Directory is the identity provider: Authentik in production.
 type Directory interface {
-	// CreateInvitation creates a single-use enrolment invitation that only
-	// enrols email (username key) and carries the app's invitation ID.
+	// CreateInvitation creates an enrolment invitation that only enrols email
+	// (username key) and carries the app's invitation ID. Opening its link
+	// uses nothing up; finishing enrolment does (R43a, ADR 0021).
 	CreateInvitation(ctx context.Context, inv DirectoryInvitation) (id string, err error)
+	// RepairInvitation reports whether an invitation still works, making one
+	// created while invitations were single-use reusable.
+	RepairInvitation(ctx context.Context, id string) (found bool, err error)
 	// SendInvitation emails the invitation's link to the address.
 	SendInvitation(ctx context.Context, id, address string) error
 	// DeleteInvitation makes an invitation unusable. A missing one is fine.
@@ -59,8 +63,8 @@ type Directory interface {
 	SetActive(ctx context.Context, subject string, active bool) error
 	// DeleteUser deletes a user. A missing one is fine.
 	DeleteUser(ctx context.Context, subject string) error
-	// UserByUsername finds a user's subject by username.
-	UserByUsername(ctx context.Context, username string) (subject string, found bool, err error)
+	// UserByUsername finds a user by username.
+	UserByUsername(ctx context.Context, username string) (u DirectoryUser, found bool, err error)
 	// EmailHolders finds who holds an address, matched as the sign-in form
 	// matches it, ignoring case.
 	EmailHolders(ctx context.Context, address string) (EmailHolders, error)
@@ -70,6 +74,12 @@ type Directory interface {
 type EmailHolders struct {
 	Count         int
 	Administrator bool // one of them is an Authentik administrator (akadmin)
+}
+
+// DirectoryUser is a user in the identity provider.
+type DirectoryUser struct {
+	Subject string
+	Active  bool
 }
 
 // DirectoryInvitation is what the identity provider needs to know.
@@ -232,13 +242,14 @@ func (s *Service) createInDirectory(ctx context.Context, q *db.Queries, inv *db.
 // was entered, or (for an admin's re-invitation) the deactivated user's old
 // Authentik user, which the new enrolment replaces (owner, 2026-10-13).
 func (s *Service) clearStaleDirectoryUser(ctx context.Context, q *db.Queries, key string, reactivates *int64) error {
-	sub, found, err := s.Dir.UserByUsername(ctx, key)
+	du, found, err := s.Dir.UserByUsername(ctx, key)
 	if err != nil {
 		return s.unavailable("look up user", err)
 	}
 	if !found {
 		return nil
 	}
+	sub := du.Subject
 	owner, err := q.UserBySubject(ctx, &sub)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -379,6 +390,7 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 		return db.User{}, refuse(http.StatusForbidden, "not_invited", "This sign-in has no usable email address.")
 	}
 	var cancelled bool
+	var link *string
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
 		inv, err := q.InvitationByID(ctx, invID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (inv.EmailKey == nil || *inv.EmailKey != e.Key)) {
@@ -443,6 +455,7 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 			}
 			return refuse(http.StatusConflict, "invitation_used", "That invitation has already been used.")
 		}
+		link = inv.AuthentikID
 		return nil
 	})
 	if cancelled {
@@ -456,6 +469,9 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 		return db.User{}, err
 	}
 	s.Log.Info("account created", "user", u.ID, "role", u.Role, "invited_by", u.InvitedBy)
+	// The enrolment flow deleted the link it used; this one is gone too if a
+	// resend replaced it meanwhile (ADR 0021).
+	s.deleteDirectoryInvitations(ctx, []*string{link})
 	return u, nil
 }
 

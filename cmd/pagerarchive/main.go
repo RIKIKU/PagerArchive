@@ -296,6 +296,7 @@ func serve(stderr io.Writer) error {
 	}
 	go expireSessions(ctx, st, log)
 	go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)
+	go acc.WatchInvitations(ctx, adminAddressCheckEvery, adminAddressCheckTries)
 
 	at, err := nightly.ParseAt(getenv("NIGHTLY_AT", "03:00"))
 	if err != nil {
@@ -541,7 +542,8 @@ func authConfig() (authSettings, error) {
 }
 
 // Authentik can take minutes to answer on a first start, and the API doesn't
-// wait for it: the address check (R44c) keeps asking for 10 minutes.
+// wait for it: the address check (R44c) and the invitations check (ADR 0021)
+// keep asking for 10 minutes.
 const (
 	adminAddressCheckEvery = 5 * time.Second
 	adminAddressCheckTries = 120

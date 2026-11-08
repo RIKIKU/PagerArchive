@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { api, type Invitation, type Me, type Meta, type UserRow } from '#lib/api.ts';
 	import { date, dateTime, isoAttr } from '#lib/format.ts';
+	import { resentNotice } from '#lib/invitations.ts';
 
 	let meta: Meta | undefined = $state();
 	let me: Me | undefined = $state();
@@ -14,7 +15,9 @@
 	let busy = $state(false);
 
 	const tz = $derived(meta?.time_zone ?? 'UTC');
-	const pending = $derived(invitations.filter((i) => i.status === 'pending'));
+	// Unused invitations that still count: waiting, or with a link that no
+	// longer works and needs a resend (ADR 0021).
+	const pending = $derived(invitations.filter((i) => i.status === 'pending' || i.status === 'link_lost'));
 
 	api.meta().then((m) => (meta = m));
 	api.me().then((m) => (me = m));
@@ -66,6 +69,11 @@
 		run(async () => {
 			await api.cancelInvitation(inv.id);
 			return `Invitation to ${inv.email} cancelled.`;
+		});
+	const resend = (inv: Invitation) =>
+		run(async () => {
+			await api.resendInvitation(inv.id);
+			return resentNotice(inv);
 		});
 </script>
 
@@ -137,11 +145,13 @@
 			<div class="head">
 				<span class="who">{inv.email}</span>
 				{#if inv.reinvite}<span class="tag">Re-invitation</span>{/if}
+				{#if inv.status === 'link_lost'}<span class="tag">Link no longer works</span>{/if}
 			</div>
 			<div class="meta">
 				From {inv.invited_by} · expires <time datetime={isoAttr(inv.expires_at)}>{dateTime(inv.expires_at, tz)}</time>
 			</div>
 			<div class="actions">
+				<button class="secondary" type="button" disabled={busy} onclick={() => resend(inv)} aria-label="Resend: invitation to {inv.email}">Resend</button>
 				<button class="secondary" type="button" disabled={busy} onclick={() => cancel(inv)} aria-label="Cancel: invitation to {inv.email}">Cancel</button>
 			</div>
 		</li>

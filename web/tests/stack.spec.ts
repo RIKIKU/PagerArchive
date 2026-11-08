@@ -2,7 +2,8 @@
 // SPEC.md section 11, step 2, in a real browser against the full compose
 // stack (scripts/stack-e2e.sh): an admin is created, invites a test user,
 // and the test user enrols with a code sent to an allowed test domain,
-// caught by Mailpit. Authentik's own pages are used, as a person would.
+// caught by Mailpit. Authentik's own pages are used, as a person would. Then
+// A81 (ADR 0021): link scanners, resending, and two browsers finishing at once.
 import { test, expect, type Browser, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';

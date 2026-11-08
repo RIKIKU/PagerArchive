@@ -26,7 +26,7 @@ func TestClientThroughInternalURL(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
 		case "/api/v3/core/users/":
-			_, _ = w.Write([]byte(`{"results":[{"pk":42}]}`))
+			_, _ = w.Write([]byte(`{"results":[{"pk":42,"is_active":true}]}`))
 		case "/api/v3/flows/instances/":
 			_, _ = w.Write([]byte(`{"results":[{"pk":"flow-1"}]}`))
 		case "/api/v3/stages/invitation/invitations/":
@@ -42,9 +42,9 @@ func TestClientThroughInternalURL(t *testing.T) {
 	c := &Client{URL: public, Token: "tok", HTTP: &http.Client{Transport: Transport(public, internal, nil)}}
 	ctx := context.Background()
 
-	sub, found, err := c.UserByUsername(ctx, "b+x@example.com")
-	if err != nil || !found || sub != "42" {
-		t.Fatalf("UserByUsername: %q %v %v", sub, found, err)
+	u, found, err := c.UserByUsername(ctx, "b+x@example.com")
+	if err != nil || !found || u.Subject != "42" || !u.Active {
+		t.Fatalf("UserByUsername: %+v %v %v", u, found, err)
 	}
 	r := seen[0]
 	if r.URL.Query().Get("username") != "b+x@example.com" || r.Host != "auth.example.org" ||
@@ -60,7 +60,7 @@ func TestClientThroughInternalURL(t *testing.T) {
 		t.Errorf("flow lookup: %s", seen[1].URL)
 	}
 	fixed := bodies[2]["fixed_data"].(map[string]any)
-	if bodies[2]["flow"] != "flow-1" || bodies[2]["single_use"] != true || fixed["email"] != "B+x@example.com" || fixed["username"] != "b@example.com" ||
+	if bodies[2]["flow"] != "flow-1" || bodies[2]["single_use"] != false || fixed["email"] != "B+x@example.com" || fixed["username"] != "b@example.com" ||
 		fixed["attributes"].(map[string]any)["pagerarchive_invitation"] != "7" {
 		t.Errorf("invitation body: %v", bodies[2])
 	}
@@ -69,6 +69,42 @@ func TestClientThroughInternalURL(t *testing.T) {
 	}
 	if got := c.EnrolmentURL("inv-1"); got != "https://auth.example.org/if/flow/pagerarchive-enrolment/?itoken=inv-1" {
 		t.Errorf("EnrolmentURL: %s", got)
+	}
+}
+
+// R43a, ADR 0021: an invitation made while invitations were single-use is
+// made reusable; a missing one is reported, not an error.
+func TestRepairInvitation(t *testing.T) {
+	var patched []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodPatch:
+			var b map[string]any
+			_ = json.NewDecoder(r.Body).Decode(&b)
+			if b["single_use"] != false {
+				t.Errorf("patch body: %v", b)
+			}
+			patched = append(patched, r.URL.Path)
+			_, _ = w.Write([]byte(`{}`))
+		case strings.HasSuffix(r.URL.Path, "/old/"):
+			_, _ = w.Write([]byte(`{"single_use":true}`))
+		case strings.HasSuffix(r.URL.Path, "/new/"):
+			_, _ = w.Write([]byte(`{"single_use":false}`))
+		default:
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &Client{URL: u, Token: "tok", HTTP: srv.Client()}
+	for id, want := range map[string]bool{"old": true, "new": true, "gone": false} {
+		if found, err := c.RepairInvitation(context.Background(), id); err != nil || found != want {
+			t.Errorf("%s: found %v, error %v", id, found, err)
+		}
+	}
+	if len(patched) != 1 || patched[0] != "/api/v3/stages/invitation/invitations/old/" {
+		t.Errorf("patched: %v", patched)
 	}
 }
 

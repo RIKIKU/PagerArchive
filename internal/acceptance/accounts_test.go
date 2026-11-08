@@ -20,9 +20,10 @@ import (
 )
 
 // fakeDir stands in for Authentik in API-level tests. It models what the
-// app relies on: single-use invitations that expire and only enrol their
-// own address, and users that can be disabled or deleted. The same checks
-// run against a real Authentik in internal/stacktest.
+// app relies on: invitations that expire, only enrol their own address and
+// are used up when enrolment finishes (ADR 0021), and users that can be
+// disabled or deleted. The same checks run against a real Authentik in
+// scripts/stack-checks.sh and web/tests/stack.spec.ts.
 type fakeDir struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -64,6 +65,13 @@ func (d *fakeDir) DeleteInvitation(_ context.Context, id string) error {
 	return nil
 }
 
+func (d *fakeDir) RepairInvitation(_ context.Context, id string) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	inv, ok := d.invites[id]
+	return ok && inv.Expires.After(d.now()), nil
+}
+
 func (d *fakeDir) EnrolmentURL(id string) string {
 	return "http://authentik.test/if/flow/enrol/?itoken=" + id
 }
@@ -84,15 +92,15 @@ func (d *fakeDir) DeleteUser(_ context.Context, subject string) error {
 	return nil
 }
 
-func (d *fakeDir) UserByUsername(_ context.Context, username string) (string, bool, error) {
+func (d *fakeDir) UserByUsername(_ context.Context, username string) (accounts.DirectoryUser, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for sub, u := range d.users {
 		if u.username == username {
-			return sub, true, nil
+			return accounts.DirectoryUser{Subject: sub, Active: u.active}, true, nil
 		}
 	}
-	return "", false, nil
+	return accounts.DirectoryUser{}, false, nil
 }
 
 func (d *fakeDir) EmailHolders(_ context.Context, address string) (accounts.EmailHolders, error) {
@@ -108,9 +116,10 @@ func (d *fakeDir) EmailHolders(_ context.Context, address string) (accounts.Emai
 	return holders, nil
 }
 
-// enrol is the enrolment flow: the invitation must exist and not have
-// expired; it's used up; a user is created for its address. (The emailed
-// code is checked by the real stack test.)
+// enrol is a finished enrolment flow: the invitation must exist and not
+// have expired; it's used up; a user is created for its address. Opening
+// the link without finishing changes nothing, so isn't modelled. (The
+// emailed code is checked by the real stack test.)
 func (d *fakeDir) enrol(id, name string) (accounts.Claims, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -282,8 +291,9 @@ func TestA24Invitations(t *testing.T) {
 	if me.Role != "user" || me.InvitedBy == nil || *me.InvitedBy != "a@example.com" {
 		t.Fatalf("B: role %s, invited by %v", me.Role, me.InvitedBy)
 	}
-	// The same invitation again: Authentik refuses it (single use), and so
-	// does the app if the claims are replayed with another user.
+	// The same invitation again: Authentik refuses it (used up when
+	// enrolment finished), and so does the app if the claims are replayed
+	// with another user.
 	reused := b.claims
 	reused.Subject = "someone-else"
 	if _, err := e.signIn(reused); err == nil || !strings.Contains(err.Error(), "already been used") {
