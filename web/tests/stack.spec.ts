@@ -251,6 +251,18 @@ function linkIn(text: string): string {
 	return link!;
 }
 
+/** The link in a resend's email: the newest invitation email whose link isn't
+ * the old one. The first email can be inside `since`'s 2 seconds of slack, so
+ * waiting for any email could return it before the resend's arrives. */
+async function resentLink(request: APIRequestContext, address: string, since: Date, old: string): Promise<string> {
+	const deadline = Date.now() + 30_000;
+	for (;;) {
+		const link = linkIn(await mail(request, address, 'invited', since));
+		if (link !== old || Date.now() > deadline) return link;
+		await new Promise((r) => setTimeout(r, 300));
+	}
+}
+
 /** Sends an invitation from the invite page and returns the emailed link. */
 async function inviteFrom(page: Page, request: APIRequestContext, address: string): Promise<string> {
 	const since = new Date(Date.now() - 2000);
@@ -355,7 +367,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	const resent = new Date(Date.now() - 2000);
 	await aPage.getByRole('button', { name: `Resend: invitation to ${h}` }).click();
 	await expect(aPage.getByRole('status').filter({ hasText: `sent to ${h} again` })).toBeVisible();
-	const hNew = linkIn(await mail(request, h, 'invited', resent));
+	const hNew = await resentLink(request, h, resent, hOld);
 	expect(hNew, 'a new link').not.toBe(hOld);
 	await expect(rowFor(aPage, h), 'one invitation to h').toHaveCount(1);
 	await expect(rowFor(aPage, h)).toContainText('Waiting');
@@ -385,7 +397,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	const jResent = new Date(Date.now() - 2000);
 	await admin.getByRole('button', { name: `Resend: invitation to ${j}` }).click();
 	await expect(admin.getByRole('status').filter({ hasText: `sent to ${j} again` })).toBeVisible();
-	const jNew = linkIn(await mail(request, j, 'invited', jResent));
+	const jNew = await resentLink(request, j, jResent, jOld);
 	expect(jNew).not.toBe(jOld);
 	await bPage.goto('/account/invite');
 	await expect(rowFor(bPage, j), "still in B's list").toContainText('Waiting');
@@ -443,7 +455,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 			const since = new Date(Date.now() - 2000);
 			await aPage.getByRole('button', { name: `Resend: invitation to ${m}` }).click();
 			await expect(aPage.getByRole('status').filter({ hasText: `sent to ${m} again` })).toBeVisible();
-			mLink = linkIn(await mail(request, m, 'invited', since));
+			mLink = await resentLink(request, m, since, mLink);
 		}
 		// Not looking back: the previous run's email came just before.
 		const since = new Date();
