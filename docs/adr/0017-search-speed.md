@@ -540,9 +540,51 @@ On A75's 4,562,500 pages (cld01, from `pg_relation_size` in A75's log):
 
 ### Timings, before and after
 
+A75 on cld01's spinning disk, `TestA75SearchSpeed` from a fresh database each time, with the seed above: main's code with this branch's seed and searches (30b67d9), against this branch (e04e89f). Cold is the first run after a restart with both caches cold; warm is the three runs after it. Milliseconds unless shown; over 1 second in bold:
+
+| Search | Main, cold | Fix, cold | Main, warm | Fix, warm |
+|---|---|---|---|---|
+| **A75** `ZZNOTHING` | 601 | 340 | 4 3 3 | 3 3 2 |
+| **A75** `hoses grass pump` | 420 | 374 | 226 226 225 | 231 226 227 |
+| **A75** `"Smoke showing" or:"grass fire"` | 540 | 533 | 10 8 8 | 10 10 10 |
+| **A75** `tanker9` | 202 | 230 | 8 7 9 | 9 7 7 |
+| **A75** `alias:"Station 1" 12345` | 301 | 215 | 116 115 113 | 9 8 8 |
+| **A75** `alias:"Station 1" STN2` | 660 | 760 | 283 280 283 | 279 284 285 |
+| **A75** `alias:sta STN2` | **12,451** | 751 | **5,391** | 10 10 10 |
+| **A75** `STN2`, "Station 1" picked | 652 | 784 | 294 287 279 | 274 278 280 |
+| **A75** `alias:"Station 5" fire` (busy alias) | **9,578** | 704 | **1,090** | 6 6 6 |
+| **A75** `m 23 b4` (map reference) | **11,286** | 244 | **10,874** | 8 6 7 |
+| `SMOKE` | 127 | 138 | 4 4 4 | 3 3 4 |
+| `alias:"Station 1" smoke` | **11,065** | 130 | **3,868** | 5 5 4 |
+| `alias:"Unit 0001" smoke` (a small alias) | 141 | 220 | 7 5 6 | 6 5 5 |
+| `st 12` (two short terms in most pages) | 132 | 161 | 4 3 3 | 9 9 8 |
+
+The pages listed are the same as the query before M13a's in every row, cold and warm (A75 checks it). Single cold runs vary by 100 to 300 ms between runs on cld01: `ZZNOTHING` took 317 to 601, the busy alias 159 to 704 in four runs of the fix. The direct comparison is the table under "What was weighed", five cold runs each, through the store, on one database: there `alias:"Station 1" STN2` is the one search slower, by about 70 ms. Warm, `st 12` takes 9 ms against 4: two short terms in most pages now take the tries, and the first answers. Every A75 search's cold run on cld01 was under 1 second in the four runs of the fix but one, a version that gave the bounded try the alias too (1,007 ms for `alias:"Station 1" STN2`).
 
 ### A75 and A76 in CI
 
+CI run 42440766086 on e04e89f, every job passed. A75's job on GitHub's runner, in milliseconds:
+
+| Search | Cold | Warm |
+|---|---|---|
+| **A75** `ZZNOTHING` | 50 | 2 1 1 |
+| **A75** `hoses grass pump` | 678 | 215 302 207 |
+| **A75** `"Smoke showing" or:"grass fire"` | 384 | 7 5 6 |
+| **A75** `tanker9` | 75 | 5 5 5 |
+| **A75** `alias:"Station 1" 12345` | 57 | 6 5 5 |
+| **A75** `alias:"Station 1" STN2` | 520 | 239 244 243 |
+| **A75** `alias:sta STN2` | 482 | 7 6 6 |
+| **A75** `STN2`, "Station 1" picked | 715 | 239 278 242 |
+| **A75** `alias:"Station 5" fire` | 99 | 3 4 3 |
+| **A75** `m 23 b4` | 208 | 5 5 4 |
+| `SMOKE` | 55 | 3 2 3 |
+| `alias:"Station 1" smoke` | 78 | 3 3 3 |
+| `alias:"Unit 0001" smoke` | 85 | 4 4 3 |
+| `st 12` | 196 | 6 6 6 |
+
+Seeding took 3 min 7 s and the two GIN indexes 5 min 2 s: 8 min 23 s with `VACUUM ANALYZE`, within the job's 35 minutes. The tables with every index came to 2,884 MB.
+
+A76's job: 200,000 pages imported in random order on top of the 4,562,500, with live pages, at **1,050 pages a second** (1,063 while storing), against 963 on main's last run (the runner varies by that much), so the bigram index's cost to an import doesn't show at A76's 500. Live posts answered in 4 ms at the median, 129 ms at most. A75's searches after it, warm: 1 to 9 ms, `hoses grass pump` 210 to 216 ms, the two never-together Station 1 searches 251 to 280 ms.
 
 ### Mutations
 
