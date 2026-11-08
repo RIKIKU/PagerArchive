@@ -43,6 +43,7 @@
       matchUpdateTypes: ["digest", "pinDigest", "patch"],
       groupName: "base images",
       automerge: true,
+      commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
     // R85a: libraries, on the 1st of the month. Every patch in one pull request
     // that merges on its own; everything larger in another that waits.
@@ -54,6 +55,7 @@
       groupName: "libraries patch",
       schedule: ["* * 1 * *"],
       automerge: true,
+      commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
     {
       matchManagers: ["gomod", "npm", "github-actions", "dockerfile"],
@@ -61,6 +63,7 @@
       groupName: "libraries and base images minor and major",
       schedule: ["* * 1 * *"],
       automerge: false,
+      commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // R85b: third-party images, the ones a deployment runs (compose.yaml and
     // the monitoring stack) and the ones CI runs, on Mondays. Each image is its
@@ -73,6 +76,7 @@
       groupName: null,
       schedule: ["* * * * 1"],
       automerge: false,
+      commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // R85b: images named by an exact version, which publish nothing that moves
     // within a minor version (ADR 0019): their patches merge on their own.
@@ -81,6 +85,7 @@
       matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus", "axllent/mailpit"],
       matchUpdateTypes: ["patch"],
       automerge: true,
+      commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
     // PostGIS's tag is <PostgreSQL major>-<PostGIS minor>: both parts are minor
     // versions or more, so every update waits.
@@ -88,6 +93,7 @@
       matchPackageNames: ["postgis/postgis"],
       versioning: "regex:^(?<major>\\d+)-(?<minor>\\d+)\\.(?<patch>\\d+)$",
       automerge: false,
+      commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // Our own image in compose.yaml is bump-version.sh's.
     {
