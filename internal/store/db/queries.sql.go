@@ -3683,9 +3683,10 @@ WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   -- trigram index on message_search_text() finds the candidates (R33b, ADR
   -- 0017): q_index1 to 4 are up to four of q_all it can serve, one condition
   -- each, and with q_any_index it serves the or: terms. Each term is then
-  -- matched in the text or one extra field, as before. q_short are terms too
-  -- short for a trigram, which the index on message_search_bigrams() serves
-  -- when there's no other (ADR 0017).
+  -- matched in the text or one extra field, as before. When a term is too
+  -- short for a trigram, q_short are the terms the index on
+  -- message_search_bigrams() serves instead, and q_index1 to 4 are unset
+  -- (ADR 0017).
   AND ((cardinality($2::text[]) = 0 AND cardinality($3::text[]) = 0)
        OR (cardinality($2::text[]) > 0
            AND (cardinality($4::text[]) = 0

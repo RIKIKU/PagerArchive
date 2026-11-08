@@ -439,6 +439,19 @@ mutate "search: terms too short for a trigram aren't given to the bigram index" 
 	'p.QShort = shortTerms(terms.All)' 'p.QShort = []string{}'
 mutate "search: the bigram index isn't built" internal/store/migrations/00015_search_alias_short_terms.sql a75:TestA75SearchSpeed \
 	'CREATE INDEX CONCURRENTLY messages_search_bigrams_idx ON messages USING gin (message_search_bigrams(text, extra));' ''
+must="the same, with a 3-digit page"
+mutate "search: with a term the trigram index finds, short terms aren't given to the bigram index" internal/search/search.go a75:TestA75SearchSpeed \
+	'	if !slices.ContainsFunc(all, func(s string) bool { return bigrams(s) && !indexable(s) }) {' '	if slices.ContainsFunc(all, indexable) || !slices.ContainsFunc(all, func(s string) bool { return bigrams(s) && !indexable(s) }) {'
+mutate "search: both indexes find candidates, so each one's bigrams are worked out again" internal/search/search.go a75:TestA75SearchSpeed \
+	'		p.QIndex1, p.QIndex2, p.QIndex3, p.QIndex4 = nil, nil, nil, nil
+' ''
+mutate "search: only the terms too short for a trigram go to the bigram index" internal/search/search.go a75:TestA75SearchSpeed \
+	'		if bigrams(s) {' '		if bigrams(s) && !indexable(s) {'
+must=""
+mutate "search: every bigram goes to the bigram index, the common ones too" internal/store/search.go go:TestSearchRarestBigrams \
+	'LIMIT CASE WHEN EXISTS (SELECT FROM s) THEN $2::int END' 'LIMIT NULL'
+mutate "search: the commonest bigrams go to the bigram index" internal/store/search.go go:TestSearchRarestBigrams \
+	'NULLS FIRST, b' 'DESC NULLS LAST, b'
 must=""
 mutate "search: the bigrams keep their case, so a term in other case isn't found" internal/store/migrations/00015_search_alias_short_terms.sql go:TestSearchShortTerms \
 	'FROM lower(s) AS l,' 'FROM (SELECT s) AS x (l),'

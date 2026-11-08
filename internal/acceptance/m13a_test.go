@@ -95,6 +95,9 @@ func TestSearchShortTerms(t *testing.T) {
 		{"m 23 b4", ref + " | CHECK PANEL"},            // in the text, or all in one extra field
 		{"b4 23", ref + " | B4 THEN 23 | CHECK PANEL"}, // in any order
 		{"m 23 b4 smoke", ref},                         // with a longer term, as before
+		{"panel éb", "PANEL ÉB ÄÖ"},                    // with a longer term, case ignored
+		{"check 4k", ""},                               // with a longer term, across two extra fields
+		{"405 4_", "4_5 AND 405"},                      // a typed _ with a longer term
 		{"23 b4 zz", ""},                               // one of them nowhere
 		{"b k", ref + " | CHECK PANEL"},                // single letters: no bigram, as before
 		{"4k", ""},                                     // across two extra fields
@@ -116,6 +119,40 @@ func TestSearchShortTerms(t *testing.T) {
 		}
 	}
 	e.st.FirstTry, e.st.BoundedTryOnly, e.st.SecondTryOnly = 0, false, false
+}
+
+// R33b (ADR 0017): the bigram index is given a search's rarest bigrams, by the
+// statistics on it, and all of them before there are any.
+func TestSearchRarestBigrams(t *testing.T) {
+	e := setup(t)
+	if _, err := e.st.Pool.Exec(e.ctx, `ANALYZE messages`); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := e.st.RarestBigrams(e.ctx, []string{"tanker9", "st"}); err != nil || len(got) != 7 {
+		t.Errorf("with no pages, %q (%v), want all 7", got, err)
+	}
+	for i := range 200 {
+		text := "QDCHECK HOSES @ 12 FICTION ST"
+		if i == 7 {
+			text = "QDTANKER9 @ 12 FICTION ST"
+		}
+		e.mustPost("a", "0100001", text, e.now.Add(-time.Duration(i)*time.Minute))
+	}
+	if _, err := e.st.Pool.Exec(e.ctx, `ANALYZE messages`); err != nil {
+		t.Fatal(err)
+	}
+	got, err := e.st.RarestBigrams(e.ctx, []string{"tanker9", "st"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	slices.Sort(got)
+	// ta, an, nk, ke, er and r9 are in one page; st is in all of them.
+	if len(got) != 3 || slices.Contains(got, "st") {
+		t.Errorf("%q, want 3 without st", got)
+	}
+	if rows := e.list("q=" + url.QueryEscape("tanker9 st")); len(rows) != 1 {
+		t.Errorf("tanker9 st: %d pages, want 1", len(rows))
+	}
 }
 
 // R33b and P1: a value the nightly run redacts is no longer found by search,

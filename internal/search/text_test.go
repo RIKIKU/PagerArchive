@@ -74,7 +74,8 @@ func TestTooManyTerms(t *testing.T) {
 // R33b (ADR 0017): up to four terms the index can find go to it, longest run
 // of letters and digits first: a term needs a trigram, and none of the
 // characters jsonb escapes in an extra field. The or: terms go to it only if
-// it can find every one.
+// it can find every one. A term too short for a trigram sends every term of two
+// characters or more to the bigram index instead.
 func TestIndexTerms(t *testing.T) {
 	str := func(p *string) string {
 		if p == nil {
@@ -86,19 +87,21 @@ func TestIndexTerms(t *testing.T) {
 		text     string
 		want     string
 		anyIndex bool
+		short    string
 	}{
-		{"", "- - - -", false},
-		{"a bc 1:2", "- - - -", false},
-		{"smoke", "%smoke% - - -", false},
-		{`hoses "grass fire" pump`, "%hoses% %grass fire% %pump% -", false},
-		{"a b c ZZNOTHING", "%ZZNOTHING% - - -", false},
-		{"14:05 abc 50% x_yz", "%abc% - - -", false},
-		{"one three seventeen four fivefive", "%seventeen% %fivefive% %three% %four%", false},
-		{`5"hose back\slash tab` + "\t" + `x "unit` + "\x1f" + `crew" smoke`, "%smoke% %tab% - -", false},
-		{"or:alarm fire", "%fire% - - -", true},
-		{`or:alarm or:"grass fire"`, "- - - -", true},
-		{"or:alarm or:ab", "- - - -", false},
-		{`or:alarm or:5"hose`, "- - - -", false},
+		{"", "- - - -", false, ""},
+		{"a bc 1:2", "- - - -", false, "bc 1:2"},
+		{"smoke", "%smoke% - - -", false, ""},
+		{"m 345 c7", "- - - -", false, "345 c7"},
+		{`hoses "grass fire" pump`, "%hoses% %grass fire% %pump% -", false, ""},
+		{"a b c ZZNOTHING", "%ZZNOTHING% - - -", false, ""},
+		{"14:05 abc 50% x_yz", "- - - -", false, "14:05 abc 50% x_yz"},
+		{"one three seventeen four fivefive", "%seventeen% %fivefive% %three% %four%", false, ""},
+		{`5"hose back\slash tab` + "\t" + `x "unit` + "\x1f" + `crew" smoke`, "%smoke% %tab% - -", false, ""},
+		{"or:alarm fire", "%fire% - - -", true, ""},
+		{`or:alarm or:"grass fire"`, "- - - -", true, ""},
+		{"or:alarm or:ab", "- - - -", false, ""},
+		{`or:alarm or:5"hose`, "- - - -", false, ""},
 	}
 	for _, tt := range tests {
 		p, err := Filter{Text: tt.text}.Params(nil, nil, 50)
@@ -106,8 +109,8 @@ func TestIndexTerms(t *testing.T) {
 			t.Fatal(err)
 		}
 		got := strings.Join([]string{str(p.QIndex1), str(p.QIndex2), str(p.QIndex3), str(p.QIndex4)}, " ")
-		if got != tt.want || p.QAnyIndex != tt.anyIndex {
-			t.Errorf("%q: %s, or: terms %v; want %s, %v", tt.text, got, p.QAnyIndex, tt.want, tt.anyIndex)
+		if short := strings.Join(p.QShort, " "); got != tt.want || p.QAnyIndex != tt.anyIndex || short != tt.short {
+			t.Errorf("%q: %s, or: terms %v, short %q; want %s, %v, %q", tt.text, got, p.QAnyIndex, short, tt.want, tt.anyIndex, tt.short)
 		}
 	}
 }
