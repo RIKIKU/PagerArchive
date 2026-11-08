@@ -256,11 +256,18 @@ func TestA75SearchSpeed(t *testing.T) {
 		// without quotes, three terms too short for the trigram index.
 		{`a common term with alias:"Station 5", the busy alias`, "Station 5", "", "fire", true},
 		{"a map reference typed without quotes", "", "", "m 23 b4", true},
+		// Production's shape (owner, 2026-11-08): a letter, a number of three
+		// digits in 2.4% of the pages and a square in 0.7%, together in about
+		// 1 page in 1,000.
+		{"the same, with a 3-digit page", "", "", "m 345 c7", true},
 		// Not A75's, for the record: common searches stay fast.
 		{"one term in a third of the pages", "", "", "SMOKE", false},
 		{`a common term with alias:"Station 1"`, "Station 1", "", "smoke", false},
 		{`a common term with alias:"Unit 0001", a small alias`, "Unit 0001", "", "smoke", false},
 		{"two short terms in most pages", "", "", "st 12", false},
+		{"a common term and a short one in every page", "", "", "smoke st", false},
+		{"a rare term and a short one in every page", "", "", "tanker9 st", false},
+		{"a term in 2.4% of the pages and a short one", "", "", "345 c7", false},
 	}
 	for _, s := range searches {
 		query := "q=" + url.QueryEscape(s.text)
