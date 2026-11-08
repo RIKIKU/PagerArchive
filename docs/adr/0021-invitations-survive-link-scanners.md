@@ -108,6 +108,6 @@ The log line names the invitation's ID only, never the address (R73).
   - the admin resends B's invitation from B's page: B stays its inviter, and B's old link is refused;
   - resending a used invitation is refused;
   - two browsers finishing one invitation at once make one account.
-- **The same test on main's code**, committed alone first (2740cea, CI run 42450944874), failed as production did: the first scan used the invitation up, so the second found no enrolment page.
+- **The same test on main's code**, committed alone first (2740cea, before the rebase onto 0.16.2; CI run 42450944874), failed as production did: the first scan used the invitation up, so the second found no enrolment page.
 - **API-level tests** with the fake Authentik (`internal/acceptance/m20_test.go`): resending, its refusals, and the start-up check's three cases. Also `internal/authentik`'s `TestRepairInvitation`.
 - A24, A25, A27 and A48–A50 run unchanged, at the API and on the stack.
