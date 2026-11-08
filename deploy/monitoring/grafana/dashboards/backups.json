@@ -1,0 +1,71 @@
+{
+  "uid": "pa-backups",
+  "title": "PagerArchive: backups",
+  "description": "The nightly backups (R86-R86d): how long since the last good one, whether the last one failed, and each night's dump size, dump time and check time, so the check's growth with the archive can be seen.",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "1m",
+  "time": {"from": "now-30d", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "A backup is **good** once both databases are dumped and the check has restored the dumps into a throwaway database and compared every table's rows (R86a). **Since the last good backup** turns orange after 26 hours (a night missed) and red after 36, when the \"Backup failing\" alert fires and Administration says so. **Last backup** is red while the last one failed: Administration's Backups page says why.\n\nThe three graphs are each good night's numbers: the size of both dumps, how long the dumps took, and how long the check took. The check restores everything, so it grows with the archive. A backup whose check takes more than 12 hours fails."}
+    },
+    {
+      "id": 2, "type": "stat", "title": "Since the last good backup",
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "time() - max by (instance) (pagerarchive_backup_last_good_timestamp_seconds{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 93600}, {"color": "red", "value": 129600}]},
+          "noValue": "No good backup yet"
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 3, "type": "stat", "title": "Last backup",
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 5},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_backup_failing{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "FAILING", "color": "red"}}}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "noValue": "The API isn't scraped"
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Dump size, each night",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_bytes{job=\"pagerarchive\"})", "legendFormat": "both dumps"}],
+      "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Dump time, each night",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_dump_seconds{job=\"pagerarchive\"})", "legendFormat": "both dumps"}],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Check time, each night",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_check_seconds{job=\"pagerarchive\"})", "legendFormat": "restore and compare"}],
+      "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "single"}}
+    }
+  ]
+}

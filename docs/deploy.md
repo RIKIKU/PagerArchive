@@ -263,7 +263,7 @@ scrape_configs:
 
 Alerts for a quiet receiver and for backups, for example: `pagerarchive_client_receiving == 0` and `pagerarchive_backup_failing == 1`.
 
-The backups' state is there too: when the last good one was, and whether they're failing (see [Backups](#backups)).
+The backups' state is there too: when the last good one was, whether they're failing, and the last good night's size and how long its dumps and check took (`pagerarchive_backup_last_good_bytes`, `_dump_seconds`, `_check_seconds`; see [Backups](#backups)).
 
 Since M12, `/metrics` also has requests by route and status with their durations (and, for a scraper that asks for OpenMetrics, exemplars linking them to traces), the database pool, open live-update connections, and the Go runtime's memory and CPU. The names above are unchanged.
 
@@ -321,7 +321,7 @@ A night is four files:
 
 **Each night's dumps are checked.** The `backup-check` container has no network and no passwords. It restores the dumps into a throwaway database of its own and compares every table's row count with the counts taken when the dump was. It needs free disk space for that about the size of your database, for the length of the check, on Docker's disk (the `backup-check` volume).
 
-**If something goes wrong,** admins see it in **Administration**, and on **Administration → Backups**: the last backup failed, or the last good one is more than 36 hours old. `/metrics` has `pagerarchive_backup_last_good_timestamp_seconds` and `pagerarchive_backup_failing`, and the [example monitoring stack](monitoring.md#alerts-and-where-they-go) alerts on it. `docker compose logs backup backup-check` says when each ran and how long it took. To try it now, or after fixing something: `docker compose exec backup pagerarchive-backup now`.
+**If something goes wrong,** admins see it in **Administration**, and on **Administration → Backups**: the last backup failed, or the last good one is more than 36 hours old. `/metrics` has `pagerarchive_backup_last_good_timestamp_seconds` and `pagerarchive_backup_failing`, and the [example monitoring stack](monitoring.md#alerts-and-where-they-go) alerts on it. Its [backups dashboard](monitoring.md#the-dashboards) also graphs each night's size, dump time and check time, so you can see the check grow with the archive. `docker compose logs backup backup-check` says when each ran and how long it took. To try it now, or after fixing something: `docker compose exec backup pagerarchive-backup now`.
 
 **What it costs,** at 10 years of pages (4,562,500, a 2.4 GB database), measured on a fast test disk: about 30 s for the dumps and 4 minutes for the check, at about 290 MB in the folder per night, so about 4 GB for 14 nights. A restore takes about 4 minutes. Memory that can't be given back stays under 250 MB during the check, and the file cache on top is given back when anything needs it. A spinning disk will take longer, by an amount not yet measured.
 

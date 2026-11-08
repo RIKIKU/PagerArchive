@@ -1,0 +1,98 @@
+// What the maintenance workflow (.github/workflows/maintenance.yml) updates,
+// and when (SPEC.md R85-R85c, ADR 0022). Renovate reads this; later rules
+// override earlier ones.
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  // Nothing from presets: every rule is here.
+  extends: [],
+  enabledManagers: ["dockerfile", "docker-compose", "gomod", "npm", "github-actions"],
+  timezone: "Etc/UTC",
+  dependencyDashboard: false,
+  prHourlyLimit: 0,
+  prConcurrentLimit: 0,
+  labels: ["maintenance"],
+  // A pull request that waits is the owner's; one that merges on its own is
+  // only theirs if it fails (assignAutomerge is off), and the "CI failed"
+  // workflow assigns that one (R85c).
+  assignees: ["RIKIKU"],
+  // Commits through GitHub's API, so they're the app's and verified.
+  platformCommit: "enabled",
+  // Every merge to main is a release, and of two automatic pull requests open
+  // at once, the one behind main is rebased and takes the next version.
+  rebaseWhen: "behind-base-branch",
+  // GitHub merges once every required check passes (ADR 0022).
+  platformAutomerge: true,
+  automergeType: "pr",
+  postUpdateOptions: ["gomodTidy"],
+  // R85c: every update raises VERSION as check-versions.sh wants it, run again
+  // on every rebase. allowedCommands in the workflow allows exactly this.
+  postUpgradeTasks: {
+    commands: ["sh scripts/ci/bump-version.sh"],
+    fileFilters: ["VERSION", "compose.yaml"],
+    executionMode: "branch",
+  },
+  npm: {rangeStrategy: "bump"},
+  // R85a: two pull requests, not a third for majors.
+  separateMajorMinor: false,
+  packageRules: [
+    // R85: the base images under our own images, in every FROM, build stages
+    // included, pinned by digest. A new digest or patch, daily, is one pull
+    // request that merges on its own: a patch release.
+    {
+      matchManagers: ["dockerfile"],
+      matchUpdateTypes: ["digest", "pinDigest", "patch"],
+      groupName: "base images",
+      automerge: true,
+    },
+    // R85a: libraries, on the 1st of the month. Every patch in one pull request
+    // that merges on its own; everything larger in another that waits.
+    // Playwright's image in CI goes with the npm package, as their versions
+    // must match (ci.yml checks).
+    {
+      matchManagers: ["gomod", "npm", "github-actions"],
+      matchUpdateTypes: ["patch"],
+      groupName: "libraries patch",
+      schedule: ["* * 1 * *"],
+      automerge: true,
+    },
+    {
+      matchManagers: ["gomod", "npm", "github-actions", "dockerfile"],
+      matchUpdateTypes: ["minor", "major"],
+      groupName: "libraries and base images minor and major",
+      schedule: ["* * 1 * *"],
+      automerge: false,
+    },
+    // R85b: third-party images, the ones a deployment runs (compose.yaml and
+    // the monitoring stack) and the ones CI runs, on Mondays. Each image is its
+    // own pull request, as each can need "Upgrade steps" (R84a). A new minor or
+    // major version waits for the owner.
+    {
+      matchManagers: ["docker-compose", "github-actions"],
+      matchDatasources: ["docker"],
+      matchPackageNames: ["!mcr.microsoft.com/playwright"],
+      groupName: null,
+      schedule: ["* * * * 1"],
+      automerge: false,
+    },
+    // R85b: images named by an exact version, which publish nothing that moves
+    // within a minor version (ADR 0019): their patches merge on their own.
+    {
+      matchManagers: ["docker-compose"],
+      matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus", "axllent/mailpit"],
+      matchUpdateTypes: ["patch"],
+      automerge: true,
+    },
+    // PostGIS's tag is <PostgreSQL major>-<PostGIS minor>: both parts are minor
+    // versions or more, so every update waits.
+    {
+      matchPackageNames: ["postgis/postgis"],
+      versioning: "regex:^(?<major>\\d+)-(?<minor>\\d+)\\.(?<patch>\\d+)$",
+      automerge: false,
+    },
+    // Our own image in compose.yaml is bump-version.sh's.
+    {
+      matchPackageNames: ["ghcr.io/rikiku/pagerarchive", "pagerarchive"],
+      enabled: false,
+    },
+  ],
+}

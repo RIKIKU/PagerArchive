@@ -62,6 +62,8 @@ write_status() {
   "last_good_at": ${s_good_at:-0},
   "last_good_night": "${s_good_night:-}",
   "last_good_bytes": ${s_good_bytes:-0},
+  "last_good_dump_seconds": ${s_good_dump:-0},
+  "last_good_check_seconds": ${s_good_check:-0},
   "nights": ${s_nights:-0},
   "error": "${s_error:-}"
 }
@@ -72,6 +74,7 @@ JSON
 read_status() {
 	s_since=$(field since) s_night=$(field last_night) s_run_at=$(field last_run_at) s_ok=$(field last_run_ok)
 	s_good_at=$(field last_good_at) s_good_night=$(field last_good_night) s_good_bytes=$(field last_good_bytes)
+	s_good_dump=$(field last_good_dump_seconds) s_good_check=$(field last_good_check_seconds)
 	s_nights=$(field nights) s_error=$(field error)
 }
 
@@ -193,11 +196,13 @@ run_backup() {
 	fi
 
 	prune "$_night"
+	# R86d: the three numbers the dashboard shows for each night.
 	s_run_at=$_at s_ok=true s_error="" s_good_at=$_at s_good_night=$_night
+	s_good_dump=$((_dumped - _start)) s_good_check=$(($(date +%s) - _dumped))
 	s_good_bytes=$(cat "$DIR/$_night.pagerarchive.dump" "$DIR/$_night.authentik.dump" | wc -c)
 	s_nights=$(nights | wc -l)
 	write_status
-	say "$_night good: dumps took $((_dumped - _start)) s, the check $(($(date +%s) - _dumped)) s, $s_good_bytes bytes, $s_nights nights kept"
+	say "$_night good: dumps took $s_good_dump s, the check $s_good_check s, $s_good_bytes bytes, $s_nights nights kept"
 }
 
 # locked <command...>: one backup at a time. The lock goes with the process.

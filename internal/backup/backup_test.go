@@ -62,3 +62,30 @@ func TestUnreadableStatusIsAFailure(t *testing.T) {
 		t.Errorf("%+v", got)
 	}
 }
+
+// R86d: the last good backup's size and how long its dumps and check took,
+// for the metrics, as backup.sh writes them.
+func TestLastGoodNumbers(t *testing.T) {
+	now := time.Date(2026, 11, 3, 12, 0, 0, 0, time.UTC)
+	path := filepath.Join(t.TempDir(), "status.json")
+	data := fmt.Sprintf(`{
+  "since": %d,
+  "last_night": "2026-11-03",
+  "last_run_at": %d,
+  "last_run_ok": true,
+  "last_good_at": %d,
+  "last_good_night": "2026-11-03",
+  "last_good_bytes": 52428800,
+  "last_good_dump_seconds": 41,
+  "last_good_check_seconds": 187,
+  "nights": 14,
+  "error": ""
+}`, now.Add(-240*time.Hour).Unix(), now.Add(-8*time.Hour).Unix(), now.Add(-8*time.Hour).Unix())
+	if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got := Read(path, now, now)
+	if got.LastGoodBytes != 52428800 || got.LastGoodDumpSeconds != 41 || got.LastGoodCheckSeconds != 187 {
+		t.Errorf("size %d, dumps %d s, check %d s; want 52428800, 41 s, 187 s", got.LastGoodBytes, got.LastGoodDumpSeconds, got.LastGoodCheckSeconds)
+	}
+}

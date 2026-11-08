@@ -1,6 +1,6 @@
 # Client image: amd64 and arm64 (SPEC.md section 8). Go cross-compiles the
 # binary on the build platform; the runtime stage adds rtl_fm and multimon-ng.
-FROM --platform=$BUILDPLATFORM golang:1.27.2 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27.2@sha256:820153096fda4de6ac1b7194d12e416b7dd8f4e9a33d17e0345b111b945162d8 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -8,7 +8,7 @@ COPY . .
 ARG TARGETOS TARGETARCH
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags "-s -w" -o /out/pagerarchive-client ./cmd/pagerarchive-client
 
-FROM debian:trixie-slim
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 RUN apt-get update \
  && apt-get install -y --no-install-recommends rtl-sdr multimon-ng ca-certificates \
  && rm -rf /var/lib/apt/lists/*

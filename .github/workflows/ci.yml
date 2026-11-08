@@ -48,6 +48,9 @@ jobs:
           fetch-depth: 0
       - name: Compare with main
         run: sh scripts/ci/check-versions.sh origin/main
+      # R85c, ADR 0022: how automatic updates raise VERSION.
+      - name: Automatic updates raise VERSION (bump-version.sh)
+        run: sh scripts/ci/bump-version-checks.sh
 
   test:
     name: Tests, golden tables and acceptance checks
@@ -577,6 +580,30 @@ jobs:
           path: monitoring-results/
           if-no-files-found: ignore
           retention-days: 14
+
+  # The one check main's ruleset requires before a pull request merges (R85c,
+  # ADR 0022), so an automatic update merges only once every check has passed.
+  # "versions" is skipped on main only.
+  checks:
+    name: All checks passed
+    needs: [versions, test, search, import, web, powershell, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every check passed
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+          ON_MAIN: ${{ github.ref == 'refs/heads/main' }}
+        run: |
+          failed=$(echo "$NEEDS" | jq -r --argjson main "$ON_MAIN" 'to_entries[]
+            | select(.value.result != "success") | select(($main and .key == "versions" and .value.result == "skipped") | not)
+            | "\(.key): \(.value.result)"')
+          if [ -n "$failed" ]; then
+            echo "::error::Not every check passed: $(echo $failed)"
+            exit 1
+          fi
+          echo "Every check passed"
 
   # The release (SPEC.md 12.1, ADR 0016): on a push to main whose checks all
   # passed, before anything is published. The plan fails if VERSION isn't

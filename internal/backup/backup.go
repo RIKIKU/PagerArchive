@@ -32,6 +32,8 @@ type file struct {
 	LastGoodAt    int64  `json:"last_good_at"`
 	LastGoodNight string `json:"last_good_night"`
 	LastGoodBytes int64  `json:"last_good_bytes"`
+	DumpSeconds   int64  `json:"last_good_dump_seconds"`
+	CheckSeconds  int64  `json:"last_good_check_seconds"`
 	Nights        int    `json:"nights"`
 	Error         string `json:"error"`
 }
@@ -44,8 +46,11 @@ type Status struct {
 	LastGoodAt    *time.Time `json:"last_good_at"`
 	LastGoodNight string     `json:"last_good_night,omitempty"`
 	LastGoodBytes int64      `json:"last_good_bytes"`
-	Nights        int        `json:"nights"`
-	Error         string     `json:"error,omitempty"`
+	// R86d: how long the last good backup's dumps and check took.
+	LastGoodDumpSeconds  int64  `json:"last_good_dump_seconds"`
+	LastGoodCheckSeconds int64  `json:"last_good_check_seconds"`
+	Nights               int    `json:"nights"`
+	Error                string `json:"error,omitempty"`
 }
 
 // Failing is whether an admin should be told, and an alert fire.
@@ -81,7 +86,8 @@ func Read(path string, now, started time.Time) Status {
 	}
 	s := Status{
 		LastRunAt: at(f.LastRunAt), LastGoodAt: at(f.LastGoodAt), LastGoodNight: f.LastGoodNight,
-		LastGoodBytes: f.LastGoodBytes, Nights: f.Nights, Error: f.Error,
+		LastGoodBytes: f.LastGoodBytes, LastGoodDumpSeconds: f.DumpSeconds, LastGoodCheckSeconds: f.CheckSeconds,
+		Nights: f.Nights, Error: f.Error,
 	}
 	from := f.LastGoodAt
 	if from == 0 {

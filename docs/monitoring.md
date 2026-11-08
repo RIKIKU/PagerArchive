@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, three dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, four dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -108,7 +108,7 @@ You need PagerArchive's folder ([Deploying the server](deploy.md)), with `METRIC
 
    and run `docker compose up -d` there. Keep `default`, or the API loses the database. The alias is what Alloy scrapes (`PA_API_ADDRESS`, default `pagerarchive:8080`): other stacks on a shared network can have a service named `api` too. From now on the stack has to be there before PagerArchive starts, or Compose says `network monitoring declared as external, but could not be found`.
 
-5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the three dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
+5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the four dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
 
 Stop it with `docker compose down` (keeps the data) or `docker compose down -v` (deletes it).
 
@@ -173,7 +173,7 @@ The client sends its traces (each page from decode to the server's answer), its 
 
 ## The dashboards
 
-All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
+All four are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
 
 **A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), integration deliveries and **failed delivery attempts by kind and cause**, and the log lines from pages and requests (click one for its trace).
 
@@ -194,6 +194,8 @@ One page's trace, opened from that table. The client's `buffer` span is long bec
 "Each client's own view" keeps a client that has **stopped reporting**: it shows the last values it sent in the dashboard's time range, and **Last report** says how long ago they came (orange after 5 minutes). Without that, a switched-off client would drop out of the table after 5 minutes, just when you want to see what it said last. A client reading stdin shows *not run by the client* in the radio columns.
 
 ![Clients](monitoring/dashboard-clients.png)
+
+**Backups.** How long since the last good backup (orange after 26 hours, a night missed; red after 36, when **Backup failing** fires), whether the last one failed, and each good night's three numbers: the size of both dumps, how long the dumps took and how long the check took (R86d). The check restores everything, so it grows with the archive, and a check that takes more than 12 hours fails the night: this is where you see that coming. See [Backups](deploy.md#backups).
 
 ## Radio health
 
