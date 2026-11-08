@@ -43,9 +43,11 @@
 		try {
 			await fn();
 			notice = done;
-			load();
 		} catch (e) {
 			error = (e as Error).message;
+		} finally {
+			// A resend whose email failed still changed the link (R43d).
+			load();
 		}
 	}
 </script>

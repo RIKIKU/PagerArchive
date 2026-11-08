@@ -63,6 +63,9 @@ type Directory interface {
 	SetActive(ctx context.Context, subject string, active bool) error
 	// DeleteUser deletes a user. A missing one is fine.
 	DeleteUser(ctx context.Context, subject string) error
+	// DeleteUnfinishedUser deletes the user an enrolment with the app's
+	// invitation appID made and never finished, if there is one (ADR 0021).
+	DeleteUnfinishedUser(ctx context.Context, username string, appID int64) (deleted bool, err error)
 	// UserByUsername finds a user by username.
 	UserByUsername(ctx context.Context, username string) (u DirectoryUser, found bool, err error)
 	// EmailHolders finds who holds an address, matched as the sign-in form
@@ -392,7 +395,24 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 	var cancelled bool
 	var link *string
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
+		// The invitation is locked, as Resend locks it, so a resend either
+		// finishes first (and its link is the one deleted below) or is
+		// refused after this (ADR 0021). Its inviter, and the account it
+		// reactivates, are locked before it, in the order a tree
+		// deactivation locks users before cancelling their invitations, so
+		// neither waits on the other in a circle (ADR 0008 §5).
 		inv, err := q.InvitationByID(ctx, invID)
+		if err == nil {
+			var ids []int64
+			for _, id := range []*int64{inv.InvitedBy, inv.Reactivates} {
+				if id != nil {
+					ids = append(ids, *id)
+				}
+			}
+			if err = q.LockUsers(ctx, ids); err == nil {
+				inv, err = q.LockInvitation(ctx, invID)
+			}
+		}
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (inv.EmailKey == nil || *inv.EmailKey != e.Key)) {
 			return refuse(http.StatusForbidden, "not_invited", "This sign-in doesn't match its invitation.")
 		}
@@ -442,9 +462,8 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 			return dbErr("use invitation", err)
 		}
 		if n != 1 {
-			// It changed since it was read above: a tree deactivation can cancel
-			// it while this sign-in waits on the tree's locks (ADR 0008 §5).
-			// Each statement sees the latest commit, so read it again.
+			// It changed since it was read above. It's locked, so this is only
+			// a guard. Each statement sees the latest commit, so read it again.
 			now, err := q.InvitationByID(ctx, inv.ID)
 			if err != nil {
 				return dbErr("invitation", err)
@@ -756,6 +775,13 @@ func (s *Service) CancelInvitation(ctx context.Context, actor db.User, id int64)
 		return dbErr("cancel invitation", err)
 	}
 	s.deleteDirectoryInvitations(ctx, []*string{authentikID})
+	// An enrolment left unfinished leaves an inactive user behind; it goes
+	// now, or at the next ClearUnfinishedUsers if Authentik doesn't answer.
+	if inv.EmailKey != nil {
+		if _, err := s.clearUnfinishedUser(ctx, inv.ID, *inv.EmailKey); err != nil {
+			s.Log.Warn("couldn't remove a cancelled invitation's unfinished user from Authentik; it's tried again within an hour", "invitation", inv.ID, "error", err.Error())
+		}
+	}
 	return nil
 }
 

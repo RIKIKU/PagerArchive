@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -172,5 +173,204 @@ func TestInvitationLinksChecked(t *testing.T) {
 	}
 	if logs := e.logs.String(); !strings.Contains(logs, "an invitation's link no longer works in Authentik") || strings.Contains(logs, "lost@example.com") {
 		t.Errorf("log: the warning, without the address:\n%s", logs)
+	}
+}
+
+// linkOf is the invitation's current Authentik link, from the app's record.
+func (e *env) linkOf(id int64) string {
+	e.t.Helper()
+	var link string
+	if err := e.st.Pool.QueryRow(e.ctx, `SELECT authentik_id FROM invitations WHERE id = $1`, id).Scan(&link); err != nil {
+		e.t.Fatal(err)
+	}
+	return link
+}
+
+// R43d (owner's review, 2026-11-08): a resend changes the links first and
+// emails last. If the old link can't be deleted, nothing changes and nothing
+// is emailed; if the email can't be sent, the new link stays and works, and
+// the error says so.
+func TestResendEmailsLast(t *testing.T) {
+	e := setup(t)
+	old := e.invite(e.user, "r@example.com")
+	inv := e.invitationTo(e.user, "r@example.com")
+	links, emailed := len(e.dir.invites), len(e.dir.sent)
+
+	e.dir.mu.Lock()
+	e.dir.failDelete = old
+	e.dir.mu.Unlock()
+	if code, p := e.user.call(http.MethodPost, resendPath(inv.ID), nil, nil); code != http.StatusServiceUnavailable {
+		t.Fatalf("old link not deleted: %d %+v", code, p)
+	}
+	e.dir.mu.Lock()
+	e.dir.failDelete = ""
+	e.dir.mu.Unlock()
+	if got := e.linkOf(inv.ID); got != old {
+		t.Errorf("the record changed: %s, was %s", got, old)
+	}
+	if len(e.dir.invites) != links || len(e.dir.sent) != emailed {
+		t.Errorf("the new link was left, or emailed: %d links, %d emailed, was %d and %d", len(e.dir.invites), len(e.dir.sent), links, emailed)
+	}
+
+	e.dir.mu.Lock()
+	e.dir.sendErr = errors.New("smtp is down")
+	e.dir.mu.Unlock()
+	code, p := e.user.call(http.MethodPost, resendPath(inv.ID), nil, nil)
+	e.dir.mu.Lock()
+	e.dir.sendErr = nil
+	e.dir.mu.Unlock()
+	if code != http.StatusServiceUnavailable || p.Code != "not_emailed" || !strings.Contains(p.Error, "has a new link") {
+		t.Fatalf("not emailed: %d %+v", code, p)
+	}
+	link := e.linkOf(inv.ID)
+	if link == old {
+		t.Fatal("the link didn't change")
+	}
+	if _, err := e.dir.enrol(old, ""); err == nil {
+		t.Error("the old link still enrols")
+	}
+	if got := e.invitationTo(e.user, "r@example.com"); got.Status != "pending" || got.ResentAt == nil {
+		t.Errorf("after the resend: %+v", got)
+	}
+	c, err := e.dir.enrol(link, "")
+	if err != nil {
+		t.Fatalf("the new link: %v", err)
+	}
+	if _, err := e.signIn(c); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("old link not deleted: nothing changed or emailed; email failed: %q, the new link enrolled", p.Error)
+}
+
+// R43d, ADR 0021 (owner's review, 2026-11-08): a sign-in and a resend take
+// the invitation's lock. A sign-in waits for a resend under way, then deletes
+// the resend's link, the current one; a resend after joining is refused.
+func TestSignInWaitsForResend(t *testing.T) {
+	e := setup(t)
+	old := e.invite(e.user, "s@example.com")
+	inv := e.invitationTo(e.user, "s@example.com")
+	actor, err := e.st.UserByID(e.ctx, e.user.id)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	entered, release := make(chan struct{}), make(chan struct{})
+	e.dir.onCreate = func() { close(entered); <-release }
+	resent := make(chan error, 1)
+	go func() {
+		_, err := e.acc.Resend(e.ctx, actor, inv.ID)
+		resent <- err
+	}()
+	<-entered // the resend holds the lock, making its new link
+	e.dir.onCreate = nil
+	c, err := e.dir.enrol(old, "") // finished enrolment with the old link just before
+	if err != nil {
+		t.Fatal(err)
+	}
+	signedIn := make(chan error, 1)
+	go func() {
+		_, err := e.signIn(c)
+		signedIn <- err
+	}()
+	select {
+	case err := <-signedIn:
+		t.Fatalf("the sign-in didn't wait for the resend: %v", err)
+	case <-time.After(300 * time.Millisecond):
+	}
+	close(release)
+	if err := <-resent; err != nil {
+		t.Fatalf("resend: %v", err)
+	}
+	if err := <-signedIn; err != nil {
+		t.Fatalf("sign-in: %v", err)
+	}
+	link := e.linkOf(inv.ID)
+	e.dir.mu.Lock()
+	_, live := e.dir.invites[link]
+	e.dir.mu.Unlock()
+	if link == old || live {
+		t.Errorf("the resend's link %s is still live in Authentik (old %s)", link, old)
+	}
+	if code, p := e.user.call(http.MethodPost, resendPath(inv.ID), nil, nil); code != http.StatusConflict || p.Code != "not_pending" {
+		t.Errorf("resend after joining: %d %+v", code, p)
+	}
+
+	// Finished in Authentik, not yet signed in to the app: refused too.
+	link = e.invite(e.user, "t@example.com")
+	if _, err := e.dir.enrol(link, ""); err != nil {
+		t.Fatal(err)
+	}
+	tInv := e.invitationTo(e.user, "t@example.com")
+	if code, p := e.user.call(http.MethodPost, resendPath(tInv.ID), nil, nil); code != http.StatusConflict || p.Code != "already_joined" {
+		t.Errorf("resend after enrolling in Authentik: %d %+v", code, p)
+	}
+}
+
+// ADR 0021 (owner's review, 2026-11-08): the inactive user an unfinished
+// enrolment left goes when its invitation is cancelled (at once), expires
+// or is cancelled with its inviter's tree (within the hour); a waiting one's
+// stays, and the next run with any of its links, resent ones too, finishes
+// with it.
+func TestUnfinishedUsersCleared(t *testing.T) {
+	e := setup(t)
+	users := func(address string) int {
+		e.dir.mu.Lock()
+		defer e.dir.mu.Unlock()
+		n := 0
+		for _, u := range e.dir.users {
+			if u.username == address {
+				n++
+			}
+		}
+		return n
+	}
+	for _, address := range []string{"cancelled@example.com", "expired@example.com", "waiting@example.com", "tree@example.com"} {
+		inviter := e.user
+		if address == "tree@example.com" {
+			inviter = e.admin
+		}
+		link := e.invite(inviter, address)
+		e.dir.start(link)
+	}
+	cancelled := e.invitationTo(e.user, "cancelled@example.com")
+	if code, _ := e.user.call(http.MethodDelete, fmt.Sprintf("/api/v1/invitations/%d", cancelled.ID), nil, nil); code != http.StatusNoContent {
+		t.Fatal("cancel")
+	}
+	if n := users("cancelled@example.com"); n != 0 {
+		t.Errorf("cancelled: %d users left", n)
+	}
+	if _, err := e.st.Pool.Exec(e.ctx, `UPDATE invitations SET expires_at = now() - interval '1 minute' WHERE email = 'expired@example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := e.st.Pool.Exec(e.ctx, `UPDATE invitations SET status = 'cancelled', cancelled_at = now() WHERE email = 'tree@example.com'`); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := e.acc.ClearUnfinishedUsers(e.ctx)
+	if err != nil || removed != 2 {
+		t.Fatalf("cleared: %d, %v", removed, err)
+	}
+	if again, err := e.acc.ClearUnfinishedUsers(e.ctx); err != nil || again != 0 {
+		t.Errorf("cleared again: %d, %v", again, err)
+	}
+	for address, want := range map[string]int{"expired@example.com": 0, "tree@example.com": 0, "waiting@example.com": 1} {
+		if n := users(address); n != want {
+			t.Errorf("%s: %d users, want %d", address, n, want)
+		}
+	}
+
+	// The waiting one is resent; its new link finishes with the same user.
+	w := e.invitationTo(e.user, "waiting@example.com")
+	if code, p := e.user.call(http.MethodPost, resendPath(w.ID), nil, nil); code != http.StatusOK {
+		t.Fatalf("resend: %d %+v", code, p)
+	}
+	c, err := e.dir.enrol(e.linkOf(w.ID), "")
+	if err != nil {
+		t.Fatalf("the resent link: %v", err)
+	}
+	if _, err := e.signIn(c); err != nil {
+		t.Fatal(err)
+	}
+	if n := users("waiting@example.com"); n != 1 {
+		t.Errorf("waiting: %d users after joining", n)
 	}
 }

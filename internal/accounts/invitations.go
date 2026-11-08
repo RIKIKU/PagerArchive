@@ -16,8 +16,13 @@ import (
 // admin, while it's waiting or expired. It gets a new link and a new 7 days,
 // and the old link stops working. It's still the same invitation, from the
 // same inviter, and it follows a new invitation's rules (R41, R43).
+//
+// The links are changed first, holding the invitation's lock (which SignIn
+// takes too), and the email is sent last. If the email can't be sent, the
+// new link stays and the error says so: resending again sends another.
 func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invitation, error) {
 	var inv db.Invitation
+	var address string
 	err := s.Store.InTx(ctx, func(q *db.Queries) error {
 		var err error
 		inv, err = q.LockInvitation(ctx, id)
@@ -37,6 +42,7 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 		if !ok {
 			return refuse(http.StatusConflict, "invalid_email", "That invitation's address can't be used. Cancel it and send a new invitation.")
 		}
+		address = e.Address
 		if !s.allowed(e.Domain) {
 			return refuse(http.StatusUnprocessableEntity, "domain_not_allowed",
 				"Invitations can only be sent to addresses at %s.", strings.Join(s.AllowedDomains, " or "))
@@ -52,6 +58,15 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 			return refuse(http.StatusForbidden, "deactivated",
 				"%s was deactivated, so only an admin can invite them again.", e.Address)
 		}
+		// Enrolment finished in Authentik, which used the link up, and the
+		// account is made at their first sign-in, any moment now.
+		du, found, err := s.Dir.UserByUsername(ctx, e.Key)
+		if err != nil {
+			return s.unavailable("look up user", err)
+		}
+		if found && du.Active {
+			return refuse(http.StatusConflict, "already_joined", "%s has finished joining, so the invitation can't be resent. Their account appears when they first sign in.", e.Address)
+		}
 
 		old := inv.AuthentikID
 		expires := s.now().Add(InvitationLifetime)
@@ -59,8 +74,8 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 		if err != nil {
 			return s.unavailable("create invitation", err)
 		}
-		// From here a failure removes the new link, and the transaction leaves
-		// the invitation as it was.
+		// Until the old link is gone, a failure removes the new one, and the
+		// transaction leaves the invitation as it was.
 		fail := func(err error) error {
 			s.deleteDirectoryInvitations(ctx, []*string{&link})
 			return err
@@ -68,22 +83,24 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 		if err := q.ResendInvitation(ctx, db.ResendInvitationParams{ID: inv.ID, AuthentikID: &link, ExpiresAt: expires}); err != nil {
 			return fail(dbErr("resend invitation", err))
 		}
-		if err := s.Dir.SendInvitation(ctx, link, e.Address); err != nil {
-			return fail(s.unavailable("send invitation", err))
-		}
 		if old != nil {
 			if err := s.Dir.DeleteInvitation(ctx, *old); err != nil {
 				return fail(s.unavailable("replace invitation", err))
 			}
 		}
 		now := s.now()
-		inv.AuthentikID, inv.ExpiresAt, inv.ResentAt, inv.LinkLostAt = &link, expires, &now, nil
+		inv.AuthentikID, inv.ExpiresAt, inv.ResentAt, inv.LinkLostAt, inv.ClearedAt = &link, expires, &now, nil, nil
 		return nil
 	})
 	if err != nil {
 		return db.Invitation{}, err
 	}
 	s.Log.Info("invitation resent", "by", actor.ID, "invitation", inv.ID)
+	if err := s.Dir.SendInvitation(ctx, *inv.AuthentikID, address); err != nil {
+		s.Log.Error("authentik", "op", "send invitation", "invitation", inv.ID, "error", err.Error())
+		return inv, refuse(http.StatusServiceUnavailable, "not_emailed",
+			"The invitation to %s has a new link for 7 days, and the old link no longer works, but the email with the new link couldn't be sent. Resend it again shortly.", address)
+	}
 	return inv, nil
 }
 
@@ -128,14 +145,52 @@ func (s *Service) CheckInvitations(ctx context.Context) (int, error) {
 	return lost, nil
 }
 
-// WatchInvitations runs CheckInvitations on start, beside the API, and then
-// every hour. Authentik may not answer for minutes after a start, so a
-// failed check is tried again after retry, up to tries times, before it
-// waits for the next hour. Its messages never hold an address (R73).
+// ClearUnfinishedUsers removes the inactive Authentik users that unfinished
+// enrolments left for invitations since used, cancelled or expired, so none
+// is left behind (ADR 0021). It returns how many it removed.
+func (s *Service) ClearUnfinishedUsers(ctx context.Context) (int, error) {
+	rows, err := s.Store.InvitationsToClear(ctx)
+	if err != nil {
+		return 0, dbErr("invitations to clear", err)
+	}
+	var removed int
+	for _, r := range rows {
+		deleted, err := s.clearUnfinishedUser(ctx, r.ID, *r.EmailKey)
+		if err != nil {
+			return removed, err
+		}
+		if deleted {
+			removed++
+		}
+	}
+	return removed, nil
+}
+
+// clearUnfinishedUser removes the unfinished user an enrolment with
+// invitation id left, if any, and records that it's done.
+func (s *Service) clearUnfinishedUser(ctx context.Context, id int64, key string) (bool, error) {
+	deleted, err := s.Dir.DeleteUnfinishedUser(ctx, key, id)
+	if err != nil {
+		return false, err
+	}
+	if err := s.Store.MarkInvitationCleared(ctx, id); err != nil {
+		return deleted, dbErr("mark invitation cleared", err)
+	}
+	return deleted, nil
+}
+
+// WatchInvitations runs CheckInvitations and ClearUnfinishedUsers on start,
+// beside the API, and then every hour. Authentik may not answer for minutes
+// after a start, so a failed check is tried again after retry, up to tries
+// times, before it waits for the next hour. Its messages never hold an address (R73).
 func (s *Service) WatchInvitations(ctx context.Context, retry time.Duration, tries int) {
 	for failures := 0; ; {
 		wait := time.Hour
-		if _, err := s.CheckInvitations(ctx); err != nil && ctx.Err() == nil {
+		_, err := s.CheckInvitations(ctx)
+		if err == nil {
+			_, err = s.ClearUnfinishedUsers(ctx)
+		}
+		if err != nil && ctx.Err() == nil {
 			if failures++; failures < tries {
 				wait = retry
 			} else {

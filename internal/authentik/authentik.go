@@ -247,6 +247,36 @@ func (c *Client) UserByUsername(ctx context.Context, username string) (accounts.
 	return accounts.DirectoryUser{Subject: strconv.FormatInt(r.PK, 10), Active: r.IsActive}, true, nil
 }
 
+// DeleteUnfinishedUser deletes the user an enrolment with the app's
+// invitation appID made and never finished: inactive, never signed in, with
+// that invitation (ADR 0021). Any other user with the username is left
+// alone. It reports whether it deleted one.
+func (c *Client) DeleteUnfinishedUser(ctx context.Context, username string, appID int64) (bool, error) {
+	var out struct {
+		Results []struct {
+			PK         int64          `json:"pk"`
+			IsActive   bool           `json:"is_active"`
+			LastLogin  *string        `json:"last_login"`
+			Path       string         `json:"path"`
+			Attributes map[string]any `json:"attributes"`
+		} `json:"results"`
+	}
+	q := url.Values{"username": {username}}
+	if _, err := c.do(ctx, "find user", http.MethodGet, "/api/v3/core/users/?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
+		return false, err
+	}
+	for _, r := range out.Results {
+		if r.IsActive || r.LastLogin != nil || r.Path != "users/pagerarchive" || r.Attributes["pagerarchive_invitation"] != strconv.FormatInt(appID, 10) {
+			continue
+		}
+		if err := c.DeleteUser(ctx, strconv.FormatInt(r.PK, 10)); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
 // EmailHolders finds who holds an address. The identification stages match
 // ignoring case and take the oldest match (R44c), so the search's results are
 // compared the same way. Its results also hold partial matches.

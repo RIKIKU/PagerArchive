@@ -1231,7 +1231,7 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 const createInvitation = `-- name: CreateInvitation :one
 INSERT INTO invitations (email, email_key, invited_by, first_admin, reactivates, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at
+RETURNING id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at, cleared_at
 `
 
 type CreateInvitationParams struct {
@@ -1269,6 +1269,7 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		&i.CancelledAt,
 		&i.ResentAt,
 		&i.LinkLostAt,
+		&i.ClearedAt,
 	)
 	return i, err
 }
@@ -2324,7 +2325,7 @@ func (q *Queries) IntegrationsByOwner(ctx context.Context, ownerID int64) ([]Int
 }
 
 const invitationByID = `-- name: InvitationByID :one
-SELECT id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at FROM invitations WHERE id = $1
+SELECT id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at, cleared_at FROM invitations WHERE id = $1
 `
 
 func (q *Queries) InvitationByID(ctx context.Context, id int64) (Invitation, error) {
@@ -2346,6 +2347,7 @@ func (q *Queries) InvitationByID(ctx context.Context, id int64) (Invitation, err
 		&i.CancelledAt,
 		&i.ResentAt,
 		&i.LinkLostAt,
+		&i.ClearedAt,
 	)
 	return i, err
 }
@@ -2373,6 +2375,40 @@ func (q *Queries) InvitationsToCheck(ctx context.Context) ([]InvitationsToCheckR
 	for rows.Next() {
 		var i InvitationsToCheckRow
 		if err := rows.Scan(&i.ID, &i.EmailKey, &i.AuthentikID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const invitationsToClear = `-- name: InvitationsToClear :many
+SELECT id, email_key FROM invitations
+WHERE cleared_at IS NULL AND email_key IS NOT NULL AND NOT first_admin
+  AND (status <> 'pending' OR expires_at <= now())
+ORDER BY id
+`
+
+type InvitationsToClearRow struct {
+	ID       int64
+	EmailKey *string
+}
+
+// Used, cancelled or expired invitations whose unfinished Authentik user,
+// if an enrolment left one, the app hasn't yet removed (ADR 0021).
+func (q *Queries) InvitationsToClear(ctx context.Context) ([]InvitationsToClearRow, error) {
+	rows, err := q.db.Query(ctx, invitationsToClear)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []InvitationsToClearRow
+	for rows.Next() {
+		var i InvitationsToClearRow
+		if err := rows.Scan(&i.ID, &i.EmailKey); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2942,7 +2978,7 @@ func (q *Queries) LockDedupKey(ctx context.Context, dedupKey []byte) error {
 }
 
 const lockInvitation = `-- name: LockInvitation :one
-SELECT id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at FROM invitations WHERE id = $1 FOR UPDATE
+SELECT id, email, email_key, invited_by, first_admin, reactivates, authentik_id, status, created_at, expires_at, used_by, used_at, cancelled_at, resent_at, link_lost_at, cleared_at FROM invitations WHERE id = $1 FOR UPDATE
 `
 
 func (q *Queries) LockInvitation(ctx context.Context, id int64) (Invitation, error) {
@@ -2964,6 +3000,7 @@ func (q *Queries) LockInvitation(ctx context.Context, id int64) (Invitation, err
 		&i.CancelledAt,
 		&i.ResentAt,
 		&i.LinkLostAt,
+		&i.ClearedAt,
 	)
 	return i, err
 }
@@ -2985,6 +3022,17 @@ UPDATE clients SET clock_ahead_since = COALESCE(clock_ahead_since, now()) WHERE 
 
 func (q *Queries) MarkClockAhead(ctx context.Context, id string) error {
 	_, err := q.db.Exec(ctx, markClockAhead, id)
+	return err
+}
+
+const markInvitationCleared = `-- name: MarkInvitationCleared :exec
+UPDATE invitations SET cleared_at = now()
+WHERE id = $1 AND (status <> 'pending' OR expires_at <= now())
+`
+
+// Only while it still can't be enrolled with: a resend makes it waiting again.
+func (q *Queries) MarkInvitationCleared(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, markInvitationCleared, id)
 	return err
 }
 
@@ -3285,7 +3333,7 @@ func (q *Queries) PauseIntegration(ctx context.Context, arg PauseIntegrationPara
 }
 
 const pendingInvitationTo = `-- name: PendingInvitationTo :one
-SELECT i.id, i.email, i.email_key, i.invited_by, i.first_admin, i.reactivates, i.authentik_id, i.status, i.created_at, i.expires_at, i.used_by, i.used_at, i.cancelled_at, i.resent_at, i.link_lost_at, u.email AS inviter_email, u.name AS inviter_name
+SELECT i.id, i.email, i.email_key, i.invited_by, i.first_admin, i.reactivates, i.authentik_id, i.status, i.created_at, i.expires_at, i.used_by, i.used_at, i.cancelled_at, i.resent_at, i.link_lost_at, i.cleared_at, u.email AS inviter_email, u.name AS inviter_name
 FROM invitations i LEFT JOIN users u ON u.id = i.invited_by
 WHERE i.email_key = $1 AND i.status = 'pending' AND i.expires_at > now()
 LIMIT 1
@@ -3307,6 +3355,7 @@ type PendingInvitationToRow struct {
 	CancelledAt  *time.Time
 	ResentAt     *time.Time
 	LinkLostAt   *time.Time
+	ClearedAt    *time.Time
 	InviterEmail *string
 	InviterName  *string
 }
@@ -3330,6 +3379,7 @@ func (q *Queries) PendingInvitationTo(ctx context.Context, emailKey *string) (Pe
 		&i.CancelledAt,
 		&i.ResentAt,
 		&i.LinkLostAt,
+		&i.ClearedAt,
 		&i.InviterEmail,
 		&i.InviterName,
 	)
@@ -3503,7 +3553,7 @@ func (q *Queries) RequestReparse(ctx context.Context, arg RequestReparseParams) 
 }
 
 const resendInvitation = `-- name: ResendInvitation :exec
-UPDATE invitations SET authentik_id = $2, expires_at = $3, resent_at = now(), link_lost_at = NULL
+UPDATE invitations SET authentik_id = $2, expires_at = $3, resent_at = now(), link_lost_at = NULL, cleared_at = NULL
 WHERE id = $1 AND status = 'pending'
 `
 

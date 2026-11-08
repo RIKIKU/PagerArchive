@@ -108,6 +108,46 @@ func TestRepairInvitation(t *testing.T) {
 	}
 }
 
+// ADR 0021: only the user an unfinished enrolment with this invitation made
+// is deleted; one that signed in, is active, or came from another invitation
+// is left alone.
+func TestDeleteUnfinishedUser(t *testing.T) {
+	var deleted []string
+	users := map[string]string{
+		"half@example.com":      `{"pk":1,"is_active":false,"last_login":null,"path":"users/pagerarchive","attributes":{"pagerarchive_invitation":"7"}}`,
+		"joined@example.com":    `{"pk":2,"is_active":true,"last_login":null,"path":"users/pagerarchive","attributes":{"pagerarchive_invitation":"7"}}`,
+		"off@example.com":       `{"pk":3,"is_active":false,"last_login":"2026-11-01T00:00:00Z","path":"users/pagerarchive","attributes":{"pagerarchive_invitation":"7"}}`,
+		"other@example.com":     `{"pk":4,"is_active":false,"last_login":null,"path":"users/pagerarchive","attributes":{"pagerarchive_invitation":"8"}}`,
+		"elsewhere@example.com": `{"pk":5,"is_active":false,"last_login":null,"path":"users","attributes":{"pagerarchive_invitation":"7"}}`,
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Method == http.MethodDelete {
+			deleted = append(deleted, r.URL.Path)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		u, ok := users[r.URL.Query().Get("username")]
+		if !ok {
+			_, _ = w.Write([]byte(`{"results":[]}`))
+			return
+		}
+		_, _ = w.Write([]byte(`{"results":[` + u + `]}`))
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &Client{URL: u, Token: "tok", HTTP: srv.Client()}
+	for name, want := range map[string]bool{"half@example.com": true, "joined@example.com": false, "off@example.com": false,
+		"other@example.com": false, "elsewhere@example.com": false, "none@example.com": false} {
+		if got, err := c.DeleteUnfinishedUser(context.Background(), name, 7); err != nil || got != want {
+			t.Errorf("%s: deleted %v, error %v", name, got, err)
+		}
+	}
+	if len(deleted) != 1 || deleted[0] != "/api/v3/core/users/1/" {
+		t.Errorf("deleted: %v", deleted)
+	}
+}
+
 // R44c: holders are matched as the sign-in form matches, ignoring case; partial
 // matches don't count; every page is read.
 func TestEmailHolders(t *testing.T) {

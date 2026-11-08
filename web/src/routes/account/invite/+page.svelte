@@ -44,9 +44,11 @@
 		inviteError = inviteDone = '';
 		try {
 			inviteDone = await fn();
-			load();
 		} catch (e) {
 			inviteError = (e as Error).message;
+		} finally {
+			// A resend whose email failed still changed the link (R43d).
+			load();
 		}
 	}
 	const cancel = (inv: Invitation) =>

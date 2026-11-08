@@ -42,11 +42,12 @@
 		try {
 			notice = await what();
 			confirming = undefined;
-			load();
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
 			busy = false;
+			// A resend whose email failed still changed the link (R43d).
+			load();
 		}
 	}
 

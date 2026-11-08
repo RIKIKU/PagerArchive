@@ -134,7 +134,7 @@ entries:
         if carried:
             from datetime import datetime
             last, count = datetime.fromisoformat(carried["at"]), carried["count"]
-            for d in EmailDevice.objects.filter(user=user, confirmed=False):
+            for d in EmailDevice.objects.filter(user=user):
                 ts = d.throttling_failure_timestamp
                 if ts is not None and d.throttling_failure_count and ts - last < WINDOW:
                     last, count = max(last, ts), count + d.throttling_failure_count
@@ -185,6 +185,8 @@ entries:
   # on with that user ("resume") rather than failing on its username. The
   # invitation is used up after the code, by deleting it ("activate"): of two
   # browsers finishing at once, only one deletes it, and the other is refused.
+  # Each run sends a code email, so an invitation sends at most 5 an hour
+  # ("code-emails", R44a).
   - model: authentik_policies_expression.expressionpolicy
     id: enrolment-resume
     identifiers:
@@ -202,18 +204,20 @@ entries:
         fixed = invitation.fixed_data
         app_id = (fixed.get("attributes") or {}).get("pagerarchive_invitation")
         # Only a user an earlier run of this invitation made, and never
-        # finished: inactive, the same app invitation, no confirmed code.
-        user = (User.objects.filter(username=fixed.get("username"), is_active=False, path="users/pagerarchive",
-                                    attributes__pagerarchive_invitation=app_id)
-                .exclude(pk__in=EmailDevice.objects.filter(confirmed=True).values("user")).first())
+        # finished: inactive, never signed in, the same app invitation. An
+        # earlier run may have got as far as an accepted code and then lost
+        # its next request (the invitee lost signal, or a resend or cancel
+        # came first): this run asks for a code again, and finishes.
+        user = User.objects.filter(username=fixed.get("username"), is_active=False, last_login__isnull=True,
+                                   path="users/pagerarchive", attributes__pagerarchive_invitation=app_id).first()
         if user is None or app_id is None:
             return True
-        # The email stage allows one device per user, and a wrong code saved
-        # the earlier run's. Delete it, keeping its wrong codes for the lock
-        # (R44a: restarting doesn't reset the count).
+        # The email stage allows one device per user, and a wrong code (or an
+        # accepted one) saved the earlier run's. Delete it, keeping its wrong
+        # codes for the lock (R44a: restarting doesn't reset the count).
         from datetime import datetime, timedelta
         carried = (user.attributes or {}).get("pagerarchive_code_failures")
-        for d in EmailDevice.objects.filter(user=user, confirmed=False):
+        for d in EmailDevice.objects.filter(user=user):
             ts, n = d.throttling_failure_timestamp, d.throttling_failure_count
             if ts is not None and n:
                 if carried and ts - datetime.fromisoformat(carried["at"]) < timedelta(minutes=15):
@@ -244,6 +248,87 @@ entries:
             return True
         plan.context["pagerarchive_invitation_gone"] = True
         return False
+  - model: authentik_policies_expression.expressionpolicy
+    id: enrolment-code-emails
+    identifiers:
+      name: pagerarchive-enrolment-code-emails
+    attrs:
+      expression: |
+        # R44a (owner, 2026-11-08): an invitation's enrolment sends at most 5
+        # code emails an hour, counted per invitation across runs, restarts,
+        # addresses and resends (each sent one is an event naming the app's
+        # invitation). A run past that is told when to try again, and sends
+        # nothing. Checked on every visit to the code page, before the page
+        # runs: it emails a code on its first visit in each run, and on an
+        # answer that gives an address instead of a code, which is refused
+        # here (the address is the invitation's, R41).
+        import json
+        from datetime import timedelta
+        from django.db import transaction
+        from django.utils.timezone import now
+        from authentik.core.models import User
+        from authentik.events.models import Event
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.stages.authenticator_email.stage import PLAN_CONTEXT_EMAIL_DEVICE
+
+        # Event.new adds "custom_" to the action.
+        LIMIT, WINDOW, ACTION = 5, timedelta(hours=1), "pagerarchive_code_email"
+        plan = request.context["flow_plan"]
+        if plan.context.get("pagerarchive_locked") or plan.context.get("pagerarchive_invitation_gone"):
+            return True  # refused by the policies before this one; nothing is sent
+        http = request.http_request
+        if http is None:
+            return True
+        if http.method == "POST":
+            try:
+                answer = json.loads(http.body or b"{}")
+            except Exception:
+                answer = {}
+            if isinstance(answer, dict) and "email" in answer and "code" not in answer:
+                plan.context["pagerarchive_code_wait"] = True
+                plan.context["deny_message"] = "The code can only go to the address the invitation was sent to."
+                return False
+            return True
+        if PLAN_CONTEXT_EMAIL_DEVICE in plan.context:
+            return True  # this run's code was sent already
+        invitation = plan.context.get("invitation")
+        user = plan.context.get(PLAN_CONTEXT_PENDING_USER)
+        app_id = ((invitation.fixed_data.get("attributes") or {}).get("pagerarchive_invitation")) if invitation else None
+        if app_id is None or user is None or user.pk is None:
+            return True
+        with transaction.atomic():
+            # Two runs at once take turns here: the user row is the lock.
+            User.objects.select_for_update().filter(pk=user.pk).first()
+            t = now()
+            sent = list(Event.objects.filter(action="custom_" + ACTION, context__pagerarchive_invitation=app_id, created__gt=t - WINDOW)
+                        .order_by("created").values_list("created", flat=True))
+            if len(sent) >= LIMIT:
+                at = sent[len(sent) - LIMIT] + WINDOW
+                minutes = max(1, -(-int((at - t).total_seconds()) // 60))
+                plan.context["pagerarchive_code_wait"] = True
+                plan.context["deny_message"] = (
+                    f"This invitation has sent {LIMIT} code emails in the last hour, the most it can. "
+                    f"Try again after {at:%H:%M} UTC, in {minutes} minute{'s' if minutes != 1 else ''}, "
+                    "with the newest invitation email's link.")
+                return False
+            Event.new(ACTION, app="pagerarchive", pagerarchive_invitation=app_id,
+                      message="PagerArchive enrolment code email").save()
+        return True
+  - model: authentik_policies_expression.expressionpolicy
+    id: code-wait
+    identifiers:
+      name: pagerarchive-code-wait
+    attrs:
+      expression: |
+        # Set by pagerarchive-enrolment-code-emails in the same flow when it refused.
+        return bool(request.context["flow_plan"].context.get("pagerarchive_code_wait"))
+  - model: authentik_stages_deny.denystage
+    id: code-wait-deny
+    identifiers:
+      name: pagerarchive-code-wait
+    attrs:
+      # Shown only when the run's own message is missing; it says when.
+      deny_message: This invitation has sent as many code emails as it can for now. Try again in an hour.
   - model: authentik_policies_expression.expressionpolicy
     id: invitation-gone
     identifiers:
@@ -302,10 +387,19 @@ entries:
         # browsers finishing at once only one goes on; the other is refused.
         # An invitation made before ADR 0021 is single-use, and was used up
         # when this run started.
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.stages.authenticator_email.models import EmailDevice
         from authentik.stages.invitation.models import Invitation
 
         plan = request.context["flow_plan"]
         invitation = plan.context.get("invitation")
+        user = plan.context.get(PLAN_CONTEXT_PENDING_USER)
+        # The code must have gone to the invitation's address (R41).
+        if invitation is not None and user is not None and (EmailDevice.objects.filter(user=user, confirmed=True)
+                .exclude(email__iexact=invitation.fixed_data.get("email", "")).exists()):
+            plan.context["pagerarchive_invitation_gone"] = True
+            plan.context["deny_message"] = "The code can only go to the address the invitation was sent to."
+            return False
         if invitation is None or not (invitation.single_use or Invitation.objects.filter(pk=invitation.pk).delete()[0] == 1):
             plan.context["pagerarchive_invitation_gone"] = True
             return False
@@ -379,6 +473,11 @@ entries:
       target: !KeyOf enrolment-code-binding
       policy: !KeyOf enrolment-invitation-live
       order: 1
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding
+      policy: !KeyOf enrolment-code-emails
+      order: 2
   - model: authentik_flows.flowstagebinding
     id: enrolment-code-binding-deny
     identifiers:
@@ -406,6 +505,20 @@ entries:
     identifiers:
       target: !KeyOf enrolment-code-binding-gone
       policy: !KeyOf invitation-gone
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: enrolment-code-binding-wait
+    identifiers:
+      target: !KeyOf enrolment
+      stage: !KeyOf code-wait-deny
+      order: 47
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding-wait
+      policy: !KeyOf code-wait
       order: 0
   - model: authentik_flows.flowstagebinding
     id: enrolment-activate-binding

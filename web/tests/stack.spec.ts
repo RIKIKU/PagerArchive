@@ -3,7 +3,8 @@
 // stack (scripts/stack-e2e.sh): an admin is created, invites a test user,
 // and the test user enrols with a code sent to an allowed test domain,
 // caught by Mailpit. Authentik's own pages are used, as a person would. Then
-// A81 (ADR 0021): link scanners, resending, and two browsers finishing at once.
+// A81 (ADR 0021): link scanners, resending, two browsers finishing at once,
+// and the limit on code emails (R44a).
 import { test, expect, type Browser, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
@@ -256,7 +257,8 @@ async function inviteFrom(page: Page, request: APIRequestContext, address: strin
 	await page.goto('/account/invite');
 	await page.getByLabel('Their email address').fill(address);
 	await page.getByRole('button', { name: 'Send invitation' }).click();
-	await expect(page.getByRole('status').filter({ hasText: `Invitation sent to ${address}` })).toBeVisible();
+	// The API waits on Authentik to make and email the invitation.
+	await expect(page.getByRole('status').filter({ hasText: `Invitation sent to ${address}` })).toBeVisible({ timeout: 30_000 });
 	return linkIn(await mail(request, address, 'invited', since));
 }
 
@@ -313,7 +315,7 @@ type Listed = { id: number; email: string; status: string; expires_at: string };
 
 // Runs after the test above, which made the first admin and the test user.
 test('A81: invitations survive link scanners, and resending (R43a, R43d)', async ({ browser, request, baseURL }) => {
-	test.setTimeout(300_000);
+	test.setTimeout(420_000);
 	const app = new URL(baseURL!).origin;
 	const admin = await signIn(browser, app, OWNER, 'Owner Person');
 
@@ -423,4 +425,47 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	await admin.goto('/admin/users');
 	await expect(rowFor(admin, k), 'one account for k').toHaveCount(1);
 	console.log('A81: two browsers finishing one invitation at once made one account; the other was refused');
+
+	// R44a: an invitation's enrolment sends at most 5 code emails an hour,
+	// across runs, addresses and a resend; a sixth run is told when to try
+	// again and sends nothing.
+	const m = `m@${DOMAIN}`;
+	let mLink = await inviteFrom(aPage, request, m);
+	const run = async (i: number) => {
+		const ctx = await browser.newContext({ extraHTTPHeaders: { 'X-Forwarded-For': `203.0.113.${i}` } });
+		const page = await ctx.newPage();
+		await page.goto(mLink);
+		return { ctx, page };
+	};
+	for (let i = 1; i <= 5; i++) {
+		if (i === 4) {
+			await aPage.goto('/account/invite');
+			const since = new Date(Date.now() - 2000);
+			await aPage.getByRole('button', { name: `Resend: invitation to ${m}` }).click();
+			await expect(aPage.getByRole('status').filter({ hasText: `sent to ${m} again` })).toBeVisible();
+			mLink = linkIn(await mail(request, m, 'invited', since));
+		}
+		// Not looking back: the previous run's email came just before.
+		const since = new Date();
+		const { ctx, page } = await run(i);
+		await toCodePage(page, `Run ${i}`);
+		await mail(request, m, 'code', since);
+		await ctx.close();
+	}
+	const sixthSince = new Date();
+	const { ctx: sixth, page: sixthPage } = await run(6);
+	await expect(sixthPage.locator('input[name="name"]')).toBeVisible({ timeout: 30_000 });
+	await sixthPage.locator('input[name="name"]').fill('Run 6');
+	await sixthPage.locator('input[name="password"]').fill(passwordOf('Run 6'));
+	await sixthPage.locator('input[name="password_repeat"]').fill(passwordOf('Run 6'));
+	await sixthPage.locator('button[type="submit"]').click();
+	const wait = sixthPage.getByText(/sent 5 code emails in the last hour.*Try again after \d\d:\d\d UTC, in \d+ minutes?/);
+	await expect(wait, 'the sixth run is told when to try again').toBeVisible({ timeout: 30_000 });
+	await expect(sixthPage.locator('input[name="code"]')).toHaveCount(0);
+	const told = await wait.textContent();
+	await new Promise((r) => setTimeout(r, 15_000)); // longer than a code email takes
+	const sixthMail = (await (await request.get(`${MAILPIT}/api/v1/search`, { params: { query: `to:"${m}"` } })).json()) as { messages: { Created: string; Subject: string }[] };
+	expect(sixthMail.messages.filter((x) => new Date(x.Created) > sixthSince && x.Subject.includes('code')), 'no code email for the sixth run').toHaveLength(0);
+	await sixth.close();
+	console.log(`A81: five runs of one invitation, a resend among them, sent five code emails; the sixth sent none and said: ${told}`);
 });

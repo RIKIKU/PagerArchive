@@ -541,7 +541,7 @@ SELECT * FROM invitations WHERE id = $1 FOR UPDATE;
 
 -- name: ResendInvitation :exec
 -- R43d: the same invitation, with a new link and a new 7 days.
-UPDATE invitations SET authentik_id = $2, expires_at = $3, resent_at = now(), link_lost_at = NULL
+UPDATE invitations SET authentik_id = $2, expires_at = $3, resent_at = now(), link_lost_at = NULL, cleared_at = NULL
 WHERE id = $1 AND status = 'pending';
 
 -- name: InvitationsToCheck :many
@@ -554,6 +554,19 @@ ORDER BY id;
 -- Only if nothing changed it since it was checked (a resend gives a new link).
 UPDATE invitations SET link_lost_at = now()
 WHERE id = $1 AND authentik_id = $2 AND status = 'pending' AND link_lost_at IS NULL;
+
+-- name: InvitationsToClear :many
+-- Used, cancelled or expired invitations whose unfinished Authentik user,
+-- if an enrolment left one, the app hasn't yet removed (ADR 0021).
+SELECT id, email_key FROM invitations
+WHERE cleared_at IS NULL AND email_key IS NOT NULL AND NOT first_admin
+  AND (status <> 'pending' OR expires_at <= now())
+ORDER BY id;
+
+-- name: MarkInvitationCleared :exec
+-- Only while it still can't be enrolled with: a resend makes it waiting again.
+UPDATE invitations SET cleared_at = now()
+WHERE id = $1 AND (status <> 'pending' OR expires_at <= now());
 
 -- name: PendingInvitationTo :one
 SELECT i.*, u.email AS inviter_email, u.name AS inviter_name

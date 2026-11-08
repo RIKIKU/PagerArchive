@@ -33,11 +33,11 @@ A run that reached the code page has made an inactive user. A new policy, `pager
 - inactive;
 - under `users/pagerarchive`, with the invitation's username;
 - marked with the same app invitation ID;
-- without a confirmed email code.
+- never signed in.
 
-So it never takes over a member's account, a deactivated member (an admin's re-invitation deletes that user first, ADR 0004 §4), or another invitation's user.
+It may have a confirmed email code: a run whose code was accepted but whose next request never arrived (the invitee lost signal, or a resend or cancel came first) never activated it. Its devices are deleted, and the new run asks for a code again, so the next run of any valid link for the invitation finishes (owner's review, 2026-11-08). So it never takes over a member's account, a deactivated member (an admin's re-invitation deletes that user first, ADR 0004 §4), or another invitation's user.
 
-The email stage allows one device per user. If the earlier run saved a device with a wrong code, the policy deletes it, but first carries its wrong codes onto the user (`pagerarchive_code_failures`: count and time). `pagerarchive-not-locked` adds them to the new run's, so restarting the flow doesn't reset R44a's count of 5 in 15 minutes. Activation clears them.
+The email stage allows one device per user. If the earlier run saved a device (with a wrong code, or an accepted one), the policy deletes it, but first carries its wrong codes onto the user (`pagerarchive_code_failures`: count and time). `pagerarchive-not-locked` adds them to the new run's, so restarting the flow doesn't reset R44a's count of 5 in 15 minutes. Activation clears them.
 
 ### 3. Used up once, after the code
 
@@ -45,7 +45,15 @@ The email stage allows one device per user. If the earlier run saved a device wi
 - **After a correct code**, `pagerarchive-enrolment-activate` deletes the invitation with `Invitation.objects.filter(pk=…).delete()` and goes on only if that deleted one row. PostgreSQL lets only one of two concurrent deletes of a row delete it, so one browser activates the user and the other gets the same deny stage. Then, as before, the user is signed in, sent to the app, and the app makes the account at first sign-in (ADR 0004 §4), checking its own record: cancelled, expired or used is still refused.
 - **When the app makes the account**, it also deletes the invitation's current Authentik link, in case a resend replaced the one that was used.
 
+- **Activation also checks the code went to the invitation's address.** The email stage takes an answer with an address instead of a code and emails a code there; `pagerarchive-enrolment-code-emails` refuses such an answer (§3a), and activation refuses a user whose confirmed code went elsewhere.
+
 Two browsers that both reach the code page share the one unfinished user (§2), so whoever finishes keeps their own name and password: activation writes that browser's copy of the user.
+
+### 3a. At most 5 code emails an hour per invitation (R44a)
+
+Each run that reaches the code page emails a code, and runs are unlimited, so a leaked link and a script could use up the deployment's mail quota, and with it everyone's codes and password resets. `pagerarchive-enrolment-code-emails`, bound to the code page beside the other two (mode "all"), runs before the page on every visit. The page emails a code on its first visit in each run; before that visit, the policy counts the invitation's code emails in the last hour. They are Authentik events (`custom_pagerarchive_code_email`) naming the app's invitation ID, so the count holds across runs, restarts, addresses and resends, and survives the unfinished user being removed (§5). Under 5, it records one and the page sends. At 5, a deny stage (`pagerarchive-code-wait`) says when to try again (the time in UTC, and in minutes), and nothing is sent. Two runs at once take turns on the user's row lock, so they can't both take the fifth.
+
+An event is append-only, so nothing a run writes to the user can lose a count. The user's own attributes were rejected for that reason: the user-write stages save the flow's copy of the user, which would overwrite a count another run added.
 
 ### 4. Resending (R43d)
 
@@ -58,12 +66,14 @@ Two browsers that both reach the code page share the one unfinished user (§2), 
 
 Inside one transaction, with the invitation's row locked, it:
 
-1. creates a new Authentik invitation with the same app ID;
-2. sets the row's new link and expiry (now + 7 days) and `resent_at`;
-3. emails the new link;
+1. refuses if enrolment already finished in Authentik (an active user holds the username: the account is made at their first sign-in);
+2. creates a new Authentik invitation with the same app ID;
+3. sets the row's new link and expiry (now + 7 days) and `resent_at`;
 4. deletes the old link.
 
-If any step fails, it removes the new link and the row is unchanged. It's the same invitation and the same inviter, so the list still shows one invitation to that address. An unfinished enrolment from the old link carries on with the new one (§2), since the app ID is the same.
+If any of those fails, it removes the new link and the row is unchanged. After the commit, it emails the new link. If that fails, the new link stays and works, the old one is gone, and the reply says so: resending again sends another (owner's review, 2026-11-08: emailing first could leave the invitee with an email for a link that was then removed).
+
+The app's first sign-in locks the same row (after the inviter's, and any reactivated account's, user rows, in the order a tree deactivation locks users before cancelling invitations). So a resend under way finishes first, and the sign-in deletes its link, the current one; a resend after the sign-in finds the invitation used and is refused. Without the lock, a resend between the sign-in reading the link and deleting it left a live link nobody checked, and emailed someone who had joined. It's the same invitation and the same inviter, so the list still shows one invitation to that address. An unfinished enrolment from the old link carries on with the new one (§2), since the app ID is the same.
 
 ### 5. The app and Authentik agree
 
@@ -74,6 +84,8 @@ On every start (beside the API, retried every 5 s for 10 minutes while Authentik
 - **Missing because enrolment finished in Authentik** (an active user holds the username, and the account is made at first sign-in): it's left alone.
 
 The log line names the invitation's ID only, never the address (R73).
+
+The same start-up and hourly run removes the inactive user an unfinished enrolment left, once its invitation is used, cancelled (alone, with an inviter's tree, or with a deleted account) or expired (`ClearUnfinishedUsers`). It removes only a user that is inactive, has never signed in, is under `users/pagerarchive` and carries that invitation's ID, and records `cleared_at` on the row so each invitation is done once; a resend clears it, since the invitation can be enrolled with again. Cancelling one invitation removes its user at once, and the hourly run is the fallback if Authentik doesn't answer. Before this, such a user was only removed when the address was invited again (owner's review, 2026-11-08).
 
 ### Rejected
 
@@ -87,18 +99,18 @@ The log line names the invitation's ID only, never the address (R73).
 `docker compose pull && docker compose up -d` is enough. The release doesn't need "Upgrade steps".
 
 - `compose.yaml`'s config label for Authentik changes, so `up -d` recreates its containers and the new blueprint applies.
-- Migration 00016 adds `resent_at` and `link_lost_at` to `invitations`.
+- Migration 00016 adds `resent_at`, `link_lost_at` and `cleared_at` to `invitations`.
 - **Waiting invitations whose links still work** are made reusable by the API's check, within seconds of Authentik answering after the upgrade. If one is opened before that, Authentik uses it up at the start, as 0.16 did. The new flow accepts that (`single_use`, already used up), so its enrolment still finishes. Nothing else changes for it: same link, same expiry.
 - **Waiting invitations that Authentik already deleted** (production's two) show as "Link no longer works" after the first check. The inviter, or an admin, resends them. The app doesn't email anyone by itself on an upgrade.
 - **Expired** invitations stay expired, and can now be resent.
-- **An inactive user from a half-finished 0.16 enrolment** carries the same app invitation ID, so a resend or the link carries on with it.
+- **An inactive user from a half-finished 0.16 enrolment** carries the same app invitation ID, so a resend or the link carries on with it. One whose invitation is already used, cancelled or expired is removed by the first run after the upgrade, which looks at every such invitation once.
 
 ## Consequences
 
 - An invitation link works until it's used, cancelled, resent or 7 days old, however often it's opened. The invite page and the email no longer say it "works once".
-- Anyone holding the link can run the flow as far as the code page. Each run that gets there emails a code to the invitee, and leaves an inactive Authentik user, as abandoning an enrolment always did (ADR 0004 §4 removes it when the address is next invited). Only someone who can read the invitee's mail can finish. A real scanner doesn't fill in a password, so it stops on the first page and sends no code.
+- Anyone holding the link can run the flow as far as the code page. Each run that gets there emails a code to the invitee, up to 5 an hour for the invitation (§3a), and runs share one inactive Authentik user, removed once the invitation can no longer be used (§5). Only someone who can read the invitee's mail can finish. A real scanner doesn't fill in a password, so it stops on the first page and sends no code.
 - R44a's lock still holds across restarted enrolments, through the carried count.
-- The enrolment flow has three new policies and one new deny stage. An Authentik upgrade must still re-run `scripts/stack-checks.sh` and `scripts/stack-e2e.sh` (ADR 0004).
+- The enrolment flow has five new policies and two new deny stages. An Authentik upgrade must still re-run `scripts/stack-checks.sh` and `scripts/stack-e2e.sh` (ADR 0004).
 - Migration 00016: fix-search (0.16.2) merged first with 00015, so this branch took the next number.
 
 ## How it's checked
@@ -107,7 +119,9 @@ The log line names the invitation's ID only, never the address (R73).
   - A resends an expired invitation to h: a new link for 7 days, the old one refused, one waiting invitation, and H enrols with A as inviter;
   - the admin resends B's invitation from B's page: B stays its inviter, and B's old link is refused;
   - resending a used invitation is refused;
-  - two browsers finishing one invitation at once make one account.
+  - two browsers finishing one invitation at once make one account;
+  - five runs of one invitation, from five addresses and with a resend among them, send five code emails; a sixth sends none and says when to try again (R44a).
+- **Stack tests against the real Authentik** (`internal/stacktest/m20_test.go`, CI's accounts job): a code accepted whose next request is lost, and the next run of the same link, or of a resent one, enrols; an answer naming another address is refused and nothing is sent there; cancelling removes the unfinished user; a sixth run of one invitation sends no code email and says when to try again.
 - **The same test on main's code**, committed alone first (2740cea, before the rebase onto 0.16.2; CI run 42450944874), failed as production did: the first scan used the invitation up, so the second found no enrolment page.
-- **API-level tests** with the fake Authentik (`internal/acceptance/m20_test.go`): resending, its refusals, and the start-up check's three cases. Also `internal/authentik`'s `TestRepairInvitation`.
+- **API-level tests** with the fake Authentik (`internal/acceptance/m20_test.go`): resending, its refusals, and the start-up check's three cases; a resend whose old link can't be deleted changes and emails nothing, and one whose email fails keeps its working new link and says so; a sign-in waits for a resend under way and deletes its link, and a resend after joining is refused; unfinished users are removed after a cancel, an expiry and a tree's cancel, and kept for a waiting invitation. Also `internal/authentik`'s `TestRepairInvitation` and `TestDeleteUnfinishedUser`.
 - A24, A25, A27 and A48–A50 run unchanged, at the API and on the stack.
