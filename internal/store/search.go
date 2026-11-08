@@ -50,20 +50,54 @@ const searchOrderBy = "ORDER BY m.sent_at DESC, m.id DESC\n"
 // pages may all be old) does a second try read and sort them all. They run in
 // turn, as on a cold disk a try reading the table leaves no room for another.
 //
-// The bounded and second tries find the alias: values' pages by alias_id, looked
-// up first (the names are still matched), and have the memory to combine those
-// with the text index's pages page by page and row by row (32 MB, for this
-// query only). The first try doesn't: knowing the alias, the planner gives up
-// reading in order for a common term too.
+// The alias: values' aliases are looked up first (the names are still
+// matched). The bounded and second tries find their pages by alias_id, and have
+// the memory to combine those with the text index's pages page by page and row
+// by row (32 MB, for this query only). The first try isn't given several:
+// knowing them, the planner gives up reading in order for a common term too.
+// One alias, though, the first try is given (OnlyAliasID), so the planner can
+// read that alias's newest pages in order. Through the join on its name it
+// can't, and for an alias with a few per cent of the pages it read and sorted
+// all of them.
+//
+// Several aliases that hold most of the pages are the other way round. They
+// rule out few pages, so the bounded and second tries aren't given them: the
+// planner may read most of the index on alias_id to combine with the text's
+// pages. But the first try selects them by alias_id alone, looked up in its own
+// snapshot (AliasNamesByID): through the join on their names the planner
+// guesses they hold few pages, as each of 2,005 aliases would, and reads and
+// sorts every one of them (12 s cold for alias:sta, five aliases holding 90%).
+//
+// Terms too short for a trigram (QShort) take the same tries, with the bigram
+// index finding the pages.
 func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
 	if p.AliasNameIds == nil {
 		p.AliasNameIds = []int64{}
 	}
-	if p.QIndex1 == nil && !p.QAnyIndex {
-		return s.searchWith(ctx, p, false, "SET LOCAL jit = off")
+	if p.QShort == nil {
+		p.QShort = []string{}
+	}
+	p, most, err := s.withAliasIDs(ctx, p)
+	if err != nil {
+		return nil, err
+	}
+	first := p
+	switch {
+	case len(p.AliasIds) == 1:
+		first.OnlyAliasID = &p.AliasIds[0]
+	case p.AliasNamesResolved && len(p.AliasNameIds) == 1:
+		first.OnlyAliasID = &p.AliasNameIds[0]
+	}
+	first.AliasNamesResolved, first.AliasNameIds = false, []int64{}
+	first.AliasNamesByID = most && len(p.AliasNameIds) > 1
+	if most {
+		p.AliasNamesResolved, p.AliasNameIds = false, []int64{}
+	}
+	if p.QIndex1 == nil && !p.QAnyIndex && len(p.QShort) == 0 {
+		return s.searchWith(ctx, first, false, "SET LOCAL jit = off")
 	}
 	if !s.SecondTryOnly && !s.BoundedTryOnly {
-		rows, err := s.searchFirstTry(ctx, p, s.firstTry(p))
+		rows, err := s.searchFirstTry(ctx, first, s.firstTry(p))
 		if !searchTimedOut(ctx, err) {
 			return rows, err
 		}
@@ -75,7 +109,7 @@ func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) (
 		}
 	}
 	if !s.SecondTryOnly && !s.BoundedTryOnly {
-		rows, err := s.searchFirstTry(ctx, p, searchFirstTryAgain)
+		rows, err := s.searchFirstTry(ctx, first, searchFirstTryAgain)
 		if !searchTimedOut(ctx, err) {
 			return rows, err
 		}
@@ -106,24 +140,46 @@ func (s *Store) searchFirstTry(ctx context.Context, p db.SearchMessagesParams, l
 	return s.searchWith(ctx, p, false, "SET LOCAL jit = off", "SET LOCAL statement_timeout = "+strconv.FormatInt(limit.Milliseconds(), 10))
 }
 
-// withAliasIDs adds the alias: values' aliases, looked up first. Values that
-// name every alias rule out no alias's pages, so the planner isn't given them:
-// it may read the whole index on alias_id to combine with the text's pages.
-func (s *Store) withAliasIDs(ctx context.Context, p db.SearchMessagesParams) (db.SearchMessagesParams, error) {
-	if len(p.Aliases) > 0 || len(p.AliasLikes) > 0 {
-		ids, err := s.Queries.AliasIDsNamed(ctx, db.AliasIDsNamedParams{Aliases: p.Aliases, AliasLikes: p.AliasLikes})
-		if err != nil {
-			return p, err
-		}
-		var aliases int
-		if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM aliases`).Scan(&aliases); err != nil {
-			return p, err
-		}
-		if len(ids) < aliases {
-			p.AliasNamesResolved, p.AliasNameIds = true, append([]int64{}, ids...)
+// withAliasIDs adds the alias: values' aliases, looked up first, and says
+// whether several hold most of the pages: over half, by the planner's own
+// estimate. For one alias that isn't asked: the first try has it by alias_id
+// anyway.
+func (s *Store) withAliasIDs(ctx context.Context, p db.SearchMessagesParams) (db.SearchMessagesParams, bool, error) {
+	if len(p.Aliases) == 0 && len(p.AliasLikes) == 0 {
+		return p, false, nil
+	}
+	ids, err := s.Queries.AliasIDsNamed(ctx, db.AliasIDsNamedParams{Aliases: p.Aliases, AliasLikes: p.AliasLikes})
+	if err != nil {
+		return p, false, err
+	}
+	p.AliasNamesResolved, p.AliasNameIds = true, append([]int64{}, ids...)
+	if len(ids) < 2 {
+		return p, false, nil
+	}
+	share, err := s.aliasShare(ctx, ids)
+	return p, share > 0.5, err
+}
+
+// aliasShare is the planner's estimate of the share of pages these aliases
+// hold, from its statistics: no page is read.
+func (s *Store) aliasShare(ctx context.Context, ids []int64) (float64, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	var plan []struct {
+		Plan struct {
+			Rows float64 `json:"Plan Rows"`
 		}
 	}
-	return p, nil
+	var all float64
+	err := s.Pool.QueryRow(ctx, `EXPLAIN (FORMAT JSON) SELECT FROM messages WHERE alias_id = ANY($1::bigint[])`, ids).Scan(&plan)
+	if err == nil {
+		err = s.Pool.QueryRow(ctx, `SELECT reltuples FROM pg_class WHERE oid = 'messages'::regclass`).Scan(&all)
+	}
+	if err != nil || len(plan) == 0 || all <= 0 {
+		return 0, err
+	}
+	return plan[0].Plan.Rows / all, nil
 }
 
 // searchBoundedTry lets the index find up to searchBoundedRows pages, unordered.
@@ -131,9 +187,6 @@ func (s *Store) withAliasIDs(ctx context.Context, p db.SearchMessagesParams) (db
 // rows is the answer, in the search's order.
 func (s *Store) searchBoundedTry(ctx context.Context, p db.SearchMessagesParams) (rows []db.SearchMessagesRow, complete bool, err error) {
 	limit := p.MaxRows
-	if p, err = s.withAliasIDs(ctx, p); err != nil {
-		return nil, false, err
-	}
 	p.MaxRows = searchBoundedRows
 	// With no order to keep, the planner would read the table from its start,
 	// expecting to find that many soon: for terms never together, all of it.
@@ -152,10 +205,6 @@ func (s *Store) searchBoundedTry(ctx context.Context, p db.SearchMessagesParams)
 
 // searchSecondTry runs the search with the index, not in order.
 func (s *Store) searchSecondTry(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
-	p, err := s.withAliasIDs(ctx, p)
-	if err != nil {
-		return nil, err
-	}
 	return s.searchWith(ctx, p, false, "SET LOCAL jit = off", "SET LOCAL enable_indexscan = off", "SET LOCAL work_mem = '32MB'")
 }
 
@@ -166,15 +215,28 @@ func (u unordered) Query(ctx context.Context, sql string, args ...any) (pgx.Rows
 	return u.Tx.Query(ctx, strings.Replace(sql, searchOrderBy, "", 1), args...)
 }
 
-// searchWith runs the search in a transaction with these settings.
+// searchWith runs the search in a transaction with these settings. With
+// AliasNamesByID, the alias: values' aliases are looked up in the search's own
+// snapshot, so they are exactly the aliases the names match there.
 func (s *Store) searchWith(ctx context.Context, p db.SearchMessagesParams, noOrder bool, set ...string) (rows []db.SearchMessagesRow, err error) {
-	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+	var opts pgx.TxOptions
+	if p.AliasNamesByID {
+		opts.IsoLevel = pgx.RepeatableRead
+	}
+	err = pgx.BeginTxFunc(ctx, s.Pool, opts, func(tx pgx.Tx) error {
 		for _, stmt := range set {
 			if _, err := tx.Exec(ctx, stmt); err != nil {
 				return err
 			}
 		}
 		q := s.Queries.WithTx(tx)
+		if p.AliasNamesByID {
+			ids, err := q.AliasIDsNamed(ctx, db.AliasIDsNamedParams{Aliases: p.Aliases, AliasLikes: p.AliasLikes})
+			if err != nil {
+				return err
+			}
+			p.AliasNamesResolved, p.AliasNameIds = true, append([]int64{}, ids...)
+		}
 		if noOrder {
 			q = db.New(unordered{tx})
 		}

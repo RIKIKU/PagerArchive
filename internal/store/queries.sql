@@ -207,9 +207,13 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
   -- trigram index on message_search_text() finds the candidates (R33b, ADR
   -- 0017): q_index1 to 4 are up to four of q_all it can serve, one condition
   -- each, and with q_any_index it serves the or: terms. Each term is then
-  -- matched in the text or one extra field, as before.
+  -- matched in the text or one extra field, as before. q_short are terms too
+  -- short for a trigram, which the index on message_search_bigrams() serves
+  -- when there's no other (ADR 0017).
   AND ((cardinality(sqlc.arg(q_all)::text[]) = 0 AND cardinality(sqlc.arg(q_any)::text[]) = 0)
        OR (cardinality(sqlc.arg(q_all)::text[]) > 0
+           AND (cardinality(sqlc.arg(q_short)::text[]) = 0
+                OR message_search_bigrams(m.text, m.extra) @> search_terms_bigrams(sqlc.arg(q_short)::text[]))
            AND (sqlc.narg(q_index1)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index1)::text)
            AND (sqlc.narg(q_index2)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index2)::text)
            AND (sqlc.narg(q_index3)::text IS NULL OR message_search_text(m.text, m.extra) ILIKE sqlc.narg(q_index3)::text)
@@ -223,11 +227,18 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
                        WHERE m.text ILIKE term.p
                           OR EXISTS (SELECT 1 FROM jsonb_each_text(m.extra) e WHERE e.value ILIKE term.p))))
   AND (cardinality(sqlc.arg(capcodes)::text[]) = 0 OR m.capcode = ANY(sqlc.arg(capcodes)::text[]))
-  AND (cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
-  AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))
+  -- alias_names_by_id: the aliases those names match were looked up in this
+  -- query's own snapshot (alias_name_ids), so they stand for the names. Then
+  -- the planner can't start from the aliases the names match, guessing each
+  -- holds few pages, and read every page of all of them (R33b, ADR 0017).
+  AND (sqlc.arg(alias_names_by_id)::bool OR cardinality(sqlc.arg(aliases)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(aliases)::text[]))
+  AND (sqlc.arg(alias_names_by_id)::bool OR cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR a.name ILIKE ANY(sqlc.arg(alias_likes)::text[]))
   -- The aliases those names match, looked up first (AliasIDsNamed; R33b,
   -- ADR 0017), so the planner can find their pages by alias_id.
   AND (NOT sqlc.arg(alias_names_resolved)::bool OR m.alias_id = ANY(sqlc.arg(alias_name_ids)::bigint[]))
+  -- The one alias they name, or the one alias_ids holds, so the planner can
+  -- read its newest pages in order (messages_alias_sent_idx).
+  AND (sqlc.narg(only_alias_id)::bigint IS NULL OR m.alias_id = sqlc.narg(only_alias_id)::bigint)
   AND (cardinality(sqlc.arg(alias_ids)::bigint[]) = 0 OR m.alias_id = ANY(sqlc.arg(alias_ids)::bigint[]))
   AND (cardinality(sqlc.arg(agencies)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agencies)::text[]))
   AND (cardinality(sqlc.arg(agency_likes)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agency_likes)::text[]))

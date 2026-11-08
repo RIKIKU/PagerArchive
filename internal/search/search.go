@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -199,7 +200,13 @@ func likeContains(vs []string) []string {
 // characters jsonb escapes when it writes an extra field (", \ and control
 // characters), so a value holding the term holds it as written there.
 func indexable(s string) bool {
-	return longestRun(s) >= 3 && !strings.ContainsFunc(s, func(r rune) bool { return r == '"' || r == '\\' || r < 0x20 })
+	return longestRun(s) >= 3 && !escapedInJSON(s)
+}
+
+// escapedInJSON reports whether a term holds a character jsonb escapes when
+// it writes an extra field's value: ", \ or a control character.
+func escapedInJSON(s string) bool {
+	return strings.ContainsFunc(s, func(r rune) bool { return r == '"' || r == '\\' || r < 0x20 })
 }
 
 // indexTerms picks up to four of the terms the index can find, as ILIKE
@@ -223,6 +230,24 @@ func indexTerms(all []string) (a, b, c, d *string) {
 		out[i] = &ts[i].pattern
 	}
 	return out[0], out[1], out[2], out[3]
+}
+
+// shortTerms are the terms the bigram index can find (ADR 0017), when the
+// trigram index can find none of them: each two characters or more, and none
+// of the characters jsonb escapes. A map reference typed without quotes is
+// three such terms (A75). With a term the trigram index can find, the search
+// is as it was.
+func shortTerms(all []string) []string {
+	out := []string{}
+	for _, s := range all {
+		if indexable(s) {
+			return []string{}
+		}
+		if utf8.RuneCountInString(s) >= 2 && !escapedInJSON(s) {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // longestRun is the length of a term's longest run of letters and digits.
@@ -308,6 +333,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 	p.QAll = likeContains(terms.All)
 	p.QAny = likeContains(terms.Any)
 	p.QIndex1, p.QIndex2, p.QIndex3, p.QIndex4 = indexTerms(terms.All)
+	p.QShort = shortTerms(terms.All)
 	p.QAnyIndex = len(terms.Any) > 0 && !slices.ContainsFunc(terms.Any, func(s string) bool { return !indexable(s) })
 	for _, name := range f.Category {
 		if name == "Other" {

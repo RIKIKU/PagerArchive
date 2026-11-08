@@ -62,6 +62,62 @@ func TestSearchFieldBoundary(t *testing.T) {
 	}
 }
 
+// R33b (ADR 0017): terms too short for a trigram, which the bigram index
+// finds, list the pages they did before it, whichever try answers: anywhere
+// in the text or one extra field, case ignored (non-ASCII letters too), a
+// typed % or _ as itself, never across two fields.
+func TestSearchShortTerms(t *testing.T) {
+	e := setup(t)
+	for i, text := range []string{
+		"@@EX0000101 HSF1 SMOKE FROM ROOF 1 M 23 B4 @ 12 FICTION ST, MADEUPTON #STN1",
+		"QDB4 THEN 23",
+		"QDMAP 2 3 B 4",
+		"QDCHECK PANEL",
+		"QDPANEL ÉB ÄÖ",
+		"QD50% OFF",
+		"QD4_5 AND 405",
+	} {
+		e.mustPost("a", "0100001", text, e.now.Add(-time.Duration(i)*time.Minute))
+	}
+	if _, err := e.st.Pool.Exec(e.ctx, `UPDATE messages SET extra = '{"grid": "M 23 B4", "unit": "K"}' WHERE text = 'QDCHECK PANEL'`); err != nil {
+		t.Fatal(err)
+	}
+	shown := func(text string) string {
+		var got []string
+		for _, m := range e.list("q=" + url.QueryEscape(text)) {
+			got = append(got, strings.TrimPrefix(m.Text, "QD"))
+		}
+		slices.Sort(got)
+		return strings.Join(got, " | ")
+	}
+	ref := "@@EX0000101 HSF1 SMOKE FROM ROOF 1 M 23 B4 @ 12 FICTION ST, MADEUPTON #STN1"
+	tests := []struct{ text, want string }{
+		{"m 23 b4", ref + " | CHECK PANEL"},            // in the text, or all in one extra field
+		{"b4 23", ref + " | B4 THEN 23 | CHECK PANEL"}, // in any order
+		{"m 23 b4 smoke", ref},                         // with a longer term, as before
+		{"23 b4 zz", ""},                               // one of them nowhere
+		{"b k", ref + " | CHECK PANEL"},                // single letters: no bigram, as before
+		{"4k", ""},                                     // across two extra fields
+		{"lk", ""},                                     // across the text and an extra field
+		{"éb äö", "PANEL ÉB ÄÖ"},                       // case ignored
+		{"0%", "50% OFF"},                              // a typed % as itself
+		{"4_", "4_5 AND 405"},                          // and _
+		{"0_", ""},                                     // not as a wildcard
+	}
+	for _, tt := range tests {
+		for _, mode := range []string{"first", "1 ms first try", "bounded", "second"} {
+			e.st.FirstTry, e.st.BoundedTryOnly, e.st.SecondTryOnly = 0, mode == "bounded", mode == "second"
+			if mode == "1 ms first try" {
+				e.st.FirstTry = time.Millisecond
+			}
+			if got := shown(tt.text); got != tt.want {
+				t.Errorf("%q, %s: %q, want %q", tt.text, mode, got, tt.want)
+			}
+		}
+	}
+	e.st.FirstTry, e.st.BoundedTryOnly, e.st.SecondTryOnly = 0, false, false
+}
+
 // R33b and P1: a value the nightly run redacts is no longer found by search,
 // in the text or an extra field: the search index is derived from them, so
 // it follows the redaction in the same run.

@@ -342,6 +342,8 @@ var a75Searches = []struct{ name, query string }{
 	{`alias:"Station 1", a term never in its pages`, "q=STN2&alias=" + url.QueryEscape("Station 1")},
 	{"the same with alias:sta", "q=STN2&alias=sta"},
 	{`the same with "Station 1" picked`, "q=STN2&alias_like=" + url.QueryEscape("Station 1")},
+	{`a common term with alias:"Station 5", the busy alias`, "q=fire&alias=" + url.QueryEscape("Station 5")},
+	{"a map reference typed without quotes", "q=" + url.QueryEscape("m 23 b4")},
 }
 
 // checkSearches times A75's searches once the import has ended: straight away,
