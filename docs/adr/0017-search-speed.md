@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.16.3): see "A map reference with a page number".
+Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.1): see "A map reference with a page number".
 
 ## Context
 
@@ -605,7 +605,7 @@ Five new in `scripts/mutation-checks.sh`, and three changed to follow the code (
 
 ## A map reference with a page number (fix-search-2, 2026-11-08)
 
-The owner's brief: on production (3.1 million pages), with 0.16.2, every A75 search passed cold and warm except a real map reference typed without quotes. It took 3.35 s cold, 1.1 s on the first warm run and 0.8 s after that. That reference is three words: a letter (in 89% of the pages), a page number of three digits (86,626 pages, about 3%) and a square of two characters (26,468 pages), all three together in about 1 page in 1,000. The fix had to be a patch, 0.16.3: no change to `compose.yaml` or the configuration archive, and the same pages listed.
+The owner's brief: on production (3.1 million pages), with 0.16.2, every A75 search passed cold and warm except a real map reference typed without quotes. It took 3.35 s cold, 1.1 s on the first warm run and 0.8 s after that. That reference is three words: a letter (in 89% of the pages), a page number of three digits (86,626 pages, about 3%) and a square of two characters (26,468 pages), all three together in about 1 page in 1,000. The fix had to be a patch, the next after main (0.17.1, as M20 merged first as 0.17.0): no change to `compose.yaml` or the configuration archive, and the same pages listed.
 
 ### The made-up pages
 
@@ -642,7 +642,7 @@ The tries are as they were. With the bigram statistics the planner expects few p
 
 ### Costs
 
-- **Disk, the migration and the upgrade:** none. No index, function or migration is added, and the database at A75's size is 2,884 MB as before. The upgrade to 0.16.3 on production's 3.1 million pages runs no migration: the API serves as soon as it has started, in seconds. 0.16.2's 14.5 minutes there were 00015 building the bigram index, which this uses as it is.
+- **Disk, the migration and the upgrade:** none. No index, function or migration is added, and the database at A75's size is 2,884 MB as before. This adds no migration. From 0.16.2 the upgrade to 0.17.1 runs only M20's 00016, which adds three columns to `invitations` without rewriting a page: the API serves within seconds of starting. 0.16.2's 14.5 minutes there were 00015 building the bigram index, which this uses as it is.
 - **Importing (A76):** nothing changes for storing pages. CI's A76 job stored 200,000 pages at **1,382 a second** (1,402 while storing).
 - **Memory:** none. The second try reads 5,090 candidates where main's read 109,575.
 - **Each search with a short term** runs `RarestBigrams` first: a few ms cold, under 1 ms warm. `smoke st` took 7 to 8 ms warm in CI against 3 to 4 on main, and `st 12` 7 to 8 against 9 to 10.
@@ -700,8 +700,8 @@ None.
 - A first try of 100 to 250 ms now costs up to about 150 ms more, warm, as it's stopped and run again.
 - CI has one more job, A75's, which seeds 4,562,500 pages, and now restarts its database and drops the runner's page cache before each search.
 - The search query's `ORDER BY` line is matched as text to run it unordered (`searchOrderBy`). If sqlc's output changes, the bounded try would sort every match, and A75's cold check fails, by a mutation above.
-- From 0.16.2 (fix-search): a search for one alias reads that alias's pages newest first in its first try (`messages_alias_sent_idx`). Several aliases holding most of the pages are selected by ID in the first try and aren't given to the bounded and second tries. Terms too short for a trigram are found through `messages_search_bigrams_idx`, when no term has a trigram (from 0.16.3, with or without one: see the next point). A search of only one-character terms still reads every page.
+- From 0.16.2 (fix-search): a search for one alias reads that alias's pages newest first in its first try (`messages_alias_sent_idx`). Several aliases holding most of the pages are selected by ID in the first try and aren't given to the bounded and second tries. Terms too short for a trigram are found through `messages_search_bigrams_idx`, when no term has a trigram (from 0.17.1, with or without one: see the next point). A search of only one-character terms still reads every page.
 - The two indexes add about 511 MB at A75's size (22%), and the upgrade to 0.16.2 builds them before the API serves: about 8 minutes for 4,562,500 pages on a spinning disk.
 - A single-alias search whose term is in none of the alias's pages is about 70 ms slower cold (0.62 to 0.70 s on cld01), and the same warm. The owner accepted it (2026-11-08).
 - A75's seed has 2,005 aliases, and its searches include the busy alias and the map reference. Its seeding builds two GIN indexes, which takes about 7 minutes more.
-- From 0.16.3 (fix-search-2): a search with a term too short for a trigram gives the bigram index the three rarest bigrams of all its terms of two characters or more, by the statistics on the index's expression, and gives the trigram index nothing. No index or migration was added. Such a search runs one more small query first, about 1 ms warm, and a common term with a short one takes about 8 ms warm against 4.
+- From 0.17.1 (fix-search-2): a search with a term too short for a trigram gives the bigram index the three rarest bigrams of all its terms of two characters or more, by the statistics on the index's expression, and gives the trigram index nothing. No index or migration was added. Such a search runs one more small query first, about 1 ms warm, and a common term with a short one takes about 8 ms warm against 4.
