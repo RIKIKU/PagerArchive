@@ -276,11 +276,17 @@ async function toCodePage(page: Page, name: string) {
  * goes without the code. Authentik takes the address from X-Forwarded-For,
  * because the browser reaches it through Docker's bridge, a trusted proxy.
  */
-async function scan(browser: Browser, link: string, from: string) {
+async function scan(browser: Browser, request: APIRequestContext, link: string, address: string, from: string) {
 	const ctx = await browser.newContext({ extraHTTPHeaders: { 'X-Forwarded-For': from } });
 	const page = await ctx.newPage();
+	const since = new Date(Date.now() - 500);
 	await page.goto(link);
 	await toCodePage(page, 'Link Scanner');
+	// Reaching the code page emails the invitee a code. Wait for it, and then
+	// past the 2 s that enrol looks back, so the invitee's own code is the one
+	// enrol finds.
+	await mail(request, address, 'code', since);
+	await new Promise((r) => setTimeout(r, 2500));
 	await ctx.close();
 }
 
@@ -321,8 +327,8 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	// A invites g. A link scanner runs the page twice, from two addresses.
 	const g = `g@${DOMAIN}`;
 	const gLink = await inviteFrom(aPage, request, g);
-	await scan(browser, gLink, '192.0.2.10');
-	await scan(browser, gLink, '198.51.100.20');
+	await scan(browser, request, gLink, g, '192.0.2.10');
+	await scan(browser, request, gLink, g, '198.51.100.20');
 	await aPage.goto('/account/invite');
 	await expect(rowFor(aPage, g), "still waiting in A's list after the scans").toContainText('Waiting');
 	// G opens the same link, enters the emailed code and enrols, A as inviter.

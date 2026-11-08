@@ -331,7 +331,9 @@ type mailMessage struct {
 // whose subject contains subject, and returns its text.
 func (m mailpit) latest(t *testing.T, address, subject string, since time.Time) string {
 	t.Helper()
-	deadline := time.Now().Add(30 * time.Second)
+	// Authentik's worker sends the emails. Just after an upgrade recreates it
+	// (A77), it can take well over 30 s to get to them.
+	deadline := time.Now().Add(90 * time.Second)
 	for time.Now().Before(deadline) {
 		var list struct {
 			Messages []mailMessage `json:"messages"`
