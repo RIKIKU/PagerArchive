@@ -687,6 +687,7 @@ Five new in `scripts/mutation-checks.sh`:
 
 `TestSearchShortTerms` adds a longer term with short ones, in other case, across two extra fields and with a typed `_`. Its results are checked through every try. `TestIndexTerms` checks which terms go to which index.
 
+The run of the search mutations (`PA_MUT_ONLY="^search: "`) on cld01, at f4719ac, finished 2026-11-08 15:09 UTC after 5 h 8 min: **20 of 20 guarded**, the five new ones among them.
 ### Questions for the owner
 
 None.
