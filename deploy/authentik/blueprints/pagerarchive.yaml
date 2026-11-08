@@ -8,8 +8,10 @@
 #
 # Enrolment: invitation (created by the app, with the invitee's email fixed)
 # -> name and password -> user created inactive -> one-time code emailed to
-# the invited address -> user activated -> signed in -> back to the app.
-# Sign-in: email and password. Password reset: emailed code.
+# the invited address -> invitation used up -> user activated -> signed in ->
+# back to the app. Opening the link uses nothing up (R43a, ADR 0021): the
+# app's invitations aren't single-use, and are deleted here once the code is
+# verified. Sign-in: email and password. Password reset: emailed code.
 version: 1
 metadata:
   name: PagerArchive
@@ -126,6 +128,18 @@ entries:
             ts = d.throttling_failure_timestamp
             if d.throttling_failure_count >= LIMIT and ts is not None:
                 locked_until = max(locked_until or ts + WINDOW, ts + WINDOW)
+        # Wrong enrolment codes from an earlier run of the same invitation,
+        # carried over by pagerarchive-enrolment-resume, add to this run's.
+        carried = (user.attributes or {}).get("pagerarchive_code_failures")
+        if carried:
+            from datetime import datetime
+            last, count = datetime.fromisoformat(carried["at"]), carried["count"]
+            for d in EmailDevice.objects.filter(user=user):
+                ts = d.throttling_failure_timestamp
+                if ts is not None and d.throttling_failure_count and ts - last < WINDOW:
+                    last, count = max(last, ts), count + d.throttling_failure_count
+            if count >= LIMIT:
+                locked_until = max(locked_until or last + WINDOW, last + WINDOW)
         if locked_until is not None and locked_until > t:
             request.context["flow_plan"].context["pagerarchive_locked"] = True
             return False
@@ -163,6 +177,173 @@ entries:
       continue_flow_without_invitation: false # R41: invitation required
   # The invitation fixes email, username and the app's invitation id; the
   # invitee only chooses a name and password, so the email can't be changed.
+  #
+  # R43a (ADR 0021): the app's invitations aren't single-use, so running the
+  # page (as a mail provider's link scanner does) uses nothing up, and an
+  # enrolment can be left and started again with the same link. A run that
+  # got as far as the code left an inactive user behind; the next run carries
+  # on with that user ("resume") rather than failing on its username. The
+  # invitation is used up after the code, by deleting it ("activate"): of two
+  # browsers finishing at once, only one deletes it, and the other is refused.
+  # Each run sends a code email, so an invitation sends at most 5 an hour
+  # ("code-emails", R44a).
+  - model: authentik_policies_expression.expressionpolicy
+    id: enrolment-resume
+    identifiers:
+      name: pagerarchive-enrolment-resume
+    attrs:
+      expression: |
+        from authentik.core.models import User
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.stages.authenticator_email.models import EmailDevice
+
+        plan = request.context["flow_plan"]
+        invitation = plan.context.get("invitation")
+        if invitation is None:
+            return True
+        fixed = invitation.fixed_data
+        app_id = (fixed.get("attributes") or {}).get("pagerarchive_invitation")
+        # Only a user an earlier run of this invitation made, and never
+        # finished: inactive, never signed in, the same app invitation. An
+        # earlier run may have got as far as an accepted code and then lost
+        # its next request (the invitee lost signal, or a resend or cancel
+        # came first): this run asks for a code again, and finishes.
+        user = User.objects.filter(username=fixed.get("username"), is_active=False, last_login__isnull=True,
+                                   path="users/pagerarchive", attributes__pagerarchive_invitation=app_id).first()
+        if user is None or app_id is None:
+            return True
+        # The email stage allows one device per user, and a wrong code (or an
+        # accepted one) saved the earlier run's. Delete it, keeping its wrong
+        # codes for the lock (R44a: restarting doesn't reset the count).
+        from datetime import datetime, timedelta
+        carried = (user.attributes or {}).get("pagerarchive_code_failures")
+        for d in EmailDevice.objects.filter(user=user):
+            ts, n = d.throttling_failure_timestamp, d.throttling_failure_count
+            if ts is not None and n:
+                if carried and ts - datetime.fromisoformat(carried["at"]) < timedelta(minutes=15):
+                    carried = {"count": carried["count"] + n, "at": ts.isoformat()}
+                else:
+                    carried = {"count": n, "at": ts.isoformat()}
+            d.delete()
+        if carried:
+            user.attributes["pagerarchive_code_failures"] = carried
+            user.save(update_fields=["attributes"])
+        plan.context[PLAN_CONTEXT_PENDING_USER] = user
+        return True
+  - model: authentik_policies_expression.expressionpolicy
+    id: enrolment-invitation-live
+    identifiers:
+      name: pagerarchive-enrolment-invitation-live
+    attrs:
+      expression: |
+        # Checked on every visit to the code page: the invitation must still
+        # work (not used up by another browser, replaced by a resend (R43d),
+        # cancelled or expired). An invitation made before ADR 0021 is
+        # single-use and was used up when this run started.
+        from authentik.stages.invitation.models import Invitation
+
+        plan = request.context["flow_plan"]
+        invitation = plan.context.get("invitation")
+        if invitation is not None and (invitation.single_use or Invitation.objects.filter(pk=invitation.pk).exists()):
+            return True
+        plan.context["pagerarchive_invitation_gone"] = True
+        return False
+  - model: authentik_policies_expression.expressionpolicy
+    id: enrolment-code-emails
+    identifiers:
+      name: pagerarchive-enrolment-code-emails
+    attrs:
+      expression: |
+        # R44a (owner, 2026-11-08): an invitation's enrolment sends at most 5
+        # code emails an hour, counted per invitation across runs, restarts,
+        # addresses and resends (each sent one is an event naming the app's
+        # invitation). A run past that is told when to try again, and sends
+        # nothing. Checked on every visit to the code page, before the page
+        # runs: it emails a code on its first visit in each run, and on an
+        # answer that gives an address instead of a code, which is refused
+        # here (the address is the invitation's, R41).
+        import json
+        from datetime import timedelta
+        from django.db import transaction
+        from django.utils.timezone import now
+        from authentik.core.models import User
+        from authentik.events.models import Event
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.stages.authenticator_email.stage import PLAN_CONTEXT_EMAIL_DEVICE
+
+        # Event.new adds "custom_" to the action.
+        LIMIT, WINDOW, ACTION = 5, timedelta(hours=1), "pagerarchive_code_email"
+        plan = request.context["flow_plan"]
+        if plan.context.get("pagerarchive_locked") or plan.context.get("pagerarchive_invitation_gone"):
+            return True  # refused by the policies before this one; nothing is sent
+        http = request.http_request
+        if http is None:
+            return True
+        if http.method == "POST":
+            try:
+                answer = json.loads(http.body or b"{}")
+            except Exception:
+                answer = {}
+            if isinstance(answer, dict) and "email" in answer and "code" not in answer:
+                plan.context["pagerarchive_code_wait"] = True
+                plan.context["deny_message"] = "The code can only go to the address the invitation was sent to."
+                return False
+            return True
+        if PLAN_CONTEXT_EMAIL_DEVICE in plan.context:
+            return True  # this run's code was sent already
+        invitation = plan.context.get("invitation")
+        user = plan.context.get(PLAN_CONTEXT_PENDING_USER)
+        app_id = ((invitation.fixed_data.get("attributes") or {}).get("pagerarchive_invitation")) if invitation else None
+        if app_id is None or user is None or user.pk is None:
+            return True
+        with transaction.atomic():
+            # Two runs at once take turns here: the user row is the lock.
+            User.objects.select_for_update().filter(pk=user.pk).first()
+            t = now()
+            sent = list(Event.objects.filter(action="custom_" + ACTION, context__pagerarchive_invitation=app_id, created__gt=t - WINDOW)
+                        .order_by("created").values_list("created", flat=True))
+            if len(sent) >= LIMIT:
+                at = sent[len(sent) - LIMIT] + WINDOW
+                minutes = max(1, -(-int((at - t).total_seconds()) // 60))
+                plan.context["pagerarchive_code_wait"] = True
+                plan.context["deny_message"] = (
+                    f"This invitation has sent {LIMIT} code emails in the last hour, the most it can. "
+                    f"Try again after {at:%H:%M} UTC, in {minutes} minute{'s' if minutes != 1 else ''}, "
+                    "with the newest invitation email's link.")
+                return False
+            Event.new(ACTION, app="pagerarchive", pagerarchive_invitation=app_id,
+                      message="PagerArchive enrolment code email").save()
+        return True
+  - model: authentik_policies_expression.expressionpolicy
+    id: code-wait
+    identifiers:
+      name: pagerarchive-code-wait
+    attrs:
+      expression: |
+        # Set by pagerarchive-enrolment-code-emails in the same flow when it refused.
+        return bool(request.context["flow_plan"].context.get("pagerarchive_code_wait"))
+  - model: authentik_stages_deny.denystage
+    id: code-wait-deny
+    identifiers:
+      name: pagerarchive-code-wait
+    attrs:
+      # Shown only when the run's own message is missing; it says when.
+      deny_message: This invitation has sent as many code emails as it can for now. Try again in an hour.
+  - model: authentik_policies_expression.expressionpolicy
+    id: invitation-gone
+    identifiers:
+      name: pagerarchive-invitation-gone
+    attrs:
+      expression: |
+        # Set in the same flow by pagerarchive-enrolment-invitation-live or
+        # pagerarchive-enrolment-activate when the invitation no longer works.
+        return bool(request.context["flow_plan"].context.get("pagerarchive_invitation_gone"))
+  - model: authentik_stages_deny.denystage
+    id: invitation-gone-deny
+    identifiers:
+      name: pagerarchive-invitation-gone
+    attrs:
+      deny_message: This invitation link no longer works. It was used, cancelled or replaced by a newer invitation email. Use the newest email, or ask whoever invited you.
   - model: authentik_stages_prompt.promptstage
     id: enrolment-details
     identifiers:
@@ -179,7 +360,9 @@ entries:
     identifiers:
       name: pagerarchive-enrolment-create
     attrs:
-      user_creation_mode: always_create
+      # A new user, unless pagerarchive-enrolment-resume found this
+      # invitation's unfinished one.
+      user_creation_mode: create_when_required
       create_users_as_inactive: true # active only after the emailed code
       user_type: internal
       user_path_template: users/pagerarchive
@@ -199,9 +382,30 @@ entries:
       name: pagerarchive-enrolment-activate
     attrs:
       expression: |
-        # Reached only after the emailed code was entered correctly: the next
-        # user write activates the user and changes nothing else.
-        request.context["flow_plan"].context["prompt_data"] = {"is_active": True}
+        # Reached only after the emailed code was entered correctly. The
+        # invitation is used up here (R43a): deleting it is atomic, so of two
+        # browsers finishing at once only one goes on; the other is refused.
+        # An invitation made before ADR 0021 is single-use, and was used up
+        # when this run started.
+        from authentik.flows.planner import PLAN_CONTEXT_PENDING_USER
+        from authentik.stages.authenticator_email.models import EmailDevice
+        from authentik.stages.invitation.models import Invitation
+
+        plan = request.context["flow_plan"]
+        invitation = plan.context.get("invitation")
+        user = plan.context.get(PLAN_CONTEXT_PENDING_USER)
+        # The code must have gone to the invitation's address (R41).
+        if invitation is not None and user is not None and (EmailDevice.objects.filter(user=user, confirmed=True)
+                .exclude(email__iexact=invitation.fixed_data.get("email", "")).exists()):
+            plan.context["pagerarchive_invitation_gone"] = True
+            plan.context["deny_message"] = "The code can only go to the address the invitation was sent to."
+            return False
+        if invitation is None or not (invitation.single_use or Invitation.objects.filter(pk=invitation.pk).delete()[0] == 1):
+            plan.context["pagerarchive_invitation_gone"] = True
+            return False
+        # The next user write activates the user, forgets wrong codes carried
+        # from earlier runs, and changes nothing else.
+        plan.context["prompt_data"] = {"is_active": True, "attributes": {"pagerarchive_code_failures": None}}
         return True
   - model: authentik_stages_user_write.userwritestage
     id: enrolment-activate
@@ -236,10 +440,19 @@ entries:
       stage: !KeyOf enrolment-details
       order: 20
   - model: authentik_flows.flowstagebinding
+    id: enrolment-create-binding
     identifiers:
       target: !KeyOf enrolment
       stage: !KeyOf enrolment-create
       order: 30
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-create-binding
+      policy: !KeyOf enrolment-resume
+      order: 0
   - model: authentik_flows.flowstagebinding
     id: enrolment-code-binding
     identifiers:
@@ -249,11 +462,22 @@ entries:
     attrs:
       evaluate_on_plan: false
       re_evaluate_policies: true # on every request: each attempt is checked
+      policy_engine_mode: all
   - model: authentik_policies.policybinding
     identifiers:
       target: !KeyOf enrolment-code-binding
       policy: !KeyOf not-locked
       order: 0
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding
+      policy: !KeyOf enrolment-invitation-live
+      order: 1
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding
+      policy: !KeyOf enrolment-code-emails
+      order: 2
   - model: authentik_flows.flowstagebinding
     id: enrolment-code-binding-deny
     identifiers:
@@ -269,6 +493,34 @@ entries:
       policy: !KeyOf locked
       order: 0
   - model: authentik_flows.flowstagebinding
+    id: enrolment-code-binding-gone
+    identifiers:
+      target: !KeyOf enrolment
+      stage: !KeyOf invitation-gone-deny
+      order: 46
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding-gone
+      policy: !KeyOf invitation-gone
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: enrolment-code-binding-wait
+    identifiers:
+      target: !KeyOf enrolment
+      stage: !KeyOf code-wait-deny
+      order: 47
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-code-binding-wait
+      policy: !KeyOf code-wait
+      order: 0
+  - model: authentik_flows.flowstagebinding
     id: enrolment-activate-binding
     identifiers:
       target: !KeyOf enrolment
@@ -281,6 +533,20 @@ entries:
     identifiers:
       target: !KeyOf enrolment-activate-binding
       policy: !KeyOf enrolment-activate-policy
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    id: enrolment-activate-binding-gone
+    identifiers:
+      target: !KeyOf enrolment
+      stage: !KeyOf invitation-gone-deny
+      order: 55
+    attrs:
+      evaluate_on_plan: false
+      re_evaluate_policies: true
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !KeyOf enrolment-activate-binding-gone
+      policy: !KeyOf invitation-gone
       order: 0
   - model: authentik_flows.flowstagebinding
     identifiers:

@@ -3,6 +3,7 @@
 	// own in Account (owner, 2026-11-02; ADR 0015).
 	import { api, type Invitation, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import { resendable, resentNotice, statusLabels as labels } from '#lib/invitations.ts';
 
 	let meta: Meta | undefined = $state();
 	let invitations: Invitation[] = $state([]);
@@ -13,12 +14,6 @@
 	let listError = $state('');
 
 	const tz = $derived(meta?.time_zone ?? 'UTC');
-	const labels: Record<Invitation['status'], string> = {
-		pending: 'Waiting',
-		expired: 'Expired',
-		used: 'Joined',
-		cancelled: 'Cancelled'
-	};
 
 	api.meta().then((m) => (meta = m));
 	function load() {
@@ -35,7 +30,7 @@
 		sending = true;
 		try {
 			const inv = await api.invite(email.trim());
-			inviteDone = `Invitation sent to ${inv.email}. It works once and expires in 7 days.`;
+			inviteDone = `Invitation sent to ${inv.email}. It works for 7 days, until they join.`;
 			email = '';
 			load();
 		} catch (e) {
@@ -45,16 +40,27 @@
 		}
 	}
 
-	async function cancel(inv: Invitation) {
+	async function act(fn: () => Promise<string>) {
 		inviteError = inviteDone = '';
 		try {
-			await api.cancelInvitation(inv.id);
-			inviteDone = `Invitation to ${inv.email} cancelled.`;
-			load();
+			inviteDone = await fn();
 		} catch (e) {
 			inviteError = (e as Error).message;
+		} finally {
+			// A resend whose email failed still changed the link (R43d).
+			load();
 		}
 	}
+	const cancel = (inv: Invitation) =>
+		act(async () => {
+			await api.cancelInvitation(inv.id);
+			return `Invitation to ${inv.email} cancelled.`;
+		});
+	const resend = (inv: Invitation) =>
+		act(async () => {
+			await api.resendInvitation(inv.id);
+			return resentNotice(inv);
+		});
 </script>
 
 <svelte:head><title>Invite someone · PagerArchive</title></svelte:head>
@@ -69,7 +75,8 @@
 		</div>
 		<p id="invite-help" class="help">
 			{#if meta?.allowed_email_domains?.length}Addresses at {meta.allowed_email_domains.join(' or ')} only.{/if}
-			They'll get an email with a link that works once, for 7 days, and a code to confirm their address.
+			They'll get an email with a link that works for 7 days, until they join, and a code to confirm their address.
+			You can resend it with a new link if it expires or goes astray.
 		</p>
 	</form>
 	{#if inviteError}<p class="error" role="alert">{inviteError}</p>{/if}
@@ -86,11 +93,16 @@
 				<span class="who">{inv.email}</span>
 				<span class="state {inv.status}">{labels[inv.status]}</span>
 				<span class="when">
-					Sent <time datetime={isoAttr(inv.created_at)}>{dateTime(inv.created_at, tz)}</time>{#if inv.status === 'pending'}, expires
-						<time datetime={isoAttr(inv.expires_at)}>{dateTime(inv.expires_at, tz)}</time>{/if}
+					Sent <time datetime={isoAttr(inv.created_at)}>{dateTime(inv.created_at, tz)}</time>{#if inv.resent_at}, resent
+						<time datetime={isoAttr(inv.resent_at)}>{dateTime(inv.resent_at, tz)}</time>{/if}{#if inv.status === 'pending'}, expires
+						<time datetime={isoAttr(inv.expires_at)}>{dateTime(inv.expires_at, tz)}</time>{/if}{#if inv.status === 'link_lost'}. Its link
+						stopped working before they used it: resend it to send a new one{/if}
 				</span>
-				{#if inv.status === 'pending'}
-					<button class="secondary" type="button" onclick={() => cancel(inv)} aria-label="Cancel: invitation to {inv.email}">Cancel</button>
+				{#if resendable(inv)}
+					<span class="actions">
+						<button class="secondary" type="button" onclick={() => resend(inv)} aria-label="Resend: invitation to {inv.email}">Resend</button>
+						<button class="secondary" type="button" onclick={() => cancel(inv)} aria-label="Cancel: invitation to {inv.email}">Cancel</button>
+					</span>
 				{/if}
 			</li>
 		{/each}
@@ -156,7 +168,9 @@
 		border-radius: var(--radius-pill);
 		padding: 0 var(--space-sm);
 	}
-	.cards button {
+	.actions {
+		display: flex;
+		gap: var(--space-sm);
 		margin-left: auto;
 	}
 </style>

@@ -46,9 +46,13 @@ const (
 
 // Directory is the identity provider: Authentik in production.
 type Directory interface {
-	// CreateInvitation creates a single-use enrolment invitation that only
-	// enrols email (username key) and carries the app's invitation ID.
+	// CreateInvitation creates an enrolment invitation that only enrols email
+	// (username key) and carries the app's invitation ID. Opening its link
+	// uses nothing up; finishing enrolment does (R43a, ADR 0021).
 	CreateInvitation(ctx context.Context, inv DirectoryInvitation) (id string, err error)
+	// RepairInvitation reports whether an invitation still works, making one
+	// created while invitations were single-use reusable.
+	RepairInvitation(ctx context.Context, id string) (found bool, err error)
 	// SendInvitation emails the invitation's link to the address.
 	SendInvitation(ctx context.Context, id, address string) error
 	// DeleteInvitation makes an invitation unusable. A missing one is fine.
@@ -59,8 +63,11 @@ type Directory interface {
 	SetActive(ctx context.Context, subject string, active bool) error
 	// DeleteUser deletes a user. A missing one is fine.
 	DeleteUser(ctx context.Context, subject string) error
-	// UserByUsername finds a user's subject by username.
-	UserByUsername(ctx context.Context, username string) (subject string, found bool, err error)
+	// DeleteUnfinishedUser deletes the user an enrolment with the app's
+	// invitation appID made and never finished, if there is one (ADR 0021).
+	DeleteUnfinishedUser(ctx context.Context, username string, appID int64) (deleted bool, err error)
+	// UserByUsername finds a user by username.
+	UserByUsername(ctx context.Context, username string) (u DirectoryUser, found bool, err error)
 	// EmailHolders finds who holds an address, matched as the sign-in form
 	// matches it, ignoring case.
 	EmailHolders(ctx context.Context, address string) (EmailHolders, error)
@@ -70,6 +77,12 @@ type Directory interface {
 type EmailHolders struct {
 	Count         int
 	Administrator bool // one of them is an Authentik administrator (akadmin)
+}
+
+// DirectoryUser is a user in the identity provider.
+type DirectoryUser struct {
+	Subject string
+	Active  bool
 }
 
 // DirectoryInvitation is what the identity provider needs to know.
@@ -232,13 +245,14 @@ func (s *Service) createInDirectory(ctx context.Context, q *db.Queries, inv *db.
 // was entered, or (for an admin's re-invitation) the deactivated user's old
 // Authentik user, which the new enrolment replaces (owner, 2026-10-13).
 func (s *Service) clearStaleDirectoryUser(ctx context.Context, q *db.Queries, key string, reactivates *int64) error {
-	sub, found, err := s.Dir.UserByUsername(ctx, key)
+	du, found, err := s.Dir.UserByUsername(ctx, key)
 	if err != nil {
 		return s.unavailable("look up user", err)
 	}
 	if !found {
 		return nil
 	}
+	sub := du.Subject
 	owner, err := q.UserBySubject(ctx, &sub)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
@@ -379,8 +393,26 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 		return db.User{}, refuse(http.StatusForbidden, "not_invited", "This sign-in has no usable email address.")
 	}
 	var cancelled bool
+	var link *string
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
+		// The invitation is locked, as Resend locks it, so a resend either
+		// finishes first (and its link is the one deleted below) or is
+		// refused after this (ADR 0021). Its inviter, and the account it
+		// reactivates, are locked before it, in the order a tree
+		// deactivation locks users before cancelling their invitations, so
+		// neither waits on the other in a circle (ADR 0008 §5).
 		inv, err := q.InvitationByID(ctx, invID)
+		if err == nil {
+			var ids []int64
+			for _, id := range []*int64{inv.InvitedBy, inv.Reactivates} {
+				if id != nil {
+					ids = append(ids, *id)
+				}
+			}
+			if err = q.LockUsers(ctx, ids); err == nil {
+				inv, err = q.LockInvitation(ctx, invID)
+			}
+		}
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (inv.EmailKey == nil || *inv.EmailKey != e.Key)) {
 			return refuse(http.StatusForbidden, "not_invited", "This sign-in doesn't match its invitation.")
 		}
@@ -430,9 +462,8 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 			return dbErr("use invitation", err)
 		}
 		if n != 1 {
-			// It changed since it was read above: a tree deactivation can cancel
-			// it while this sign-in waits on the tree's locks (ADR 0008 §5).
-			// Each statement sees the latest commit, so read it again.
+			// It changed since it was read above. It's locked, so this is only
+			// a guard. Each statement sees the latest commit, so read it again.
 			now, err := q.InvitationByID(ctx, inv.ID)
 			if err != nil {
 				return dbErr("invitation", err)
@@ -443,6 +474,7 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 			}
 			return refuse(http.StatusConflict, "invitation_used", "That invitation has already been used.")
 		}
+		link = inv.AuthentikID
 		return nil
 	})
 	if cancelled {
@@ -456,6 +488,9 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 		return db.User{}, err
 	}
 	s.Log.Info("account created", "user", u.ID, "role", u.Role, "invited_by", u.InvitedBy)
+	// The enrolment flow deleted the link it used; this one is gone too if a
+	// resend replaced it meanwhile (ADR 0021).
+	s.deleteDirectoryInvitations(ctx, []*string{link})
 	return u, nil
 }
 
@@ -740,6 +775,13 @@ func (s *Service) CancelInvitation(ctx context.Context, actor db.User, id int64)
 		return dbErr("cancel invitation", err)
 	}
 	s.deleteDirectoryInvitations(ctx, []*string{authentikID})
+	// An enrolment left unfinished leaves an inactive user behind; it goes
+	// now, or at the next ClearUnfinishedUsers if Authentik doesn't answer.
+	if inv.EmailKey != nil {
+		if _, err := s.clearUnfinishedUser(ctx, inv.ID, *inv.EmailKey); err != nil {
+			s.Log.Warn("couldn't remove a cancelled invitation's unfinished user from Authentik; it's tried again within an hour", "invitation", inv.ID, "error", err.Error())
+		}
+	}
 	return nil
 }
 

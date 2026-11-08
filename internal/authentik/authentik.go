@@ -110,7 +110,8 @@ func (c *Client) do(ctx context.Context, op, method, path string, body, out any,
 	defer resp.Body.Close()
 	for _, s := range okStatus {
 		if resp.StatusCode == s {
-			if out != nil && resp.StatusCode != http.StatusNoContent {
+			// Only a success has a body to decode: an accepted 404 means "gone".
+			if out != nil && resp.StatusCode != http.StatusNoContent && resp.StatusCode < 300 {
 				if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
 					return resp.StatusCode, fmt.Errorf("%s: decode: %w", op, err)
 				}
@@ -143,8 +144,10 @@ func (c *Client) enrolmentFlowPK(ctx context.Context) (string, error) {
 	return c.flowPK, nil
 }
 
-// CreateInvitation creates a single-use invitation whose fixed data sets the
-// email and username and records the app's invitation ID on the user.
+// CreateInvitation creates an invitation whose fixed data sets the email and
+// username and records the app's invitation ID on the user. It isn't
+// single-use: opening the link uses nothing up, and the enrolment flow
+// deletes it once the emailed code is verified (R43a, ADR 0021).
 func (c *Client) CreateInvitation(ctx context.Context, inv accounts.DirectoryInvitation) (string, error) {
 	flow, err := c.enrolmentFlowPK(ctx)
 	if err != nil {
@@ -153,7 +156,7 @@ func (c *Client) CreateInvitation(ctx context.Context, inv accounts.DirectoryInv
 	body := map[string]any{
 		"name":       fmt.Sprintf("pagerarchive-%d", inv.AppID),
 		"expires":    inv.Expires.UTC().Format(time.RFC3339),
-		"single_use": true,
+		"single_use": false,
 		"flow":       flow,
 		"fixed_data": map[string]any{
 			"email":      inv.Address,
@@ -184,6 +187,26 @@ func (c *Client) DeleteInvitation(ctx context.Context, id string) error {
 	return err
 }
 
+// RepairInvitation reports whether an invitation still works, and makes one
+// created before ADR 0021 (single-use, so opening it used it up) reusable.
+// An expired invitation isn't found.
+func (c *Client) RepairInvitation(ctx context.Context, id string) (bool, error) {
+	path := "/api/v3/stages/invitation/invitations/" + url.PathEscape(id) + "/"
+	var out struct {
+		SingleUse bool `json:"single_use"`
+	}
+	status, err := c.do(ctx, "read invitation", http.MethodGet, path, nil, &out, http.StatusOK, http.StatusNotFound)
+	if err != nil || status == http.StatusNotFound {
+		return false, err
+	}
+	if out.SingleUse {
+		if _, err := c.do(ctx, "make invitation reusable", http.MethodPatch, path, map[string]any{"single_use": false}, nil, http.StatusOK); err != nil {
+			return true, err
+		}
+	}
+	return true, nil
+}
+
 // EnrolmentURL is the browser link that starts enrolment with an invitation.
 func (c *Client) EnrolmentURL(id string) string {
 	return c.URL.JoinPath("/if/flow/", EnrolmentFlow, "/").String() + "?itoken=" + url.QueryEscape(id)
@@ -204,21 +227,54 @@ func (c *Client) DeleteUser(ctx context.Context, subject string) error {
 	return err
 }
 
-// UserByUsername finds a user's ID (the OIDC subject) by username.
-func (c *Client) UserByUsername(ctx context.Context, username string) (string, bool, error) {
+// UserByUsername finds a user by username: their ID (the OIDC subject) and
+// whether they're active.
+func (c *Client) UserByUsername(ctx context.Context, username string) (accounts.DirectoryUser, bool, error) {
 	var out struct {
 		Results []struct {
-			PK int64 `json:"pk"`
+			PK       int64 `json:"pk"`
+			IsActive bool  `json:"is_active"`
 		} `json:"results"`
 	}
 	q := url.Values{"username": {username}}
 	if _, err := c.do(ctx, "find user", http.MethodGet, "/api/v3/core/users/?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
-		return "", false, err
+		return accounts.DirectoryUser{}, false, err
 	}
 	if len(out.Results) == 0 {
-		return "", false, nil
+		return accounts.DirectoryUser{}, false, nil
 	}
-	return strconv.FormatInt(out.Results[0].PK, 10), true, nil
+	r := out.Results[0]
+	return accounts.DirectoryUser{Subject: strconv.FormatInt(r.PK, 10), Active: r.IsActive}, true, nil
+}
+
+// DeleteUnfinishedUser deletes the user an enrolment with the app's
+// invitation appID made and never finished: inactive, never signed in, with
+// that invitation (ADR 0021). Any other user with the username is left
+// alone. It reports whether it deleted one.
+func (c *Client) DeleteUnfinishedUser(ctx context.Context, username string, appID int64) (bool, error) {
+	var out struct {
+		Results []struct {
+			PK         int64          `json:"pk"`
+			IsActive   bool           `json:"is_active"`
+			LastLogin  *string        `json:"last_login"`
+			Path       string         `json:"path"`
+			Attributes map[string]any `json:"attributes"`
+		} `json:"results"`
+	}
+	q := url.Values{"username": {username}}
+	if _, err := c.do(ctx, "find user", http.MethodGet, "/api/v3/core/users/?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
+		return false, err
+	}
+	for _, r := range out.Results {
+		if r.IsActive || r.LastLogin != nil || r.Path != "users/pagerarchive" || r.Attributes["pagerarchive_invitation"] != strconv.FormatInt(appID, 10) {
+			continue
+		}
+		if err := c.DeleteUser(ctx, strconv.FormatInt(r.PK, 10)); err != nil {
+			return false, err
+		}
+		return true, nil
+	}
+	return false, nil
 }
 
 // EmailHolders finds who holds an address. The identification stages match

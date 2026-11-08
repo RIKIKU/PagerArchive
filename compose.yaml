@@ -28,7 +28,7 @@ x-authentik: &authentik
   # so a release's new files take effect (R84a, ADR 0019). A test checks it
   # and prints the right value.
   labels:
-    pagerarchive.config: "03ce4ad13583afe2"
+    pagerarchive.config: "c7ec6a6cd10e38d3"
   environment:
     AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in .env}
     AUTHENTIK_POSTGRESQL__HOST: db
@@ -111,7 +111,7 @@ services:
   api:
     # This minor version's image. `docker compose pull` gets its patch releases;
     # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
-    image: ghcr.io/rikiku/pagerarchive:0.16
+    image: ghcr.io/rikiku/pagerarchive:0.17
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable

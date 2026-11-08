@@ -297,8 +297,11 @@ export interface Me {
 export interface Invitation {
 	id: number;
 	email: string;
-	status: 'pending' | 'expired' | 'used' | 'cancelled';
+	// link_lost: Authentik no longer has its link, though nobody used or
+	// cancelled it (ADR 0021). Pending, expired and link_lost can be resent.
+	status: 'pending' | 'expired' | 'link_lost' | 'used' | 'cancelled';
 	created_at: string;
+	resent_at: string | null;
 	expires_at: string;
 	used_at: string | null;
 	invited_by: string;
@@ -629,8 +632,11 @@ export const api = {
 	invitations: () => get<Invitation[]>('/api/v1/invitations'),
 	invite: (email: string) => request<Invitation>('POST', '/api/v1/invitations', { email }),
 	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),
+	/** R43d: a new link and a new 7 days; the old link stops working. */
+	resendInvitation: (id: number) => request<Invitation>('POST', `/api/v1/invitations/${id}/resend`, {}),
 	users: () => get<UserRow[]>('/api/v1/admin/users'),
 	allInvitations: () => get<Invitation[]>('/api/v1/admin/invitations'),
+	userInvitations: (id: number | string) => get<Invitation[]>(`/api/v1/admin/users/${encodeURIComponent(id)}/invitations`),
 	deactivate: (id: number) => request<{ deactivated: number }>('POST', `/api/v1/admin/users/${id}/deactivate`, {}),
 	deactivationPreview: (id: number | string) =>
 		get<DeactivationPreview>(`/api/v1/admin/users/${encodeURIComponent(id)}/deactivation-preview`),

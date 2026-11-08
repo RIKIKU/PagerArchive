@@ -2,8 +2,10 @@
 // SPEC.md section 11, step 2, in a real browser against the full compose
 // stack (scripts/stack-e2e.sh): an admin is created, invites a test user,
 // and the test user enrols with a code sent to an allowed test domain,
-// caught by Mailpit. Authentik's own pages are used, as a person would.
-import { test, expect, type Page, type APIRequestContext } from '@playwright/test';
+// caught by Mailpit. Authentik's own pages are used, as a person would. Then
+// A81 (ADR 0021): link scanners, resending, two browsers finishing at once,
+// and the limit on code emails (R44a).
+import { test, expect, type Browser, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
 import { join } from 'node:path';
@@ -220,4 +222,250 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	}
 	expect([...origins], 'origins the page requested').toEqual([app]);
 	console.log(`A57: icon ${src} shown beside Station 1 in light and dark mode; 3 files refused; origins requested: ${[...origins].join(' ')}`);
+});
+
+/**
+ * The browser is signed in, on the app's message list. It checks the page,
+ * not a load event: one after the redirect from Authentik can be missed.
+ */
+async function inApp(page: Page, app: string) {
+	await expect.poll(() => { const u = new URL(page.url()); return u.origin + u.pathname; }, { timeout: 30_000 }).toBe(`${app}/`);
+	await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible({ timeout: 30_000 });
+}
+
+/** Signs in on Authentik's pages, from the app's address, in a fresh browser. */
+async function signIn(browser: Browser, app: string, email: string, name: string): Promise<Page> {
+	const page = await (await browser.newContext()).newPage();
+	await page.goto('/');
+	await page.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+	await answer(page, 'uidField', email);
+	await answer(page, 'password', passwordOf(name));
+	await inApp(page, app);
+	return page;
+}
+
+/** The invitation link in an email. */
+function linkIn(text: string): string {
+	const link = /https?:\/\/\S+itoken=[0-9a-f-]+/.exec(text)?.[0];
+	expect(link, 'invitation link in the email').toBeTruthy();
+	return link!;
+}
+
+/** Sends an invitation from the invite page and returns the emailed link. */
+async function inviteFrom(page: Page, request: APIRequestContext, address: string): Promise<string> {
+	const since = new Date(Date.now() - 2000);
+	await page.goto('/account/invite');
+	await page.getByLabel('Their email address').fill(address);
+	await page.getByRole('button', { name: 'Send invitation' }).click();
+	// The API waits on Authentik to make and email the invitation.
+	await expect(page.getByRole('status').filter({ hasText: `Invitation sent to ${address}` })).toBeVisible({ timeout: 30_000 });
+	return linkIn(await mail(request, address, 'invited', since));
+}
+
+/** Fills in the enrolment page's name and password, and waits for the code page. */
+async function toCodePage(page: Page, name: string) {
+	await expect(page.locator('input[name="name"]')).toBeVisible({ timeout: 30_000 });
+	await page.locator('input[name="name"]').fill(name);
+	await page.locator('input[name="password"]').fill(passwordOf(name));
+	await page.locator('input[name="password_repeat"]').fill(passwordOf(name));
+	await page.locator('button[type="submit"]').click();
+	await expect(page.locator('input[name="code"]')).toBeVisible({ timeout: 30_000 });
+}
+
+/**
+ * A mail provider's link scanner: a headless browser with no cookies, from
+ * its own address, opens the link and runs the enrolment page as far as it
+ * goes without the code. Authentik takes the address from X-Forwarded-For,
+ * because the browser reaches it through Docker's bridge, a trusted proxy.
+ */
+async function scan(browser: Browser, request: APIRequestContext, link: string, address: string, from: string) {
+	const ctx = await browser.newContext({ extraHTTPHeaders: { 'X-Forwarded-For': from } });
+	const page = await ctx.newPage();
+	const since = new Date(Date.now() - 500);
+	await page.goto(link);
+	await toCodePage(page, 'Link Scanner');
+	// Reaching the code page emails the invitee a code. Wait for it, and then
+	// past the 2 s that enrol looks back, so the invitee's own code is the one
+	// enrol finds.
+	await mail(request, address, 'code', since);
+	await new Promise((r) => setTimeout(r, 2500));
+	await ctx.close();
+}
+
+/** A replaced or used link is refused: Authentik doesn't offer enrolment. */
+async function refused(browser: Browser, link: string, what: string) {
+	const ctx = await browser.newContext();
+	const page = await ctx.newPage();
+	await page.goto(link);
+	await expect(page.getByText(/invalid invite|not found/i).first(), what).toBeVisible({ timeout: 30_000 });
+	await expect(page.locator('input[name="name"]'), what).toHaveCount(0);
+	await ctx.close();
+}
+
+/** Runs SQL in the stack's database: the app's (postgres) or Authentik's. */
+function sql(database: string, statement: string) {
+	execFileSync('docker', ['compose', '-f', '../compose.yaml', '-f', '../deploy/test/compose.yaml', 'exec', '-T', 'db',
+		'psql', '-q', '-v', 'ON_ERROR_STOP=1', '-U', 'postgres', '-d', database, '-c', statement]);
+}
+
+/** The row for address in a list of invitations or users. */
+const rowFor = (page: Page, address: string) => page.locator('li').filter({ hasText: address });
+
+type Listed = { id: number; email: string; status: string; expires_at: string };
+
+// Runs after the test above, which made the first admin and the test user.
+test('A81: invitations survive link scanners, and resending (R43a, R43d)', async ({ browser, request, baseURL }) => {
+	test.setTimeout(420_000);
+	const app = new URL(baseURL!).origin;
+	const admin = await signIn(browser, app, OWNER, 'Owner Person');
+
+	// User A.
+	const a = `a81-a@${DOMAIN}`;
+	const aPage = await (await browser.newContext()).newPage();
+	await aPage.goto(await inviteFrom(admin, request, a));
+	await enrol(aPage, request, a, 'Inviter A');
+	await inApp(aPage, app);
+
+	// A invites g. A link scanner runs the page twice, from two addresses.
+	const g = `g@${DOMAIN}`;
+	const gLink = await inviteFrom(aPage, request, g);
+	await scan(browser, request, gLink, g, '192.0.2.10');
+	await scan(browser, request, gLink, g, '198.51.100.20');
+	await aPage.goto('/account/invite');
+	await expect(rowFor(aPage, g), "still waiting in A's list after the scans").toContainText('Waiting');
+	// G opens the same link, enters the emailed code and enrols, A as inviter.
+	const gPage = await (await browser.newContext()).newPage();
+	await gPage.goto(gLink);
+	await enrol(gPage, request, g, 'Person G');
+	await inApp(gPage, app);
+	await gPage.goto('/account/profile');
+	await expect(gPage.locator('dl')).toContainText(`Inviter A (${a})`);
+	await aPage.goto('/account/invite');
+	await expect(rowFor(aPage, g)).toContainText('Joined');
+	await refused(browser, gLink, 'a used link');
+	console.log('A81: two scans from two addresses left the invitation waiting; G enrolled with the same link, A recorded as inviter; the used link is refused');
+
+	// A's invitation to h expires (in the app and in Authentik); A resends it.
+	const h = `h@${DOMAIN}`;
+	const hOld = await inviteFrom(aPage, request, h);
+	sql('postgres', `UPDATE invitations SET expires_at = now() - interval '1 minute' WHERE email = '${h}'`);
+	sql('authentik', `UPDATE authentik_stages_invitation_invitation SET expires = now() - interval '1 minute' WHERE fixed_data->>'email' = '${h}'`);
+	await aPage.goto('/account/invite');
+	await expect(rowFor(aPage, h)).toContainText('Expired');
+	const resent = new Date(Date.now() - 2000);
+	await aPage.getByRole('button', { name: `Resend: invitation to ${h}` }).click();
+	await expect(aPage.getByRole('status').filter({ hasText: `sent to ${h} again` })).toBeVisible();
+	const hNew = linkIn(await mail(request, h, 'invited', resent));
+	expect(hNew, 'a new link').not.toBe(hOld);
+	await expect(rowFor(aPage, h), 'one invitation to h').toHaveCount(1);
+	await expect(rowFor(aPage, h)).toContainText('Waiting');
+	const mine = (await (await aPage.request.get('/api/v1/invitations')).json()) as Listed[];
+	const hRows = mine.filter((i) => i.email === h);
+	expect(hRows.map((i) => i.status)).toEqual(['pending']);
+	const days = (new Date(hRows[0].expires_at).getTime() - Date.now()) / 86_400_000;
+	expect(days, 'a new 7 days').toBeGreaterThan(6.99);
+	expect(days).toBeLessThanOrEqual(7);
+	await refused(browser, hOld, 'the old link after a resend');
+	const hPage = await (await browser.newContext()).newPage();
+	await hPage.goto(hNew);
+	await enrol(hPage, request, h, 'Person H');
+	await inApp(hPage, app);
+	await hPage.goto('/account/profile');
+	await expect(hPage.locator('dl')).toContainText(`Inviter A (${a})`);
+	console.log('A81: the expired invitation to h was resent: a new link for 7 days, the old one refused, one waiting invitation, H enrolled with A as inviter');
+
+	// The admin resends B's waiting invitation from B's page in Administration.
+	const b = `tester@${DOMAIN}`;
+	const bPage = await signIn(browser, app, b, 'Test Person');
+	const j = `j@${DOMAIN}`;
+	const jOld = await inviteFrom(bPage, request, j);
+	await admin.goto('/admin/users');
+	await rowFor(admin, b).first().getByRole('link').first().click();
+	await admin.waitForURL((u) => /^\/admin\/users\/\d+$/.test(u.pathname));
+	const jResent = new Date(Date.now() - 2000);
+	await admin.getByRole('button', { name: `Resend: invitation to ${j}` }).click();
+	await expect(admin.getByRole('status').filter({ hasText: `sent to ${j} again` })).toBeVisible();
+	const jNew = linkIn(await mail(request, j, 'invited', jResent));
+	expect(jNew).not.toBe(jOld);
+	await bPage.goto('/account/invite');
+	await expect(rowFor(bPage, j), "still in B's list").toContainText('Waiting');
+	await admin.goto('/admin/users');
+	await expect(rowFor(admin, j)).toContainText('From Test Person');
+	await refused(browser, jOld, "B's old link after the admin's resend");
+	console.log("A81: the admin resent B's invitation: B is still its inviter, B's old link is refused");
+
+	// A can't resend a used invitation.
+	await aPage.goto('/account/invite');
+	await expect(rowFor(aPage, g)).toContainText('Joined');
+	await expect(aPage.getByRole('button', { name: `Resend: invitation to ${g}` })).toHaveCount(0);
+	const used = mine.find((i) => i.email === g)!;
+	const res = await aPage.request.post(`/api/v1/invitations/${used.id}/resend`);
+	expect(res.status(), 'resending a used invitation').toBe(409);
+	console.log('A81: resending a used invitation is refused');
+
+	// R43a: finishing enrolment twice, from two browsers at once, makes one account.
+	const k = `k@${DOMAIN}`;
+	const kLink = await inviteFrom(aPage, request, k);
+	const racers: Page[] = [];
+	const codes: string[] = [];
+	for (const name of ['Racer One', 'Racer Two']) {
+		const p = await (await browser.newContext()).newPage();
+		const since = new Date(Date.now() - 500);
+		await p.goto(kLink);
+		await toCodePage(p, name);
+		codes.push(/\b\d{6}\b/.exec(await mail(request, k, 'code', since))![0]);
+		racers.push(p);
+		await new Promise((r) => setTimeout(r, 1100)); // so the next code's email is newer
+	}
+	expect(codes[0], 'each browser has its own code').not.toBe(codes[1]);
+	await Promise.all(racers.map((p, i) => p.locator('input[name="code"]').fill(codes[i])));
+	await Promise.all(racers.map((p) => p.locator('button[type="submit"]').click()));
+	const outcomes = await Promise.allSettled(racers.map((p) => inApp(p, app)));
+	expect(outcomes.filter((o) => o.status === 'fulfilled'), 'one browser finishes enrolment').toHaveLength(1);
+	await admin.goto('/admin/users');
+	await expect(rowFor(admin, k), 'one account for k').toHaveCount(1);
+	console.log('A81: two browsers finishing one invitation at once made one account; the other was refused');
+
+	// R44a: an invitation's enrolment sends at most 5 code emails an hour,
+	// across runs, addresses and a resend; a sixth run is told when to try
+	// again and sends nothing.
+	const m = `m@${DOMAIN}`;
+	let mLink = await inviteFrom(aPage, request, m);
+	const run = async (i: number) => {
+		const ctx = await browser.newContext({ extraHTTPHeaders: { 'X-Forwarded-For': `203.0.113.${i}` } });
+		const page = await ctx.newPage();
+		await page.goto(mLink);
+		return { ctx, page };
+	};
+	for (let i = 1; i <= 5; i++) {
+		if (i === 4) {
+			await aPage.goto('/account/invite');
+			const since = new Date(Date.now() - 2000);
+			await aPage.getByRole('button', { name: `Resend: invitation to ${m}` }).click();
+			await expect(aPage.getByRole('status').filter({ hasText: `sent to ${m} again` })).toBeVisible();
+			mLink = linkIn(await mail(request, m, 'invited', since));
+		}
+		// Not looking back: the previous run's email came just before.
+		const since = new Date();
+		const { ctx, page } = await run(i);
+		await toCodePage(page, `Run ${i}`);
+		await mail(request, m, 'code', since);
+		await ctx.close();
+	}
+	const sixthSince = new Date();
+	const { ctx: sixth, page: sixthPage } = await run(6);
+	await expect(sixthPage.locator('input[name="name"]')).toBeVisible({ timeout: 30_000 });
+	await sixthPage.locator('input[name="name"]').fill('Run 6');
+	await sixthPage.locator('input[name="password"]').fill(passwordOf('Run 6'));
+	await sixthPage.locator('input[name="password_repeat"]').fill(passwordOf('Run 6'));
+	await sixthPage.locator('button[type="submit"]').click();
+	const wait = sixthPage.getByText(/sent 5 code emails in the last hour.*Try again after \d\d:\d\d UTC, in \d+ minutes?/);
+	await expect(wait, 'the sixth run is told when to try again').toBeVisible({ timeout: 30_000 });
+	await expect(sixthPage.locator('input[name="code"]')).toHaveCount(0);
+	const told = await wait.textContent();
+	await new Promise((r) => setTimeout(r, 15_000)); // longer than a code email takes
+	const sixthMail = (await (await request.get(`${MAILPIT}/api/v1/search`, { params: { query: `to:"${m}"` } })).json()) as { messages: { Created: string; Subject: string }[] };
+	expect(sixthMail.messages.filter((x) => new Date(x.Created) > sixthSince && x.Subject.includes('code')), 'no code email for the sixth run').toHaveLength(0);
+	await sixth.close();
+	console.log(`A81: five runs of one invitation, a resend among them, sent five code emails; the sixth sent none and said: ${told}`);
 });

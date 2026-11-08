@@ -20,9 +20,10 @@ import (
 )
 
 // fakeDir stands in for Authentik in API-level tests. It models what the
-// app relies on: single-use invitations that expire and only enrol their
-// own address, and users that can be disabled or deleted. The same checks
-// run against a real Authentik in internal/stacktest.
+// app relies on: invitations that expire, only enrol their own address and
+// are used up when enrolment finishes (ADR 0021), and users that can be
+// disabled or deleted. The same checks run against a real Authentik in
+// scripts/stack-checks.sh and web/tests/stack.spec.ts.
 type fakeDir struct {
 	mu      sync.Mutex
 	now     func() time.Time
@@ -30,11 +31,16 @@ type fakeDir struct {
 	invites map[string]accounts.DirectoryInvitation
 	users   map[string]*fakeUser // by subject
 	sent    map[string]string    // invitation ID -> address it was emailed to
+	// Set by a test: errors to return, and a hook run (unlocked) as an
+	// invitation is created.
+	sendErr    error
+	failDelete string // an invitation ID whose deletion fails
+	onCreate   func()
 }
 
 type fakeUser struct {
 	username, email, invitation string
-	active                      bool
+	active, signedIn            bool
 }
 
 func newFakeDir() *fakeDir {
@@ -42,6 +48,9 @@ func newFakeDir() *fakeDir {
 }
 
 func (d *fakeDir) CreateInvitation(_ context.Context, inv accounts.DirectoryInvitation) (string, error) {
+	if d.onCreate != nil {
+		d.onCreate()
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	d.next++
@@ -53,6 +62,9 @@ func (d *fakeDir) CreateInvitation(_ context.Context, inv accounts.DirectoryInvi
 func (d *fakeDir) SendInvitation(_ context.Context, id, address string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if d.sendErr != nil {
+		return d.sendErr
+	}
 	d.sent[id] = address
 	return nil
 }
@@ -60,8 +72,18 @@ func (d *fakeDir) SendInvitation(_ context.Context, id, address string) error {
 func (d *fakeDir) DeleteInvitation(_ context.Context, id string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if id == d.failDelete {
+		return fmt.Errorf("authentik is down")
+	}
 	delete(d.invites, id)
 	return nil
+}
+
+func (d *fakeDir) RepairInvitation(_ context.Context, id string) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	inv, ok := d.invites[id]
+	return ok && inv.Expires.After(d.now()), nil
 }
 
 func (d *fakeDir) EnrolmentURL(id string) string {
@@ -84,15 +106,37 @@ func (d *fakeDir) DeleteUser(_ context.Context, subject string) error {
 	return nil
 }
 
-func (d *fakeDir) UserByUsername(_ context.Context, username string) (string, bool, error) {
+func (d *fakeDir) DeleteUnfinishedUser(_ context.Context, username string, appID int64) (bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sub, u := range d.users {
+		if u.username == username && !u.active && !u.signedIn && u.invitation == strconv.FormatInt(appID, 10) {
+			delete(d.users, sub)
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// start is an enrolment with invitation id left before it finished: an
+// inactive user that never signed in.
+func (d *fakeDir) start(id string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	inv := d.invites[id]
+	d.next++
+	d.users[strconv.Itoa(1000+d.next)] = &fakeUser{username: inv.Key, email: inv.Address, invitation: strconv.FormatInt(inv.AppID, 10)}
+}
+
+func (d *fakeDir) UserByUsername(_ context.Context, username string) (accounts.DirectoryUser, bool, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for sub, u := range d.users {
 		if u.username == username {
-			return sub, true, nil
+			return accounts.DirectoryUser{Subject: sub, Active: u.active}, true, nil
 		}
 	}
-	return "", false, nil
+	return accounts.DirectoryUser{}, false, nil
 }
 
 func (d *fakeDir) EmailHolders(_ context.Context, address string) (accounts.EmailHolders, error) {
@@ -108,9 +152,10 @@ func (d *fakeDir) EmailHolders(_ context.Context, address string) (accounts.Emai
 	return holders, nil
 }
 
-// enrol is the enrolment flow: the invitation must exist and not have
-// expired; it's used up; a user is created for its address. (The emailed
-// code is checked by the real stack test.)
+// enrol is a finished enrolment flow: the invitation must exist and not
+// have expired; it's used up; a user is created for its address, or the
+// one an unfinished enrolment with the same invitation left (start) is
+// finished. (The emailed code is checked by the real stack test.)
 func (d *fakeDir) enrol(id, name string) (accounts.Claims, error) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -119,15 +164,19 @@ func (d *fakeDir) enrol(id, name string) (accounts.Claims, error) {
 		return accounts.Claims{}, fmt.Errorf("invalid invite/invite not found")
 	}
 	delete(d.invites, id)
-	for _, u := range d.users {
+	app := strconv.FormatInt(inv.AppID, 10)
+	for sub, u := range d.users {
 		if u.username == inv.Key {
-			return accounts.Claims{}, fmt.Errorf("username taken")
+			if u.active || u.signedIn || u.invitation != app {
+				return accounts.Claims{}, fmt.Errorf("username taken")
+			}
+			u.active, u.signedIn = true, true
+			return accounts.Claims{Subject: sub, Email: inv.Address, Name: name, Invitation: app}, nil
 		}
 	}
 	d.next++
 	sub := strconv.Itoa(1000 + d.next)
-	app := strconv.FormatInt(inv.AppID, 10)
-	d.users[sub] = &fakeUser{username: inv.Key, email: inv.Address, invitation: app, active: true}
+	d.users[sub] = &fakeUser{username: inv.Key, email: inv.Address, invitation: app, active: true, signedIn: true}
 	return accounts.Claims{Subject: sub, Email: inv.Address, Name: name, Invitation: app}, nil
 }
 
@@ -282,8 +331,9 @@ func TestA24Invitations(t *testing.T) {
 	if me.Role != "user" || me.InvitedBy == nil || *me.InvitedBy != "a@example.com" {
 		t.Fatalf("B: role %s, invited by %v", me.Role, me.InvitedBy)
 	}
-	// The same invitation again: Authentik refuses it (single use), and so
-	// does the app if the claims are replayed with another user.
+	// The same invitation again: Authentik refuses it (used up when
+	// enrolment finished), and so does the app if the claims are replayed
+	// with another user.
 	reused := b.claims
 	reused.Subject = "someone-else"
 	if _, err := e.signIn(reused); err == nil || !strings.Contains(err.Error(), "already been used") {

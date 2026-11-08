@@ -4,7 +4,7 @@ Date: 2026-10-13
 
 ## Status
 
-Accepted (2026-10-13, by the owner, after the second review round: guessing protection, the admin second factor and the address-variation check)
+Accepted (2026-10-13, by the owner, after the second review round: guessing protection, the admin second factor and the address-variation check). §4's single-use invitations, and §9's note that an enrolment can't be restarted, are changed by ADR 0021 (M20): invitations are used up when enrolment finishes.
 
 ## Context
 

@@ -1,5 +1,6 @@
 #!/bin/sh
-# SPEC.md section 11, steps 2 and 3, in a real browser: the full compose stack
+# SPEC.md section 11, steps 2 and 3, and A81 (link scanners and resending,
+# ADR 0021), in a real browser: the full compose stack
 # (API, PostgreSQL, Authentik, Mailpit) from a fresh install with the
 # documented test settings (deploy/test/stack.vars: allowed domain
 # example.test), and web/tests/stack.spec.ts driving it.

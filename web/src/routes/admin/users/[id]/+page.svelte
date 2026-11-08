@@ -3,14 +3,16 @@
 	// type, status, last delivery, and Pause or Resume. Never where they send
 	// or their secrets (R47); the API doesn't return them.
 	import { page } from '$app/state';
-	import { api, type AdminUser, type Meta } from '#lib/api.ts';
+	import { api, type AdminUser, type Invitation, type Meta } from '#lib/api.ts';
 	import { date, dateTime, isoAttr } from '#lib/format.ts';
+	import { resendable, resentNotice, statusLabels } from '#lib/invitations.ts';
 	import { kindLabels, statusLabel } from '#lib/integrations.ts';
 	import InviteTree from '#lib/InviteTree.svelte';
 	import { setTitle } from '#lib/here.svelte.ts';
 
 	let meta: Meta | undefined = $state();
 	let data: AdminUser | undefined = $state();
+	let invitations: Invitation[] = $state([]);
 	let error = $state('');
 	let notice = $state('');
 	const id = $derived(page.params.id ?? '');
@@ -26,6 +28,11 @@
 			.adminUser(id)
 			.then((d) => (data = d))
 			.catch((e) => (error = e.message));
+		// R43d: the invitations they sent, which an admin can resend.
+		api
+			.userInvitations(id)
+			.then((r) => (invitations = r))
+			.catch((e) => (error = e.message));
 	}
 	$effect(load);
 
@@ -36,9 +43,11 @@
 		try {
 			await fn();
 			notice = done;
-			load();
 		} catch (e) {
 			error = (e as Error).message;
+		} finally {
+			// A resend whose email failed still changed the link (R43d).
+			load();
 		}
 	}
 </script>
@@ -88,6 +97,38 @@
 		<p class="note">Who invited {label}, and everyone {label} invited, and so on.</p>
 		<InviteTree root={data.tree.root} inviter={data.tree.inviter} {tz} />
 		<p class="note"><a href="/admin/users/{data.user.id}/deactivate-tree">Deactivate with invite tree…</a> shows who would be deactivated first.</p>
+	</section>
+
+	<section aria-labelledby="invitations-heading">
+		<h2 id="invitations-heading">Invitations they sent</h2>
+		{#if invitations.length === 0}
+			<p class="status">None.</p>
+		{:else}
+			<p class="note">Resending sends a new link for 7 days, and the old link stops working. {label} stays its inviter.</p>
+			<ul class="cards">
+				{#each invitations as inv (inv.id)}
+					<li data-testid="user-invitation">
+						<span class="name">{inv.email}</span>
+						<span class="state">{statusLabels[inv.status]}</span>
+						<span class="muted when"
+							>Sent <time datetime={isoAttr(inv.created_at)}>{dateTime(inv.created_at, tz)}</time>{#if inv.resent_at}, resent
+								<time datetime={isoAttr(inv.resent_at)}>{dateTime(inv.resent_at, tz)}</time>{/if}{#if inv.status === 'pending'}, expires
+								<time datetime={isoAttr(inv.expires_at)}>{dateTime(inv.expires_at, tz)}</time>{/if}</span
+						>
+						{#if resendable(inv)}
+							<span class="actions">
+								<button type="button" class="secondary" onclick={() => act(() => api.resendInvitation(inv.id), resentNotice(inv))}
+									aria-label="Resend: invitation to {inv.email}">Resend</button
+								>
+								<button type="button" class="secondary" onclick={() => act(() => api.cancelInvitation(inv.id), `Invitation to ${inv.email} cancelled.`)}
+									aria-label="Cancel: invitation to {inv.email}">Cancel</button
+								>
+							</span>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		{/if}
 	</section>
 
 	<section aria-labelledby="records-heading">
@@ -224,7 +265,12 @@
 		color: var(--warn-fg);
 		border-color: var(--warn-bg);
 	}
-	.cards button {
+	.cards li > button,
+	.actions {
 		margin-left: auto;
+	}
+	.actions {
+		display: flex;
+		gap: var(--space-sm);
 	}
 </style>

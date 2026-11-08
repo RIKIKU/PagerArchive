@@ -42,6 +42,43 @@ type a77State struct {
 	IconSHA256   string           `json:"icon_sha256"`
 	Integrations []a77Integration `json:"integrations"`
 	Users        []string         `json:"users"`
+	// ADR 0021: the user's two invitations waiting on the previous release,
+	// one of them opened there by a link scanner. Not compared field by field.
+	WaitingLink string `json:"waiting_link,omitempty"`
+	ScannedLink string `json:"scanned_link,omitempty"`
+	// Whether the scan used it up: on a release from before ADR 0021, yes.
+	ScannedUsedUp bool `json:"scanned_used_up,omitempty"`
+}
+
+const (
+	a77Waiting = "a77-waiting@example.com"
+	a77Scanned = "a77-scanned@example.com"
+)
+
+// a77Scan is a mail provider's link scanner: a browser with no cookies runs
+// the enrolment page and goes no further.
+func a77Scan(t *testing.T, s *stack, link string) challenge {
+	t.Helper()
+	_, c := s.browser(t, "scanner@example.net").walk(link, func(challenge) map[string]any { return nil })
+	return c
+}
+
+// a77Invitation is the user's invitation to address, from their list.
+func a77Invitation(t *testing.T, u *browser, address string) (id int64, status string) {
+	t.Helper()
+	var list []struct {
+		ID     int64  `json:"id"`
+		Email  string `json:"email"`
+		Status string `json:"status"`
+	}
+	u.a77JSON("/api/v1/invitations", &list)
+	for _, i := range list {
+		if i.Email == address {
+			return i.ID, i.Status
+		}
+	}
+	t.Fatalf("no invitation to %s in %s's list", address, u.email)
+	return 0, ""
 }
 
 type a77Message struct {
@@ -212,6 +249,14 @@ func TestA77Seed(t *testing.T) {
 	if len(st.Messages) != 5 || len(st.Aliases) == 0 || len(st.Templates) == 0 || st.IconSHA256 == "" || len(st.Integrations) != 1 || len(st.Users) != 2 {
 		t.Fatalf("the made-up data isn't all there: %+v", st)
 	}
+	// ADR 0021: two waiting invitations. A scanner opens one; on a release
+	// whose invitations are single-use, that uses it up.
+	st.WaitingLink = u.invite(a77Waiting)
+	st.ScannedLink = u.invite(a77Scanned)
+	c := a77Scan(t, s, st.ScannedLink)
+	// A second run of the page shows whether the first used it up.
+	st.ScannedUsedUp = a77Scan(t, s, st.ScannedLink).Component != "ak-stage-prompt"
+	t.Logf("A77: on the previous release, the scanner's run of one invitation stopped at %q; used up: %v", c.Component, st.ScannedUsedUp)
 	data, _ := json.MarshalIndent(st, "", " ")
 	if err := os.WriteFile(os.Getenv("PA_A77_STATE"), data, 0o600); err != nil {
 		t.Fatal(err)
@@ -322,4 +367,59 @@ func TestA77Check(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Error("the new page didn't reach the integration within 60 s")
 	}
+
+	a77CheckInvitations(t, s, u, want)
+}
+
+// a77CheckInvitations: no invitation that was waiting before the upgrade is
+// left broken (ADR 0021). The API's check on start makes the working one
+// reusable and marks the one the scanner used up; until it has run, the
+// list may still show both as waiting.
+func a77CheckInvitations(t *testing.T, s *stack, u *browser, want a77State) {
+	t.Helper()
+	if want.WaitingLink == "" {
+		t.Fatal("the seed recorded no invitations")
+	}
+	scannedID, status := a77Invitation(t, u, a77Scanned)
+	if want.ScannedUsedUp {
+		deadline := time.Now().Add(2 * time.Minute)
+		for status != "link_lost" && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Second)
+			_, status = a77Invitation(t, u, a77Scanned)
+		}
+		if status != "link_lost" {
+			t.Fatalf("the invitation the scanner used up on the previous release shows %q, not link_lost", status)
+		}
+		t.Log("A77: after the upgrade, the invitation the scanner used up shows that its link no longer works")
+	} else if status != "pending" {
+		// A80 seeds and checks on one release, whose scans use nothing up.
+		t.Errorf("the scanned invitation, not used up, shows %q", status)
+	}
+	if _, status := a77Invitation(t, u, a77Waiting); status != "pending" {
+		t.Errorf("the working invitation shows %q after the upgrade", status)
+	}
+
+	// The working one: two scans, then its invitee enrols with the same link.
+	for range 2 {
+		if c := a77Scan(t, s, want.WaitingLink); c.Component != "ak-stage-prompt" {
+			t.Fatalf("a scan of the upgraded invitation stopped at %q %s", c.Component, c.errorText())
+		}
+	}
+	w := s.browser(t, a77Waiting)
+	w.enrol(want.WaitingLink)
+	if m := w.me(); m.InvitedBy == nil || !strings.Contains(*m.InvitedBy, a77User) {
+		t.Errorf("the waiting invitation's invitee: invited by %v", m.InvitedBy)
+	}
+
+	// The used-up one: resent, and its invitee enrols with the new link.
+	since := time.Now()
+	if code, msg := u.api(http.MethodPost, fmt.Sprintf("/api/v1/invitations/%d/resend", scannedID), nil, nil); code != http.StatusOK {
+		t.Fatalf("resend: %d %s", code, msg)
+	}
+	sc := s.browser(t, a77Scanned)
+	sc.enrol(s.mailpit.invitationLink(t, a77Scanned, since))
+	if m := sc.me(); m.InvitedBy == nil || !strings.Contains(*m.InvitedBy, a77User) {
+		t.Errorf("the resent invitation's invitee: invited by %v", m.InvitedBy)
+	}
+	t.Log("A77: the waiting invitation survived two scans and enrolled; the used-up one was resent and enrolled, both with the user as inviter")
 }
