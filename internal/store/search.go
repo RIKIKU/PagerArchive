@@ -68,14 +68,21 @@ const searchOrderBy = "ORDER BY m.sent_at DESC, m.id DESC\n"
 // guesses they hold few pages, as each of 2,005 aliases would, and reads and
 // sorts every one of them (12 s cold for alias:sta, five aliases holding 90%).
 //
-// Terms too short for a trigram (QShort) take the same tries, with the bigram
-// index finding the pages.
+// A search with a term too short for a trigram takes the same tries, with the
+// bigram index alone finding the pages, for all its terms (QShort).
 func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
 	if p.AliasNameIds == nil {
 		p.AliasNameIds = []int64{}
 	}
 	if p.QShort == nil {
 		p.QShort = []string{}
+	}
+	if len(p.QShort) > 0 {
+		short, err := s.RarestBigrams(ctx, p.QShort)
+		if err != nil {
+			return nil, err
+		}
+		p.QShort = short
 	}
 	p, most, err := s.withAliasIDs(ctx, p)
 	if err != nil {
@@ -115,6 +122,33 @@ func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) (
 		}
 	}
 	return s.searchSecondTry(ctx, p)
+}
+
+// searchBigrams is how many bigrams a search gives the bigram index at most.
+const searchBigrams = 3
+
+// rarestBigrams picks a search's bigrams by the planner's statistics on the
+// bigram index's expression: the bigrams it doesn't list are rarer than those
+// it does. Without statistics (before the first ANALYZE), all of them.
+const rarestBigrams = `
+WITH s AS (SELECT most_common_elems::text::text[] AS e, most_common_elem_freqs AS f
+           FROM pg_stats WHERE schemaname = current_schema() AND tablename = 'messages_search_bigrams_idx')
+SELECT b FROM unnest(search_terms_bigrams($1::text[])) AS b
+ORDER BY (SELECT s.f[array_position(s.e, b)] FROM s) NULLS FIRST, b
+LIMIT CASE WHEN EXISTS (SELECT FROM s) THEN $2::int END`
+
+// RarestBigrams are the searchBigrams rarest bigrams of these terms (ADR
+// 0017). Each of a term's bigrams is in every page that holds it, so any of
+// them is a necessary condition and the pages listed are the same. A common
+// one rules out few pages but costs most of the index's reading: a bigram in
+// every page has a list of every page. The bigrams go to the query as terms,
+// as a bigram's only bigram is itself.
+func (s *Store) RarestBigrams(ctx context.Context, terms []string) ([]string, error) {
+	rows, err := s.Pool.Query(ctx, rarestBigrams, terms, searchBigrams)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
 }
 
 // firstTry is how long this search's first try runs.

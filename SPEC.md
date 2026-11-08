@@ -467,7 +467,8 @@ All checks use the **example profile** and the **standard test fixture** (sectio
   - a term found only in an extra field;
   - a term with `alias:"Station 1"`;
   - a common term with `alias:"..."` for an alias holding 80,000 of the pages, with at least 20,000 of them matching (production's busiest alias, scaled to 10 years; owner, 2026-11-08);
-  - the example network's map reference typed without quotes, as three terms of one or two characters (`m 23 b4`; owner, 2026-11-08).
+  - the example network's map reference typed without quotes, as three terms of one or two characters (`m 23 b4`; owner, 2026-11-08);
+  - a map reference typed without quotes in production's shape: a one-letter term, a three-digit term in about 3% of the pages and a two-character term, together in about 1 page in 1,000 (`m 345 c7`; owner, 2026-11-08).
 
   The made-up pages hold that alias, and map references in a realistic share of the pages (section 10). The first run of each counts: it also holds straight after the database restarts with its caches cold (the operating system's and PostgreSQL's), as after a reboot (owner, 2026-11-03).
 - **A76. Importing messages** (owner, 2026-11-02). **Given** a made-up file of 10,000 pages from the example network that includes pages holding details the redaction rules remove, 20 pairs of duplicates 3 seconds apart, 5 pages older than the retention period, a page with no `source_id`, and 3 malformed lines, and a test integration selecting every page:

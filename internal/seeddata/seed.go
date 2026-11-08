@@ -32,8 +32,12 @@ const A75Pages = 4_562_500
 //
 // One page in 9, all Emergency, has a map reference at the end of its
 // description (section 10): a page of 600 and a square of 16 columns by 30
-// rows, at random. A reference typed without quotes is three terms of one or
-// two characters (ADR 0017).
+// rows, at random, except that 15% are on page 345 and 6% in square C7, as a
+// network's own area is on a few pages and its towns in a few squares. A
+// reference typed without quotes is three terms of one or two characters
+// (`m 23 b4`), or production's shape (owner, 2026-11-08): `m 345 c7`, a letter
+// in every page, a number in 2.4% and a square in 0.7%, together in about 1
+// page in 1,000 (ADR 0017).
 const a75Seed = `
 INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, paging_group, alias_id, extra)
 SELECT a.pattern_key,
@@ -42,7 +46,11 @@ SELECT a.pattern_key,
             ELSE (ARRAY['@@','Hb','QD'])[1 + g % 3]
                    || (ARRAY['SMOKE FROM ROOF','CHECK HOSES TODAY','GRASS FIRE','STRUCTURE FIRE, SMOKE SHOWING','ROUTINE PUMP CHECK','MEET AT THE STATION'])[1 + s.phrasing]
                    || ' ' || g
-                   || CASE WHEN g % 9 = 0 THEN ' M ' || (1 + r.h % 600) || ' ' || chr(65 + ((r.h / 600) % 16)::int) || (1 + (r.h / 9600) % 30) ELSE '' END
+                   || CASE WHEN g % 9 = 0
+                           THEN ' M ' || CASE WHEN (r.h2 / 65536) % 100 < 15 THEN 345 ELSE 1 + r.h % 600 END
+                                || ' ' || CASE WHEN (r.h3 / 65536) % 100 < 6 THEN 'C7'
+                                               ELSE chr(65 + ((r.h / 600) % 16)::int) || (1 + (r.h / 9600) % 30) END
+                           ELSE '' END
                    || ' @ ' || (g % 900) || ' FICTION ST, MADEUPTON #STN' || s.n
        END,
        (ARRAY['Emergency','Non-emergency','Admin'])[1 + g % 3],
@@ -53,7 +61,9 @@ SELECT a.pattern_key,
 FROM generate_series(1, $1::int) g
 CROSS JOIN LATERAL (SELECT CASE WHEN g % 57 = 0 AND g <= 57 * 80000 THEN 5 ELSE 1 + g % 4 END AS n,
                            CASE WHEN g % 57 = 0 AND g <= 57 * 80000 THEN (g / 57) % 6 ELSE (g * 7) % 6 END AS phrasing) s
-CROSS JOIN LATERAL (SELECT (g::bigint * 2654435761) % 4294967296 AS h) r
+CROSS JOIN LATERAL (SELECT (g::bigint * 2654435761) % 4294967296 AS h,
+                           (g::bigint * 2246822519) % 4294967296 AS h2,
+                           (g::bigint * 3266489917) % 4294967296 AS h3) r
 JOIN aliases a ON a.pattern_key = CASE WHEN s.n = 5 THEN '0100005'
                                      WHEN g % 10 = 5 THEN '02' || lpad((1 + (g / 10) % 2000)::text, 5, '0')
                                      ELSE '010000' || s.n END`

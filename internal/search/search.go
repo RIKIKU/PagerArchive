@@ -232,18 +232,21 @@ func indexTerms(all []string) (a, b, c, d *string) {
 	return out[0], out[1], out[2], out[3]
 }
 
-// shortTerms are the terms the bigram index can find (ADR 0017), when the
-// trigram index can find none of them: each two characters or more, and none
-// of the characters jsonb escapes. A map reference typed without quotes is
-// three such terms (A75). With a term the trigram index can find, the search
-// is as it was.
+// shortTerms are the terms the bigram index finds (ADR 0017), when one of
+// them is too short for a trigram: every term of two characters or more
+// without the characters jsonb escapes, the longer ones too. A map reference
+// typed without quotes is such a search (A75). Its page number may have a
+// trigram, but alone it's in 2.4% of A75's pages; with the square's bigrams,
+// in about 1 in 1,000. A single character has no bigram and is in most pages
+// anyway. With no term too short for a trigram, there are none.
 func shortTerms(all []string) []string {
+	bigrams := func(s string) bool { return utf8.RuneCountInString(s) >= 2 && !escapedInJSON(s) }
+	if !slices.ContainsFunc(all, func(s string) bool { return bigrams(s) && !indexable(s) }) {
+		return []string{}
+	}
 	out := []string{}
 	for _, s := range all {
-		if indexable(s) {
-			return []string{}
-		}
-		if utf8.RuneCountInString(s) >= 2 && !escapedInJSON(s) {
+		if bigrams(s) {
 			out = append(out, s)
 		}
 	}
@@ -334,6 +337,11 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 	p.QAny = likeContains(terms.Any)
 	p.QIndex1, p.QIndex2, p.QIndex3, p.QIndex4 = indexTerms(terms.All)
 	p.QShort = shortTerms(terms.All)
+	if len(p.QShort) > 0 {
+		// The bigram index alone. With the trigram index too, PostgreSQL
+		// rechecks every candidate, working out its bigrams again.
+		p.QIndex1, p.QIndex2, p.QIndex3, p.QIndex4 = nil, nil, nil, nil
+	}
 	p.QAnyIndex = len(terms.Any) > 0 && !slices.ContainsFunc(terms.Any, func(s string) bool { return !indexable(s) })
 	for _, name := range f.Category {
 		if name == "Other" {
