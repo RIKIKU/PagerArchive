@@ -65,7 +65,7 @@ func TestA78MonitoringInstalled(t *testing.T) {
 	items = nil
 	get("/api/datasources", &items)
 	got = titles(items)
-	if len(got) != 4 {
+	if len(got) != 3 {
 		t.Errorf("data sources: %q, want Tempo, Loki and Prometheus", got)
 	}
 	t.Logf("A78: data sources: %q", got)

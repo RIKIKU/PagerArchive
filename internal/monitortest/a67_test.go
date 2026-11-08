@@ -84,7 +84,18 @@ func (s *stack) panelValues(t *testing.T, dashboard, title string) map[string]ma
 	if targets == nil {
 		t.Fatalf("dashboard %s has no panel %q", dashboard, title)
 	}
-	body, _ := json.Marshal(map[string]any{"queries": targets, "from": "now-6h", "to": "now"})
+	// A graph's range query gets the step a browser asks for (the scrape
+	// interval, at about 1,000 points): without it, the last step can end
+	// before a series a few seconds old begins.
+	queries := make([]map[string]any, len(targets))
+	for i, raw := range targets {
+		if err := json.Unmarshal(raw, &queries[i]); err != nil {
+			t.Fatal(err)
+		}
+		queries[i]["intervalMs"] = 15000
+		queries[i]["maxDataPoints"] = 1000
+	}
+	body, _ := json.Marshal(map[string]any{"queries": queries, "from": "now-6h", "to": "now"})
 	req, _ := http.NewRequest(http.MethodPost, s.grafana+"/api/ds/query", bytes.NewReader(body))
 	req.SetBasicAuth("admin", s.grafanaPassword)
 	req.Header.Set("Content-Type", "application/json")

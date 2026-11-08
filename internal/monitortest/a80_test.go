@@ -48,6 +48,9 @@ func TestA80ToldWhenABackupFails(t *testing.T) {
 		t.Errorf("backups dashboard: last backup %v (shown %t), want 0, OK", v, ok)
 	}
 	for _, title := range []string{"Dump size, each night", "Dump time, each night", "Check time, each night"} {
+		// A graph's points are a step apart, so a series seconds old may not
+		// have one yet.
+		waitFor(90*time.Second, func() bool { _, ok := one(title); return ok })
 		if v, ok := one(title); !ok {
 			t.Errorf("backups dashboard: %q shows nothing", title)
 		} else {
