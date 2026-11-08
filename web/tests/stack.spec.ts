@@ -223,6 +223,15 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	console.log(`A57: icon ${src} shown beside Station 1 in light and dark mode; 3 files refused; origins requested: ${[...origins].join(' ')}`);
 });
 
+/**
+ * The browser is signed in, on the app's message list. It checks the page,
+ * not a load event: one after the redirect from Authentik can be missed.
+ */
+async function inApp(page: Page, app: string) {
+	await expect.poll(() => { const u = new URL(page.url()); return u.origin + u.pathname; }, { timeout: 30_000 }).toBe(`${app}/`);
+	await expect(page.getByRole('navigation', { name: 'Main' })).toBeVisible({ timeout: 30_000 });
+}
+
 /** Signs in on Authentik's pages, from the app's address, in a fresh browser. */
 async function signIn(browser: Browser, app: string, email: string, name: string): Promise<Page> {
 	const page = await (await browser.newContext()).newPage();
@@ -230,7 +239,7 @@ async function signIn(browser: Browser, app: string, email: string, name: string
 	await page.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
 	await answer(page, 'uidField', email);
 	await answer(page, 'password', passwordOf(name));
-	await page.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await inApp(page, app);
 	return page;
 }
 
@@ -307,7 +316,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	const aPage = await (await browser.newContext()).newPage();
 	await aPage.goto(await inviteFrom(admin, request, a));
 	await enrol(aPage, request, a, 'Inviter A');
-	await aPage.waitForURL((u) => u.origin === app && u.pathname === '/');
+	await inApp(aPage, app);
 
 	// A invites g. A link scanner runs the page twice, from two addresses.
 	const g = `g@${DOMAIN}`;
@@ -320,7 +329,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	const gPage = await (await browser.newContext()).newPage();
 	await gPage.goto(gLink);
 	await enrol(gPage, request, g, 'Person G');
-	await gPage.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await inApp(gPage, app);
 	await gPage.goto('/account/profile');
 	await expect(gPage.locator('dl')).toContainText(`Inviter A (${a})`);
 	await aPage.goto('/account/invite');
@@ -352,7 +361,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	const hPage = await (await browser.newContext()).newPage();
 	await hPage.goto(hNew);
 	await enrol(hPage, request, h, 'Person H');
-	await hPage.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await inApp(hPage, app);
 	await hPage.goto('/account/profile');
 	await expect(hPage.locator('dl')).toContainText(`Inviter A (${a})`);
 	console.log('A81: the expired invitation to h was resent: a new link for 7 days, the old one refused, one waiting invitation, H enrolled with A as inviter');
@@ -403,7 +412,7 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	expect(codes[0], 'each browser has its own code').not.toBe(codes[1]);
 	await Promise.all(racers.map((p, i) => p.locator('input[name="code"]').fill(codes[i])));
 	await Promise.all(racers.map((p) => p.locator('button[type="submit"]').click()));
-	const outcomes = await Promise.allSettled(racers.map((p) => p.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 })));
+	const outcomes = await Promise.allSettled(racers.map((p) => inApp(p, app)));
 	expect(outcomes.filter((o) => o.status === 'fulfilled'), 'one browser finishes enrolment').toHaveLength(1);
 	await admin.goto('/admin/users');
 	await expect(rowFor(admin, k), 'one account for k').toHaveCount(1);

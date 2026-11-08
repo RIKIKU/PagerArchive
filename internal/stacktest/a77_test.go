@@ -46,6 +46,8 @@ type a77State struct {
 	// one of them opened there by a link scanner. Not compared field by field.
 	WaitingLink string `json:"waiting_link,omitempty"`
 	ScannedLink string `json:"scanned_link,omitempty"`
+	// Whether the scan used it up: on a release from before ADR 0021, yes.
+	ScannedUsedUp bool `json:"scanned_used_up,omitempty"`
 }
 
 const (
@@ -252,7 +254,9 @@ func TestA77Seed(t *testing.T) {
 	st.WaitingLink = u.invite(a77Waiting)
 	st.ScannedLink = u.invite(a77Scanned)
 	c := a77Scan(t, s, st.ScannedLink)
-	t.Logf("A77: on the previous release, the scanner's run of one invitation stopped at %q", c.Component)
+	// A second run of the page shows whether the first used it up.
+	st.ScannedUsedUp = a77Scan(t, s, st.ScannedLink).Component != "ak-stage-prompt"
+	t.Logf("A77: on the previous release, the scanner's run of one invitation stopped at %q; used up: %v", c.Component, st.ScannedUsedUp)
 	data, _ := json.MarshalIndent(st, "", " ")
 	if err := os.WriteFile(os.Getenv("PA_A77_STATE"), data, 0o600); err != nil {
 		t.Fatal(err)
@@ -376,19 +380,24 @@ func a77CheckInvitations(t *testing.T, s *stack, u *browser, want a77State) {
 	if want.WaitingLink == "" {
 		t.Fatal("the seed recorded no invitations")
 	}
-	deadline := time.Now().Add(2 * time.Minute)
 	scannedID, status := a77Invitation(t, u, a77Scanned)
-	for status != "link_lost" && time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
-		_, status = a77Invitation(t, u, a77Scanned)
-	}
-	if status != "link_lost" {
-		t.Fatalf("the invitation the scanner used up on the previous release shows %q, not link_lost", status)
+	if want.ScannedUsedUp {
+		deadline := time.Now().Add(2 * time.Minute)
+		for status != "link_lost" && time.Now().Before(deadline) {
+			time.Sleep(2 * time.Second)
+			_, status = a77Invitation(t, u, a77Scanned)
+		}
+		if status != "link_lost" {
+			t.Fatalf("the invitation the scanner used up on the previous release shows %q, not link_lost", status)
+		}
+		t.Log("A77: after the upgrade, the invitation the scanner used up shows that its link no longer works")
+	} else if status != "pending" {
+		// A80 seeds and checks on one release, whose scans use nothing up.
+		t.Errorf("the scanned invitation, not used up, shows %q", status)
 	}
 	if _, status := a77Invitation(t, u, a77Waiting); status != "pending" {
 		t.Errorf("the working invitation shows %q after the upgrade", status)
 	}
-	t.Log("A77: after the upgrade, the invitation the scanner used up shows that its link no longer works; the other is waiting")
 
 	// The working one: two scans, then its invitee enrols with the same link.
 	for range 2 {
