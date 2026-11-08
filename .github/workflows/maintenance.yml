@@ -21,11 +21,11 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: "Renovate's dryRun: empty for a real run, or full or lookup"
+        description: "Renovate's dryRun: off for a real run, or full or lookup"
         required: false
-        default: ""
+        default: "off"
         type: choice
-        options: ["", full, lookup]
+        options: ["off", full, lookup]
       log_level:
         description: "info or debug"
         required: false
@@ -70,5 +70,5 @@ jobs:
           RENOVATE_REQUIRE_CONFIG: required
           # The only command an update may run: raising VERSION (R85c).
           RENOVATE_ALLOWED_COMMANDS: '["^sh scripts/ci/bump-version\\.sh$"]'
-          RENOVATE_DRY_RUN: ${{ inputs.dry_run || '' }}
+          RENOVATE_DRY_RUN: ${{ inputs.dry_run != 'off' && inputs.dry_run || '' }}
           LOG_LEVEL: ${{ inputs.log_level || 'info' }}

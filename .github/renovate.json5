@@ -32,8 +32,9 @@
     executionMode: "branch",
   },
   npm: {rangeStrategy: "bump"},
-  // R85a: two pull requests, not a third for majors.
-  separateMajorMinor: false,
+  // A patch is never held back by a newer minor version: it has its own pull
+  // request, which merges on its own where the rules below say so.
+  separateMinorPatch: true,
   packageRules: [
     // R85: the base images under our own images, in every FROM, build stages
     // included, pinned by digest. A new digest or patch, daily, is one pull
@@ -42,6 +43,7 @@
       matchManagers: ["dockerfile"],
       matchUpdateTypes: ["digest", "pinDigest", "patch"],
       groupName: "base images",
+      group: {branchTopic: "base-images"},
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
@@ -53,6 +55,7 @@
       matchManagers: ["gomod", "npm", "github-actions"],
       matchUpdateTypes: ["patch"],
       groupName: "libraries patch",
+      group: {branchTopic: "libraries-patch"},
       schedule: ["* * 1 * *"],
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
@@ -61,6 +64,8 @@
       matchManagers: ["gomod", "npm", "github-actions", "dockerfile"],
       matchUpdateTypes: ["minor", "major"],
       groupName: "libraries and base images minor and major",
+      // One pull request for both (without this, majors get their own).
+      group: {branchTopic: "libraries-and-base-images-minor-and-major"},
       schedule: ["* * 1 * *"],
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
@@ -79,7 +84,8 @@
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // R85b: images named by an exact version, which publish nothing that moves
-    // within a minor version (ADR 0019): their patches merge on their own.
+    // within a minor version (ADR 0019): their patches merge on their own, in a
+    // pull request of their own when a new minor version is out too.
     {
       matchManagers: ["docker-compose"],
       matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus", "axllent/mailpit"],

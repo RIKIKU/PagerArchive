@@ -9,9 +9,12 @@ name: CI
 # every check has passed, the release job tags the commit v<VERSION> and the
 # publish jobs follow, in the same run. Pushes are filtered to branches, so a
 # tag push (the release's own, or one made by hand) starts no run at all.
+#
+# An automatic update's branch (renovate/**, ADR 0022) runs on its pull
+# request only, which Renovate opens with the branch: not twice.
 on:
   push:
-    branches: ["**"]
+    branches: ["**", "!renovate/**"]
     paths:
       - "**"
       - "!SPEC.md"
@@ -51,6 +54,8 @@ jobs:
       # R85c, ADR 0022: how automatic updates raise VERSION.
       - name: Automatic updates raise VERSION (bump-version.sh)
         run: sh scripts/ci/bump-version-checks.sh
+      - name: A failed automatic update is assigned to the owner (tell-owner.sh)
+        run: sh scripts/ci/tell-owner-checks.sh
 
   test:
     name: Tests, golden tables and acceptance checks
@@ -600,7 +605,7 @@ jobs:
             | select(.value.result != "success") | select(($main and .key == "versions" and .value.result == "skipped") | not)
             | "\(.key): \(.value.result)"')
           if [ -n "$failed" ]; then
-            echo "::error::Not every check passed: $(echo $failed)"
+            echo "::error::Not every check passed: $(printf '%s' "$failed" | tr '\n' ' ')"
             exit 1
           fi
           echo "Every check passed"
