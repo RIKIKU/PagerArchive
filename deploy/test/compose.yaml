@@ -7,7 +7,7 @@ services:
     image: pagerarchive:${PAGERARCHIVE_VERSION:-stacktest}
     build: .
   mailpit:
-    image: axllent/mailpit:v1.31.5
+    image: axllent/mailpit:v1.31.6
     environment:
       MP_SMTP_AUTH_ACCEPT_ANY: "true"
       MP_SMTP_AUTH_ALLOW_INSECURE: "true"
