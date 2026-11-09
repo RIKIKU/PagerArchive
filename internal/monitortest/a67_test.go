@@ -162,7 +162,9 @@ func (s *stack) startClient(t *testing.T, id, key string, radio bool) *radioClie
 	args := []string{"run", "-d", "--name", c.container, "--network", os.Getenv("PA_MON_NETWORK"), "--label", os.Getenv("PA_MON_LABEL"),
 		"--user", fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid()),
 		"-e", "SERVER_URL=http://" + os.Getenv("PA_MON_API_ADDRESS"), "-e", "CLIENT_ID=" + id, "-e", "CLIENT_KEY=" + key,
-		"-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318", "-e", "OTEL_METRIC_EXPORT_INTERVAL=10000",
+		// The client's own metric interval (15 s; ADR 0022): the dashboard is
+		// checked at the defaults.
+		"-e", "OTEL_EXPORTER_OTLP_ENDPOINT=http://alloy:4318",
 		"-e", "OTEL_BSP_SCHEDULE_DELAY=1000", "-e", "OTEL_BLRP_SCHEDULE_DELAY=1000"}
 	if radio {
 		dir, err := os.MkdirTemp("", "a67-"+id+"-")
@@ -289,6 +291,23 @@ func TestA67ToldWhenARadioStalls(t *testing.T) {
 		t.Errorf("multimon-ng didn't decode %d of the %d pages the stand-in wrote: %q", len(missing), len(pages), missing)
 	} else {
 		t.Logf("A67: multimon-ng decoded all %d pages the stand-in wrote in %v, each stored from %s", len(pages), time.Since(started).Round(time.Second), a)
+	}
+
+	// The rate panels, at the client's default metric interval and the data
+	// source's 15 s step: $__rate_interval is 1 minute, which needs more than
+	// one sample in it (ADR 0022).
+	for _, p := range []struct{ panel, ref string }{
+		{"Radio: audio received per second", "A"},
+		{"Lines read from the decoder, per minute", "A"},
+		{"Pages decoded and sent, per minute", "A"},
+		{"Pages decoded and sent, per minute", "B"},
+	} {
+		v, ok := s.panelValues(t, "pa-clients", p.panel)[p.ref][a]
+		if !ok {
+			t.Errorf("at the client's default metric interval, %q (%s) shows no data for %s", p.panel, p.ref, a)
+		} else {
+			t.Logf("A67: %q (%s) for %s at the defaults: %.1f", p.panel, p.ref, a, v)
+		}
 	}
 
 	// rtl_fm's messages: a failed USB transfer, and one it has never said.

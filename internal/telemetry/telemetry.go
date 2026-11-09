@@ -123,7 +123,7 @@ func Start(ctx context.Context, set Settings) *Telemetry {
 			set.Log.Error("telemetry: metrics are off", "error", err.Error())
 		} else {
 			t.mp = sdkmetric.NewMeterProvider(sdkmetric.WithResource(res),
-				sdkmetric.WithReader(sdkmetric.NewPeriodicReader(&metricExporter{Exporter: exp, drops: t.drops})),
+				sdkmetric.WithReader(sdkmetric.NewPeriodicReader(&metricExporter{Exporter: exp, drops: t.drops}, readerOptions()...)),
 				sdkmetric.WithView(metricView))
 		}
 	}
@@ -364,4 +364,19 @@ func (e *metricExporter) Export(ctx context.Context, rm *metricdata.ResourceMetr
 		e.drops.failed("metrics", n, err)
 	}
 	return nil
+}
+
+// MetricInterval is how often metrics are sent when OTEL_METRIC_EXPORT_INTERVAL
+// doesn't say (ADR 0022): the example stack's 15 s step, so a rate over the
+// clients dashboard's $__rate_interval (1 minute) has four samples. At the
+// SDK's own 60 s it had one, and the rate panels showed no data.
+const MetricInterval = 15 * time.Second
+
+// readerOptions is MetricInterval, unless OTEL_METRIC_EXPORT_INTERVAL is set:
+// the SDK reads that itself, and WithInterval would override it.
+func readerOptions() []sdkmetric.PeriodicReaderOption {
+	if strings.TrimSpace(os.Getenv("OTEL_METRIC_EXPORT_INTERVAL")) != "" {
+		return nil
+	}
+	return []sdkmetric.PeriodicReaderOption{sdkmetric.WithInterval(MetricInterval)}
 }

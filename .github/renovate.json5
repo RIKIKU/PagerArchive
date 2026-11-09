@@ -48,15 +48,19 @@
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
     // R85a: libraries, on the 1st of the month. Every patch in one pull request
-    // that merges on its own; everything larger in another that waits.
+    // that merges on its own; everything larger in another that waits. Each
+    // waits 3 days after its release first (owner, 2026-11-09), so a broken or
+    // withdrawn release has time to be noticed; base images don't. Actions are
+    // pinned by digest, so a moved tag is a digest update, in the patch one.
     // Playwright's image in CI goes with the npm package, as their versions
     // must match (ci.yml checks).
     {
       matchManagers: ["gomod", "npm", "github-actions"],
-      matchUpdateTypes: ["patch"],
+      matchUpdateTypes: ["patch", "digest", "pinDigest"],
       groupName: "libraries patch",
       group: {branchTopic: "libraries-patch"},
       schedule: ["* * 1 * *"],
+      minimumReleaseAge: "3 days",
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
@@ -70,6 +74,23 @@
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
+    {
+      matchManagers: ["gomod", "npm", "github-actions"],
+      matchUpdateTypes: ["minor", "major"],
+      minimumReleaseAge: "3 days",
+    },
+    {
+      matchManagers: ["github-actions"],
+      matchDepTypes: ["action"],
+      pinDigests: true,
+    },
+    // The runner images and Node's majors are in the monthly pull request that
+    // waits, Node's long-term support (even) versions only (owner, 2026-11-09),
+    // in CI and in the Dockerfile's build stage alike.
+    {
+      matchPackageNames: ["node"],
+      allowedVersions: "/^\\d*[02468]([.-]|$)/",
+    },
     // R85b: third-party images, the ones a deployment runs (compose.yaml and
     // the monitoring stack) and the ones CI runs, on Mondays. Each image is its
     // own pull request, as each can need "Upgrade steps" (R84a). A new minor or
@@ -79,17 +100,21 @@
       matchDatasources: ["docker"],
       matchPackageNames: ["!mcr.microsoft.com/playwright"],
       groupName: null,
+      minimumReleaseAge: null,
       schedule: ["* * * * 1"],
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // R85b: images named by an exact version, which publish nothing that moves
-    // within a minor version (ADR 0019): their patches merge on their own, in a
-    // pull request of their own when a new minor version is out too.
+    // within a minor version (ADR 0019): their patches, in one weekly pull
+    // request apart from any new minor version, merge on their own (a minor
+    // release, as the monitoring stack's compose.yaml changes; owner, 2026-11-09).
     {
       matchManagers: ["docker-compose"],
       matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus", "axllent/mailpit"],
       matchUpdateTypes: ["patch"],
+      groupName: "exact-version images patch",
+      group: {branchTopic: "exact-version-images-patch"},
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },

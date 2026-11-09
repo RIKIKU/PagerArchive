@@ -161,11 +161,10 @@ A client on the **same machine** as the monitoring stack (in Docker on PagerArch
    ```sh
    docker run ... \
      -e OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.20:4318 \
-     -e OTEL_METRIC_EXPORT_INTERVAL=15000 \
      ghcr.io/rikiku/pagerarchive-client
    ```
 
-   (For the binary on a Pi, put the same two lines in its systemd unit's `Environment=`.)
+   (For the binary on a Pi, put the same line in its systemd unit's `Environment=`.) The client sends its metrics every 15 s, the stack's step, unless `OTEL_METRIC_EXPORT_INTERVAL` says otherwise: the dashboard's rates need more than one sample a minute.
 
 Anyone who can reach that port can send telemetry into your stack, so keep it on the LAN, or reach it over the same VPN the client uses for the server (docs/client.md).
 
@@ -295,7 +294,7 @@ PagerArchive uses the standard OpenTelemetry environment variables. The ones you
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Every trace is kept by default; e.g. `parentbased_traceidratio` with `0.1` keeps one in ten |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export may take, in ms (default 10000). A batch that doesn't make it is dropped |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Headers for a collector that wants them (`Authorization=Bearer ...`) |
-| `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_METRIC_EXPORT_INTERVAL` | Batching and how often the client sends its metrics (default 60000 ms) |
+| `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_METRIC_EXPORT_INTERVAL` | Batching and how often the client sends its metrics (the client's default is 15000 ms; at the standard 60000 the clients dashboard's rates show no data) |
 
 Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored and baggage is never read or sent, because it could carry anything into a span.
 
