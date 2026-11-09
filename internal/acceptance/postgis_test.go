@@ -99,14 +99,21 @@ func TestA83PostGISUpdatedOnStart(t *testing.T) {
 	t.Cleanup(cleanup)
 	exec("DROP SCHEMA public CASCADE; CREATE SCHEMA public")
 
-	// The image's own first start makes these as well as postgis.
+	// The image's own first start makes these as well as postgis (the tiger
+	// geocoder only before PostGIS 3.7, which no longer ships it).
 	st, err := store.Open(ctx, url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	st.Close()
 	exec(`CREATE EXTENSION IF NOT EXISTS postgis_topology`)
-	exec(`CREATE EXTENSION IF NOT EXISTS postgis_tiger_geocoder CASCADE`)
+	var tiger bool
+	if err := admin.QueryRow(ctx, `SELECT EXISTS (SELECT FROM pg_available_extensions WHERE name = 'postgis_tiger_geocoder')`).Scan(&tiger); err != nil {
+		t.Fatal(err)
+	}
+	if tiger {
+		exec(`CREATE EXTENSION IF NOT EXISTS postgis_tiger_geocoder CASCADE`)
+	}
 
 	type version struct{ installed, image string }
 	versions := func() map[string]version {
@@ -147,7 +154,7 @@ ORDER BY string_to_array(source, '.')::int[] DESC LIMIT 1`, name, v.image).Scan(
 		}
 		older[name] = from
 	}
-	for _, want := range []string{"postgis", "postgis_topology", "postgis_tiger_geocoder"} {
+	for _, want := range []string{"postgis", "postgis_topology"} {
 		if _, ok := older[want]; !ok {
 			t.Fatalf("%s isn't installed: %v", want, older)
 		}
@@ -229,7 +236,7 @@ ORDER BY string_to_array(source, '.')::int[] DESC LIMIT 1`, name, v.image).Scan(
 	for _, l := range logLines(t, &warn) {
 		msg, _ := l["msg"].(string)
 		name, _ := l["extension"].(string)
-		if l["level"] != "WARN" || !strings.Contains(msg, "ALTER EXTENSION "+name+" UPDATE as its owner") {
+		if l["level"] != "WARN" || !strings.Contains(msg, "run the fix as the extension's owner") || l["fix"] != "ALTER EXTENSION "+name+" UPDATE" {
 			t.Errorf("unexpected log line: %v", l)
 			continue
 		}

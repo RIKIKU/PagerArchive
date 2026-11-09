@@ -31,25 +31,26 @@ type Conn interface {
 func UpdatePostGIS(ctx context.Context, conn Conn, log *slog.Logger) {
 	rows, err := conn.Query(ctx, `
 SELECT e.extname, e.extversion, a.default_version
-FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname
+FROM pg_extension e LEFT JOIN pg_available_extensions a ON a.name = e.extname
 WHERE e.extname = ANY($1)`, PostGISExtensions)
 	if err != nil {
 		log.Warn("couldn't check the PostGIS extensions' versions", "error", SafeError(err))
 		return
 	}
-	type ext struct{ from, to string }
+	type ext struct {
+		from string
+		to   *string // nil: the image doesn't provide it
+	}
 	installed := map[string]ext{}
 	for rows.Next() {
-		var name, from string
-		var to *string
-		if err := rows.Scan(&name, &from, &to); err != nil {
+		var e ext
+		var name string
+		if err := rows.Scan(&name, &e.from, &e.to); err != nil {
 			rows.Close()
 			log.Warn("couldn't check the PostGIS extensions' versions", "error", SafeError(err))
 			return
 		}
-		if to != nil {
-			installed[name] = ext{from, *to}
-		}
+		installed[name] = e
 	}
 	if err := rows.Err(); err != nil {
 		log.Warn("couldn't check the PostGIS extensions' versions", "error", SafeError(err))
@@ -57,18 +58,30 @@ WHERE e.extname = ANY($1)`, PostGISExtensions)
 	}
 	for _, name := range PostGISExtensions {
 		e, ok := installed[name]
-		if !ok || e.from == e.to {
+		if !ok {
+			continue
+		}
+		if e.to == nil {
+			// PostGIS 3.7 no longer ships postgis_tiger_geocoder, for one.
+			log.Warn("a PostGIS extension is installed that the database image no longer provides, so it can't be updated; PagerArchive doesn't use it (docs/deploy.md)", "extension", name, "version", e.from)
+			continue
+		}
+		if e.from == *e.to {
 			continue
 		}
 		if _, err := conn.Exec(ctx, "ALTER EXTENSION "+pgx.Identifier{name}.Sanitize()+" UPDATE"); err != nil {
-			msg := "couldn't update a PostGIS extension: run ALTER EXTENSION " + name + " UPDATE as its owner (docs/deploy.md)"
+			// Messages are literals (R73): the extension and the fix are attributes.
+			fix := "ALTER EXTENSION " + name + " UPDATE"
 			var pgErr *pgconn.PgError
 			if errors.As(err, &pgErr) && pgErr.Code == "42501" {
-				msg = "couldn't update a PostGIS extension, as the API's database role doesn't own it: run ALTER EXTENSION " + name + " UPDATE as its owner (docs/deploy.md)"
+				log.Warn("couldn't update a PostGIS extension, as the API's database role doesn't own it: run the fix as the extension's owner (docs/deploy.md)",
+					"extension", name, "from", e.from, "to", *e.to, "fix", fix, "error", SafeError(err))
+			} else {
+				log.Warn("couldn't update a PostGIS extension: run the fix as the extension's owner (docs/deploy.md)",
+					"extension", name, "from", e.from, "to", *e.to, "fix", fix, "error", SafeError(err))
 			}
-			log.Warn(msg, "extension", name, "from", e.from, "to", e.to, "error", SafeError(err))
 			continue
 		}
-		log.Info("PostGIS extension updated", "extension", name, "from", e.from, "to", e.to)
+		log.Info("PostGIS extension updated", "extension", name, "from", e.from, "to", *e.to)
 	}
 }
