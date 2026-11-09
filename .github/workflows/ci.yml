@@ -14,7 +14,7 @@ name: CI
 # request only, which Renovate opens with the branch: not twice.
 on:
   push:
-    branches: ["**", "!renovate/**"]
+    branches: ["**", "!renovate/**", "!fix-a75-cold"] # TEMPORARY: A75 diag runs alone
     paths:
       - "**"
       - "!SPEC.md"
