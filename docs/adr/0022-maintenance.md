@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: Proposed. The owner's brief for M18 of 2026-11-09: SPEC.md section 7.23 (R85-R85c), R86d and A79, on the branch `m18` from main at 2d277f9 (v0.17.2). To be released as 0.18.0. The API, client, search and import don't change, apart from three new backup metrics. **The PowerShell module doesn't change**, so its version stays.
+Status: Accepted (owner, 2026-11-09), with the review's changes below. The owner's brief for M18 of 2026-11-09: SPEC.md section 7.23 (R85-R85c), R86d and A79, on the branch `m18` from main at 2d277f9 (v0.17.2). To be released as 0.18.0. The API, client, search and import don't change, apart from three new backup metrics. **The PowerShell module doesn't change**, so its version stays.
 
 ## Context
 
@@ -31,10 +31,10 @@ Each rule's `schedule` says on which day a pull request may open; the workflow r
 | R | What | When | Pull requests | Merges |
 |---|---|---|---|---|
 | R85 | Every `FROM` in `Dockerfile`, `Dockerfile.client`, `scripts/test-receiver/Dockerfile`, build stages included (`node`, `golang`, `distroless`, `debian`): a new digest or patch | Daily | One, "base images" | On its own |
-| R85a | Go modules, npm packages, Actions (and Playwright's image in CI, with its npm package): patches | The 1st | One, "libraries patch" | On its own |
-| R85a | The same, and base images: minor and major | The 1st | One, "libraries and base images minor and major" | Waits for the owner |
+| R85a | Go modules, npm packages, Actions (pinned by digest; a moved tag is a digest update) and Renovate's own version, each 3 days after its release; Playwright's image in CI with its npm package: patches | The 1st | One, "libraries patch" | On its own |
+| R85a | The same, 3 days after release, base images, the runner images and Node (even, long-term support majors only): minor and major | The 1st | One, "libraries and base images minor and major" | Waits for the owner |
 | R85b | Third-party images in `compose.yaml`, the monitoring stack's `compose.yaml`, `deploy/test/compose.yaml` and CI: a new minor or major | Mondays | One per image | Waits for the owner |
-| R85b | Images named by an exact version (Alloy, Tempo, Prometheus, Mailpit; ADR 0019): a patch | Mondays | One per image, apart from its minor's | On its own |
+| R85b | Images named by an exact version (Alloy, Tempo, Prometheus, Mailpit; ADR 0019): a patch | Mondays | One for all four, apart from any new minor | On its own, as a minor release |
 
 - **Every `FROM` is now pinned by digest** (`golang:1.27.2@sha256:8201...`), so a base image rebuilt under the same tag, often for a security fix, is a change Renovate sees. `distroless/static-debian13:nonroot` and `debian:trixie-slim` have no version in their tags, so only their digests move. `golang:1.27.2` is already behind 1.27.3: the first run opens that, in "base images".
 - **PostGIS** (`18-3.6`) is read as PostgreSQL major, PostGIS minor and patch, and every update to it waits, as either part can need "Upgrade steps".
@@ -102,7 +102,14 @@ What only the first real runs can show: that GitHub's auto-merge, turned on with
 6. **Protect main.** Settings, Rules, Rulesets, New branch ruleset: name "main", Active, Target: the default branch. Bypass list: Repository admin (so your own merges and pushes to main work as now). Rules: "Require status checks to pass", with "Require branches to be up to date before merging" ticked, and the check **All checks passed** (from GitHub Actions; it's listed once CI has run on m18). Leave the rest off. Create.
 7. **Try it.** Actions, Maintenance, Run workflow, on main, `dry_run` set to `full`: the log lists the pull requests it would open. Then run it with `dry_run` `off`, or wait for 03:17 UTC: the golang 1.27.3 pull request opens, passes CI, merges, and v0.18.1 is released.
 
-## Questions for the owner
+## The owner's review (2026-11-09)
 
-1. **Exact versions' patches are minor releases** (decision 4). They merge on their own as R85b says, but each is a new `compose.yaml`, so 0.19.0, 0.20.0 and so on can follow from Alloy, Tempo and Prometheus patches alone. The other choice is to let them wait for review like the minors. Which?
-2. **Runners and Node.** Renovate also offers `ubuntu-26.04` runners and Node 26 for CI, in the monthly pull request that waits. Keep that, or leave runners and toolchains out?
+Renovate is kept, and before the merge:
+
+1. **3 days after release** (`minimumReleaseAge`) for Go modules, npm packages and Actions, not base images. Playwright is the exception: its image in CI has no release dates, so Renovate would hold it for good while the npm package moved, and CI fails when the two differ. Renovate's own image may have none either, so a missing date doesn't hold it (`timestamp-optional`).
+2. **Actions pinned by digest**, with the tag beside it (`@<commit> # v5`); new ones are pinned by Renovate (`pinDigests`).
+3. **The exact versions' patches in one weekly pull request**, still merging on its own as a minor release.
+4. **Runner images and Node majors** in the monthly pull request that waits, Node's even (long-term support) majors only, in CI and the Dockerfile alike (`allowedVersions`).
+5. **The clients dashboard's rate panels showed no data** at the client's default: the SDK's 60 s export left one sample in a 1-minute `$__rate_interval`. The client now sends its metrics every 15 s, the data source's step, when `OTEL_METRIC_EXPORT_INTERVAL` is unset (`telemetry.MetricInterval`); setting it still wins. A67 now starts its clients with no interval set, and checks that the audio, lines read and pages decoded and sent panels each show the client, as a browser asks for them.
+
+**Seen** (the dry run as before, on a throwaway `[skip ci]` branch, deleted): `renovate/exact-version-images-patch` holds Mailpit 1.31.6, Alloy 1.21.3 and Prometheus 3.15.1 and merges on its own; Prometheus 3.16.0 waits apart. maplibre-gl was offered 6.16.0, not 6.17.0, released inside the 3 days. The waiting pull request has `node 24 -> 26`, `node 24-slim -> 26-slim` and `ubuntu 24.04 -> 26.04`. No odd Node major is out yet; the pattern takes 24.11.1, 26.0.0, 26-slim and 28-slim, and refuses 25.2.0, 27.0.0, 27-slim and 31-slim.

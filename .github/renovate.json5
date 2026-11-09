@@ -84,6 +84,17 @@
       matchDepTypes: ["action"],
       pinDigests: true,
     },
+    // Except Playwright: its image has no release dates, so it would wait
+    // forever while the npm package moved, and CI needs the two to match.
+    {
+      matchPackageNames: ["@playwright/test", "mcr.microsoft.com/playwright"],
+      minimumReleaseAge: null,
+    },
+    // Renovate's own image may have no release dates either.
+    {
+      matchPackageNames: ["ghcr.io/renovatebot/renovate"],
+      minimumReleaseAgeBehaviour: "timestamp-optional",
+    },
     // The runner images and Node's majors are in the monthly pull request that
     // waits, Node's long-term support (even) versions only (owner, 2026-11-09),
     // in CI and in the Dockerfile's build stage alike.
@@ -98,7 +109,8 @@
     {
       matchManagers: ["docker-compose", "github-actions"],
       matchDatasources: ["docker"],
-      matchPackageNames: ["!mcr.microsoft.com/playwright"],
+      // Playwright's image, and Renovate's own in maintenance.yml, are libraries.
+      matchPackageNames: ["!mcr.microsoft.com/playwright", "!ghcr.io/renovatebot/renovate"],
       groupName: null,
       minimumReleaseAge: null,
       schedule: ["* * * * 1"],
