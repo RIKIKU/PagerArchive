@@ -137,6 +137,20 @@ until [ -n "$(metric pagerarchive_backup_last_good_timestamp_seconds)" ]; do
 done
 stack_compose logs --no-color backup | grep 'good:' | tail -n 1
 want_metric pagerarchive_backup_failing 0
+# R86d: the night's dump size, dump time and check time, as the log says.
+size=$(cat "$BACKUPS/$today.pagerarchive.dump" "$BACKUPS/$today.authentik.dump" | wc -c)
+want_metric pagerarchive_backup_last_good_bytes "$size"
+logged=$(stack_compose logs --no-color backup | grep 'good:' | tail -n 1)
+for m in dump check; do
+	[ -n "$(metric pagerarchive_backup_last_good_${m}_seconds)" ] || fail "no pagerarchive_backup_last_good_${m}_seconds"
+done
+dump_s=$(metric pagerarchive_backup_last_good_dump_seconds)
+check_s=$(metric pagerarchive_backup_last_good_check_seconds)
+case $logged in
+*"dumps took $dump_s s, the check $check_s s, $size bytes"*) ;;
+*) fail "the metrics say $dump_s s, $check_s s and $size bytes, the log: $logged" ;;
+esac
+echo "--- R86d: pagerarchive_backup_last_good_bytes $size, _dump_seconds $dump_s, _check_seconds $check_s"
 for f in "$today.pagerarchive.dump" "$today.authentik.dump" "$today.counts.tsv" "$today.check"; do
 	[ -s "$BACKUPS/$f" ] || fail "no $f in the folder"
 done

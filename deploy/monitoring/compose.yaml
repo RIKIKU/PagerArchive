@@ -89,7 +89,7 @@ services:
     image: grafana/grafana:13.2
     restart: unless-stopped
     labels:
-      pagerarchive.config: "ed763d1930c193f1"
+      pagerarchive.config: "d5073036a598aaba"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
@@ -109,6 +109,7 @@ services:
       - ./grafana/provisioning/datasources/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - ./grafana/provisioning/dashboards/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
       - ./grafana/provisioning/alerting/rules.yaml:/etc/grafana/provisioning/alerting/rules.yaml:ro
+      - ./grafana/dashboards/backups.json:/var/lib/grafana/dashboards/backups.json:ro
       - ./grafana/dashboards/clients.json:/var/lib/grafana/dashboards/clients.json:ro
       - ./grafana/dashboards/page-path.json:/var/lib/grafana/dashboards/page-path.json:ro
       - ./grafana/dashboards/requests.json:/var/lib/grafana/dashboards/requests.json:ro

@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, three dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, four dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -108,7 +108,7 @@ You need PagerArchive's folder ([Deploying the server](deploy.md)), with `METRIC
 
    and run `docker compose up -d` there. Keep `default`, or the API loses the database. The alias is what Alloy scrapes (`PA_API_ADDRESS`, default `pagerarchive:8080`): other stacks on a shared network can have a service named `api` too. From now on the stack has to be there before PagerArchive starts, or Compose says `network monitoring declared as external, but could not be found`.
 
-5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the three dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
+5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the four dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
 
 Stop it with `docker compose down` (keeps the data) or `docker compose down -v` (deletes it).
 
@@ -161,11 +161,10 @@ A client on the **same machine** as the monitoring stack (in Docker on PagerArch
    ```sh
    docker run ... \
      -e OTEL_EXPORTER_OTLP_ENDPOINT=http://192.168.1.20:4318 \
-     -e OTEL_METRIC_EXPORT_INTERVAL=15000 \
      ghcr.io/rikiku/pagerarchive-client
    ```
 
-   (For the binary on a Pi, put the same two lines in its systemd unit's `Environment=`.)
+   (For the binary on a Pi, put the same line in its systemd unit's `Environment=`.) The client sends its metrics every 15 s, the stack's step, unless `OTEL_METRIC_EXPORT_INTERVAL` says otherwise: the dashboard's rates need more than one sample a minute.
 
 Anyone who can reach that port can send telemetry into your stack, so keep it on the LAN, or reach it over the same VPN the client uses for the server (docs/client.md).
 
@@ -173,7 +172,7 @@ The client sends its traces (each page from decode to the server's answer), its 
 
 ## The dashboards
 
-All three are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
+All four are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
 
 **A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), integration deliveries and **failed delivery attempts by kind and cause**, and the log lines from pages and requests (click one for its trace).
 
@@ -194,6 +193,8 @@ One page's trace, opened from that table. The client's `buffer` span is long bec
 "Each client's own view" keeps a client that has **stopped reporting**: it shows the last values it sent in the dashboard's time range, and **Last report** says how long ago they came (orange after 5 minutes). Without that, a switched-off client would drop out of the table after 5 minutes, just when you want to see what it said last. A client reading stdin shows *not run by the client* in the radio columns.
 
 ![Clients](monitoring/dashboard-clients.png)
+
+**Backups.** How long since the last good backup (orange after 26 hours, a night missed; red after 36, when **Backup failing** fires), whether the last one failed, and each good night's three numbers: the size of both dumps, how long the dumps took and how long the check took (R86d). The check restores everything, so it grows with the archive, and a check that takes more than 12 hours fails the night: this is where you see that coming. See [Backups](deploy.md#backups).
 
 ## Radio health
 
@@ -293,7 +294,7 @@ PagerArchive uses the standard OpenTelemetry environment variables. The ones you
 | `OTEL_TRACES_SAMPLER`, `OTEL_TRACES_SAMPLER_ARG` | Every trace is kept by default; e.g. `parentbased_traceidratio` with `0.1` keeps one in ten |
 | `OTEL_EXPORTER_OTLP_TIMEOUT` | How long one export may take, in ms (default 10000). A batch that doesn't make it is dropped |
 | `OTEL_EXPORTER_OTLP_HEADERS` | Headers for a collector that wants them (`Authorization=Bearer ...`) |
-| `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_METRIC_EXPORT_INTERVAL` | Batching and how often the client sends its metrics (default 60000 ms) |
+| `OTEL_BSP_*`, `OTEL_BLRP_*`, `OTEL_METRIC_EXPORT_INTERVAL` | Batching and how often the client sends its metrics (the client's default is 15000 ms; at the standard 60000 the clients dashboard's rates show no data) |
 
 Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored and baggage is never read or sent, because it could carry anything into a span.
 

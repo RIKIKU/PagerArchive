@@ -32,6 +32,35 @@ func TestA80ToldWhenABackupFails(t *testing.T) {
 	}
 	t.Log("A80: a good backup, scraped: its time in the last-good metric, and not failing")
 
+	// R86d: the backups dashboard shows it, each panel's query as Grafana runs it.
+	one := func(title string) (float64, bool) {
+		for _, v := range s.panelValues(t, "pa-backups", title)["A"] {
+			return v, true
+		}
+		return 0, false
+	}
+	if v, ok := one("Since the last good backup"); !ok || v < 0 || v > 300 {
+		t.Errorf("backups dashboard: since the last good backup %v s (shown %t), want under 5 minutes", v, ok)
+	} else {
+		t.Logf("R86d: since the last good backup: %.0f s", v)
+	}
+	if v, ok := one("Last backup"); !ok || v != 0 {
+		t.Errorf("backups dashboard: last backup %v (shown %t), want 0, OK", v, ok)
+	}
+	for _, title := range []string{"Dump size, each night", "Dump time, each night", "Check time, each night"} {
+		// A graph's points are a step apart, so a series seconds old may not
+		// have one yet.
+		waitFor(90*time.Second, func() bool { _, ok := one(title); return ok })
+		if v, ok := one(title); !ok {
+			t.Errorf("backups dashboard: %q shows nothing", title)
+		} else {
+			t.Logf("R86d: %s: %v", title, v)
+		}
+	}
+	if v, _ := one("Dump size, each night"); v <= 0 {
+		t.Errorf("backups dashboard: the dump size is %v", v)
+	}
+
 	since := time.Now()
 	s.sh(t, os.Getenv("PA_MON_STOP_DB"))
 	if err := runExpectingFailure(backup); err != nil {
@@ -47,6 +76,11 @@ func TestA80ToldWhenABackupFails(t *testing.T) {
 	}
 	at, _ := hook.find(since, "Backup failing", "firing", "")
 	t.Logf("A80: \"Backup failing\" fired %s after the database stopped", at.Sub(since).Round(time.Second))
+	if v, ok := one("Last backup"); !ok || v != 1 {
+		t.Errorf("backups dashboard: last backup %v (shown %t) after a failure, want 1, FAILING", v, ok)
+	} else {
+		t.Log("R86d: the backups dashboard says FAILING")
+	}
 
 	since = time.Now()
 	waitDB := time.Now().Add(time.Minute)

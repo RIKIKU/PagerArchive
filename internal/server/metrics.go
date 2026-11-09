@@ -177,6 +177,13 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		if b.LastGoodAt != nil {
 			m.family("pagerarchive_backup_last_good_timestamp_seconds", "gauge", "When the last good backup was made: dumped, restored and compared (R86a).")
 			m.sample("pagerarchive_backup_last_good_timestamp_seconds", nil, float64(b.LastGoodAt.Unix()))
+			// R86d: how the nightly backup grows with the archive.
+			m.family("pagerarchive_backup_last_good_bytes", "gauge", "The last good backup's size: both dumps, in bytes (R86d).")
+			m.sample("pagerarchive_backup_last_good_bytes", nil, float64(b.LastGoodBytes))
+			m.family("pagerarchive_backup_last_good_dump_seconds", "gauge", "How long the last good backup's dumps took (R86d).")
+			m.sample("pagerarchive_backup_last_good_dump_seconds", nil, float64(b.LastGoodDumpSeconds))
+			m.family("pagerarchive_backup_last_good_check_seconds", "gauge", "How long the last good backup's check took: restoring and comparing both dumps (R86d).")
+			m.sample("pagerarchive_backup_last_good_check_seconds", nil, float64(b.LastGoodCheckSeconds))
 		}
 		m.family("pagerarchive_backup_failing", "gauge", "1 if the last backup failed, or the last good one is more than 36 hours old (R86a).")
 		m.sample("pagerarchive_backup_failing", nil, b2f(b.Failing()))

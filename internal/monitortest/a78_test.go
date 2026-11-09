@@ -48,8 +48,8 @@ func TestA78MonitoringInstalled(t *testing.T) {
 		Name  string `json:"name"`
 	}
 	get("/api/search?type=dash-db", &items)
-	if got := titles(items); len(got) != 3 {
-		t.Errorf("dashboards: %q, want the 3 from the archive", got)
+	if got := titles(items); len(got) != 4 {
+		t.Errorf("dashboards: %q, want the 4 from the archive", got)
 	} else {
 		t.Logf("A78: dashboards: %q", got)
 	}
