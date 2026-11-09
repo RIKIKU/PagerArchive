@@ -242,6 +242,9 @@ func serve(stderr io.Writer) error {
 		return err
 	}
 	defer st.Close()
+	// After the migrations: keep PostGIS's extensions at the image's version
+	// (R84c). A failure is a warning, and the API starts anyway.
+	store.UpdatePostGIS(ctx, st.Pool, log)
 
 	loc, err := time.LoadLocation(getenv("TZ", "UTC"))
 	if err != nil {
