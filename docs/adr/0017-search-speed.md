@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.2): see "A map reference with a page number". A cold run over 1 second in CI gets one more cold start, and the better counts (fix-a75-cold, 2026-11-09; 1.0.1): see "A75's cold runs on CI's runners".
+Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.2): see "A map reference with a page number". A cold run over 1 second in CI gets one more cold start, and the better counts (fix-a75-cold, 2026-11-09; 1.0.2): see "A75's cold runs on CI's runners".
 
 ## Context
 
@@ -694,7 +694,7 @@ None.
 
 ## A75's cold runs on CI's runners (fix-a75-cold, 2026-11-09)
 
-The owner's brief: A75's job failed on about every other run, each time on a different search's first run after a cold start, just over 1 second, and passed when run again. Releases need every check green (ADR 0016). Released as 1.0.1. The search, the API, the client and the module don't change, and nor does R33b's 1 second.
+The owner's brief: A75's job failed on about every other run, each time on a different search's first run after a cold start, just over 1 second, and passed when run again. Releases need every check green (ADR 0016). Released as 1.0.2. The search, the API, the client and the module don't change, and nor does R33b's 1 second.
 
 ### The evidence
 
