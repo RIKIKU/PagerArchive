@@ -36,6 +36,20 @@ export const examples: Record<Key, { example: string; what: string }> = {
 	flag: { example: 'flag:parse_failed', what: 'parse_failed, address_unsplit or location_mismatch.' }
 };
 
+/** A few words on each key, beside it in the suggestions (M21). */
+export const hints: Record<Key, string> = {
+	alias: 'an alias, by name',
+	agency: "an agency's aliases",
+	capcode: 'one capcode, exactly',
+	group: 'a paging group',
+	priority: 'emergency, non-emergency, admin or none',
+	category: 'an event category',
+	job: 'one job, exactly',
+	is: 'unaliased or ignored',
+	or: 'or this, instead of the other words',
+	flag: 'admins only: a parsing flag'
+};
+
 export const priorities = ['Emergency', 'Non-emergency', 'Admin', 'none'] as const;
 export const isValues = ['unaliased', 'ignored'] as const;
 export const flagValues = ['parse_failed', 'address_unsplit', 'location_mismatch'] as const;
@@ -212,4 +226,109 @@ export function apiParams(q: URLSearchParams, categories: string[]): { params: U
 		}
 	}
 	return { params: out, problem };
+}
+
+// Suggestions (R33a, M21). Clicking into the box lists every key. A key
+// being typed suggests its values; a word without a key suggests searching
+// it as text (what Enter does), the keys starting with it, and then the
+// alias, agency, group and category values containing it, with their key.
+// capcode:, job: and or: have no values, and plain words never suggest
+// capcodes or job numbers. The values come from SearchValues, asked for once
+// (searchValues.ts), so typing makes no requests.
+
+/** What's suggested from: the API's alias:, agency: and group: values, and
+ *  meta's categories. */
+export interface Values {
+	alias: string[];
+	agency: string[];
+	group: string[];
+	category: string[];
+}
+
+export type Suggestion =
+	| { kind: 'text'; id: string; text: string }
+	| { kind: 'key'; id: string; key: Key; hint: string; section?: string }
+	| { kind: 'value'; id: string; key: Key; value: string; insert: string; section?: string };
+
+export interface Suggestions {
+	/** The word the suggestions replace; none for the keys at the cursor. */
+	target?: Word;
+	options: Suggestion[];
+	/** What the options are, for the count that's announced. */
+	what: 'filter key' | 'suggestion';
+}
+
+/** Each section's heading, for a word with no key. */
+export const sections: Partial<Record<Key, string>> = { alias: 'Aliases', agency: 'Agencies', group: 'Groups', category: 'Categories' };
+
+/** At most this many values after a key, and for a word with no key. */
+const afterKey = 20;
+const plainRoom = 8;
+
+/** The values containing typed, ignoring case: those starting with it first,
+ *  then those with a word starting with it, then the rest, each in order. */
+export function matching(list: readonly string[], typed: string, limit = Infinity): string[] {
+	const t = typed.toLowerCase();
+	const ranked: string[][] = [[], [], []];
+	for (const v of list) {
+		const l = v.toLowerCase();
+		const at = l.indexOf(t);
+		if (at < 0) continue;
+		ranked[at === 0 ? 0 : /[\s\-/(]/.test(l[at - 1]) ? 1 : 2].push(v);
+	}
+	return ranked.flat().slice(0, limit);
+}
+
+/** The values a key suggests, all of them (none for capcode:, job:, or:). */
+export function valuesOf(key: Key, values: Values, admin: boolean): readonly string[] {
+	switch (key) {
+		case 'alias':
+		case 'agency':
+		case 'group':
+			return values[key];
+		case 'category':
+			return [...values.category, 'Other'];
+		case 'priority':
+			return priorities.map((p) => p.toLowerCase());
+		case 'is':
+			return isValues;
+		case 'flag':
+			return admin ? flagValues : [];
+		default:
+			return [];
+	}
+}
+
+/** What picking a value puts in the box: exact for a named value. */
+export const filterText = (key: Key, value: string) => `${key}:${show(value, exactKeys.includes(key))}`;
+
+const keyOption = (key: Key, section?: string): Suggestion => ({ kind: 'key', id: `key-${key}`, key, hint: hints[key], section });
+
+/** Every key, for the cursor where no word is being typed. */
+export function keySuggestions(admin: boolean): Suggestions {
+	return { options: keysFor(admin).map((k) => keyOption(k)), what: 'filter key' };
+}
+
+/** The suggestions for the word at the caret. */
+export function suggestions(text: string, caret: number, admin: boolean, values: Values): Suggestions {
+	const target = words(text, admin).find((w) => w.start <= caret && caret <= w.end);
+	if (!target || (!target.key && !target.value)) return keySuggestions(admin);
+	const value = (key: Key, v: string, section?: string): Suggestion => ({ kind: 'value', id: `${key}-${v}`, key, value: v, insert: filterText(key, v), section });
+	if (target.key) {
+		const key = target.key;
+		const list = valuesOf(key, values, admin);
+		return { target, options: matching(list, target.value, afterKey).map((v) => value(key, v)), what: 'suggestion' };
+	}
+	const typed = target.value;
+	const options: Suggestion[] = [{ kind: 'text', id: 'text', text: target.quoted ? `"${typed}"` : typed }];
+	if (!target.quoted) {
+		const t = typed.toLowerCase();
+		for (const k of keysFor(admin)) if (k.startsWith(t) && k !== t) options.push(keyOption(k, 'Filter keys'));
+		let room = plainRoom;
+		for (const key of ['alias', 'agency', 'group', 'category'] as const) {
+			for (const v of matching(valuesOf(key, values, admin), typed, room)) options.push(value(key, v, sections[key]));
+			room = plainRoom - options.filter((o) => o.kind === 'value').length;
+		}
+	}
+	return { target, options, what: 'suggestion' };
 }

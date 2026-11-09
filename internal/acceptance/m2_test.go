@@ -194,35 +194,35 @@ func TestSearchTextTerms(t *testing.T) {
 	}
 }
 
-// R33a: the search box's suggestions for alias:, agency: and group: are the
-// values containing what was typed, ignoring case, in order.
-func TestSearchSuggestions(t *testing.T) {
+// R33a: the search box's suggestions for alias:, agency: and group: come
+// from every alias name, template agency and paging group, in order, asked
+// for once (ADR 0023). The browser matches what's typed.
+func TestSearchValues(t *testing.T) {
 	e := setup(t)
+	var empty server.SearchValues
+	if code := e.getJSON("/api/v1/search/values", &empty); code != http.StatusOK || empty.Group == nil || len(empty.Group) != 0 {
+		t.Errorf("before any page: %d %+v, want no groups (an empty list)", code, empty)
+	}
 	for n := 1; n <= 3; n++ {
 		e.mustPost("a", fmt.Sprintf("010000%d", n), fmt.Sprintf("@@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN%d", n), e.now)
 	}
+	e.mustPost("a", "0100002", "@@EX0000005 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN2", e.now)
 	e.mustPost("a", "0999999", "plain text no group", e.now)
-	tests := []struct {
-		key, q string
-		want   []string
+	var got server.SearchValues
+	if code := e.getJSON("/api/v1/search/values", &got); code != http.StatusOK {
+		t.Fatalf("search values: %d", code)
+	}
+	for _, tt := range []struct {
+		key       string
+		got, want []string
 	}{
-		{"alias", "STATION", []string{"Station 1", "Station 2", "Station 3", "Station 4"}},
-		{"alias", "on 3", []string{"Station 3"}},
-		{"alias", "nothing like it", []string{}},
-		{"agency", "fire", []string{"Example Fire Service"}},
-		{"group", "stn", []string{"STN1", "STN2", "STN3"}},
-		{"group", "2", []string{"STN2"}},
-		{"group", "", []string{"STN1", "STN2", "STN3"}},
-	}
-	for _, tt := range tests {
-		var got []string
-		path := "/api/v1/search/suggest?" + url.Values{"key": {tt.key}, "q": {tt.q}}.Encode()
-		if code := e.getJSON(path, &got); code != http.StatusOK || got == nil || fmt.Sprint(got) != fmt.Sprint(tt.want) {
-			t.Errorf("%s: %d %q, want %q", path, code, got, tt.want)
+		{"alias", got.Alias, []string{"Station 1", "Station 2", "Station 3", "Station 4"}},
+		{"agency", got.Agency, []string{"Example Fire Service"}},
+		{"group", got.Group, []string{"STN1", "STN2", "STN3"}},
+	} {
+		if fmt.Sprint(tt.got) != fmt.Sprint(tt.want) {
+			t.Errorf("%s: %q, want %q", tt.key, tt.got, tt.want)
 		}
-	}
-	if code := e.getJSON("/api/v1/search/suggest?key=capcode&q=1", nil); code != http.StatusBadRequest {
-		t.Errorf("capcode suggestions (there are none, R33a): %d", code)
 	}
 }
 
