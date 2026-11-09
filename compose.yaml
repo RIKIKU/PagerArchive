@@ -79,7 +79,7 @@ x-authentik: &authentik
 
 services:
   db:
-    image: postgis/postgis:18-3.6
+    image: postgis/postgis:18-3.7
     restart: unless-stopped
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
@@ -111,7 +111,7 @@ services:
   api:
     # This minor version's image. `docker compose pull` gets its patch releases;
     # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
-    image: ghcr.io/rikiku/pagerarchive:1.4
+    image: ghcr.io/rikiku/pagerarchive:1.5
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
@@ -153,7 +153,7 @@ services:
   # Nightly dumps of both databases into BACKUP_DIR (R86, ADR 0020), by upstream's
   # image and a script from the archive. docs/deploy.md, "Backups".
   backup:
-    image: postgis/postgis:18-3.6
+    image: postgis/postgis:18-3.7
     restart: unless-stopped
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [serve]
@@ -179,7 +179,7 @@ services:
   # Restores each night's dumps into a throwaway database and compares them
   # (R86a). No network and no secrets: it sees only the backup folder.
   backup-check:
-    image: postgis/postgis:18-3.6
+    image: postgis/postgis:18-3.7
     restart: unless-stopped
     network_mode: none
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
