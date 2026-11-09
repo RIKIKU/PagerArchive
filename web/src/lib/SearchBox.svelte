@@ -1,138 +1,220 @@
 <script lang="ts">
-	// R33a: one search box, with From and To beside it. It follows the ARIA
-	// combobox pattern: as a key or a value is typed, matching ones are
-	// suggested; arrow keys move through them, Enter picks one (or, with
-	// none picked, searches), Escape closes the list, and the number of
-	// suggestions is announced. A help control lists every key with an
-	// example. The search applies to the view it's on (the list, the map,
-	// an alias, a job, the print page), and is kept in its address.
+	// R33a: one search box, then Help, the dates and Clear all (M21). It
+	// follows the ARIA combobox pattern: clicking into the empty box (or
+	// between words) lists every key; typing a key's value suggests its
+	// values, and typing a word with no key suggests searching it as text,
+	// then the filters whose values contain it (search.ts). Arrow keys move
+	// through the suggestions, Enter picks one (or, with none picked,
+	// searches), Escape closes the list, and the number of suggestions is
+	// announced. Picking a value searches,
+	// as Enter does; picking a key puts it in the box, ready for its value.
+	// The search applies to the view it's on (the list, the map, an alias, a
+	// job, the print page), and is kept in its address, Clear all included,
+	// so Back restores it.
 	import { goto } from '$app/navigation';
-	import { api } from './api.ts';
 	import DateRange from './DateRange.svelte';
 	import Icon from './Icon.svelte';
-	import { boxText, examples, flagValues, isValues, keysFor, parseBox, priorities, show, words, type Key, type Word } from './search.ts';
+	import { boxText, examples, keysFor, parseBox, suggestions, type Suggestion, type Suggestions, type Values } from './search.ts';
+	import { searchValues } from './searchValues.ts';
 
-	let { action, query, admin, categories }: { action: string; query: URLSearchParams; admin: boolean; categories: string[] } = $props();
+	let {
+		action,
+		query,
+		admin,
+		categories,
+		timeZone
+	}: { action: string; query: URLSearchParams; admin: boolean; categories: string[]; timeZone: string } = $props();
 
 	const uid = $props.id();
-	let text = $derived(boxText(query));
+	let text = $state('');
 	let problem = $state('');
-	let dates = $state(false);
 	let input: HTMLInputElement;
 
-	type Option = { label: string; insert: string; key?: Key };
-	let options: Option[] = $state([]);
+	// The box shows the search in the address, unless that's the search it
+	// just sent: then what's been typed since stays.
+	let sent: string | undefined;
+	let shown: string | undefined;
+	$effect(() => {
+		const s = query.toString();
+		if (s === shown) return;
+		shown = s;
+		if (s === sent) sent = undefined;
+		else text = boxText(query);
+	});
+	const from = $derived(query.get('from') ?? '');
+	const to = $derived(query.get('to') ?? '');
+	const set = $derived(text.trim() !== '' || !!from || !!to);
+
+	let values: Values = $state({ alias: [], agency: [], group: [], category: [] });
+	let list: Suggestions = $state({ options: [], what: 'suggestion' });
 	let open = $state(false);
 	let active = $state(-1);
 	let announce = $state('');
-	let target: Word | undefined;
-	let timer: ReturnType<typeof setTimeout> | undefined;
-	let seq = 0;
+	let help = $state(false);
+	let helpTipOff = $state(false);
+	let clearTipOff = $state(false);
+	let helpWrap: HTMLDivElement;
+	let quiet = false;
+	// Whether the list follows the word at the caret (not just the keys, and not
+	// closed), so it's worked out again when the values come.
+	let following = false;
 
-	const fromAPI: Key[] = ['alias', 'agency', 'group'];
-	const exactKeys: Key[] = ['alias', 'agency', 'group', 'category'];
+	// Grouped for the list: a run of options with the same heading.
+	const groups = $derived.by(() => {
+		const out: { section?: string; options: { o: Suggestion; i: number }[] }[] = [];
+		list.options.forEach((o, i) => {
+			const section = o.kind === 'text' ? undefined : o.section;
+			const last = out.at(-1);
+			if (last && last.section === section) last.options.push({ o, i });
+			else out.push({ section, options: [{ o, i }] });
+		});
+		return out;
+	});
 
-	function setOptions(list: Option[]) {
-		options = list;
+	function load() {
+		searchValues()
+			.then((v) => {
+				values = { ...v, category: categories };
+				if (following) suggest(); // the word being typed, again with them
+			})
+			.catch(() => {}); // suggestions without the API's values: keys and text
+	}
+
+	function setList(next: Suggestions) {
+		list = next;
 		active = -1;
-		open = list.length > 0;
-		announce = list.length ? `${list.length} suggestion${list.length === 1 ? '' : 's'}` : '';
+		open = next.options.length > 0;
+		const n = next.options.length;
+		announce = n ? `${n} ${next.what}${n === 1 ? '' : 's'}` : '';
 	}
 
 	function close() {
-		clearTimeout(timer);
-		seq++;
+		following = false;
 		open = false;
-		options = [];
+		list = { options: [], what: 'suggestion' };
 		active = -1;
 	}
 
 	/** Suggestions for the word at the caret. */
 	function suggest() {
+		following = true;
 		problem = '';
-		const caret = input.selectionStart ?? text.length;
-		const w = words(text, admin).find((x) => x.start <= caret && caret <= x.end);
-		target = w;
-		clearTimeout(timer);
-		if (!w || (!w.key && (w.quoted || !w.value))) return close();
-		if (!w.key) {
-			const typed = w.value.toLowerCase();
-			return setOptions(keysFor(admin).filter((k) => k.startsWith(typed) && k !== typed).map((k) => ({ label: `${k}:`, insert: `${k}:`, key: k })));
-		}
-		const typed = w.value.toLowerCase();
-		const key = w.key;
-		const values = (list: readonly string[]) => list.filter((v) => v.toLowerCase().includes(typed));
-		const fixed: Partial<Record<Key, readonly string[]>> = {
-			priority: priorities.map((p) => p.toLowerCase()),
-			is: isValues,
-			flag: admin ? flagValues : [],
-			category: [...categories, 'Other']
-		};
-		if (fixed[key]) return setOptions(values(fixed[key]!).map((v) => ({ label: v, insert: `${key}:${show(v, exactKeys.includes(key))}` })));
-		if (!fromAPI.includes(key)) return close(); // capcode:, job: and or: have none
-		const mine = ++seq;
-		timer = setTimeout(async () => {
-			try {
-				const found = await api.suggest(key as 'alias' | 'agency' | 'group', w.value);
-				if (mine === seq) setOptions(found.map((v) => ({ label: v, insert: `${key}:${show(v, true)}` })));
-			} catch {
-				if (mine === seq) close();
-			}
-		}, 150);
+		setList(suggestions(text, input.selectionStart ?? text.length, admin, { ...values, category: categories }));
 	}
 
-	async function pick(o: Option) {
-		const w = target;
-		if (!w) return;
-		const after = text.slice(w.end);
-		const spaced = o.key ? o.insert : `${o.insert}${after.startsWith(' ') ? '' : ' '}`;
-		text = text.slice(0, w.start) + spaced + after;
-		const caret = w.start + spaced.length;
-		close();
+	// Into the box: the suggestions for the word at the caret, which, in an
+	// empty box or between words, are every key. (Not always the keys: WebKit
+	// can send focus after the first input, and the list must follow that.)
+	function focus() {
+		load();
+		if (quiet) {
+			quiet = false;
+			return;
+		}
+		suggest();
+	}
+
+	async function place(next: string, caret: number) {
+		text = next;
 		await Promise.resolve();
 		input.focus();
 		input.setSelectionRange(caret, caret);
-		// A key picked: now its values.
-		if (o.key) suggest();
+	}
+
+	async function pick(o: Suggestion) {
+		if (o.kind === 'text') return run();
+		const w = list.target;
+		if (o.kind === 'key') {
+			const k = `${o.key}:`;
+			if (w) await place(text.slice(0, w.start) + k + text.slice(w.end), w.start + k.length);
+			else {
+				// At the cursor, as a word of its own.
+				const at = input.selectionStart ?? text.length;
+				const before = text.slice(0, at);
+				const ins = (before && !/\s$/.test(before) ? ' ' : '') + k;
+				await place(before + ins + text.slice(at), at + ins.length);
+			}
+			// Now its values.
+			return suggest();
+		}
+		// A value replaces the word it was suggested for, and searches.
+		const start = w ? w.start : text.length;
+		const after = text.slice(w ? w.end : text.length);
+		const ins = o.insert + (after.startsWith(' ') ? '' : ' ');
+		await place(text.slice(0, start) + ins + after, start + ins.length);
+		run();
 	}
 
 	function keydown(ev: KeyboardEvent) {
 		if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
-			if (!open || !options.length) {
-				if (ev.key === 'ArrowDown') suggest();
-				return;
-			}
 			ev.preventDefault();
-			const n = options.length;
-			active = ev.key === 'ArrowDown' ? (active + 1) % n : (active - 1 + n) % n;
+			if (!open) return suggest();
+			const n = list.options.length;
+			active = ev.key === 'ArrowDown' ? (active + 1) % n : active <= 0 ? n - 1 : active - 1;
+			document.getElementById(optionId(list.options[active]))?.scrollIntoView({ block: 'nearest' });
 		} else if (ev.key === 'Enter' && open && active >= 0) {
 			ev.preventDefault();
-			pick(options[active]);
+			pick(list.options[active]);
 		} else if (ev.key === 'Escape' && open) {
 			ev.preventDefault();
 			close();
+		} else if (['Home', 'End', 'ArrowLeft', 'ArrowRight'].includes(ev.key) && open) {
+			setTimeout(() => open && suggest(), 0); // the caret moved: follow it
 		}
 	}
 
-	function submit(ev: SubmitEvent) {
-		ev.preventDefault();
+	/** Searches what's in the box, with these dates. */
+	function run(dates = { from, to }) {
 		close();
 		const parsed = parseBox(text, admin);
 		problem = parsed.problem;
 		if (problem) return;
-		const form = new FormData(ev.currentTarget as HTMLFormElement);
 		const params = parsed.params;
-		for (const k of ['from', 'to']) {
-			const v = String(form.get(k) ?? '');
-			if (v) params.set(k, v);
-		}
+		if (dates.from) params.set('from', dates.from);
+		if (dates.to) params.set('to', dates.to);
+		go(params);
+	}
+
+	function go(params: URLSearchParams) {
 		const s = params.toString();
-		// Focus stays in the box; the results start at the top.
+		if (s !== query.toString()) sent = s;
+		// Focus stays where it is; the results start at the top.
 		goto(s ? `${action}?${s}` : action, { reset: false }).then(() => window.scrollTo(0, 0));
 	}
 
-	const optionId = (i: number) => `${uid}-opt-${i}`;
+	function submit(ev: SubmitEvent) {
+		ev.preventDefault();
+		run();
+	}
+
+	/** Clear all: the box and the dates, a search like any other (so Back
+	 *  brings them back); the focus goes to the box, as the control goes. */
+	function clearAll() {
+		text = '';
+		problem = '';
+		close();
+		go(new URLSearchParams());
+		quiet = document.activeElement !== input;
+		input.focus();
+	}
+
+	function helpKey(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		if (help) {
+			help = false;
+			helpWrap.querySelector('button')?.focus();
+		} else helpTipOff = true;
+	}
+
+	function outside(e: PointerEvent) {
+		if (help && !helpWrap.contains(e.target as Node)) help = false;
+	}
+
+	const optionId = (o: Suggestion) => `${uid}-opt-${list.options.indexOf(o)}`;
+	const shownValue = (insert: string, key: string) => insert.slice(key.length + 1);
 </script>
+
+<svelte:document onpointerdown={outside} />
 
 <form class="search" role="search" aria-label="Search messages" onsubmit={submit}>
 	<div class="box">
@@ -150,51 +232,81 @@
 				aria-autocomplete="list"
 				aria-expanded={open}
 				aria-controls="{uid}-list"
-				aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
-				aria-describedby="{uid}-hint{problem ? ` ${uid}-problem` : ''}"
+				aria-activedescendant={open && active >= 0 ? `${uid}-opt-${active}` : undefined}
+				aria-describedby={problem ? `${uid}-problem` : undefined}
 				placeholder={'Text, or alias:"Station 1", priority:emergency …'}
 				oninput={suggest}
 				onkeydown={keydown}
+				onfocus={focus}
 				onclick={suggest}
 				onblur={close}
 			/>
 		</label>
-		<ul id="{uid}-list" class="options" role="listbox" aria-label="Search suggestions" hidden={!open}>
-			{#each options as o, i (o.insert)}
-				<!-- svelte-ignore a11y_click_events_have_key_events (the combobox handles the keys) -->
-				<li id={optionId(i)} role="option" aria-selected={i === active} class:active={i === active} onmousedown={(e) => e.preventDefault()} onclick={() => pick(o)}>
-					{o.label}
-				</li>
-			{/each}
-		</ul>
-	</div>
-	<div class="dates" class:shown={dates} id="{uid}-dates">
-		<DateRange from={query.get('from') ?? ''} to={query.get('to') ?? ''} />
-	</div>
-	<div class="buttons">
-		<button class="secondary when" type="button" aria-expanded={dates} aria-controls="{uid}-dates" onclick={() => (dates = !dates)}
-			><Icon name="calendar" />Dates</button
-		>
-		<details class="help">
-			<summary class="button ghost"><Icon name="help" />Help</summary>
-			<div class="panel">
-				<p id="{uid}-hint">
-					Type words to find pages containing every one of them; words in quotes, such as "check hoses", must be together, in that
-					order. Filters narrow the search: a filter is a key and a value. A value with spaces goes in quotes; in quotes it must match
-					exactly, and without them it matches any value containing it. The same key twice means either value.
-				</p>
-				<ul class="keys">
-					{#each keysFor(admin) as k (k)}
-						<li>
-							<span class="key">{#if k === 'flag'}<span class="who">Flags (admins only)</span>{/if}<code>{examples[k].example}</code></span>
-							<span class="what">{examples[k].what}</span>
+		<div id="{uid}-list" class="options" role="listbox" aria-label="Search suggestions" hidden={!open}>
+			{#each groups as g, gi (gi)}
+				<ul role={g.section ? 'group' : 'presentation'} aria-labelledby={g.section ? `${uid}-sec-${gi}` : undefined}>
+					{#if g.section}<li class="section" role="presentation" id="{uid}-sec-{gi}">{g.section}</li>{/if}
+					{#each g.options as { o, i } (o.id)}
+						<!-- svelte-ignore a11y_click_events_have_key_events (the combobox handles the keys) -->
+						<li
+							id="{uid}-opt-{i}"
+							role="option"
+							aria-selected={i === active}
+							class:active={i === active}
+							onmousedown={(e) => e.preventDefault()}
+							onclick={() => pick(o)}
+						>
+							{#if o.kind === 'text'}
+								<span class="text">Search text: {o.text}</span>
+							{:else if o.kind === 'key'}
+								<code>{o.key}:</code><span class="hint">{o.hint}</span>
+							{:else}
+								<span><span class="k">{o.key}:</span>{shownValue(o.insert, o.key)}</span>
+							{/if}
 						</li>
 					{/each}
 				</ul>
-			</div>
-		</details>
-		<button type="submit"><Icon name="search" />Search</button>
+			{/each}
+		</div>
 	</div>
+	<!-- svelte-ignore a11y_no_static_element_interactions (Escape closes the help, and hides the tooltip: WCAG 1.4.13) -->
+	<div class="help" bind:this={helpWrap} onkeydown={helpKey}>
+		<span class="has-tip" class:tip-off={helpTipOff || help} onpointerleave={() => (helpTipOff = false)} onfocusout={() => (helpTipOff = false)}>
+		<button type="button" class="ghost icon-button" aria-label="Search help" aria-expanded={help} aria-controls="{uid}-help" onclick={() => (help = !help)}
+			><Icon name="help" /></button
+		>
+		<span class="tooltip" aria-hidden="true">Search help</span>
+		</span>
+		<div class="panel" id="{uid}-help" hidden={!help}>
+			<p>
+				Type words to find pages containing every one of them; words in quotes, such as "check hoses", must be together, in that order.
+				Filters narrow the search: a filter is a key and a value. A value with spaces goes in quotes; in quotes it must match exactly, and
+				without them it matches any value containing it. The same key twice means either value.
+			</p>
+			<ul class="keys">
+				{#each keysFor(admin) as k (k)}
+					<li>
+						<span class="key">{#if k === 'flag'}<span class="who">Flags (admins only)</span>{/if}<code>{examples[k].example}</code></span>
+						<span class="what">{examples[k].what}</span>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	</div>
+	<DateRange {from} {to} {timeZone} onchange={(f, t) => run({ from: f, to: t })} />
+	<!-- svelte-ignore a11y_no_static_element_interactions (Escape hides the tooltip: WCAG 1.4.13) -->
+	<div
+		class="has-tip clear"
+		class:hidden={!set}
+		class:tip-off={clearTipOff}
+		onkeydown={(e) => e.key === 'Escape' && (clearTipOff = true)}
+		onpointerleave={() => (clearTipOff = false)}
+		onfocusout={() => (clearTipOff = false)}
+	>
+		<button type="button" class="ghost icon-button" aria-label="Clear all" onclick={clearAll}><Icon name="clear" /></button>
+		<span class="tooltip" aria-hidden="true">Clear all</span>
+	</div>
+	<button type="submit"><Icon name="search" />Search</button>
 	<div class="visually-hidden" aria-live="polite">{announce}</div>
 	{#if problem}<p class="problem" id="{uid}-problem" role="alert">{problem}</p>{/if}
 </form>
@@ -252,63 +364,62 @@
 		overflow-y: auto;
 		margin: var(--space-2xs) 0 0;
 		padding: var(--space-2xs);
-		list-style: none;
 		background: var(--surface-2);
 		border: var(--border-width) solid var(--control-border);
 		border-radius: var(--radius);
 	}
-	.options li {
+	.options ul {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+	}
+	.options ul + ul {
+		margin-top: var(--space-2xs);
+		border-top: var(--border-width) solid var(--border);
+	}
+	.options .section {
+		padding: var(--space-xs) var(--space-md) var(--space-3xs);
+		color: var(--muted);
+		font-size: var(--text-xxs);
+		font-weight: var(--weight-strong);
+		letter-spacing: var(--badge-tracking);
+		text-transform: var(--badge-case);
+	}
+	.options li[role='option'] {
 		display: flex;
 		align-items: center;
+		gap: var(--space-md);
 		min-height: var(--target);
 		padding: 0 var(--space-md);
 		border-radius: var(--radius-small);
 		cursor: pointer;
 	}
-	.options li:hover {
+	.options li[role='option']:hover {
 		background: var(--hover);
 	}
 	.options li.active {
 		background: var(--accent-soft);
 		color: var(--accent-soft-fg);
+	}
+	.options code {
+		min-width: var(--label-min);
+		font-family: var(--font-mono);
 		font-weight: var(--weight-strong);
 	}
-	.dates {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-	.dates :global(label) {
-		display: flex;
-		flex-direction: row;
-		align-items: center;
-		gap: var(--space-xs);
+	.options .hint,
+	.options .k {
 		color: var(--muted);
+	}
+	.options .hint {
 		font-size: var(--text-sm);
 	}
-	.dates :global(input) {
-		width: auto;
-		color: var(--fg);
+	.options li.active .hint,
+	.options li.active .k {
+		color: inherit;
 	}
-	.dates :global(.range-error) {
-		color: var(--danger-text);
-	}
-	.buttons {
-		display: flex;
-		align-items: center;
-		gap: var(--space-sm);
-	}
-	.when {
-		display: none;
-	}
-	.help {
-		position: relative;
-	}
-	.help summary {
-		list-style: none;
-	}
-	.help summary::-webkit-details-marker {
-		display: none;
+	.options .text {
+		font-weight: var(--weight-strong);
+		overflow-wrap: anywhere;
 	}
 	.help .panel {
 		position: absolute;
@@ -353,35 +464,36 @@
 	code {
 		font-family: var(--font-mono);
 	}
+	.help {
+		display: inline-flex;
+	}
+	/* The help and the calendar open under the whole row, at its end. */
+	.search :global(.dates) {
+		position: static;
+	}
+	.search :global(.calendar) {
+		left: auto;
+		right: 0;
+	}
+	/* Clear all keeps its place when there's nothing to clear, so the row
+	   doesn't move when it comes. */
+	.clear.hidden {
+		visibility: hidden;
+	}
 	.problem {
 		flex-basis: 100%;
 		margin: 0;
 		color: var(--danger-text);
 		font-size: var(--text-sm);
 	}
-	/* Phones: the dates open under the box. */
+	/* Phones: the box has a row of its own, with the controls under it. */
 	@media (max-width: 47.99rem) {
 		.search {
 			width: 100%;
+			justify-content: flex-end;
 		}
 		.box {
 			flex-basis: 100%;
-		}
-		.when {
-			display: inline-flex;
-		}
-		.dates {
-			display: none;
-			flex-wrap: wrap;
-			order: 2;
-			flex-basis: 100%;
-		}
-		.dates.shown {
-			display: flex;
-		}
-		.buttons {
-			flex-basis: 100%;
-			justify-content: flex-end;
 		}
 	}
 </style>

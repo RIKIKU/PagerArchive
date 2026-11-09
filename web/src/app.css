@@ -215,6 +215,16 @@
 	--card-min: 12rem;
 	--dialog-width: 32rem;
 	--disabled-opacity: 0.6;
+	/* M21: the search row (R33a). Its icon buttons' icons, the gap above
+	   their tooltips, and the range calendar: its width, a day's height, the
+	   circle on a picked day, the bar's inset, and a previewed bar's opacity. */
+	--icon-size-large: 1.5rem;
+	--tip-gap: 0.375rem;
+	--calendar-width: 21rem;
+	--calendar-day: 2.6rem;
+	--calendar-mark: 2.2rem;
+	--calendar-bar-inset: 0.2rem;
+	--preview-opacity: 0.55;
 }
 
 @media (pointer: coarse) {
@@ -455,4 +465,55 @@ table {
 	stroke-width: var(--icon-stroke);
 	stroke-linecap: round;
 	stroke-linejoin: round;
+}
+
+/* A tooltip under an icon-only control (R33a, R77a): shown on hover and
+   focus, hidden again with Escape (WCAG 1.4.13: the wrapper adds tip-off)
+   and while the control's panel is open. The control's accessible name says
+   the same, so the tooltip is hidden from assistive technology. */
+.has-tip {
+	position: relative;
+	display: inline-flex;
+}
+.has-tip > .tooltip {
+	position: absolute;
+	top: calc(100% + var(--tip-gap));
+	left: 50%;
+	transform: translateX(-50%);
+	z-index: var(--layer-overlay);
+	padding: var(--space-3xs) var(--space-sm);
+	border-radius: var(--radius-small);
+	background: var(--fg);
+	color: var(--bg);
+	font-size: var(--text-xs);
+	font-weight: var(--weight-strong);
+	white-space: nowrap;
+	pointer-events: none;
+	opacity: 0;
+}
+/* It comes after a moment, and goes at once. */
+.has-tip:hover > .tooltip,
+.has-tip:focus-within > .tooltip {
+	opacity: 1;
+	transition: opacity 0.1s 0.25s;
+}
+.has-tip.tip-off > .tooltip {
+	opacity: 0;
+	transition: none;
+}
+@media (prefers-reduced-motion: reduce) {
+	.has-tip:hover > .tooltip,
+	.has-tip:focus-within > .tooltip {
+		transition: none;
+	}
+}
+
+/* An icon-only button (the search row's Help and Clear all). */
+.icon-button {
+	width: var(--target);
+	padding: 0;
+}
+.icon-button .ui-icon {
+	width: var(--icon-size-large);
+	height: var(--icon-size-large);
 }

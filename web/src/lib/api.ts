@@ -604,9 +604,9 @@ export const api = {
 	job: (job: string) =>
 		get<{ job_number: string; messages: Message[] }>(`/api/v1/jobs/${encodeURIComponent(job)}`),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
-	/** R33a: the search box's suggestions for alias:, agency: or group:. */
-	suggest: (key: 'alias' | 'agency' | 'group', q: string) =>
-		get<string[]>(`/api/v1/search/suggest?${new URLSearchParams({ key, q })}`),
+	/** R33a: every alias name, agency and paging group, which the search box
+	 *  suggests from (asked for once: searchValues.ts). */
+	searchValues: () => get<{ alias: string[]; agency: string[]; group: string[] }>('/api/v1/search/values'),
 	capcode: (capcode: string) => get<CapcodeView>(`/api/v1/capcodes/${encodeURIComponent(capcode)}`),
 	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
 	clients: () => get<ClientStatus[]>('/api/v1/admin/clients'),

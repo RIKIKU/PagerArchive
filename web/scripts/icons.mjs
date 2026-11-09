@@ -52,7 +52,11 @@ const icons = {
 	location: 'map-pin',
 	list: 'list',
 	warning: 'alert-triangle',
-	signout: 'logout'
+	signout: 'logout',
+	// M21: the search box's Clear all, and the calendar's months (R33a).
+	clear: 'filter-x',
+	previous: 'caret-left',
+	next: 'caret-right'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

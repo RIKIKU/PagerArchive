@@ -422,33 +422,37 @@ func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
-// suggestSearch offers values for the search box (R33a): the alias names,
-// agencies or paging groups containing q (key alias, agency or group), at
-// most 10, in order. The other keys' values are fixed or come from meta.
-func (s *Server) suggestSearch(w http.ResponseWriter, r *http.Request) {
-	q := strings.TrimSpace(r.URL.Query().Get("q"))
-	var (
-		out []string
-		err error
-	)
-	switch key := r.URL.Query().Get("key"); key {
-	case "alias":
-		out, err = s.Store.SuggestAliasNames(r.Context(), q)
-	case "agency":
-		out, err = s.Store.SuggestAgencies(r.Context(), q)
-	case "group":
-		out, err = s.Store.SuggestPagingGroups(r.Context(), q)
-	default:
-		problem(w, http.StatusBadRequest, "key must be alias, agency or group")
-		return
+// SearchValues is what the search box suggests for alias:, agency: and
+// group: (R33a): every value, in order. The other keys' values are fixed or
+// come from meta.
+type SearchValues struct {
+	Alias  []string `json:"alias"`
+	Agency []string `json:"agency"`
+	Group  []string `json:"group"`
+}
+
+// searchValues gives the search box every alias name, template agency and
+// paging group (R33a). The browser asks once and matches what's typed
+// itself, so suggestions cost no request per keystroke, however many
+// aliases there are (ADR 0023).
+func (s *Server) searchValues(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	var out SearchValues
+	var err error
+	if out.Alias, err = s.Store.SearchAliasNames(ctx); err == nil {
+		if out.Agency, err = s.Store.SearchAgencies(ctx); err == nil {
+			out.Group, err = s.Store.SearchPagingGroups(ctx)
+		}
 	}
 	if err != nil {
-		s.Log.Error("suggest", "error", store.SafeError(err))
+		s.Log.Error("search values", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	if out == nil {
-		out = []string{}
+	for _, l := range []*[]string{&out.Alias, &out.Agency, &out.Group} {
+		if *l == nil {
+			*l = []string{}
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

@@ -55,7 +55,7 @@
 	{#if meta}
 		<form method="GET" action="/reports/capcode" class="form">
 			<label>Capcode<input name="capcode" required inputmode="numeric" pattern="[0-9]{'{1,7}'}" value={capcode} /></label>
-			<DateRange from={from || defaultFrom} to={to || defaultTo} required />
+			<DateRange from={from || defaultFrom} to={to || defaultTo} timeZone={meta.time_zone} />
 			<button type="submit">Run report</button>
 		</form>
 	{/if}

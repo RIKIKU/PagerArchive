@@ -114,7 +114,7 @@
 		<header class="top" bind:clientHeight={topHeight}>
 			<Crumbs {trail} listHref={listHref()} />
 			<div class="tools">
-				{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} />{/if}
+				{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} timeZone={meta.time_zone} />{/if}
 				<AccountMenu {me} bind:theme />
 			</div>
 		</header>

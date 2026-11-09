@@ -2,7 +2,7 @@
 // Browser acceptance checks (SPEC.md section 9). scripts/e2e.sh starts the API
 // on a fresh database with the standard test fixture, a client key, and a
 // signed-in user and admin (their session tokens).
-import { test, expect, type Browser, type BrowserContextOptions, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -1187,14 +1187,15 @@ for (const width of [375, 1280]) {
 	});
 }
 
-// From and To limit each other (min and max), and a range that is still
-// reversed is refused in the browser with a clear message, before the API is
-// asked (the report API refuses it; search and the map would find nothing).
-// Search is checked on the message list; the map uses the same search form.
+// The range calendar (R33a's Dates, M21) can't make a To before the From: a
+// second day before the first swaps them. It's the same control on the
+// search page, the map and the capcode report. A range that is reversed in
+// the URL is reported, and the API isn't asked (the report API refuses it;
+// search and the map would find nothing).
 for (const f of [
 	{ name: 'reports', path: '/reports?capcode=0100001', api: '/api/v1/reports/', submit: 'Run report' },
-	{ name: 'search', path: '/', api: '/api/v1/messages', submit: 'Search' },
-	{ name: 'map', path: '/map', api: '/api/v1/map', submit: 'Search' }
+	{ name: 'search', path: '/', api: '/api/v1/messages', submit: '' },
+	{ name: 'map', path: '/map', api: '/api/v1/map', submit: '' }
 ]) {
 	test(`${f.name}: To can't be before From`, async ({ page }) => {
 		const asked: string[] = [];
@@ -1203,28 +1204,12 @@ for (const f of [
 			if (u.pathname.startsWith(f.api) && u.searchParams.has('from')) asked.push(`${u.searchParams.get('from')}/${u.searchParams.get('to')}`);
 		});
 		await page.goto(f.path);
-		const submit = page.getByRole('button', { name: f.submit, exact: true });
-		const form = page.locator('form').filter({ has: submit });
-		const from = form.getByLabel('From', { exact: true });
-		const to = form.getByLabel('To', { exact: true });
-		const message = form.getByTestId('date-range-error');
-
-		await from.fill('2026-10-10');
-		await expect(to).toHaveAttribute('min', '2026-10-10');
-		await to.fill('2026-10-01');
-		await expect(from).toHaveAttribute('max', '2026-10-01');
-		await expect(message).toHaveText('The To date is before the From date. Choose a To date on or after the From date.');
-		await submit.click();
-		await page.waitForTimeout(500);
-		expect(page.url(), 'the form was not sent').not.toContain('from=');
-		await expect(message).toBeVisible();
-
-		// Put right, it's sent.
-		await to.fill('2026-10-12');
-		await expect(message).toHaveCount(0);
-		await submit.click();
-		await expect(page).toHaveURL(/from=2026-10-10&to=2026-10-12/);
-		await expect.poll(() => asked).toContain('2026-10-10/2026-10-12');
+		const days = await pickBackwards(page, f.submit ? page.locator('main form') : page.getByRole('search', { name: 'Search messages' }));
+		// The search box searches when the calendar closes; the report's form
+		// is sent with its button.
+		if (f.submit) await page.getByRole('button', { name: f.submit, exact: true }).click();
+		await expect(page).toHaveURL(new RegExp(`from=${days.first}&to=${days.third}`));
+		await expect.poll(() => asked).toContain(`${days.first}/${days.third}`);
 
 		// A reversed range in the URL is reported, and the API isn't asked.
 		await page.goto(`${f.path}${f.path.includes('?') ? '&' : '?'}from=2026-10-10&to=2026-10-01`);
@@ -1232,6 +1217,37 @@ for (const f of [
 		await page.waitForTimeout(500);
 		expect(asked.filter((a) => a === '2026-10-10/2026-10-01'), 'reversed ranges sent to the API').toEqual([]);
 	});
+}
+
+/** The month A82 picks in: this one in the deployment's time zone (scripts/
+ *  e2e.sh's TZ), or the one before when today is before its 3rd. Its 1st and
+ *  3rd as YYYY-MM-DD, and its days' accessible names' ending ("November 2026"). */
+function pickMonth() {
+	const [y, m, d] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne' }).format(new Date()).split('-').map(Number);
+	const first = new Date(Date.UTC(y, m - 1 - (d < 3 ? 1 : 0), 1));
+	const iso = (n: number) => new Date(first.getTime() + (n - 1) * 864e5).toISOString().slice(0, 10);
+	const name = new Intl.DateTimeFormat('en-AU', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(first);
+	const short = new Intl.DateTimeFormat('en-AU', { month: 'short', timeZone: 'UTC' }).format(first);
+	const thisYear = y === first.getUTCFullYear();
+	return { first: iso(1), second: iso(2), third: iso(3), fourth: iso(4), name, label: `1 ${short}${thisYear ? '' : ` ${first.getUTCFullYear()}`} – 3 ${short}${thisYear ? '' : ` ${first.getUTCFullYear()}`}`, back: d < 3, today: Date.UTC(y, m - 1, d) };
+}
+
+/** Opens the calendar in scope and picks the 3rd, then the 1st, with the
+ *  mouse; Done closes it. */
+async function pickBackwards(page: Page, scope: Locator) {
+	const days = pickMonth();
+	await scope.getByRole('button', { name: /^Dates/ }).click();
+	const calendar = page.getByRole('dialog', { name: 'Choose dates' });
+	await expect(calendar).toBeVisible();
+	if (days.back) await calendar.getByRole('button', { name: 'Previous month' }).click();
+	await expect(calendar.getByRole('heading')).toHaveText(days.name);
+	const cell = (n: number) => calendar.getByRole('gridcell', { name: new RegExp(` ${n} ${days.name}$`) });
+	await cell(3).click();
+	await cell(1).click();
+	await expect(scope.getByRole('button', { name: `Dates: ${days.label}`, exact: true })).toBeVisible();
+	await calendar.getByRole('button', { name: 'Done' }).click();
+	await expect(calendar).toBeHidden();
+	return days;
 }
 
 // M7 (R42a-R42d, ADR 0008): invite trees, the deactivation preview, trusted
@@ -2153,7 +2169,7 @@ test('A61 one search box', async ({ browser, request }, info) => {
 
 	// alias:hill suggests both Hillside aliases, and no Station; it's said how many.
 	await box.fill('alias:hill');
-	await expect(options).toHaveText(['Hillside North', 'Hillside South']);
+	await expect(options).toHaveText(['alias:"Hillside North"', 'alias:"Hillside South"']);
 	await expect(announced).toHaveText('2 suggestions');
 	// Searched without picking: pages from both.
 	await box.fill(`alias:hill ${marker}`);
@@ -2161,9 +2177,10 @@ test('A61 one search box', async ({ browser, request }, info) => {
 	await expect(page).toHaveURL(new RegExp(`/\\?alias=hill&q=${marker}$`));
 	await expect.poll(who).toEqual(['Hillside North', 'Hillside South']);
 
-	// Station 1 picked from alias:sta's suggestions, with the keyboard.
+	// Station 1 picked from alias:sta's suggestions, with the keyboard; picking
+	// a value searches (M21), and what's typed next stays in the box.
 	await box.fill('alias:sta');
-	await expect(options.first()).toHaveText('Station 1');
+	await expect(options.first()).toHaveText('alias:"Station 1"');
 	await expect(options.filter({ hasText: 'Hillside' })).toHaveCount(0);
 	await box.press('ArrowDown');
 	await expect(options.first()).toHaveAttribute('aria-selected', 'true');
@@ -2224,7 +2241,7 @@ test('A61 one search box', async ({ browser, request }, info) => {
 	await expect(page).toHaveURL(/\/\?q=%22or%3A%22$/);
 	// or: is a key: suggested as one, with no values of its own, and in the help.
 	await box.fill('o');
-	await expect(options).toHaveText(['or:']);
+	await expect(options.locator('code')).toHaveText(['or:']);
 	await box.fill('or:');
 	await expect(options).toHaveCount(0);
 	await expect(page.getByRole('search', { name: 'Search messages' }).locator('.keys')).toContainText('or:"grass fire"');
@@ -2236,26 +2253,207 @@ test('A61 one search box', async ({ browser, request }, info) => {
 	await expect(box).toHaveValue('"or:"');
 	await expect.poll(async () => (await listed()).filter((t) => t.includes(tag)).length).toBe(1);
 
-	// fl: no flag: for B, but an admin gets it; Escape closes the list.
+	// fl: no flag: for B, but an admin gets it; Escape closes the list. (Since
+	// M21 a word with no key also suggests searching it as text, first.)
 	await box.fill('fl');
-	await expect(options).toHaveCount(0);
+	await expect(options.first()).toHaveText('Search text: fl');
+	await expect(options.locator('code')).toHaveCount(0);
 	const admin = await (await signedIn(browser, 'admin')).newPage();
 	await admin.goto('/');
 	await waitLive(admin);
 	const adminBox = admin.getByRole('combobox', { name: 'Search' });
 	await adminBox.fill('fl');
 	const adminOptions = admin.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option');
-	await expect(adminOptions).toHaveText(['flag:']);
+	await expect(adminOptions.locator('code')).toHaveText(['flag:']);
 	await adminBox.press('ArrowDown');
+	await adminBox.press('ArrowDown');
+	await expect(adminOptions.nth(1)).toHaveAttribute('aria-selected', 'true');
 	await adminBox.press('Enter');
 	await expect(adminBox).toHaveValue('flag:');
-	await expect(adminOptions).toHaveText(['parse_failed', 'address_unsplit', 'location_mismatch']);
+	await expect(adminOptions).toHaveText(['flag:parse_failed', 'flag:address_unsplit', 'flag:location_mismatch']);
 	await admin.screenshot({ path: info.outputPath('a61-suggestions-admin.png') });
 	expect(await axeOf(admin), 'axe with the suggestions open').toEqual([]);
 	await adminBox.press('Escape');
 	await expect(adminOptions).toHaveCount(0);
 	await page.context().close();
 	await admin.context().close();
+});
+
+// A82. The search box (M21): every key on the first click, a key put in at
+// the cursor, a plain word suggesting text first and then the filters
+// containing it, the range calendar with a second day before the first, and
+// Clear all, which Back undoes. Once with the mouse in light mode, once with
+// the keyboard alone in dark mode, with axe at each step.
+test('A82 search box', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const marker = `BOXA${projectN(info)}${uniqueJob().slice(2)}`;
+	await post(request, '0600001', `QD${marker} DRILL AT HILLSIDE NORTH`);
+	await post(request, '0600002', `QD${marker} DRILL AT HILLSIDE SOUTH`);
+	await post(request, '0100001', `QD${marker} DRILL AT STATION ONE`);
+	const days = pickMonth();
+	const keys = ['alias:', 'agency:', 'capcode:', 'group:', 'priority:', 'category:', 'job:', 'is:', 'or:'];
+	const report: string[] = [];
+	for (const [how, colorScheme] of [
+		['mouse', 'light'],
+		['keyboard', 'dark']
+	] as const) {
+		const page = await (await signedIn(browser, 'user', { colorScheme })).newPage();
+		await page.goto('/');
+		await waitLive(page);
+		const form = page.getByRole('search', { name: 'Search messages' });
+		const box = form.getByRole('combobox', { name: 'Search' });
+		const options = form.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option');
+		const announced = form.locator('[aria-live]').last();
+		const dates = form.getByRole('button', { name: /^Dates/ });
+		const calendar = form.getByRole('dialog', { name: 'Choose dates' });
+		const clear = form.getByRole('button', { name: 'Clear all', exact: true });
+		const help = form.getByRole('button', { name: 'Search help', exact: true });
+		const list = page.getByTestId('message-list');
+		const axe = async (what: string) => expect(await axeOf(page), `${how}, ${colorScheme}: axe, ${what}`).toEqual([]);
+		const shot = (what: string) => page.screenshot({ path: info.outputPath(`a82-${how}-${colorScheme}-${what}.png`) });
+
+		// Help and Clear all are icons with names and tooltips; nothing is set,
+		// so there's no Clear all yet.
+		await expect(help).toBeVisible();
+		await expect(clear).toBeHidden();
+		if (how === 'mouse') {
+			await help.hover();
+			await expect(form.locator('.tooltip', { hasText: 'Search help' })).toHaveCSS('opacity', '1');
+		}
+
+		// Into the empty box: every key (no flag: for B); alias: picked goes in
+		// with the cursor after it, and its values are suggested.
+		if (how === 'mouse') await box.click();
+		else await box.focus();
+		await expect(options.locator('code')).toHaveText(keys);
+		await expect(announced).toHaveText(`${keys.length} filter keys`);
+		await shot('keys');
+		await axe('the keys listed');
+		if (how === 'mouse') await options.filter({ hasText: /^alias:/ }).click();
+		else {
+			await box.press('ArrowDown');
+			await expect(options.first()).toHaveAttribute('aria-selected', 'true');
+			await box.press('Enter');
+		}
+		await expect(box).toHaveValue('alias:');
+		expect(await box.evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd])).toEqual([6, 6]);
+		await expect(options.filter({ hasText: 'alias:"Hillside North"' })).toHaveCount(1);
+
+		// hill, with no key (after the marker, a text term): searching it as
+		// text first, then both Hillside aliases.
+		if (how === 'mouse') await box.fill(`${marker} hill`);
+		else {
+			for (let i = 0; i < 'alias:'.length; i++) await box.press('Backspace');
+			await page.keyboard.type(`${marker} hill`);
+		}
+		await expect(options).toHaveText(['Search text: hill', 'alias:"Hillside North"', 'alias:"Hillside South"']);
+		await expect(announced).toHaveText('3 suggestions');
+		await shot('hill');
+		await axe('hill suggesting filters');
+		// The first alias picked: the word becomes that filter, which matches
+		// exactly, and only its pages are listed.
+		if (how === 'mouse') await options.nth(1).click();
+		else {
+			await box.press('ArrowDown');
+			await box.press('ArrowDown');
+			await expect(options.nth(1)).toHaveAttribute('aria-selected', 'true');
+			await box.press('Enter');
+		}
+		await expect(box).toHaveValue(`${marker} alias:"Hillside North" `);
+		await expect(page).toHaveURL(new RegExp(`/\\?alias=%22Hillside\\+North%22&q=${marker}$`));
+		await expect.poll(async () => await list.locator('article .who').allTextContents()).toEqual(['Hillside North']);
+
+		// The calendar: the 3rd, then the 1st, is the 1st to the 3rd, all three
+		// days barred.
+		if (how === 'mouse') await dates.click();
+		else {
+			await dates.focus();
+			await page.keyboard.press('Enter');
+		}
+		await expect(calendar).toBeVisible();
+		const cell = (n: number) => calendar.getByRole('gridcell', { name: new RegExp(` ${n} ${days.name}$`) });
+		if (how === 'mouse') {
+			if (days.back) await calendar.getByRole('button', { name: 'Previous month' }).click();
+			await cell(3).click();
+			// The bar is previewed as the pointer moves.
+			await cell(1).hover();
+			for (const n of [1, 2, 3]) await expect(cell(n)).toHaveAttribute('aria-selected', 'true');
+			await cell(1).click();
+		} else {
+			// Today has the focus: arrows to the 3rd, Enter, two days back, Enter.
+			const back = Math.round((days.today - Date.parse(`${days.third}T00:00:00Z`)) / 864e5);
+			for (let i = 0; i < back; i++) await page.keyboard.press('ArrowLeft');
+			await expect(cell(3)).toBeFocused();
+			await page.keyboard.press('Enter');
+			await page.keyboard.press('ArrowLeft');
+			await page.keyboard.press('ArrowLeft');
+			await expect(cell(1)).toBeFocused();
+			await page.keyboard.press('Enter');
+		}
+		await expect(calendar.getByRole('heading')).toHaveText(days.name);
+		for (const n of [1, 2, 3]) await expect(cell(n), `day ${n} is barred`).toHaveAttribute('aria-selected', 'true');
+		await expect(cell(4)).toHaveAttribute('aria-selected', 'false');
+		await expect(calendar.locator('button.day.in')).toHaveCount(3);
+		await expect(form.getByRole('button', { name: `Dates: ${days.label}`, exact: true })).toBeVisible();
+		await shot('calendar');
+		await axe('the calendar open');
+		if (how === 'mouse') await calendar.getByRole('button', { name: 'Done' }).click();
+		else await page.keyboard.press('Escape');
+		await expect(calendar).toBeHidden();
+		if (how === 'keyboard') await expect(dates).toBeFocused();
+		const searched = new RegExp(`/\\?alias=%22Hillside\\+North%22&q=${marker}&from=${days.first}&to=${days.third}$`);
+		await expect(page).toHaveURL(searched);
+
+		// Help, opened and closed.
+		if (how === 'mouse') await help.click();
+		else {
+			await help.focus();
+			await page.keyboard.press('Enter');
+		}
+		await expect(form.locator('.keys')).toBeVisible();
+		await expect(form.locator('.keys')).toContainText('or:"grass fire"');
+		await shot('help');
+		await axe('the help open');
+		if (how === 'mouse') await help.click();
+		else {
+			await page.keyboard.press('Escape');
+			await expect(help).toBeFocused();
+		}
+		await expect(form.locator('.keys')).toBeHidden();
+
+		// Clear all: the box and the dates are empty, and the plain list is
+		// shown; Back brings the search back.
+		await expect(clear).toBeVisible();
+		if (how === 'mouse') await clear.click();
+		else {
+			await dates.focus();
+			await page.keyboard.press('Tab');
+			await expect(clear).toBeFocused();
+			await page.keyboard.press('Enter');
+		}
+		await expect(page).toHaveURL(/\/$/);
+		await expect(box).toHaveValue('');
+		await expect(box).toBeFocused();
+		await expect(form.getByRole('button', { name: 'Dates', exact: true })).toBeVisible();
+		await expect(clear).toBeHidden();
+		await expect(list.locator('article').first()).toBeVisible();
+		await page.goBack();
+		await expect(page).toHaveURL(searched);
+		await expect(box).toHaveValue(`alias:"Hillside North" ${marker}`);
+		await expect(form.getByRole('button', { name: `Dates: ${days.label}`, exact: true })).toBeVisible();
+		await expect(clear).toBeVisible();
+		await shot('back');
+		await axe('after Back');
+
+		// Escape closes the list.
+		await box.press('ArrowDown');
+		await expect(options.first()).toBeVisible();
+		await box.press('Escape');
+		await expect(options).toHaveCount(0);
+		report.push(`${how} (${colorScheme}): keys on entry, alias: at the cursor, hill -> text then both Hillside aliases, the 3rd then the 1st -> ${days.label}, Clear all and Back`);
+		await page.context().close();
+	}
+	console.log(`A82 (${info.project.name}): ${report.join('; ')}; axe clean at every step`);
 });
 
 // A68. The side menu and the breadcrumbs, at 1,920 px.
@@ -2435,10 +2633,7 @@ test('A69 using the width', async ({ browser, request }, info) => {
 		await expect(opened).toBeInViewport();
 		await expect.poll(async () => Math.abs((await opened.boundingBox())!.y - top), `${width}: the list's place`).toBeLessThan(40);
 		await expect(page.getByRole('combobox', { name: 'Search' })).toHaveValue(marker);
-		if (width >= 768) {
-			await expect(page.getByLabel('From', { exact: true })).toHaveValue('2020-01-01');
-			await expect(page.getByLabel('To', { exact: true })).toHaveValue('2099-12-31');
-		}
+		await expect(page.getByRole('button', { name: 'Dates: 1 Jan 2020 – 31 Dec 2099', exact: true })).toBeVisible();
 		await page.screenshot({ path: info.outputPath(`a69-${width}-back.png`) });
 		console.log(`A69 (${width} px): back at the list by the breadcrumbs: the opened row ${Math.round((await opened.boundingBox())!.y - top)} px from where it was (scrollY ${y} before, ${await page.evaluate(() => window.scrollY)} now), search and dates kept`);
 		await page.context().close();
