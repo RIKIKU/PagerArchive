@@ -123,12 +123,35 @@
     // release, as the monitoring stack's compose.yaml changes; owner, 2026-11-09).
     {
       matchManagers: ["docker-compose"],
-      matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus", "axllent/mailpit"],
+      matchPackageNames: ["grafana/alloy", "grafana/tempo", "prom/prometheus"],
       matchUpdateTypes: ["patch"],
       groupName: "exact-version images patch",
       group: {branchTopic: "exact-version-images-patch"},
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
+    },
+    // Images only the test stack runs (deploy/test) are libraries: no deployment
+    // runs them, so they go in the monthly pull requests, not a weekly release
+    // of their own (owner, 2026-11-10).
+    {
+      matchFileNames: ["deploy/test/**"],
+      matchUpdateTypes: ["patch"],
+      groupName: "libraries patch",
+      group: {branchTopic: "libraries-patch"},
+      schedule: ["* * 1 * *"],
+      minimumReleaseAge: "3 days",
+      automerge: true,
+      commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
+    },
+    {
+      matchFileNames: ["deploy/test/**"],
+      matchUpdateTypes: ["minor", "major"],
+      groupName: "libraries and base images minor and major",
+      group: {branchTopic: "libraries-and-base-images-minor-and-major"},
+      schedule: ["* * 1 * *"],
+      minimumReleaseAge: "3 days",
+      automerge: false,
+      commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
     // PostGIS's tag is <PostgreSQL major>-<PostGIS minor>: both parts are minor
     // versions or more, so every update waits.
