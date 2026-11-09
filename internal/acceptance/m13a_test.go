@@ -1,10 +1,12 @@
 package acceptance
 
 import (
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -229,6 +231,47 @@ func a75ColdStart(t *testing.T, e *env, container string) {
 	e.st.Pool.Reset()
 }
 
+// a75ColdRun runs the search once straight after a75ColdStart, and says how
+// long it took and what it read from the disks. A cold run reads the same
+// blocks each time, so one that took longer read them more slowly (ADR 0017).
+func a75ColdRun(t *testing.T, e *env, container, query string) ([]int64, time.Duration, string) {
+	t.Helper()
+	a75ColdStart(t, e, container)
+	r0, ms0 := a75DiskReads()
+	t0 := time.Now()
+	var ids []int64
+	for _, m := range e.list(query) {
+		ids = append(ids, m.ID)
+	}
+	d := time.Since(t0)
+	r1, ms1 := a75DiskReads()
+	if r0 < 0 || r1 <= r0 {
+		return ids, d, ""
+	}
+	return ids, d, fmt.Sprintf(" (%d disk reads, %.2f ms each)", r1-r0, float64(ms1-ms0)/float64(r1-r0))
+}
+
+// a75DiskReads is the reads completed and the milliseconds spent reading on
+// the whole disks, from /proc/diskstats; -1 without it.
+func a75DiskReads() (reads, ms int64) {
+	b, err := os.ReadFile("/proc/diskstats")
+	if err != nil {
+		return -1, 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		f := strings.Fields(line)
+		if len(f) < 7 || !a75WholeDisk.MatchString(f[2]) {
+			continue
+		}
+		r, _ := strconv.ParseInt(f[3], 10, 64)
+		m, _ := strconv.ParseInt(f[6], 10, 64)
+		reads, ms = reads+r, ms+m
+	}
+	return reads, ms
+}
+
+var a75WholeDisk = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+)$`)
+
 // A75. Search speed: 4,562,500 made-up pages, each of A75's searches lists
 // its first page within 1 second, and the same pages as the query before
 // M13a. That counts its first run straight after a restart with both caches
@@ -306,6 +349,12 @@ func TestA75SearchSpeed(t *testing.T) {
 		{"a rare term and a short one in every page", "", "", "tanker9 st", false},
 		{"a term in 2.4% of the pages and a short one", "", "", "345 c7", false},
 	}
+	type a75Again struct {
+		name, query string
+		want        []int64
+		first       time.Duration
+	}
+	var again []a75Again
 	for _, s := range searches {
 		query := "q=" + url.QueryEscape(s.text)
 		var alias, picked []string
@@ -318,18 +367,12 @@ func TestA75SearchSpeed(t *testing.T) {
 			picked = []string{s.picked}
 		}
 		// The first run, straight after a restart with both caches cold.
-		a75ColdStart(t, e, container)
-		t0 := time.Now()
-		var cold []int64
-		for _, m := range e.list(query) {
-			cold = append(cold, m.ID)
-		}
-		coldTime := time.Since(t0)
+		cold, coldTime, coldDisk := a75ColdRun(t, e, container, query)
 		var got []int64
 		var times []time.Duration
 		// Three times warm, unless one is already over the limit.
 		for len(times) < 3 && (len(times) == 0 || times[len(times)-1] <= time.Second) {
-			t0 = time.Now()
+			t0 := time.Now()
 			ms := e.list(query)
 			times = append(times, time.Since(t0))
 			got = got[:0]
@@ -342,7 +385,7 @@ func TestA75SearchSpeed(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		t0 = time.Now()
+		t0 := time.Now()
 		rows, err := e.st.Pool.Query(e.ctx, a75Reference, p.QAll, p.QAny, p.Aliases, 50, p.AliasLikes)
 		if err != nil {
 			t.Fatal(err)
@@ -363,7 +406,7 @@ func TestA75SearchSpeed(t *testing.T) {
 		for _, d := range times {
 			each = append(each, d.Round(time.Millisecond).String())
 		}
-		t.Logf("%-42s %3d listed, cold %s, warm %s (slowest %s; the query before M13a %s)", s.name, len(got), coldTime.Round(time.Millisecond),
+		t.Logf("%-42s %3d listed, cold %s%s, warm %s (slowest %s; the query before M13a %s)", s.name, len(got), coldTime.Round(time.Millisecond), coldDisk,
 			strings.Join(each, " "), slowest.Round(time.Millisecond), before.Round(time.Millisecond))
 		if !slices.Equal(got, want) {
 			t.Errorf("%s: lists %v, the query before M13a %v", s.name, got, want)
@@ -371,11 +414,27 @@ func TestA75SearchSpeed(t *testing.T) {
 		if !slices.Equal(cold, want) {
 			t.Errorf("%s: after a cold start lists %v, the query before M13a %v", s.name, cold, want)
 		}
-		if s.a75 && coldTime > time.Second {
-			t.Errorf("%s: the first run after a cold start took %s, over 1 second (R33b)", s.name, coldTime.Round(time.Millisecond))
-		}
 		if s.a75 && slowest > time.Second {
 			t.Errorf("%s: %s, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
+		}
+		if s.a75 && coldTime > time.Second {
+			again = append(again, a75Again{s.name, query, want, coldTime})
+		}
+	}
+	// A cold run over 1 second gets one more cold start, after all the others
+	// (ADR 0017, "A75's cold runs on CI's runners"): a runner's disk can read
+	// several times slower for a few seconds, and the same search from a cold
+	// start minutes later reads the same blocks. The better of the two counts.
+	// A search that is slow cold is slow both times.
+	for _, a := range again {
+		cold, coldTime, coldDisk := a75ColdRun(t, e, container, a.query)
+		t.Logf("%-42s cold again %s%s (the first %s)", a.name, coldTime.Round(time.Millisecond), coldDisk, a.first.Round(time.Millisecond))
+		if !slices.Equal(cold, a.want) {
+			t.Errorf("%s: after another cold start lists %v, the query before M13a %v", a.name, cold, a.want)
+		}
+		if coldTime > time.Second {
+			t.Errorf("%s: the first run after a cold start took %s, and %s after another, over 1 second (R33b)", a.name,
+				a.first.Round(time.Millisecond), coldTime.Round(time.Millisecond))
 		}
 	}
 }

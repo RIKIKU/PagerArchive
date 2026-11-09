@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.2): see "A map reference with a page number".
+Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.2): see "A map reference with a page number". A cold run over 1 second in CI gets one more cold start, and the better counts (fix-a75-cold, 2026-11-09; 1.0.2): see "A75's cold runs on CI's runners".
 
 ## Context
 
@@ -691,6 +691,71 @@ The run of the search mutations (`PA_MUT_ONLY="^search: "`) on cld01, at f4719ac
 ### Questions for the owner
 
 None.
+
+## A75's cold runs on CI's runners (fix-a75-cold, 2026-11-09)
+
+The owner's brief: A75's job failed on about every other run, each time on a different search's first run after a cold start, just over 1 second, and passed when run again. Releases need every check green (ADR 0016). Released as 1.0.2. The search, the API, the client and the module don't change, and nor does R33b's 1 second.
+
+### The evidence
+
+**Twelve of A75's jobs** with all its searches, since fix-search-2's fix (main, m18 and fix-search-2, including failed attempts, from `gh api …/actions/jobs/<id>/logs`; job 128681591909 was the fix's own "before", main's code, which failed as it should): three failed, each on one search, and each passed when run again. Cold runs in milliseconds, the usual range across the jobs that passed against the failure:
+
+| Job | Search over 1 s | Its cold run | Usually | The query before M13a, seconds later |
+|---|---|---|---|---|
+| 128843412329 | `alias:"Station 5" fire` (busy alias) | 1,450 | 56 to 80 | 6.8 s, usually 3.2 to 5.0 |
+| 128879696968 | `alias:"Station 1" STN2` | 1,530 | 400 to 520 | 4.5 s; the next four cold runs 20 to 80% slower than usual |
+| 129151878677 | `m 345 c7` | 1,150 | 330 to 490 | 756 ms, usually 310 to 420; `ZZNOTHING` 296 against 43 to 80 |
+
+Every warm run in those jobs was as usual (the busy alias 4 ms, `m 345 c7` 29 to 31 ms), so the plans and the statistics were the same: a slow disk, for a while, and nothing else.
+
+**What happens at a cold start**, from the database's log, which the job prints at its end: after the first stop, whose shutdown checkpoint finishes the seed's last one, each `docker stop` writes 0 buffers, no checkpoint starts during the searches, and no autovacuum is reported. `VACUUM ANALYZE` has finished before the first cold start. The restart takes 0.8 to 2.3 s.
+
+**A diagnostic run** (temporary, run 42632966635: three jobs, each seeding as A75 and doing every A75 search's cold run three times, with `/proc/diskstats` and `/proc/pressure/io` read around each). Each search read the same number of blocks from the disk every time (`m 345 c7` 5,089 to 5,106 reads, `alias:"Station 1" STN2` 1,676 to 1,911), so the cold start is the same each time and a later cold start is as cold as the first. Two kinds of runner:
+
+- AMD EPYC 7763 with its disk as `sda` (two jobs; their index builds take about 6 min 40 s): 0.12 to 0.17 ms a read, and every cold run within 15% of the same search's others. No run over 700 ms.
+- AMD EPYC 9V74 with an NVMe disk (one job; index builds about 5 min): 0.14 to **0.95 ms** a read, with writes on the disk the test doesn't make (1,097, 180 and 114 in the three 10-second idle windows after the seed, against 3 to 261 on the others). `alias:sta STN2` took **1,200 ms** at 0.95 ms a read, and 390 to 454 ms in its other two runs; `alias:"Station 1" STN2` 897 against 461 and 479. Same reads, slower disk.
+
+All three failures were on runners whose index builds took about 5 minutes, the NVMe kind, which ran 6 of the 12 jobs.
+
+### The cause
+
+The runner's disk. A cold run reads 300 to 5,100 blocks, so its time follows the disk's speed per read, and on GitHub's shared runners that speed changes several times over for seconds at a time. For a search whose first try usually answers within its 100 ms (the busy alias, 60 ms cold), a slow few seconds also push it past that limit, and it takes the tries in turn: 1.45 s. Nothing in the cold start varies, so it can't be made more deterministic than it is.
+
+### The fix
+
+A cold run over 1 second gets one more cold start, after every search has had its first, and the better of the two counts. The two are minutes apart, so a slow few seconds on the disk can't take both. Each is a real cold start (the same `a75ColdStart`), and the job logs each cold run's disk reads and time per read, so a log shows whether the second read as much as the first. A search that is slow cold, a regression, reads the same blocks both times and fails both. Most of the mutations in `scripts/mutation-checks.sh` that A75 guards make a search seconds slower. The narrowest regression seen is fix-search-2's "before": `m 345 c7` at 1,107 ms cold on CI's runner (job 128681591909), with `345 c7` at 1,103. A second cold run of that would most likely be over 1 second too, but a regression that close to the limit could pass on a fast second run. The mutation run on cld01, whose disk is slower, remains the check for those (as before). Both runs must also list the same pages as the query before M13a. The warm runs' limit is unchanged.
+
+### What was weighed
+
+- **A deterministic cold start.** It already is (above). Waiting for the disk to go quiet after the seed wasn't kept: the NVMe runner's slow runs came 41 and 58 seconds after the seed, and its disk was still being written to, by something other than the test, the whole time.
+- **Two cold starts for every search, the better counting.** The same check, but 11 more restarts in every job for nothing when all pass.
+- **A higher limit in CI, or a margin for the runner.** Not done: the brief rules it out, and it would also pass a search that's slow every time.
+
+### What this doesn't show
+
+- **Production's disk wasn't measured this way.** A75 on a disk whose every read is slow fails, as it should. What it now tolerates is one slow cold run per search in a job.
+- **A search could fail twice by chance.** In the diagnostic run 1 cold run in 99 was over 1 second. Two for the same search, minutes apart, wasn't seen.
+
+### A75 in CI
+
+Run 42636750400 on this fix: A75's job three times at once, on three runners (a temporary workflow running only it). All three passed, and none needed a second cold start. Cold runs in milliseconds, with the time per disk read; "warm" is the slowest of the three warm runs:
+
+| Search | EPYC 9V45 | EPYC 7763 (`sda`) | EPYC 9V74 (NVMe) | warm |
+|---|---|---|---|---|
+| **A75** `ZZNOTHING` | 48 | 60 | 56 | 1 to 2 |
+| **A75** `hoses grass pump` | 226 | 306 | 259 | 186 to 251 |
+| **A75** `"Smoke showing" or:"grass fire"` | 200 | 248 | 319 | 5 to 8 |
+| **A75** `tanker9` | 68 | 89 | 74 | 4 to 7 |
+| **A75** `alias:"Station 1" 12345` | 49 | 65 | 56 | 5 to 8 |
+| **A75** `alias:"Station 1" STN2` | 392 | 502 | 449 | 217 to 289 |
+| **A75** `alias:sta STN2` | 328 | 452 | 379 | 6 to 9 |
+| **A75** `STN2`, "Station 1" picked | 452 | 495 | 452 | 224 to 284 |
+| **A75** `alias:"Station 5" fire` | 50 | 64 | 55 | 3 to 5 |
+| **A75** `m 23 b4` | 58 | 77 | 62 | 5 to 8 |
+| **A75** `m 345 c7` | 318 | 428 | 352 | 28 to 41 |
+| time per read | 0.13 to 0.15 | 0.15 to 0.17 | 0.14 to 0.22 | |
+
+The second cold start was checked on cld01 with the limit set to 1 ms in a copy (50,000 pages): every A75 search had its second cold start, read the same blocks as its first (171 and 171, 448 and 448, 256 and 256), and failed with both times shown.
 
 ## Consequences
 
