@@ -738,7 +738,24 @@ A cold run over 1 second gets one more cold start, after every search has had it
 
 ### A75 in CI
 
-The fix's CI runs are in the report on this branch.
+Run 42636750400 on this fix: A75's job three times at once, on three runners (a temporary workflow running only it). All three passed, and none needed a second cold start. Cold runs in milliseconds, with the time per disk read; "warm" is the slowest of the three warm runs:
+
+| Search | EPYC 9V45 | EPYC 7763 (`sda`) | EPYC 9V74 (NVMe) | warm |
+|---|---|---|---|---|
+| **A75** `ZZNOTHING` | 48 | 60 | 56 | 1 to 2 |
+| **A75** `hoses grass pump` | 226 | 306 | 259 | 186 to 251 |
+| **A75** `"Smoke showing" or:"grass fire"` | 200 | 248 | 319 | 5 to 8 |
+| **A75** `tanker9` | 68 | 89 | 74 | 4 to 7 |
+| **A75** `alias:"Station 1" 12345` | 49 | 65 | 56 | 5 to 8 |
+| **A75** `alias:"Station 1" STN2` | 392 | 502 | 449 | 217 to 289 |
+| **A75** `alias:sta STN2` | 328 | 452 | 379 | 6 to 9 |
+| **A75** `STN2`, "Station 1" picked | 452 | 495 | 452 | 224 to 284 |
+| **A75** `alias:"Station 5" fire` | 50 | 64 | 55 | 3 to 5 |
+| **A75** `m 23 b4` | 58 | 77 | 62 | 5 to 8 |
+| **A75** `m 345 c7` | 318 | 428 | 352 | 28 to 41 |
+| time per read | 0.13 to 0.15 | 0.15 to 0.17 | 0.14 to 0.22 | |
+
+The second cold start was checked on cld01 with the limit set to 1 ms in a copy (50,000 pages): every A75 search had its second cold start, read the same blocks as its first (171 and 171, 448 and 448, 256 and 256), and failed with both times shown.
 
 ## Consequences
 
