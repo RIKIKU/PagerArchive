@@ -100,7 +100,7 @@ What only the first real runs can show: that GitHub's auto-merge, turned on with
 4. **Add the variable and the secret.** The repository's Settings, Secrets and variables, Actions: a variable `MAINTENANCE_APP_ID` with the App ID, and a secret `MAINTENANCE_APP_PRIVATE_KEY` with the whole `.pem` file. Then delete the file.
 5. **Allow auto-merge.** Settings, General, Pull Requests: tick "Allow auto-merge" (and "Automatically delete head branches", so merged updates' branches go).
 6. **Protect main.** Settings, Rules, Rulesets, New branch ruleset: name "main", Active, Target: the default branch. Bypass list: Repository admin (so your own merges and pushes to main work as now). Rules: "Require status checks to pass", with "Require branches to be up to date before merging" ticked, and the check **All checks passed** (from GitHub Actions; it's listed once CI has run on m18). Leave the rest off. Create.
-7. **Try it.** Actions, Maintenance, Run workflow, on main, `dry_run` set to `full`: the log lists the pull requests it would open. Then run it with `dry_run` `off`, or wait for 03:17 UTC: the golang 1.27.3 pull request opens, passes CI, merges, and v0.18.1 is released.
+7. **Try it.** Actions, Maintenance, Run workflow, on main, `dry_run` set to `full`: the log lists the pull requests it would open. Then run it with `dry_run` `off`, or wait for 03:17 UTC: the golang 1.27.3 pull request opens, passes CI, merges, and v1.0.1 is released.
 
 ## The owner's review (2026-11-09)
 
