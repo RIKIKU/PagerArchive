@@ -23,6 +23,19 @@ name: pagerarchive
 x-authentik: &authentik
   image: ghcr.io/goauthentik/server:2026.8
   restart: unless-stopped
+  # TCP keepalives, so a database connection that died without being closed
+  # fails within about a minute and Authentik reconnects (ADR 0008 §11):
+  # probes after 30 s idle, every 10 s, and closed after 3 unanswered. libpq
+  # turns keepalives on and takes their timings from these, the container's
+  # own network settings. tcp_retries2 gives up on unacknowledged data after
+  # about 50 s, as tcp_user_timeout did. They replace
+  # AUTHENTIK_POSTGRESQL__CONN_OPTIONS, which Authentik deprecated (2026.5)
+  # with no setting in its place.
+  sysctls:
+    net.ipv4.tcp_keepalive_time: 30
+    net.ipv4.tcp_keepalive_intvl: 10
+    net.ipv4.tcp_keepalive_probes: 3
+    net.ipv4.tcp_retries2: 7
   # A hash of the files mounted below. Compose doesn't notice a changed file,
   # but a changed label makes `docker compose up -d` recreate the container,
   # so a release's new files take effect (R84a, ADR 0019). A test checks it
@@ -35,11 +48,10 @@ x-authentik: &authentik
     AUTHENTIK_POSTGRESQL__NAME: authentik
     AUTHENTIK_POSTGRESQL__USER: authentik
     AUTHENTIK_POSTGRESQL__PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
-    # TCP keepalives, so a database connection that died without being
-    # closed fails within about a minute and Authentik reconnects (ADR 0008
-    # §11). Base64 of:
-    # {"keepalives":1,"keepalives_idle":30,"keepalives_interval":10,"keepalives_count":3,"tcp_user_timeout":60000}
-    AUTHENTIK_POSTGRESQL__CONN_OPTIONS: eyJrZWVwYWxpdmVzIjoxLCJrZWVwYWxpdmVzX2lkbGUiOjMwLCJrZWVwYWxpdmVzX2ludGVydmFsIjoxMCwia2VlcGFsaXZlc19jb3VudCI6MywidGNwX3VzZXJfdGltZW91dCI6NjAwMDB9
+    # The address Authentik is reached at, scheme and host only: AUTHENTIK_URL,
+    # unless .env sets this. Authentik copies it into its Base URL setting
+    # when that's empty (2026.8), and needs one from 2026.11.
+    AUTHENTIK_WEB__BASE_URL: ${AUTHENTIK_WEB__BASE_URL:-${AUTHENTIK_URL:?set AUTHENTIK_URL in .env}}
     AUTHENTIK_EMAIL__HOST: ${SMTP_HOST:?set SMTP_HOST in .env}
     AUTHENTIK_EMAIL__PORT: ${SMTP_PORT:-587}
     AUTHENTIK_EMAIL__USERNAME: ${SMTP_USERNAME:-}
@@ -111,7 +123,7 @@ services:
   api:
     # This minor version's image. `docker compose pull` gets its patch releases;
     # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
-    image: ghcr.io/rikiku/pagerarchive:1.5
+    image: ghcr.io/rikiku/pagerarchive:1.6
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable

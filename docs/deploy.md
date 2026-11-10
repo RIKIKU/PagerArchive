@@ -124,6 +124,8 @@ Forward each hostname to its container, or to `API_BIND` and `AUTHENTIK_BIND` on
 
 Both must receive the original `Host` header and `X-Forwarded-Proto`.
 
+Authentik's **Base URL** (the address it's reached at) is `AUTHENTIK_URL`, unless `.env` sets `AUTHENTIK_WEB__BASE_URL`. Authentik copies it into its settings on a start when the setting is empty, and never overwrites it: if you later move Authentik to another address, change it under **System**, **Settings** in Authentik's admin interface too.
+
 An example for nginx (for instance linuxserver/swag's `proxy-confs`), with the proxy reaching the host's ports. Behind a proxy on a Docker network, use `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000` instead. Replace `192.168.0.0/16` with your LAN:
 
 ```nginx
@@ -282,7 +284,7 @@ docker compose restart authentik-server authentik-worker
 `compose.yaml` does two things to prevent the problem:
 
 - **Compose restarts Authentik for you** whenever Compose itself restarts or recreates `db` (`docker compose up -d` after a new PostGIS image, or `docker compose restart db`). That's `restart: true` under `depends_on`, which needs Docker Compose 2.17 or later. It can't help when Docker restarts `db` on its own (after a crash) or when the host reboots. Run the command above then.
-- **TCP keepalives** on Authentik's database connections (`AUTHENTIK_POSTGRESQL__CONN_OPTIONS`), so a connection that died without being closed fails within about a minute, and Authentik reconnects.
+- **TCP keepalives** on Authentik's database connections (the `sysctls` of Authentik's containers: Authentik deprecated its own `AUTHENTIK_POSTGRESQL__CONN_OPTIONS`), so a connection that died without being closed fails within about a minute, and Authentik reconnects.
 
 To see whether Authentik is stuck, count tasks that have waited more than 5 minutes:
 

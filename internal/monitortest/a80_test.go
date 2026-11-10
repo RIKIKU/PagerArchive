@@ -1,6 +1,7 @@
 package monitortest
 
 import (
+	"fmt"
 	"net"
 	"net/http"
 	"os"
@@ -22,13 +23,24 @@ func TestA80ToldWhenABackupFails(t *testing.T) {
 	go http.Serve(l, hook)
 	defer l.Close()
 
+	// Wait for this backup, not any good one: the stack's own nightly backup
+	// (BACKUP_AT, in the test stack's time zone) can run during the checks, and
+	// Prometheus keeps its older time until the next scrape.
 	backup := os.Getenv("PA_MON_BACKUP_NOW")
-	s.sh(t, backup)
+	started := time.Now().Unix()
+	// One backup at a time: if the nightly one is running, this one is refused
+	// until it's done.
+	for end := time.Now().Add(time.Minute); runQuiet(backup) != nil; time.Sleep(2 * time.Second) {
+		if time.Now().After(end) {
+			s.sh(t, backup) // fails the test, with the output
+			break
+		}
+	}
 	if !waitFor(90*time.Second, func() bool {
 		return s.query(t, `pagerarchive_backup_failing{job="pagerarchive"} == 0`) == 1 &&
-			s.query(t, `pagerarchive_backup_last_good_timestamp_seconds{job="pagerarchive"}`) == 1
+			s.query(t, fmt.Sprintf(`pagerarchive_backup_last_good_timestamp_seconds{job="pagerarchive"} >= %d`, started)) == 1
 	}) {
-		t.Fatal("Prometheus never had a good backup: is Alloy scraping the API?")
+		t.Fatal("Prometheus never had this good backup: is Alloy scraping the API?")
 	}
 	t.Log("A80: a good backup, scraped: its time in the last-good metric, and not failing")
 
