@@ -7,7 +7,9 @@
 # then find everything still there, the migrations run and a new page stored,
 # found and delivered.
 #
-# The previous release is the newest v* tag in this commit's history. One from
+# The previous release is the newest v* tag in this commit's history that's a
+# complete release: not newer than the one GitHub marks Latest, which the
+# release workflow does last, after the images and files are published. One from
 # before M17 has nothing attached (A77 starts with the release after M17's),
 # so the branch or merge that has only those makes a release of its own to
 # start from, in the throwaway registry: this checkout's code with a lower
@@ -108,8 +110,34 @@ previous_from_here() {
 	MADE_HERE=1
 }
 
+# latest_release: the tag of the release GitHub marks Latest. The release
+# workflow marks it only at the end, once its images and files are all
+# published, so it's never one still being published (or one that failed).
+latest_release() {
+	curl -fsS -o /dev/null -w '%{redirect_url}' https://github.com/RIKIKU/PagerArchive/releases/latest |
+		sed -n 's#^https://github.com/RIKIKU/PagerArchive/releases/tag/\(v[0-9.]*\)$#\1#p'
+}
+
+# complete_release <rev> <latest>: the newest v* tag in the commit's history,
+# other than its own, that isn't newer than the Latest release: a newer one is
+# still being published, or failed to be.
+complete_release() {
+	_commit=$(git rev-parse "$1^{commit}")
+	git tag -l 'v*' --sort=-v:refname --merged "$_commit" | while read -r _t; do
+		[ "$(git rev-parse "$_t^{commit}")" != "$_commit" ] || continue
+		higher "${_t#v}" "${2#v}" || echo "$_t"
+	done | head -n 1
+}
+
 MADE_HERE=""
 previous=$(previous_release HEAD 2>/dev/null || true)
+if [ -n "$previous" ]; then
+	latest=$(latest_release || true)
+	[ -n "$latest" ] || { echo "FAIL: couldn't find the release marked Latest on GitHub" >&2; exit 1; }
+	newest=$previous
+	previous=$(complete_release HEAD "$latest")
+	[ "$previous" = "$newest" ] || echo "=== A77: $newest is newer than the Latest release, $latest: not finished publishing, so not used"
+fi
 if [ -n "$previous" ] && higher "${previous#v}" 0.14.1; then
 	previous_from_release "$previous"
 else
