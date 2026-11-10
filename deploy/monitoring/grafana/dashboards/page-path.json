@@ -15,18 +15,18 @@
     },
     {
       "id": 2, "type": "timeseries", "title": "Time in each step (90th percentile)",
-      "gridPos": {"h": 10, "w": 16, "x": 0, "y": 4},
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 4},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
         "query": "{name=~\"decode|buffer|send|ingest|ingest.redact|ingest.parse|ingest.dedup|ingest.locate|ingest.store|live.publish|integration.deliver\"} | quantile_over_time(duration, .9) by (name)"
       }],
       "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "showPoints": "auto"}}, "overrides": []},
-      "options": {"legend": {"displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
     },
     {
       "id": 3, "type": "timeseries", "title": "Pages by outcome (per minute)",
-      "gridPos": {"h": 10, "w": 8, "x": 16, "y": 4},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (outcome) (rate(pagerarchive_pages_received_total{job=\"pagerarchive\"}[$__rate_interval])) * 60", "legendFormat": "{{outcome}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
@@ -34,7 +34,7 @@
     },
     {
       "id": 4, "type": "table", "title": "Recent pages (the API's ingest span)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 14},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "tableType": "spans", "limit": 50, "spss": 1,
@@ -44,7 +44,7 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Integration deliveries (per hour)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 36},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (result) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\"}[1h]))", "legendFormat": "{{result}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -53,7 +53,7 @@
     {
       "id": 7, "type": "timeseries", "title": "Failed delivery attempts, by kind and cause",
       "description": "Each failed integration.deliver span, by the integration's kind and error.type: connection_refused, dns_lookup_failed, timeout, tls_not_trusted, auth_refused, HTTP 503 ... Open a delivery's trace from the table above for its retries.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 46},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
@@ -64,7 +64,7 @@
     },
     {
       "id": 6, "type": "logs", "title": "Log lines from pages and requests (click one to open its trace)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 32},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 56},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"} | trace_id != \"\""}],
       "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
