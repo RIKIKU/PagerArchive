@@ -48,17 +48,17 @@ jobs:
     steps:
       - name: The app's secrets are set
         env:
-          APP_ID: ${{ vars.MAINTENANCE_APP_ID }}
+          CLIENT_ID: ${{ vars.MAINTENANCE_APP_CLIENT_ID }}
           APP_KEY: ${{ secrets.MAINTENANCE_APP_PRIVATE_KEY }}
         run: |
-          if [ -z "$APP_ID" ] || [ -z "$APP_KEY" ]; then
-            echo "::error::The MAINTENANCE_APP_ID variable or the MAINTENANCE_APP_PRIVATE_KEY secret isn't set (Settings, Secrets and variables, Actions; ADR 0022), so nothing is updated."
+          if [ -z "$CLIENT_ID" ] || [ -z "$APP_KEY" ]; then
+            echo "::error::The MAINTENANCE_APP_CLIENT_ID variable or the MAINTENANCE_APP_PRIVATE_KEY secret isn't set (Settings, Secrets and variables, Actions; ADR 0022), so nothing is updated."
             exit 1
           fi
       - id: app
         uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3
         with:
-          app-id: ${{ vars.MAINTENANCE_APP_ID }}
+          client-id: ${{ vars.MAINTENANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MAINTENANCE_APP_PRIVATE_KEY }}
       - uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
