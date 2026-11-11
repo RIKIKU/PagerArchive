@@ -79,7 +79,7 @@
     },
     {
       "id": 9, "type": "timeseries", "title": "Radio: audio received per second",
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 25},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 25},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_radio_audio_bytes_total[$__rate_interval]))", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "Bps", "min": 0}, "overrides": []},
@@ -87,7 +87,7 @@
     },
     {
       "id": 10, "type": "timeseries", "title": "Radio: audio level (dBFS)",
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 25},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 33},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_radio_level)", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "dB", "decimals": 1}, "overrides": []},
@@ -95,7 +95,7 @@
     },
     {
       "id": 11, "type": "timeseries", "title": "Radio: rtl_fm messages by kind (per hour)",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 25},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 41},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[1h])) > 0", "legendFormat": "{{instance}} {{kind}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "min": 0, "noValue": "none in the last hour"}, "overrides": []},
@@ -103,7 +103,7 @@
     },
     {
       "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 33},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 49},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_lines_read_total[$__rate_interval])) * 60", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -111,7 +111,7 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Pages decoded and sent, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 33},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 57},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_decoded_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} decoded"},
@@ -122,7 +122,7 @@
     },
     {
       "id": 6, "type": "timeseries", "title": "Failed sends and retries, per minute",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 41},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 65},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed"},
@@ -133,7 +133,7 @@
     },
     {
       "id": 7, "type": "timeseries", "title": "Pages buffered in memory, and dropped (R15)",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 41},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 73},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_pages_buffered)", "legendFormat": "{{instance}} buffered"},
