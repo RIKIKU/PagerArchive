@@ -61,7 +61,7 @@ R85b's pull requests change `compose.yaml` or the monitoring stack's, so they're
 
 `platformAutomerge`: Renovate turns on GitHub's auto-merge for the pull requests that merge on their own, and GitHub merges once the required check passes. CI gets a last job, **"All checks passed"**, which needs every check job and fails unless all of them succeeded ("versions" is skipped on main only). Main's ruleset requires that one check, with the branch up to date with main. So an automatic update merges only after every check (R85c), and never from behind main (decision 3). One required check, rather than each job's name, stays right when jobs are added.
 
-CI on `renovate/**` branches runs on their pull requests only: the push of the same commit would run everything a second time.
+CI on `renovate/**` branches runs on their pull requests only: the push of the same commit would run everything a second time. (Since 2026-11-12 every branch but main works this way; see ADR 0016.)
 
 ### 6. The owner is told: the pull request is assigned to them
 
