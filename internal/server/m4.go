@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
@@ -97,13 +98,21 @@ func (s *Server) mapTiles(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, "map.pmtiles", st.ModTime(), f)
 }
 
-// Report is R38's capcode report.
+// Report is R38's report, for a capcode or an alias.
 type Report struct {
-	Capcode    string           `json:"capcode"`
-	From       string           `json:"from"` // dates, inclusive, deployment time zone
+	Capcode    string           `json:"capcode,omitempty"` // the capcode asked for, zero-padded
+	Alias      string           `json:"alias,omitempty"`   // or the alias asked for, by name
+	Aliases    []ReportAlias    `json:"aliases,omitempty"` // the aliases of that name (names may repeat, A19)
+	From       string           `json:"from"`              // dates, inclusive, deployment time zone
 	To         string           `json:"to"`
 	Categories []ReportCategory `json:"categories"` // network order, then Other; empty ones left out
 	Total      int64            `json:"total"`
+}
+
+// ReportAlias is one alias an alias report covers: its capcode or pattern.
+type ReportAlias struct {
+	ID      int64  `json:"id"`
+	Pattern string `json:"pattern"`
 }
 
 // ReportCategory counts one category. Other lists its raw codes, one row
@@ -120,15 +129,22 @@ type ReportCode struct {
 	Count int64   `json:"count"`
 }
 
+// capcodeReport is R38: for one capcode (capcode=) or one alias, by name
+// (alias=), every capcode it covers.
 func (s *Server) capcodeReport(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	from, to := q.Get("from"), q.Get("to")
-	if q.Get("capcode") == "" || from == "" || to == "" {
-		problem(w, http.StatusBadRequest, "capcode, from and to are required")
+	capcode, alias := q.Get("capcode"), strings.TrimSpace(q.Get("alias"))
+	if (capcode == "") == (alias == "") || from == "" || to == "" {
+		problem(w, http.StatusBadRequest, "capcode or alias (one of them), from and to are required")
 		return
 	}
-	// Only the capcode and the date range: the same parsing as search.
-	f, err := search.Parse(url.Values{"capcode": {q.Get("capcode")}, "from": {from}, "to": {to}}, false, s.Location)
+	// The date range (and the capcode): the same parsing as search.
+	v := url.Values{"from": {from}, "to": {to}}
+	if capcode != "" {
+		v.Set("capcode", capcode)
+	}
+	f, err := search.Parse(v, false, s.Location)
 	if err != nil {
 		problem(w, http.StatusBadRequest, err.Error())
 		return
@@ -137,13 +153,36 @@ func (s *Server) capcodeReport(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "from must not be after to")
 		return
 	}
-	rows, err := s.Store.CapcodeReport(r.Context(), db.CapcodeReportParams{Capcode: f.Capcode[0], SentFrom: *f.From, SentTo: *f.To})
+	out := Report{From: from, To: to, Categories: []ReportCategory{}}
+	var rows []db.CapcodeReportRow
+	if capcode != "" {
+		out.Capcode = f.Capcode[0]
+		rows, err = s.Store.CapcodeReport(r.Context(), db.CapcodeReportParams{Capcode: f.Capcode[0], SentFrom: *f.From, SentTo: *f.To})
+	} else {
+		var named []db.AliasesNamedRow
+		if named, err = s.Store.AliasesNamed(r.Context(), alias); err == nil {
+			if len(named) == 0 {
+				problem(w, http.StatusNotFound, "there's no alias with that name")
+				return
+			}
+			out.Alias = named[0].Name
+			ids := make([]int64, len(named))
+			for i, a := range named {
+				ids[i] = a.ID
+				out.Aliases = append(out.Aliases, ReportAlias{ID: a.ID, Pattern: a.Pattern})
+			}
+			var ar []db.AliasReportRow
+			ar, err = s.Store.AliasReport(r.Context(), db.AliasReportParams{AliasIds: ids, SentFrom: *f.From, SentTo: *f.To})
+			for _, row := range ar {
+				rows = append(rows, db.CapcodeReportRow(row))
+			}
+		}
+	}
 	if err != nil {
 		s.Log.Error("report", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "report failed")
 		return
 	}
-	out := Report{Capcode: f.Capcode[0], From: from, To: to, Categories: []ReportCategory{}}
 	counts := map[string]*ReportCategory{}
 	for _, row := range rows {
 		cat := "Other"

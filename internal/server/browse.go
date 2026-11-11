@@ -157,6 +157,11 @@ type Meta struct {
 	Attribution    string   `json:"attribution"`     // the address dataset's (R24)
 	MapTiles       bool     `json:"map_tiles"`       // a tile extract is configured (R35)
 	MapAttribution string   `json:"map_attribution"` // the tiles' credit line
+	// The days of the archive's first and last pages (YYYY-MM-DD, deployment
+	// time zone), left out when it has none: the calendar's years with pages
+	// (R33a's Dates).
+	FirstPage string `json:"first_page,omitempty"`
+	LastPage  string `json:"last_page,omitempty"`
 	// Admins only: alias requests waiting for review (R55), for the count
 	// on the Admin link.
 	WaitingRequests *int64 `json:"waiting_requests,omitempty"`
@@ -169,6 +174,11 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 		m.Categories = append(m.Categories, c.Name)
 	}
 	m.Categories = append(m.Categories, "Other")
+	if first, last, err := s.Store.PageSpan(r.Context()); err != nil {
+		s.Log.Error("meta: page span", "error", store.SafeError(err))
+	} else if first != nil && last != nil {
+		m.FirstPage, m.LastPage = first.In(s.Location).Format(time.DateOnly), last.In(s.Location).Format(time.DateOnly)
+	}
 	if s.isAdmin(r) {
 		n, err := s.Store.CountWaitingRequests(r.Context())
 		if err != nil {

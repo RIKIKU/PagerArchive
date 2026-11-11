@@ -139,3 +139,11 @@ func (s *Store) AddClient(ctx context.Context, id, name string) (string, error) 
 	}
 	return key, nil
 }
+
+// PageSpan is when the archive's first and last pages were sent (nil when
+// it has none), for the calendar's years (R33a's Dates). Each end is one
+// read of the index on sent_at.
+func (s *Store) PageSpan(ctx context.Context) (first, last *time.Time, err error) {
+	err = s.Pool.QueryRow(ctx, `SELECT min(sent_at), max(sent_at) FROM messages`).Scan(&first, &last)
+	return first, last, err
+}

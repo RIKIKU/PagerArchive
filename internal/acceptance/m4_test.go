@@ -398,3 +398,52 @@ func TestA13ClientLiveness(t *testing.T) {
 		t.Errorf("user: %d, want 403", code)
 	}
 }
+
+// R38 for an alias: picked by name, the report covers every capcode the
+// alias covers; for a pattern, each capcode it matches (but not one that has
+// an alias of its own, R27). A capcode report is unchanged.
+func TestReportForAlias(t *testing.T) {
+	e := setup(t)
+	e.addAlias("007000_", "Report block") // 0070000-0070009
+	at := time.Date(2026, time.October, 2, 10, 0, 0, 0, time.UTC)
+	e.mustPost("a", "0070001", "@@EX0000041 HSF1 SMOKE @ 12 FICTION ST, MADEUPTON #STN1", at)
+	e.mustPost("a", "0070002", "@@EX0000042 HSF1 SMOKE @ 3 FICTION ST, MADEUPTON #STN1", at.Add(time.Minute))
+	e.mustPost("a", "0070003", "@@EX0000043 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", at.Add(2*time.Minute))
+	e.mustPost("a", "0100001", "@@EX0000044 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", at)
+
+	count := func(rep server.Report) map[string]int64 {
+		got := map[string]int64{"Total": rep.Total}
+		for _, c := range rep.Categories {
+			got[c.Category] = c.Count
+		}
+		return got
+	}
+	var rep server.Report
+	if code := e.getJSON("/api/v1/reports/capcode?alias=report+BLOCK&from=2026-10-01&to=2026-10-07", &rep); code != http.StatusOK {
+		t.Fatalf("alias report: %d", code)
+	}
+	if got := count(rep); got["Structure fire"] != 2 || got["Grass fire"] != 1 || got["Total"] != 3 || rep.Alias != "Report block" || len(rep.Aliases) != 1 || rep.Aliases[0].Pattern != "007000_" || rep.Capcode != "" {
+		t.Errorf("wildcard alias report %+v, want Structure fire 2, Grass fire 1, total 3", rep)
+	}
+	t.Logf("wildcard alias: %v", count(rep))
+
+	rep = server.Report{}
+	e.getJSON("/api/v1/reports/capcode?alias=Station+1&from=2026-10-01&to=2026-10-07", &rep)
+	if got := count(rep); got["Grass fire"] != 1 || got["Total"] != 1 || len(rep.Aliases) != 1 || rep.Aliases[0].Pattern != "0100001" {
+		t.Errorf("alias report %+v, want Grass fire 1, total 1", rep)
+	}
+	rep = server.Report{}
+	e.getJSON("/api/v1/reports/capcode?capcode=70002&from=2026-10-01&to=2026-10-07", &rep)
+	if got := count(rep); got["Structure fire"] != 1 || got["Total"] != 1 || rep.Capcode != "0070002" || rep.Alias != "" {
+		t.Errorf("capcode report %+v, want Structure fire 1, total 1", rep)
+	}
+	for path, want := range map[string]int{
+		"/api/v1/reports/capcode?alias=Nobody&from=2026-10-01&to=2026-10-07":                    http.StatusNotFound,
+		"/api/v1/reports/capcode?alias=Station+1&capcode=0100001&from=2026-10-01&to=2026-10-07": http.StatusBadRequest,
+		"/api/v1/reports/capcode?from=2026-10-01&to=2026-10-07":                                 http.StatusBadRequest,
+	} {
+		if code := e.getJSON(path, nil); code != want {
+			t.Errorf("%s: %d, want %d", path, code, want)
+		}
+	}
+}

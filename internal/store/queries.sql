@@ -320,13 +320,14 @@ SELECT EXISTS (
 );
 
 -- name: UnaliasedCapcodes :many
--- R33: capcodes with no alias, with message count and first- and last-seen times.
+-- R33, R78: capcodes with no alias, with message count (all time) and first-
+-- and last-seen times; the most messages first, then the latest seen.
 SELECT capcode, count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
        max(sent_at)::timestamptz AS last_seen
 FROM messages
 WHERE alias_id IS NULL
 GROUP BY capcode
-ORDER BY max(sent_at) DESC;
+ORDER BY count(*) DESC, max(sent_at) DESC, capcode;
 
 -- name: MessageReceptions :many
 -- An empty client_id is a copy from an import file (R83b, ADR 0018).
@@ -646,6 +647,26 @@ WHERE capcode = sqlc.arg(capcode)::text
   AND sent_at < sqlc.arg(sent_to)::timestamptz
 GROUP BY event_type
 ORDER BY event_type NULLS LAST;
+
+-- name: AliasReport :many
+-- R38 for an alias: Emergency messages to every capcode the aliases cover
+-- (the pages that resolved to them, R27; for a pattern, each capcode it
+-- matches), in a date range, by event type. Heartbeats are excluded (R35b).
+SELECT event_type, count(*) AS messages
+FROM messages
+WHERE alias_id = ANY(sqlc.arg(alias_ids)::bigint[])
+  AND priority = 'Emergency'
+  AND NOT heartbeat
+  AND sent_at >= sqlc.arg(sent_from)::timestamptz
+  AND sent_at < sqlc.arg(sent_to)::timestamptz
+GROUP BY event_type
+ORDER BY event_type NULLS LAST;
+
+-- name: AliasesNamed :many
+-- R38: the aliases with this name, ignoring case (names may repeat, A19).
+SELECT id, name, pattern FROM aliases
+WHERE lower(name) = lower(sqlc.arg(name)::text)
+ORDER BY pattern;
 
 -- Integrations (R47-R51c, ADR 0006).
 
