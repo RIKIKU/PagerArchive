@@ -696,7 +696,7 @@ jobs:
           } > notes.md
           cat notes.md
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md
+            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md --generate-notes
           gh release upload "$TAG" dist/* --clobber
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,

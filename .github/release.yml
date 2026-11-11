@@ -1,0 +1,12 @@
+# What GitHub's generated release notes list (the release job's
+# --generate-notes, owner 2026-11-12): the pull requests merged since the
+# previous release, Renovate's automatic updates (label "maintenance",
+# ADR 0022) in a section of their own.
+changelog:
+  categories:
+    - title: Changes
+      labels: ["*"]
+      exclude:
+        labels: [maintenance]
+    - title: Dependency updates
+      labels: [maintenance]
