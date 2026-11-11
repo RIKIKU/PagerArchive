@@ -471,6 +471,52 @@ func (q *Queries) AliasPatternsForTemplate(ctx context.Context, templateID *int6
 	return items, nil
 }
 
+const aliasReport = `-- name: AliasReport :many
+SELECT event_type, count(*) AS messages
+FROM messages
+WHERE alias_id = ANY($1::bigint[])
+  AND priority = 'Emergency'
+  AND NOT heartbeat
+  AND sent_at >= $2::timestamptz
+  AND sent_at < $3::timestamptz
+GROUP BY event_type
+ORDER BY event_type NULLS LAST
+`
+
+type AliasReportParams struct {
+	AliasIds []int64
+	SentFrom time.Time
+	SentTo   time.Time
+}
+
+type AliasReportRow struct {
+	EventType *string
+	Messages  int64
+}
+
+// R38 for an alias: Emergency messages to every capcode the aliases cover
+// (the pages that resolved to them, R27; for a pattern, each capcode it
+// matches), in a date range, by event type. Heartbeats are excluded (R35b).
+func (q *Queries) AliasReport(ctx context.Context, arg AliasReportParams) ([]AliasReportRow, error) {
+	rows, err := q.db.Query(ctx, aliasReport, arg.AliasIds, arg.SentFrom, arg.SentTo)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AliasReportRow
+	for rows.Next() {
+		var i AliasReportRow
+		if err := rows.Scan(&i.EventType, &i.Messages); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aliasRequestForUpdate = `-- name: AliasRequestForUpdate :one
 SELECT id, kind, requested_by, alias_id, pattern, alias_name, name, set_template, template_id, template_name, ignored, note, base_change, status, feedback, reviewed_by, created_at, updated_at, closed_at FROM alias_requests WHERE id = $1 FOR UPDATE
 `
@@ -570,6 +616,39 @@ func (q *Queries) AliasesMatching(ctx context.Context, capcode string) ([]Aliase
 			&i.Name,
 			&i.AgencyProfile,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const aliasesNamed = `-- name: AliasesNamed :many
+SELECT id, name, pattern FROM aliases
+WHERE lower(name) = lower($1::text)
+ORDER BY pattern
+`
+
+type AliasesNamedRow struct {
+	ID      int64
+	Name    string
+	Pattern string
+}
+
+// R38: the aliases with this name, ignoring case (names may repeat, A19).
+func (q *Queries) AliasesNamed(ctx context.Context, name string) ([]AliasesNamedRow, error) {
+	rows, err := q.db.Query(ctx, aliasesNamed, name)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AliasesNamedRow
+	for rows.Next() {
+		var i AliasesNamedRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.Pattern); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -4488,7 +4567,7 @@ SELECT capcode, count(*) AS messages, min(sent_at)::timestamptz AS first_seen,
 FROM messages
 WHERE alias_id IS NULL
 GROUP BY capcode
-ORDER BY max(sent_at) DESC
+ORDER BY count(*) DESC, max(sent_at) DESC, capcode
 `
 
 type UnaliasedCapcodesRow struct {
@@ -4498,7 +4577,8 @@ type UnaliasedCapcodesRow struct {
 	LastSeen  time.Time
 }
 
-// R33: capcodes with no alias, with message count and first- and last-seen times.
+// R33, R78: capcodes with no alias, with message count (all time) and first-
+// and last-seen times; the most messages first, then the latest seen.
 func (q *Queries) UnaliasedCapcodes(ctx context.Context) ([]UnaliasedCapcodesRow, error) {
 	rows, err := q.db.Query(ctx, unaliasedCapcodes)
 	if err != nil {

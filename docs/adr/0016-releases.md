@@ -28,7 +28,7 @@ Both VERSION and the module's `ModuleVersion` are `MAJOR.MINOR.PATCH`: three num
 
 ### 3. The checks on a branch or pull request
 
-A new job, `versions`, runs `scripts/ci/check-versions.sh origin/main` on every push to a branch other than main, every pull request and every manual run off main. It checks out the whole history (`fetch-depth: 0`, which brings the tags too) and fails, with a GitHub error annotation on the file and a line in the log, when:
+A new job, `versions`, runs `scripts/ci/check-versions.sh origin/main` on every pull request and every manual run off main. (Until 2026-11-12 it also ran on every push to a branch other than main; now only main runs on push, so a pull request no longer runs CI twice per push.) It checks out the whole history (`fetch-depth: 0`, which brings the tags too) and fails, with a GitHub error annotation on the file and a line in the log, when:
 
 - VERSION isn't `MAJOR.MINOR.PATCH`: "set it to MAJOR.MINOR.PATCH, higher than main's …";
 - VERSION isn't higher than main's: "raise it (a milestone raises the minor number, a fix the patch number), so this merge is a new release";

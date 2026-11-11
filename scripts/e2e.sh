@@ -69,11 +69,14 @@ export PA_CLIENT_KEY
 -- aliases (n = 1, 2, 3 for chromium, firefox, webkit): 04001n1-04001n3.
 -- M10 (A56): each browser project moves its own alias to a new template: 05000n1.
 -- M13 (A61): "Hillside North" and "Hillside South" beside Stations 1-4.
+-- R38: each browser project's range alias for the report, 00700n0-00700n9.
 INSERT INTO aliases (pattern, name, template_id)
 SELECT p, name, (SELECT id FROM templates WHERE name = 'Example Fire')
 FROM (VALUES ('0100%', 'Stations block'), ('0600001', 'Hillside North'), ('0600002', 'Hillside South')) AS v (p, name)
 UNION ALL
 SELECT '030010' || n, 'Report test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n
+UNION ALL
+SELECT '00700' || n || '_', 'Report range ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n
 UNION ALL
 SELECT '04001' || n || k, 'Edit test ' || n || k, (SELECT id FROM templates WHERE name = 'Example Fire')
 FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k

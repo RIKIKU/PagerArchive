@@ -570,20 +570,107 @@ for (const width of [375, 1280]) {
 	});
 }
 
-// M4. R38 in the browser (A11 itself runs against the API in Go).
+// M4. R38 in the browser (A11 itself runs against the API in Go): the
+// report for a capcode, for an alias and for a range alias, each picked with
+// the search box's suggestion control; the address names what was picked,
+// so the report comes back when it's reloaded.
 test('capcode report counts Emergency messages by category', async ({ page, request }, info) => {
-	// Each browser project gets its own capcode: they share one database.
-	const capcode = { chromium: '0300101', firefox: '0300102', webkit: '0300103' }[info.project.name] ?? '0300109';
+	// Each browser project gets its own capcodes and aliases: they share one
+	// database. scripts/e2e.sh gives alias "Report test n" to 030010n and
+	// "Report range n" to 00700n0-00700n9.
+	const n = projectN(info);
+	const capcode = `030010${n}`;
 	for (const t of ['HSF1 SMOKE', 'HSF2 SMOKE', 'GRS3 GRASS FIRE']) {
 		await post(request, capcode, `@@${uniqueJob()} ${t} @ 12 FICTION ST, MADEUPTON #STN1`);
 	}
 	await post(request, capcode, 'QDTraining Tuesday 7pm at the station');
-	await page.goto(`/reports?capcode=${capcode}`);
-	await page.getByRole('button', { name: 'Run report' }).click();
+	await post(request, `00700${n}1`, `@@${uniqueJob()} HSF1 SMOKE @ 3 FICTION ST, MADEUPTON #STN1`);
+	await post(request, `00700${n}2`, `@@${uniqueJob()} GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`);
 	const table = page.getByTestId('report');
+	const box = page.getByRole('combobox', { name: 'Alias or capcode' });
+	const options = page.getByRole('listbox', { name: 'Aliases and capcodes' });
+
+	// An address from before the box (a capcode) still works.
+	await page.goto(`/reports?capcode=${capcode}`);
+	await expect(box).toHaveValue(`capcode:${capcode}`);
+	await page.getByRole('button', { name: 'Run report' }).click();
 	await expect(table.getByRole('row', { name: 'Structure fire 2' })).toBeVisible();
 	await expect(table.getByRole('row', { name: 'Grass fire 1' })).toBeVisible();
 	await expect(table.getByRole('row', { name: 'Total 3' })).toBeVisible();
+
+	// A capcode typed, picked from the suggestions.
+	await page.goto('/reports/capcode');
+	await box.fill(capcode.slice(1));
+	await options.getByRole('option', { name: `capcode:${capcode}` }).click();
+	await page.getByRole('button', { name: 'Run report' }).click();
+	await expect(page).toHaveURL(new RegExp(`/reports/capcode\\?capcode=${capcode}&from=`));
+	await expect(table.getByRole('row', { name: 'Total 3' })).toBeVisible();
+
+	// An alias, by part of its name, with the mouse.
+	await page.goto('/reports/capcode');
+	await box.fill(`report test ${n}`);
+	await options.getByRole('option', { name: `alias:"Report test ${n}"` }).click();
+	await expect(box).toHaveValue(`alias:"Report test ${n}" `);
+	await page.getByRole('button', { name: 'Run report' }).click();
+	await expect(page).toHaveURL(new RegExp(`/reports/capcode\\?alias=Report\\+test\\+${n}&from=`));
+	await expect(table.locator('caption')).toContainText(`Alias Report test ${n} (${capcode})`);
+	await expect(table.getByRole('row', { name: 'Structure fire 2' })).toBeVisible();
+	await expect(table.getByRole('row', { name: 'Total 3' })).toBeVisible();
+	await page.reload();
+	await expect(box).toHaveValue(`alias:"Report test ${n}"`);
+	await expect(table.getByRole('row', { name: 'Total 3' })).toBeVisible();
+
+	// A range alias, by keyboard: every capcode it matches.
+	await page.goto('/reports/capcode');
+	await box.focus();
+	await page.keyboard.type(`range ${n}`);
+	await expect(options.getByRole('option')).toHaveCount(1);
+	await page.keyboard.press('ArrowDown');
+	await page.keyboard.press('Enter');
+	await expect(box).toHaveValue(`alias:"Report range ${n}" `);
+	await page.keyboard.press('Enter');
+	await expect(page).toHaveURL(new RegExp(`alias=Report\\+range\\+${n}&`));
+	await expect(table.locator('caption')).toContainText(`Alias Report range ${n} (00700${n}_)`);
+	await page.screenshot({ path: info.outputPath('report-range-alias.png'), fullPage: true });
+	await expect(table.getByRole('row', { name: 'Structure fire 1' })).toBeVisible();
+	await expect(table.getByRole('row', { name: 'Grass fire 1' })).toBeVisible();
+	await expect(table.getByRole('row', { name: 'Total 2' })).toBeVisible();
+
+	// Something that's neither is refused, without asking the API.
+	await box.fill('no such alias anywhere');
+	await page.getByRole('button', { name: 'Run report' }).click();
+	await expect(page.getByRole('alert')).toHaveText(`There's no alias "no such alias anywhere". Pick one from the suggestions.`);
+});
+
+// R78, A6: the Unknown capcodes page lists the most messages first, then
+// the latest seen; capcodes with 5 or fewer messages are hidden until "Show
+// them", which lists them too, in the same order.
+test('R78 unknown capcodes: order, and the one-offs hidden', async ({ page, request }, info) => {
+	const n = projectN(info);
+	const c = (k: number) => `0978${n}0${k}`;
+	const posts: [string, number][] = [
+		[c(1), 7],
+		[c(2), 6],
+		[c(3), 6], // seen after c(2)
+		[c(4), 5],
+		[c(5), 1]
+	];
+	for (const [capcode, count] of posts) {
+		for (let i = 0; i < count; i++) await post(request, capcode, `QDR78 page ${i} to ${capcode}`);
+	}
+	await page.goto('/capcodes');
+	const rows = page.getByRole('row');
+	const listed = async () => (await rows.allInnerTexts()).map((t) => t.split(/\s/)[0]).filter((t) => t.startsWith(`0978${n}`));
+	await expect(page.getByRole('link', { name: c(1), exact: true })).toBeVisible();
+	expect(await listed()).toEqual([c(1), c(3), c(2)]);
+	const few = page.getByTestId('few');
+	await expect(few).toContainText(/^And \d+ more with 5 or fewer messages:/);
+	await expect(page.getByRole('link', { name: c(4), exact: true })).toHaveCount(0);
+	await few.getByRole('button', { name: 'Show them' }).click();
+	await expect(few).toHaveCount(0);
+	await expect(page.getByRole('link', { name: c(4), exact: true })).toBeVisible();
+	expect(await listed()).toEqual([c(1), c(3), c(2), c(4), c(5)]);
+	await expect(page.getByRole('row').filter({ hasText: c(4) }).getByRole('cell').nth(1)).toHaveText('5');
 });
 
 // M4. R46: shortening retention asks to confirm the cut-off date.
@@ -1249,6 +1336,87 @@ async function pickBackwards(page: Page, scope: Locator) {
 	await expect(calendar).toBeHidden();
 	return days;
 }
+
+// R33a's Dates: the calendar's title switches to the year's months, and the
+// year's to a grid of years; picking a year shows its months, a month its
+// days. Years with no pages (from the archive's first and last pages) and
+// months after this one are greyed out. By mouse, then by keyboard, and at
+// phone width.
+for (const width of [1280, 375]) {
+	test(`calendar jumps to a month and a year, ${width}px`, async ({ page, request }, info) => {
+		await page.setViewportSize({ width, height: 800 });
+		const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
+		const [y, m] = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Melbourne' }).format(new Date()).split('-').map(Number);
+		const firstYear = Number(String(meta.first_page).slice(0, 4));
+		const lastYear = Number(String(meta.last_page).slice(0, 4));
+		const monthYear = (yy: number, mm: number) => new Intl.DateTimeFormat('en-AU', { month: 'long', year: 'numeric', timeZone: 'UTC' }).format(new Date(Date.UTC(yy, mm - 1, 1)));
+		await page.goto('/');
+		const scope = page.getByRole('search', { name: 'Search messages' });
+		await scope.getByRole('button', { name: /^Dates/ }).click();
+		const calendar = page.getByRole('dialog', { name: 'Choose dates' });
+
+		// Mouse: the title, a month, the year, a year.
+		await calendar.getByRole('button', { name: monthYear(y, m), exact: true }).click();
+		const months = calendar.getByRole('grid', { name: String(y) });
+		await expect(months.getByRole('gridcell')).toHaveCount(12);
+		await page.screenshot({ path: info.outputPath(`calendar-months-${width}.png`) });
+		await expect(months.getByRole('gridcell', { name: monthYear(y, m) })).toBeFocused();
+		if (m < 12) await expect(months.getByRole('gridcell', { name: monthYear(y, m + 1) })).toHaveAttribute('aria-disabled', 'true');
+		await expect(months.getByRole('gridcell', { name: monthYear(y, 1) })).not.toHaveAttribute('aria-disabled', 'true');
+		await months.getByRole('gridcell', { name: monthYear(y, 1) }).click();
+		await expect(calendar.getByRole('heading')).toHaveText(monthYear(y, 1));
+		await expect(calendar.getByRole('grid', { name: monthYear(y, 1) })).toBeVisible();
+
+		await calendar.getByRole('button', { name: monthYear(y, 1), exact: true }).click();
+		await calendar.getByRole('button', { name: String(y), exact: true }).click();
+		const from = y - (y % 12);
+		const years = calendar.getByRole('grid', { name: `${from} – ${from + 11}` });
+		await expect(years.getByRole('gridcell')).toHaveCount(12);
+		await page.screenshot({ path: info.outputPath(`calendar-years-${width}.png`) });
+		for (let yy = from; yy < from + 12; yy++) {
+			const cell = years.getByRole('gridcell', { name: String(yy), exact: true });
+			if (yy >= firstYear && yy <= lastYear && yy <= y) await expect(cell).not.toHaveAttribute('aria-disabled', 'true');
+			else await expect(cell, `${yy} has no pages`).toHaveAttribute('aria-disabled', 'true');
+		}
+		// A greyed year can't be picked; one with pages can.
+		await years.getByRole('gridcell', { name: String(y + 1), exact: true }).click({ force: true });
+		await expect(years).toBeVisible();
+		await years.getByRole('gridcell', { name: String(y), exact: true }).click();
+		await expect(calendar.getByRole('grid', { name: String(y) })).toBeVisible();
+		// The arrows move a year in the months, and 12 in the years.
+		await calendar.getByRole('button', { name: 'Previous year' }).click();
+		await expect(calendar.getByRole('heading')).toHaveText(String(y - 1));
+		await calendar.getByRole('button', { name: 'Next year' }).click();
+
+		// Keyboard: Enter on the title, arrows, Enter on a month, Escape.
+		await calendar.getByRole('button', { name: String(y), exact: true }).press('Enter');
+		await expect(years.getByRole('gridcell', { name: String(y), exact: true })).toBeFocused();
+		await page.keyboard.press('ArrowRight');
+		await expect(years.getByRole('gridcell', { name: String(y + 1), exact: true })).toBeFocused();
+		await page.keyboard.press('Enter'); // greyed: stays
+		await expect(years).toBeVisible();
+		await page.keyboard.press('ArrowLeft');
+		await page.keyboard.press('Enter');
+		const again = calendar.getByRole('grid', { name: String(y) });
+		await expect(again.getByRole('gridcell', { name: monthYear(y, 1) })).toBeFocused();
+		await page.keyboard.press('ArrowDown'); // 3 a row: April
+		await expect(again.getByRole('gridcell', { name: monthYear(y, 4) })).toBeFocused();
+		await page.keyboard.press('Enter');
+		await expect(calendar.getByRole('heading')).toHaveText(monthYear(y, 4));
+		await expect(calendar.getByRole('grid', { name: monthYear(y, 4) }).locator('[tabindex="0"]')).toBeFocused();
+		await page.keyboard.press('Escape');
+		await expect(calendar).toBeHidden();
+
+		// Phone width: the grids fit the screen.
+		await scope.getByRole('button', { name: /^Dates/ }).click();
+		await calendar.getByRole('button', { name: monthYear(y, m), exact: true }).click();
+		const box = await calendar.boundingBox();
+		expect(box && box.x >= 0 && box.x + box.width <= width, `calendar inside ${width}px: ${JSON.stringify(box)}`).toBe(true);
+		const results = await new AxeBuilder({ page }).include('[role="dialog"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+		expect(results.violations.map((v) => v.id)).toEqual([]);
+	});
+}
+
 
 // M7 (R42a-R42d, ADR 0008): invite trees, the deactivation preview, trusted
 // users and records. scripts/e2e.sh seeds each browser project n its own
