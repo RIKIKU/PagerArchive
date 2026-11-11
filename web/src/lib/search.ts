@@ -332,3 +332,48 @@ export function suggestions(text: string, caret: number, admin: boolean, values:
 	}
 	return { target, options, what: 'suggestion' };
 }
+
+// The capcode report's box (R38): the same suggestion control, picking one
+// alias, by name, or one capcode. Typing part of an alias name suggests the
+// aliases containing it; typing digits suggests that capcode too. The box
+// then holds alias:"Station 1" or capcode:0100001, as the search box would.
+
+/** At most this many aliases suggested in the report's box. */
+const reportRoom = 20;
+
+const reportKey = /^(alias|capcode):/i;
+const unquote = (v: string) => v.trim().replace(/^"/, '').replace(/"$/, '');
+
+/** The report box's suggestions: the whole box is the one word. */
+export function reportSuggestions(text: string, aliases: readonly string[]): Suggestions {
+	const m = reportKey.exec(text.trim());
+	const key = m?.[1].toLowerCase();
+	const typed = unquote(m ? text.trim().slice(m[0].length) : text);
+	const target: Word = { value: typed, quoted: false, start: 0, end: text.length };
+	const options: Suggestion[] = [];
+	const value = (k: Key, v: string, section: string): Suggestion => ({ kind: 'value', id: `${k}-${v}`, key: k, value: v, insert: filterText(k, v), section });
+	if (typed && key !== 'alias' && /^\d{1,7}$/.test(typed)) options.push(value('capcode', typed.padStart(7, '0'), 'Capcode'));
+	if (typed && key !== 'capcode') for (const v of matching(aliases, typed, reportRoom)) options.push(value('alias', v, 'Aliases'));
+	return { target, options, what: 'suggestion' };
+}
+
+/** What the report's box picks: an alias (by its name) or a capcode, or why
+ *  it can't be reported on. aliases is every alias name, or empty when they
+ *  couldn't be had (then the API says if there's no such alias). */
+export function reportPick(text: string, aliases: readonly string[]): { alias?: string; capcode?: string; problem: string } {
+	const m = reportKey.exec(text.trim());
+	const key = m?.[1].toLowerCase();
+	const v = unquote(m ? text.trim().slice(m[0].length) : text);
+	if (!v) return { problem: 'Type an alias or a capcode, and pick it from the suggestions.' };
+	if (key === 'capcode' || (!key && /^\d+$/.test(v))) {
+		return /^\d{1,7}$/.test(v) ? { capcode: v, problem: '' } : { problem: `"${v}" isn't a capcode: up to 7 digits.` };
+	}
+	const name = aliases.find((a) => a.toLowerCase() === v.toLowerCase());
+	if (name) return { alias: name, problem: '' };
+	if (aliases.length === 0) return { alias: v, problem: '' };
+	return { problem: `There's no alias "${v}". Pick one from the suggestions.` };
+}
+
+/** The report box's text for a report's address. */
+export const reportBox = (q: { get(name: string): string | null }) =>
+	q.get('alias') ? filterText('alias', q.get('alias') ?? '') : q.get('capcode') ? filterText('capcode', q.get('capcode') ?? '') : '';

@@ -8,9 +8,18 @@
 	// arrow keys move the day (Page Up and Page Down the month, Home and End
 	// the week), Enter picks, Escape closes.
 	//
+	// The month-and-year title is a button: it switches to that year's 12
+	// months, whose title (the year) switches to a grid of years. Picking a
+	// year shows its months, and picking a month its days. Years with no pages
+	// (outside the archive's first and last pages, firstPage and lastPage) and
+	// months after this one are greyed out and can't be picked. The keys work
+	// in each grid as in the days (arrows move, Page Up and Page Down a year or
+	// 12 years, Enter picks, Escape closes).
+	//
 	// The range is in the form as From and To (hidden fields), so a GET form
 	// sends it (the capcode report); onchange is told when the calendar
 	// closes with a different range (the search box searches then).
+	import { tick } from 'svelte';
 	import Icon from './Icon.svelte';
 	import { isoDate } from './format.ts';
 
@@ -18,8 +27,18 @@
 		from = '',
 		to = '',
 		timeZone,
+		firstPage,
+		lastPage,
 		onchange
-	}: { from?: string; to?: string; timeZone: string; onchange?: (from: string, to: string) => void } = $props();
+	}: {
+		from?: string;
+		to?: string;
+		timeZone: string;
+		/** The days of the archive's first and last pages: the years with pages. */
+		firstPage?: string;
+		lastPage?: string;
+		onchange?: (from: string, to: string) => void;
+	} = $props();
 
 	const uid = $props.id();
 	// Follow the range given (a new search, Clear all, Back), and what's picked.
@@ -34,6 +53,9 @@
 	let button: HTMLButtonElement;
 	let wrap: HTMLDivElement;
 	let grid: HTMLDivElement | undefined = $state();
+	// What the calendar shows: one month's days, one year's months, or 12
+	// years. In the months and years, view is the one focused.
+	let mode = $state<'days' | 'months' | 'years'>('days');
 
 	// Dates are YYYY-MM-DD, worked on as UTC days so the browser's own time
 	// zone never moves them.
@@ -83,7 +105,65 @@
 		return Array.from({ length: 6 }, (_, w) => Array.from({ length: 7 }, (_, i) => addDays(monday, w * 7 + i)));
 	});
 	const inView = (s: string) => Number(s.slice(0, 4)) === view.y && Number(s.slice(5, 7)) - 1 === view.m;
-	const hint = $derived(pending ? 'Now pick the last day.' : start ? 'Pick a day to start again.' : 'Pick the first day.');
+	const hint = $derived(mode === 'months' ? 'Pick a month.' : mode === 'years' ? 'Pick a year.' : pending ? 'Now pick the last day.' : start ? 'Pick a day to start again.' : 'Pick the first day.');
+
+	// The months and the years (the title's button switches to them).
+	const monthShort = format({ month: 'short' });
+	const yearsFrom = $derived(view.y - (((view.y % 12) + 12) % 12));
+	const years = $derived(Array.from({ length: 12 }, (_, i) => yearsFrom + i));
+	const thisMonth = $derived(today.slice(0, 7));
+	const ym = (y: number, m: number) => `${y}-${String(m + 1).padStart(2, '0')}`;
+	/** Whether a year has pages: from the first page's to the last's, and not after this one. */
+	const hasPages = (y: number) =>
+		!!firstPage && !!lastPage && y >= Number(firstPage.slice(0, 4)) && y <= Number(lastPage.slice(0, 4)) && y <= Number(today.slice(0, 4));
+	const monthOpen = (y: number, m: number) => hasPages(y) && ym(y, m) <= thisMonth;
+	// A month or year is selected when the range picked touches it.
+	const monthIn = (y: number, m: number) => !!drawn && drawn.a.slice(0, 7) <= ym(y, m) && ym(y, m) <= drawn.b.slice(0, 7);
+	const yearIn = (y: number) => !!drawn && Number(drawn.a.slice(0, 4)) <= y && y <= Number(drawn.b.slice(0, 4));
+	const title = $derived(
+		mode === 'days' ? monthName.format(new Date(Date.UTC(view.y, view.m, 1))) : mode === 'months' ? String(view.y) : `${years[0]} – ${years[11]}`
+	);
+	const steps = { days: ['Previous month', 'Next month'], months: ['Previous year', 'Next year'], years: ['Earlier years', 'Later years'] } as const;
+
+	/** The grid's focused cell gets the focus (after the grid is drawn). */
+	async function focusCell() {
+		await tick();
+		grid?.querySelector<HTMLButtonElement>('[tabindex="0"]')?.focus();
+	}
+
+	function setMode(next: 'days' | 'months' | 'years') {
+		mode = next;
+		focusCell();
+	}
+
+	function pickYear(y: number) {
+		if (!hasPages(y)) return;
+		view = { y, m: view.m };
+		setMode('months');
+	}
+
+	function pickMonth(y: number, m: number) {
+		if (!monthOpen(y, m)) return;
+		view = { y, m };
+		// The days, with the focus on the same day of that month (or today).
+		const dd = Number((focusDay || today).slice(8, 10));
+		const want = `${ym(y, m)}-${String(Math.min(dd, new Date(Date.UTC(y, m + 1, 0)).getUTCDate())).padStart(2, '0')}`;
+		focusDay = want > today ? today : want;
+		setMode('days');
+	}
+
+	/** The arrows, Page Up and Page Down in the months and the years. */
+	function gridMove(e: KeyboardEvent) {
+		const by: Record<string, number> = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -3, ArrowDown: 3, PageUp: -12, PageDown: 12 };
+		const n = by[e.key];
+		if (n === undefined) return;
+		e.preventDefault();
+		if (mode === 'months') {
+			const d = new Date(Date.UTC(view.y, view.m + n, 1));
+			view = { y: d.getUTCFullYear(), m: d.getUTCMonth() };
+		} else view = { y: view.y + n, m: view.m };
+		focusCell();
+	}
 
 	function show(s: string) {
 		const d = day(s);
@@ -99,6 +179,7 @@
 		if (now === open) return;
 		open = now;
 		if (now) {
+			mode = 'days';
 			focusDay = start ? end : today;
 			show(focusDay);
 			focusCurrent();
@@ -157,7 +238,12 @@
 		}
 	}
 
-	function month(n: number) {
+	/** The arrows beside the title: a month, a year or 12 years. */
+	function step(n: number) {
+		if (mode !== 'days') {
+			view = { y: view.y + (mode === 'months' ? n : 12 * n), m: view.m };
+			return;
+		}
 		const d = new Date(Date.UTC(view.y, view.m + n, 1));
 		view = { y: d.getUTCFullYear(), m: d.getUTCMonth() };
 	}
@@ -202,10 +288,67 @@
 	<div class="calendar" id="{uid}-calendar" role="dialog" aria-label="Choose dates" hidden={!open}>
 		{#if open}
 			<div class="head">
-				<button type="button" class="ghost" aria-label="Previous month" onclick={() => month(-1)}><Icon name="previous" /></button>
-				<h2 id="{uid}-month" aria-live="polite">{monthName.format(new Date(Date.UTC(view.y, view.m, 1)))}</h2>
-				<button type="button" class="ghost" aria-label="Next month" onclick={() => month(1)}><Icon name="next" /></button>
+				<button type="button" class="ghost" aria-label={steps[mode][0]} onclick={() => step(-1)}><Icon name="previous" /></button>
+				<h2 id="{uid}-month" aria-live="polite">
+					{#if mode === 'years'}{title}{:else}<button
+							type="button"
+							class="ghost title"
+							aria-describedby="{uid}-title-hint"
+							onclick={() => setMode(mode === 'days' ? 'months' : 'years')}>{title}</button
+						>{/if}
+				</h2>
+				<span id="{uid}-title-hint" hidden>{mode === 'days' ? 'Choose a month' : 'Choose a year'}</span>
+				<button type="button" class="ghost" aria-label={steps[mode][1]} onclick={() => step(1)}><Icon name="next" /></button>
 			</div>
+			{#if mode === 'months'}
+				<!-- svelte-ignore a11y_interactive_supports_focus (each month is a button; one of them is in the tab order) -->
+				<div class="pick" role="grid" aria-labelledby="{uid}-month" tabindex="-1" bind:this={grid} onkeydown={gridMove}>
+					{#each [0, 3, 6, 9] as row (row)}
+						<div role="row">
+							{#each [row, row + 1, row + 2] as m (m)}
+								<button
+									type="button"
+									role="gridcell"
+									class="cell"
+									class:picked={monthIn(view.y, m)}
+									class:now={ym(view.y, m) === thisMonth}
+									data-month={m}
+									aria-label={monthName.format(new Date(Date.UTC(view.y, m, 1)))}
+									aria-selected={monthIn(view.y, m)}
+									aria-disabled={monthOpen(view.y, m) ? undefined : 'true'}
+									tabindex={m === view.m ? 0 : -1}
+									onclick={() => pickMonth(view.y, m)}
+									onfocus={() => (view = { y: view.y, m })}>{monthShort.format(new Date(Date.UTC(view.y, m, 1)))}</button
+								>
+							{/each}
+						</div>
+					{/each}
+				</div>
+			{:else if mode === 'years'}
+				<!-- svelte-ignore a11y_interactive_supports_focus (each year is a button; one of them is in the tab order) -->
+				<div class="pick" role="grid" aria-labelledby="{uid}-month" tabindex="-1" bind:this={grid} onkeydown={gridMove}>
+					{#each [0, 3, 6, 9] as row (row)}
+						<div role="row">
+							{#each years.slice(row, row + 3) as y (y)}
+								<button
+									type="button"
+									role="gridcell"
+									class="cell"
+									class:picked={yearIn(y)}
+									class:now={y === Number(today.slice(0, 4))}
+									data-year={y}
+									aria-label={String(y)}
+									aria-selected={yearIn(y)}
+									aria-disabled={hasPages(y) ? undefined : 'true'}
+									tabindex={y === view.y ? 0 : -1}
+									onclick={() => pickYear(y)}
+									onfocus={() => (view = { y, m: view.m })}>{y}</button
+								>
+							{/each}
+						</div>
+					{/each}
+				</div>
+			{:else}
 			<div class="week" aria-hidden="true">
 				{#each ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'] as d (d)}<span>{d}</span>{/each}
 			</div>
@@ -249,6 +392,7 @@
 					</div>
 				{/each}
 			</div>
+			{/if}
 			<div class="foot">
 				<span aria-live="polite">{hint}</span>
 				<button
@@ -300,6 +444,63 @@
 	.head h2 {
 		margin: 0;
 		font-size: var(--text-base);
+	}
+	.head .title {
+		min-height: 0;
+		padding: var(--space-2xs) var(--space-sm);
+		color: var(--fg);
+		font-size: var(--text-base);
+		font-weight: var(--weight-strong);
+	}
+	/* The months and the years: 3 a row. */
+	.pick {
+		display: grid;
+		grid-template-columns: repeat(3, 1fr);
+		gap: var(--space-2xs);
+	}
+	.pick:focus {
+		outline: none;
+	}
+	.pick [role='row'] {
+		display: contents;
+	}
+	button.cell {
+		min-width: 0;
+		height: var(--calendar-day);
+		min-height: 0;
+		padding: 0;
+		border: 0;
+		border-radius: var(--radius-pill);
+		background: transparent;
+		color: var(--fg);
+		font-weight: var(--weight-normal);
+		font-variant-numeric: tabular-nums;
+	}
+	button.cell:hover {
+		background: var(--hover);
+		transform: none;
+	}
+	button.cell:active {
+		transform: none;
+	}
+	button.cell.now {
+		box-shadow: inset 0 0 0 var(--border-width) var(--control-border);
+	}
+	button.cell.picked,
+	button.cell.picked:hover {
+		background: var(--accent-soft);
+		color: var(--accent-soft-fg);
+	}
+	button.cell[aria-disabled='true'],
+	button.cell[aria-disabled='true']:hover {
+		background: transparent;
+		color: var(--muted);
+		opacity: var(--disabled-opacity);
+		cursor: default;
+	}
+	button.cell:focus-visible {
+		outline: var(--focus-width) solid var(--focus);
+		outline-offset: calc(-1 * var(--focus-width));
 	}
 	.week,
 	.days {

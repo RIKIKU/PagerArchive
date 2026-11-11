@@ -70,6 +70,8 @@
 		</dl>
 		{#if !/[%_]/.test(alias.pattern)}
 			<p><a href="/reports/capcode?capcode={alias.pattern}">Report for this capcode</a></p>
+		{:else}
+			<p><a href="/reports/capcode?{new URLSearchParams({ alias: alias.name })}">Report for this alias</a></p>
 		{/if}
 		<div aria-live="polite">
 			{#if notice}<p class="ok" role="status">{notice}</p>{/if}

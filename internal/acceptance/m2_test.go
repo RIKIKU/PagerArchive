@@ -89,6 +89,39 @@ func TestA6UnknownCapcodeSearch(t *testing.T) {
 	t.Logf("A6: unaliased capcodes %+v", caps)
 }
 
+// R78. The Unknown capcodes page's order: the most messages (all time)
+// first, then the latest seen. Its threshold (5) is the browser's; the API
+// lists every capcode.
+func TestR78UnknownCapcodesOrder(t *testing.T) {
+	e := setup(t)
+	posts := []struct {
+		capcode string
+		n       int
+		last    time.Duration // the last page, this long ago
+	}{
+		{"0999901", 6, 3 * time.Hour},
+		{"0999902", 6, time.Hour},
+		{"0999903", 7, 5 * time.Hour},
+		{"0999904", 2, 0},
+	}
+	for _, p := range posts {
+		for i := range p.n {
+			e.mustPost("a", p.capcode, fmt.Sprintf("QDPage %d to an unknown pager", i), e.now.Add(-p.last-time.Duration(i)*time.Minute))
+		}
+	}
+	var caps []server.UnaliasedCapcode
+	e.getJSON("/api/v1/capcodes/unaliased", &caps)
+	var got []string
+	for _, c := range caps {
+		got = append(got, fmt.Sprintf("%s:%d", c.Capcode, c.Messages))
+	}
+	want := []string{"0999903:7", "0999902:6", "0999901:6", "0999904:2"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("unaliased capcodes %v, want %v", got, want)
+	}
+	t.Logf("R78: %v", got)
+}
+
 // A10. Marker hidden in display.
 func TestA10MarkerHiddenInDisplay(t *testing.T) {
 	e := setup(t)

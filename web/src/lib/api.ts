@@ -62,7 +62,10 @@ export interface MapPage {
 }
 
 export interface Report {
-	capcode: string;
+	/** The capcode asked for, or the alias (by name) and the aliases of that name. */
+	capcode?: string;
+	alias?: string;
+	aliases?: { id: number; pattern: string }[];
 	from: string;
 	to: string;
 	categories: { category: string; count: number; codes?: { code: string | null; count: number }[] }[];
@@ -116,6 +119,9 @@ export interface Meta {
 	attribution: string;
 	map_tiles: boolean;
 	map_attribution: string;
+	/** The days of the first and last pages (none when there are none), for the calendar's years. */
+	first_page?: string;
+	last_page?: string;
 	/** Admins only: alias requests waiting for review (R55). */
 	waiting_requests?: number;
 }
@@ -611,8 +617,9 @@ export const api = {
 	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
 	clients: () => get<ClientStatus[]>('/api/v1/admin/clients'),
 	map: (query: URLSearchParams) => get<MapPage>(`/api/v1/map?${query}`),
-	report: (capcode: string, from: string, to: string) =>
-		get<Report>(`/api/v1/reports/capcode?${new URLSearchParams({ capcode, from, to })}`),
+	/** R38: for one capcode, or one alias (by name) and every capcode it covers. */
+	report: (what: { capcode: string } | { alias: string }, from: string, to: string) =>
+		get<Report>(`/api/v1/reports/capcode?${new URLSearchParams({ ...what, from, to })}`),
 	retention: () => get<Retention>('/api/v1/admin/retention'),
 	backup: () => get<BackupStatus>('/api/v1/admin/backup'),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
