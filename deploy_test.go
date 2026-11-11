@@ -94,6 +94,12 @@ func TestA79ImagesAreNamedByMajorMinor(t *testing.T) {
 			}
 			repo, tag, _ := strings.Cut(s.Image, ":")
 			switch {
+			case repo == ourImage && Version == unstampedVersion:
+				// The repository's own compose.yaml: a build writes its
+				// MAJOR.MINOR there (ADR 0024).
+				if tag != "main" {
+					t.Errorf("%s: %s's image %q: the repository's own compose.yaml names it :main", c.path, name, s.Image)
+				}
 			case slices.Contains(noMinorTag, repo):
 				if !exactTag.MatchString(tag) {
 					t.Errorf("%s: %s's image %q: %s publishes no major.minor tag, so name an exact version", c.path, name, s.Image, repo)
@@ -107,8 +113,14 @@ func TestA79ImagesAreNamedByMajorMinor(t *testing.T) {
 
 // R84: compose.yaml names this release's minor version of our image, so its
 // patch releases need no new file, and no setting in .env.example pins a version.
+// The repository's own compose.yaml names :main, and a build writes its
+// version's MAJOR.MINOR there (scripts/ci/stamp-version.sh, ADR 0024).
 func TestR84aComposeNamesThisRelease(t *testing.T) {
-	want := ourImage + ":" + Version[:strings.LastIndex(Version, ".")]
+	want := ourImage + ":main"
+	if Version != unstampedVersion {
+		v, _, _ := strings.Cut(Version, "-")
+		want = ourImage + ":" + v[:strings.LastIndex(v, ".")]
+	}
 	found := 0
 	for _, c := range composeFiles(t) {
 		for name, s := range c.Services {
@@ -268,7 +280,7 @@ func TestR84ReleaseAttachesTheFiles(t *testing.T) {
 	}
 
 	type job struct {
-		Needs []string `yaml:"needs"`
+		Needs needs `yaml:"needs"`
 		Steps []struct {
 			Run string `yaml:"run"`
 		} `yaml:"steps"`
@@ -432,4 +444,18 @@ func TestR76MonitoringOwnsItsNetwork(t *testing.T) {
 	if bytes.Contains(data, []byte("PAGERARCHIVE_NETWORK")) {
 		t.Error("the stack's compose file still names PagerArchive's network")
 	}
+}
+
+// needs is a workflow job's needs: one job's name, or a list of them.
+type needs []string
+
+func (n *needs) UnmarshalYAML(v *yaml.Node) error {
+	if v.Kind == yaml.ScalarNode {
+		*n = needs{v.Value}
+		return nil
+	}
+	var list []string
+	err := v.Decode(&list)
+	*n = list
+	return err
 }

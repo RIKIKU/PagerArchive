@@ -533,8 +533,8 @@ else
 fi
 
 # M17 (ADR 0019): installing and upgrading with no checkout.
-V=$(tr -d ' \r\n' <VERSION)
-V=${V%.*}
+# Our image's tag in compose.yaml: main, or a stamped build's MAJOR.MINOR (ADR 0024).
+V=$(tr -d '\r' <compose.yaml | sed -n 's|^ *image: ghcr\.io/rikiku/pagerarchive:||p')
 mutate "compose.yaml pulls an image that isn't ours or known upstream" compose.yaml unit:.:TestR84ImagesAreOursOrKnownUpstream \
 	'image: postgis/postgis:18-3.6' 'image: example.org/someone/postgis:18-3.6'
 mutate "the monitoring stack pulls a project-built image instead of upstream's" deploy/monitoring/compose.yaml unit:.:TestR84ImagesAreOursOrKnownUpstream \

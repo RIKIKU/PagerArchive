@@ -1,0 +1,36 @@
+name: Security release
+
+# A security update is released straight away (SPEC.md 12.1, ADR 0024): when
+# a pull request labelled "security" merges into main (Renovate labels its
+# vulnerability alerts' pull requests so, .github/renovate.json5), this starts
+# the Release workflow on main, as "Release now" would. A workflow_dispatch
+# made with GITHUB_TOKEN does start a run (GitHub's one exception, with
+# repository_dispatch).
+#
+# Its own workflow, not a trigger of release.yml: that one's runs wait for
+# each other, and a run for every closed pull request there could replace a
+# release that's waiting.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Start the Release workflow
+    if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'security')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+    steps:
+      - name: Release main now
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
+          echo "::notice::Security update merged ($PR): the Release workflow is started on main."

@@ -1,0 +1,99 @@
+name: Release
+
+# Cuts a release (SPEC.md 12.1, ADR 0024). A merge to main isn't one: it
+# publishes the main and sha-<commit> images only (ci.yml).
+#
+#   - Every Saturday, before the owner's weekly upgrade at 09:00 their time
+#     (UTC+10, or UTC+11 with daylight saving): 18:17 UTC on Friday is 05:17
+#     on Saturday with daylight saving and 04:17 without. GitHub can start a
+#     scheduled run late, and the checks take about an hour, so it starts
+#     hours early, off the hour, when fewer runs start.
+#   - "Release now": Actions, Release, Run workflow, on main.
+#   - A security update: security-release.yml starts this, on main, when a
+#     pull request labelled "security" (Renovate's vulnerability alerts,
+#     ADR 0022) merges.
+#
+# Each run releases the commit it starts on (main's newest), if main changed
+# since the previous release in anything but documentation (what CI's
+# docs-only filter ignores); otherwise it says "nothing to release" and
+# succeeds. scripts/ci/release-version.sh decides, and works out the version:
+# minor if a file a deployment downloads changed (compose.yaml or the
+# configuration archive's files), otherwise patch. Then ci.yml runs, as a
+# called workflow, with that version: every check on the commit, then the
+# tag, the GitHub release with its notes and files, the images, the module,
+# and the release made the latest.
+#
+# "dry_run" (a manual run, on any branch) does everything but tag and
+# publish: the version, every check, the client's binaries, the release's
+# notes and files, and the images built but not pushed. Off main a run that
+# isn't a dry run fails before anything starts.
+#
+# One release at a time, never cancelled: a run waits for the one before it
+# to finish, then finds whether that one already released its commit.
+on:
+  schedule:
+    - cron: "17 18 * * 5"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Dry run: everything but tag and publish"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    name: What to release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      release: ${{ steps.version.outputs.release }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: A release is made from main
+        if: github.ref != 'refs/heads/main' && inputs.dry_run != true
+        run: |
+          echo "::error::A release is made from main only, and this run is on $GITHUB_REF. Off main, tick \"Dry run\"."
+          exit 1
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Work out the version
+        id: version
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run == true }}
+        run: |
+          git fetch --force --tags origin
+          # The release GitHub marks Latest: the last one that finished.
+          PA_LATEST_RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          export PA_LATEST_RELEASE
+          echo "Commit $GITHUB_SHA ($GITHUB_REF); the Latest release is $PA_LATEST_RELEASE"
+          sh scripts/ci/release-version.sh "$GITHUB_SHA"
+          if grep -qx 'release=false' "$GITHUB_OUTPUT"; then
+            echo "::notice::Nothing to release: $(sed -n 's/^why=//p' "$GITHUB_OUTPUT")"
+          elif [ "$DRY_RUN" = true ]; then
+            echo "::notice::Dry run: $(sed -n 's/^tag=//p' "$GITHUB_OUTPUT") would be released ($(sed -n 's/^why=//p' "$GITHUB_OUTPUT")). Nothing is tagged or published."
+          fi
+
+  checks:
+    name: Checks and release
+    needs: plan
+    if: needs.plan.outputs.release == 'true'
+    uses: ./.github/workflows/ci.yml
+    with:
+      release: ${{ needs.plan.outputs.version }}
+      dry_run: ${{ inputs.dry_run == true }}
+    # The release jobs tag, create the release and push the images; the
+    # module's job needs PSGALLERY_API_KEY.
+    permissions:
+      contents: write
+      packages: write
+    secrets: inherit

@@ -5,10 +5,18 @@ name: CI
 # changed runs everything. The map sprites' LICENSE.md is built into the
 # server (web/web.go embeds web/build), so web/static/** counts as code.
 #
-# Every push to main that runs is a release (SPEC.md 12.1, ADR 0016): once
-# every check has passed, the release job tags the commit v<VERSION> and the
-# publish jobs follow, in the same run. Pushes are filtered to branches, so a
-# tag push (the release's own, or one made by hand) starts no run at all.
+# A merge to main isn't a release (SPEC.md 12.1, ADR 0024): once every check
+# has passed, its images are published as main and sha-<commit> only. A
+# release is cut by the Release workflow (release.yml), which runs this
+# workflow (workflow_call) with the release's version: every check, then the
+# release jobs below tag the commit v<version> and publish it. Pushes are
+# filtered to branches, so a tag push (the release's own, or one made by
+# hand) starts no run at all.
+#
+# Every build writes its version into VERSION and compose.yaml first (the
+# stamp job, scripts/ci/stamp-version.sh): a release's own, or for any other
+# build <next>-dev+<commit>, such as 1.7.6-dev+3f2c1ab, so a build of main is
+# never taken for a release.
 #
 # Only main runs on push. Every other branch runs on its pull request only
 # (owner, 2026-11-12): a push to a branch with an open pull request used to
@@ -32,42 +40,103 @@ on:
       - "web/static/**"
   # Publishes the current branch's images tagged sha-<commit> only (owner, 2026-10-13).
   workflow_dispatch:
+  # The Release workflow's checks and release (ADR 0024).
+  workflow_call:
+    inputs:
+      release:
+        description: "The version to release, MAJOR.MINOR.PATCH (release-version.sh's)"
+        required: true
+        type: string
+      dry_run:
+        description: "Everything but tagging and publishing"
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
 
 # A new push to a pull request's branch cancels that pull request's run still
-# in progress (owner, 2026-11-11). A run on main is a release, so each gets a
-# group of its own and is never cancelled or replaced.
+# in progress (owner, 2026-11-11). Every other run (main's, a manual one, a
+# release's) gets a group of its own and is never cancelled or replaced.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.head_ref || github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.event_name == 'pull_request' && github.head_ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 # Every job has a time limit well above its usual time (ADR 0012), so a hang
 # fails in minutes rather than after GitHub's 6 hours.
 jobs:
-  # A branch's or pull request's VERSION is higher than main's, and so is the
-  # module's ModuleVersion if the branch changes the module (SPEC.md 12.1,
-  # R63). On main, the release job's plan checks the version instead.
+  # The build's version (ADR 0024). Every job below that checks out the code
+  # writes it into its checkout first (scripts/ci/stamp-version.sh), so what's
+  # tested is what's published: the Release workflow's version in its run, or
+  # <next>-dev+<commit> in any other (release-version.sh --dev). Also what the
+  # run publishes, its mode: release (or dry-run) in the Release workflow's
+  # run, main on a push to main, sha on a manual run, none on a pull request.
+  stamp:
+    name: The build's version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      major_minor: ${{ steps.version.outputs.major_minor }}
+      mode: ${{ steps.version.outputs.mode }}
+      publish: ${{ steps.version.outputs.publish }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 0
+      - name: Work out the version
+        id: version
+        env:
+          RELEASE: ${{ inputs.release }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          EVENT: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+        run: |
+          . scripts/ci/versions-lib.sh
+          if [ -n "$RELEASE" ]; then
+            is_version "$RELEASE" || { echo "::error::The release's version is '$RELEASE', not MAJOR.MINOR.PATCH"; exit 1; }
+            version=$RELEASE
+            if [ "$DRY_RUN" = true ]; then mode=dry-run; else mode=release; fi
+          else
+            version=$(sh scripts/ci/release-version.sh --dev HEAD | sed -n 's/^version=//p')
+            is_dev_version "$version" || { echo "::error::Couldn't work out this build's version"; exit 1; }
+            case $EVENT/$REF in
+            push/refs/heads/main) mode=main ;;
+            workflow_dispatch/*) mode=sha ;;
+            *) mode=none ;;
+            esac
+          fi
+          case $mode in release | main | sha) publish=true ;; *) publish=false ;; esac
+          {
+            echo "version=$version"
+            echo "major_minor=$(major_minor "$version")"
+            echo "mode=$mode"
+            echo "publish=$publish"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  # The repository's own VERSION and compose.yaml are unstamped, and the
+  # module's ModuleVersion is raised if the module changed since the previous
+  # release (SPEC.md 12.1, R63; ADR 0024).
   versions:
-    name: VERSION and the module's version are raised
-    if: github.ref != 'refs/heads/main'
+    name: Versions are left to the release, and the module's is raised
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
-      - name: Compare with main
-        run: sh scripts/ci/check-versions.sh origin/main
-      # R85c, ADR 0022: how automatic updates raise VERSION.
-      - name: Automatic updates raise VERSION (bump-version.sh)
-        run: sh scripts/ci/bump-version-checks.sh
+      - name: Unstamped, and the module's version against the previous release
+        run: sh scripts/ci/check-versions.sh HEAD
+      # ADR 0024: what's released, as which version, and the stamp.
+      - name: The release's version (release-version.sh, stamp-version.sh, check-versions.sh)
+        run: sh scripts/ci/release-version-checks.sh
       - name: A failed automatic update is assigned to the owner (tell-owner.sh)
         run: sh scripts/ci/tell-owner-checks.sh
 
   test:
     name: Tests, golden tables and acceptance checks
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -87,6 +156,10 @@ jobs:
       PAGERARCHIVE_REQUIRE_DB: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -112,6 +185,7 @@ jobs:
   # seeding 4,562,500 pages takes minutes.
   search:
     name: Search speed (A75)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
@@ -132,6 +206,10 @@ jobs:
       PAGERARCHIVE_A75: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -147,10 +225,15 @@ jobs:
 
   import:
     name: Importing messages (A76)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -174,6 +257,7 @@ jobs:
 
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     # Microsoft's Playwright image, the exact version in web/package-lock.json
@@ -199,6 +283,10 @@ jobs:
       HOME: /root
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -301,6 +389,7 @@ jobs:
   # PA_STACK_PART); they used to run one after the other on one stack.
   stack:
     name: Against Authentik (${{ matrix.title }})
+    needs: stamp
     strategy:
       fail-fast: false
       matrix:
@@ -317,6 +406,10 @@ jobs:
       PA_STACK_PART: ${{ matrix.part }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -333,10 +426,15 @@ jobs:
 
   stack-e2e:
     name: Section 11 steps 2 and 3 in a browser, on the compose stack
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -376,16 +474,23 @@ jobs:
           if-no-files-found: ignore
           retention-days: 14
 
-  # A77: from the previous release's attached files to this checkout's with
-  # `docker compose pull && docker compose up -d` only. Needs the v* tags.
+  # A77: from the latest release's attached files (the one GitHub marks Latest)
+  # to this build's with `docker compose pull && docker compose up -d` only, on
+  # every pull request and every build of main, so a change that breaks the
+  # upgrade is caught before a release is cut (ADR 0024). Needs the v* tags.
   upgrade:
-    name: Upgrade from the previous release (A77)
+    name: Upgrade from the latest release (A77)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -407,10 +512,15 @@ jobs:
   # network.
   install:
     name: Install with no checkout (A78)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 24
@@ -448,10 +558,15 @@ jobs:
   # install. Its alert is in the monitoring job.
   backups:
     name: Backups (A80)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -490,6 +605,7 @@ jobs:
 
   images:
     name: Images and client replay (${{ matrix.arch }})
+    needs: stamp
     strategy:
       fail-fast: false
       matrix:
@@ -504,20 +620,28 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - name: Build client image (native ${{ matrix.arch }})
         run: docker build -f Dockerfile.client -t pagerarchive-client:ci .
-      - name: Client --version is VERSION
+      - name: Client --version is the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: |
           docker run --rm pagerarchive-client:ci --version | tee client-version.txt
-          test "$(cat client-version.txt)" = "pagerarchive-client $(cat VERSION)"
+          test "$(cat client-version.txt)" = "pagerarchive-client $PA_VERSION"
       - name: Build server image (amd64 only)
         if: matrix.server
         run: docker build -t pagerarchive:ci .
-      - name: Server version is VERSION
+      - name: Server version is the build's version
         if: matrix.server
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: |
           docker run --rm pagerarchive:ci version | tee server-version.txt
-          test "$(cat server-version.txt)" = "pagerarchive $(cat VERSION)"
+          test "$(cat server-version.txt)" = "pagerarchive $PA_VERSION"
       - name: Server image runs validate-profile
         if: matrix.server
         run: docker run --rm -v "$PWD/profiles/example:/profiles:ro" pagerarchive:ci validate-profile /profiles
@@ -533,6 +657,7 @@ jobs:
 
   budget:
     name: Resource budget, short run (A15), telemetry ${{ matrix.telemetry }}
+    needs: stamp
     strategy:
       fail-fast: false
       matrix:
@@ -547,6 +672,10 @@ jobs:
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -570,10 +699,15 @@ jobs:
   # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
     name: Example monitoring stack (A78's install, A65, A67, A80's alert)
+    needs: stamp
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -597,10 +731,9 @@ jobs:
 
   # The one check main's ruleset requires before a pull request merges (R85c,
   # ADR 0022), so an automatic update merges only once every check has passed.
-  # "versions" is skipped on main only.
   checks:
     name: All checks passed
-    needs: [versions, test, search, import, web, powershell, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring]
+    needs: [stamp, versions, test, search, import, web, powershell, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -608,51 +741,59 @@ jobs:
       - name: Every check passed
         env:
           NEEDS: ${{ toJSON(needs) }}
-          ON_MAIN: ${{ github.ref == 'refs/heads/main' }}
         run: |
-          failed=$(echo "$NEEDS" | jq -r --argjson main "$ON_MAIN" 'to_entries[]
-            | select(.value.result != "success") | select(($main and .key == "versions" and .value.result == "skipped") | not)
-            | "\(.key): \(.value.result)"')
+          failed=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
           if [ -n "$failed" ]; then
             echo "::error::Not every check passed: $(printf '%s' "$failed" | tr '\n' ' ')"
             exit 1
           fi
           echo "Every check passed"
 
-  # The release (SPEC.md 12.1, ADR 0016): on a push to main whose checks all
-  # passed, before anything is published. The plan fails if VERSION isn't
-  # higher than the previous release (the newest v* tag in the commit's
-  # history), or if v<VERSION> is already a tag on
-  # another commit, so nothing is published. Otherwise this
-  # job tags the commit (annotated, "PagerArchive v<VERSION>"), creates the
-  # GitHub release with the client's binaries and checksums, not yet marked the
-  # latest (attach-release-files does that), and passes on
-  # whether the module is published. A tag pushed with GITHUB_TOKEN starts no
-  # run, and the push trigger takes branches only anyway. Re-run, the job
-  # finds its own tag and release on this commit and finishes them.
+  # The release (SPEC.md 12.1; ADR 0016, ADR 0024): only in the Release
+  # workflow's run, once every check passed, before anything is published.
+  # The plan fails if the version (the stamp job's, from release-version.sh)
+  # isn't higher than the previous release (the newest v* tag in the commit's
+  # history), or if its tag is already on another commit, so nothing is
+  # published. Otherwise this job tags the commit (annotated, "PagerArchive
+  # v<version>"), creates the GitHub release with the client's binaries and
+  # checksums, not yet marked the latest (attach-release-files does that), and
+  # passes on whether the module is published. A tag pushed with GITHUB_TOKEN
+  # starts no run, and the push trigger takes branches only anyway. Re-run, the
+  # job finds its own tag and release on this commit and finishes them. In a
+  # dry run it tags nothing and creates no release: it shows the notes it would
+  # write instead.
   release:
-    name: Release v<VERSION> (tag, GitHub release, client binaries)
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    name: Release v<version> (tag, GitHub release, client binaries)
+    needs: [stamp, versions, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell]
+    if: needs.stamp.outputs.mode == 'release' || needs.stamp.outputs.mode == 'dry-run'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: write
+    env:
+      DRY_RUN: ${{ needs.stamp.outputs.mode == 'dry-run' }}
     outputs:
       version: ${{ steps.plan.outputs.version }}
       major_minor: ${{ steps.plan.outputs.major_minor }}
       tag: ${{ steps.plan.outputs.tag }}
       module: ${{ steps.plan.outputs.module }}
       module_version: ${{ steps.plan.outputs.module_version }}
+      dry_run: ${{ needs.stamp.outputs.mode == 'dry-run' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
           fetch-depth: 0
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - name: Decide what to publish
         id: plan
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: |
           git fetch --force --tags origin
-          sh scripts/ci/release-plan.sh "$GITHUB_SHA"
+          sh scripts/ci/release-plan.sh "$GITHUB_SHA" "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
@@ -667,7 +808,30 @@ jobs:
               -o "dist/pagerarchive-client-$TAG-linux-$arch" ./cmd/pagerarchive-client
           done
           (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
+      - name: The release's notes
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
+          MODULE_NOTES: ${{ steps.plan.outputs.notes }}
+        run: |
+          {
+            echo "PagerArchive $TAG, from $GITHUB_SHA."
+            echo
+            echo "- Images: \`ghcr.io/rikiku/pagerarchive:$VERSION\` and \`ghcr.io/rikiku/pagerarchive-client:$VERSION\` (amd64 and arm64)."
+            echo "- To install or upgrade: \`compose.yaml\`, \`env.example\` and \`pagerarchive-config.tar.gz\` (docs/deploy.md). The example monitoring stack: \`monitoring-compose.yaml\` and \`monitoring-env.example\` (docs/monitoring.md)."
+            echo "- The client's binaries for linux/amd64 and linux/arm64, with \`SHA256SUMS\` (docs/client.md)."
+            echo "- $MODULE_NOTES"
+          } > notes.md
+          cat notes.md
+          if [ "$DRY_RUN" = true ]; then
+            echo "--- dry run: GitHub's generated notes, which would follow (nothing is created):"
+            gh api "repos/$GITHUB_REPOSITORY/releases/generate-notes" -f tag_name="$TAG" -f target_commitish="$GITHUB_SHA" \
+              -f previous_tag_name="$PREVIOUS" --jq .body
+          fi
       - name: Tag the commit
+        if: env.DRY_RUN != 'true'
         env:
           TAG: ${{ steps.plan.outputs.tag }}
         run: |
@@ -680,33 +844,33 @@ jobs:
             git push origin "refs/tags/$TAG"
           fi
       - name: Create the GitHub release with the binaries
+        if: env.DRY_RUN != 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
-          VERSION: ${{ steps.plan.outputs.version }}
-          MODULE_NOTES: ${{ steps.plan.outputs.notes }}
+          PREVIOUS: ${{ steps.plan.outputs.previous }}
         run: |
-          {
-            echo "PagerArchive $TAG, from $GITHUB_SHA."
-            echo
-            echo "- Images: \`ghcr.io/rikiku/pagerarchive:$VERSION\` and \`ghcr.io/rikiku/pagerarchive-client:$VERSION\` (amd64 and arm64)."
-            echo "- To install or upgrade: \`compose.yaml\`, \`env.example\` and \`pagerarchive-config.tar.gz\` (docs/deploy.md). The example monitoring stack: \`monitoring-compose.yaml\` and \`monitoring-env.example\` (docs/monitoring.md)."
-            echo "- The client's binaries for linux/amd64 and linux/arm64, with \`SHA256SUMS\` (docs/client.md)."
-            echo "- $MODULE_NOTES"
-          } > notes.md
-          cat notes.md
           gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md --generate-notes
+            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md --generate-notes --notes-start-tag "$PREVIOUS"
           gh release upload "$TAG" dist/* --clobber
+      - name: Dry run, so nothing tagged or released
+        if: env.DRY_RUN == 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          echo "dry run: would tag $GITHUB_SHA $TAG, create the release \"PagerArchive $TAG\" (not yet the latest) and attach:"
+          ls -l dist
 
   # Images on GHCR (SPEC.md section 8), only from a green build (owner,
-  # 2026-10-13): a release (a push to main) -> <VERSION>, its MAJOR.MINOR,
-  # latest, main and sha-<commit>; a manual run on any branch -> sha-<commit> only. Other
-  # pushes build the images without publishing them. Off main the release job
-  # is skipped, so these run unless something they need failed.
+  # 2026-10-13), as the stamp job's mode says (ADR 0024): a release ->
+  # <version>, its MAJOR.MINOR and latest; a push to main -> main and
+  # sha-<commit>; a manual run on any branch -> sha-<commit> only. A pull
+  # request, and a release's dry run, build the images without publishing
+  # them. Off a release the release job is skipped, so these run unless
+  # something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
+    needs: [stamp, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -714,10 +878,15 @@ jobs:
       contents: read
       packages: write
     env:
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
-      RELEASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      PUBLISH: ${{ needs.stamp.outputs.publish }}
+      RELEASE: ${{ needs.stamp.outputs.mode == 'release' || needs.stamp.outputs.mode == 'dry-run' }}
+      MAIN: ${{ needs.stamp.outputs.mode == 'main' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         if: env.PUBLISH == 'true'
@@ -730,11 +899,11 @@ jobs:
         with:
           images: ghcr.io/rikiku/pagerarchive
           tags: |
-            type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
-            type=raw,value=${{ needs.release.outputs.major_minor || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.stamp.outputs.version }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.stamp.outputs.major_minor }},enable=${{ env.RELEASE }}
             type=raw,value=latest,enable=${{ env.RELEASE }}
-            type=raw,value=main,enable=${{ env.RELEASE }}
-            type=sha,prefix=sha-,format=short
+            type=raw,value=main,enable=${{ env.MAIN }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE != 'true' }}
       - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
@@ -743,13 +912,16 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           push: ${{ env.PUBLISH == 'true' }}
       - name: Summary
+        env:
+          MODE: ${{ needs.stamp.outputs.mode }}
+          TAGS: ${{ steps.meta.outputs.tags }}
         run: |
-          echo "published: $PUBLISH"
-          echo "${{ steps.meta.outputs.tags }}"
+          echo "mode: $MODE; published: $PUBLISH"
+          echo "$TAGS"
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
+    needs: [stamp, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
     if: ${{ !failure() && !cancelled() }}
     strategy:
       matrix:
@@ -764,9 +936,13 @@ jobs:
       contents: read
       packages: write
     env:
-      PUBLISH: ${{ github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main') }}
+      PUBLISH: ${{ needs.stamp.outputs.publish }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         if: env.PUBLISH == 'true'
@@ -804,15 +980,16 @@ jobs:
 
   publish-client-manifest:
     name: Publish client image (amd64 + arm64)
-    needs: [publish-client, release]
-    if: ${{ !failure() && !cancelled() && (github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
+    needs: [stamp, publish-client, release]
+    if: ${{ !failure() && !cancelled() && needs.stamp.outputs.publish == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
       packages: write
     env:
-      RELEASE: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+      RELEASE: ${{ needs.stamp.outputs.mode == 'release' }}
+      MAIN: ${{ needs.stamp.outputs.mode == 'main' }}
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
@@ -830,11 +1007,11 @@ jobs:
         with:
           images: ghcr.io/rikiku/pagerarchive-client
           tags: |
-            type=raw,value=${{ needs.release.outputs.version || 'none' }},enable=${{ env.RELEASE }}
-            type=raw,value=${{ needs.release.outputs.major_minor || 'none' }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.stamp.outputs.version }},enable=${{ env.RELEASE }}
+            type=raw,value=${{ needs.stamp.outputs.major_minor }},enable=${{ env.RELEASE }}
             type=raw,value=latest,enable=${{ env.RELEASE }}
-            type=raw,value=main,enable=${{ env.RELEASE }}
-            type=sha,prefix=sha-,format=short
+            type=raw,value=main,enable=${{ env.MAIN }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE != 'true' }}
       - name: Join the architectures under the tags
         working-directory: digests
         run: |
@@ -847,11 +1024,13 @@ jobs:
   # isn't there yet (owner, 2026-11-03; ADR 0019). Only then does the release
   # become the latest, so the docs' releases/latest/download links keep getting
   # the previous release's files until this one's are all in place. Re-run after
-  # a failure, it finishes the job.
+  # a failure, it finishes the job. The files are this checkout's, stamped with
+  # the release's version, so compose.yaml names its MAJOR.MINOR (ADR 0024). In
+  # a dry run it makes and lists them, and attaches nothing.
   attach-release-files:
     name: Attach the install and upgrade files, and make it the latest release
     needs: [release, publish-server, publish-client-manifest]
-    if: ${{ !failure() && !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+    if: ${{ !failure() && !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -860,16 +1039,22 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.release.outputs.tag }}
       MAJOR_MINOR: ${{ needs.release.outputs.major_minor }}
+      PA_VERSION: ${{ needs.release.outputs.version }}
+      DRY_RUN: ${{ needs.release.outputs.dry_run }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       # No docker login in this job: this is what anyone pulling sees.
       - name: The release's images are on GHCR
+        if: env.DRY_RUN != 'true'
         run: |
           docker manifest inspect "ghcr.io/rikiku/pagerarchive:$MAJOR_MINOR" >/dev/null
           docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null
       - name: The files for installing and upgrading
         run: sh scripts/ci/release-assets.sh dist
       - name: Attach them, check they're there, and make it the latest release
+        if: env.DRY_RUN != 'true'
         run: |
           gh release upload "$TAG" dist/* --clobber
           attached=$(gh release view "$TAG" --json assets --jq '.assets[].name')
@@ -877,20 +1062,26 @@ jobs:
             printf '%s\n' "$attached" | grep -qx "$asset" || { echo "::error::$TAG has no $asset attached"; exit 1; }
           done
           gh release edit "$TAG" --latest
+      - name: Dry run, so nothing attached
+        if: env.DRY_RUN == 'true'
+        run: |
+          echo "dry run: would attach these to $TAG, then make it the latest release:"
+          ls -l dist
+          echo "--- its compose.yaml: $(grep 'ghcr.io/rikiku/pagerarchive:' dist/compose.yaml)"
 
   # The PowerShell module on the PowerShell Gallery (R63): only from a release
   # whose plan said "publish" (powershell/PagerArchive/ changed since the
   # previous release and the manifest's version isn't on the Gallery yet),
-  # with the manifest's own version, not VERSION. Otherwise it's skipped, and
-  # the release job's log and the release notes say "module unchanged: the
-  # Gallery keeps <version>". Without the PSGALLERY_API_KEY secret it fails,
-  # since the release notes already say the module is published (owner,
-  # 2026-11-02). Re-run after a failure, it publishes the version, or finds
-  # it already there.
+  # with the manifest's own version, not the release's. Otherwise it's
+  # skipped, and the release job's log and the release notes say "module
+  # unchanged: the Gallery keeps <version>". Without the PSGALLERY_API_KEY
+  # secret it fails, since the release notes already say the module is
+  # published (owner, 2026-11-02). Re-run after a failure, it publishes the
+  # version, or finds it already there. Never in a dry run.
   publish-powershell:
     name: Publish the PowerShell module to the PowerShell Gallery
-    needs: [release]
-    if: needs.release.outputs.module == 'publish'
+    needs: [stamp, release]
+    if: needs.release.outputs.module == 'publish' && needs.stamp.outputs.mode == 'release'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:

@@ -19,8 +19,11 @@ cd "$(dirname "$0")/.."
 export COMPOSE_PROJECT_NAME="pa-a78-$$"
 . ./scripts/stack-lib.sh
 . ./scripts/install-lib.sh
+. ./scripts/ci/versions-lib.sh
 VERSION=$(tr -d ' \r\n' <VERSION)
-IMAGE_TAG=${VERSION%.*}
+# The tag compose.yaml names our image by: the build's MAJOR.MINOR, or main
+# in the repository's own, unstamped files (ADR 0024).
+IMAGE_TAG=$(compose_image_tag)
 WORK=$(mktemp -d)
 DIR=$WORK/deployment
 MAILPIT=pa-a78-mailpit-$$

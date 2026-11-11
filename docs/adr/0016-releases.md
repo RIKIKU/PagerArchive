@@ -4,6 +4,8 @@
 
 Proposed (2026-11-01). The owner's brief: releases on merge, SPEC.md R63's "Guidelines and publishing" bullet and section 12.1 (owner, 2026-11-01), as a fix on its own branch, `releases-on-merge`, from main at 1f41c38. Revised after the owner's review of 21cdc17 (2026-11-02; main 7008d55, which changed section 12.1): see "Review (owner, 2026-11-02)".
 
+**Superseded in part by [ADR 0024](0024-deliberate-releases.md) (owner, 2026-11-12):** a merge to main is no longer a release, and no branch sets `VERSION`. The Release workflow cuts releases, works out each version from the previous release, and writes it into the build (VERSION in the repository says `0.0.0-dev`). Where decisions 1 to 4 and 6 below say a merge is a release or a branch sets `VERSION`, ADR 0024 replaces them; the release plan's checks, the re-runs (decision 5), the module's rules and the release jobs themselves still hold, run from the Release workflow.
+
 ## Context
 
 Until now a release was a `v*` tag pushed by hand (v0.12.0 is the last). The tag's run published the images as `X.Y.Z` and `X.Y`, attached the client's binaries to a GitHub release, and published the PowerShell module with the tag's version, written into a copy of the manifest. So the manifest in the repo never changed: it still said `ModuleVersion = '0.9.0'`. Every push to main published images as `latest`, `main` and `sha-<commit>` but no version.

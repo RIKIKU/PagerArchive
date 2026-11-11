@@ -376,13 +376,15 @@ PagerArchive's images are published to GitHub's container registry by CI, but on
 
 | Tag | Is |
 |---|---|
-| `X.Y.Z`, `X.Y` | a release |
-| `latest`, `main` | the newest build of `main` |
+| `X.Y.Z`, `X.Y`, `latest` | a release (`latest`: the latest one) |
+| `main` | the newest build of `main`, which isn't a release: it reports a version such as `1.7.6-dev+3f2c1ab`, the next release's with `-dev+<commit>` |
 | `sha-<commit>` | one exact build |
 
 `compose.yaml` names PagerArchive's image, and upstream's PostGIS and Authentik images, by their major.minor tags (`pagerarchive:0.16`), so the minor version you run is the `compose.yaml` you have, and `docker compose pull` gets every patch release. Keeping up with patches is your job: nothing pulls them for you. Nothing about versions goes in `.env`.
 
 ## Upgrading
+
+Releases come out weekly, at about 18:20 UTC on Fridays, when anything but the documentation changed that week, straight away for a security fix, and now and then in between. A build of `main` isn't a release.
 
 **A patch release** (0.16.0 to 0.16.1) needs only these two commands, from the folder with `compose.yaml`. Run them regularly, as patches often carry security fixes:
 
