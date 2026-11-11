@@ -10,11 +10,13 @@ name: CI
 # publish jobs follow, in the same run. Pushes are filtered to branches, so a
 # tag push (the release's own, or one made by hand) starts no run at all.
 #
-# An automatic update's branch (renovate/**, ADR 0022) runs on its pull
-# request only, which Renovate opens with the branch: not twice.
+# Only main runs on push. Every other branch runs on its pull request only
+# (owner, 2026-11-12): a push to a branch with an open pull request used to
+# start two runs, one for each trigger. A branch with no pull request runs
+# nothing until one is opened (or by hand, workflow_dispatch).
 on:
   push:
-    branches: ["**", "!renovate/**"]
+    branches: [main]
     paths:
       - "**"
       - "!SPEC.md"
@@ -34,10 +36,9 @@ on:
 permissions:
   contents: read
 
-# A new push to a branch or pull request cancels that branch's run still in
-# progress (owner, 2026-11-11). Push and pull-request runs keep separate
-# groups, so neither cancels the other. A run on main is a release, so each
-# gets a group of its own and is never cancelled or replaced.
+# A new push to a pull request's branch cancels that pull request's run still
+# in progress (owner, 2026-11-11). A run on main is a release, so each gets a
+# group of its own and is never cancelled or replaced.
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.head_ref || github.ref }}
   cancel-in-progress: true
