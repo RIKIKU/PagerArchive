@@ -263,20 +263,17 @@
 	let done: number | undefined;
 	let pumping: Promise<void> | undefined;
 	function pump(): Promise<void> {
+		// .finally runs after the assignment even when there's nothing to do.
 		pumping ??= (async () => {
-			try {
-				while (want !== undefined && want !== done && marks[want]) {
-					const j = want;
-					done = j;
-					const t0 = performance.now();
-					await onjump(marks[j].end);
-					const rest = 120 - (performance.now() - t0);
-					if (rest > 0 && want !== j) await new Promise((r) => setTimeout(r, rest));
-				}
-			} finally {
-				pumping = undefined;
+			while (want !== undefined && want !== done && marks[want]) {
+				const j = want;
+				done = j;
+				const t0 = performance.now();
+				await onjump(marks[j].end);
+				const rest = 120 - (performance.now() - t0);
+				if (rest > 0 && want !== j) await new Promise((r) => setTimeout(r, rest));
 			}
-		})();
+		})().finally(() => (pumping = undefined));
 		return pumping;
 	}
 
