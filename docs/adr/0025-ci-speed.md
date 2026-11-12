@@ -89,7 +89,7 @@ The tooltip isn't hidden at that moment: it's on its way to being shown, so it's
 
 Nothing is excluded and the scan's rules are unchanged.
 
-### 4. Security releases batch for 15 minutes
+### 4. Security releases batch for 30 minutes
 
 ADR 0024's section of 2026-11-12.
 
@@ -179,5 +179,5 @@ Run on real runs, it showed two faults, fixed before these: a job's name with co
 - The table must be kept up to date. A new file or folder with no area runs everything, which is safe but slow, and `changes-checks.sh` warns about it.
 - A gap in the table can let a pull request merge that fails on main (main runs everything); a release runs everything first, so a gap never reaches a release.
 - A flake no longer turns a run red by itself, but every one is a warning on the run: they're there to be fixed, not ignored.
-- A security fix waits 15 minutes after its merge before the Release workflow starts.
+- A security fix waits 30 minutes after its merge before the Release workflow starts.
 - govulncheck can fail a run for a vulnerability published after the change was written.

@@ -8,7 +8,7 @@ name: Security release
 # repository_dispatch).
 #
 # Security updates that merge close together go out as one release (owner,
-# 2026-11-12; ADR 0024's section of that date): the run waits 15 minutes
+# 2026-11-12; ADR 0024's section of that date): the run waits 30 minutes
 # before starting the Release workflow, and a second security merge inside
 # that time cancels the waiting run and starts the wait again, so the one
 # release has both. (On 2026-11-12 two security merges 18 minutes apart made
@@ -34,22 +34,22 @@ concurrency:
 
 jobs:
   release:
-    name: Start the Release workflow, 15 minutes after the last security merge
+    name: Start the Release workflow, 30 minutes after the last security merge
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'security')
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 40
     permissions:
       actions: write
       contents: read
     steps:
       # For scripts/ci/retry.sh (ADR 0025).
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - name: Wait 15 minutes for another security merge
+      - name: Wait 30 minutes for another security merge
         env:
           PR: ${{ github.event.pull_request.html_url }}
         run: |
-          echo "::notice::Security update merged ($PR): the Release workflow starts on main in 15 minutes, unless another security update merges first (then it waits for that one)."
-          sleep 900
+          echo "::notice::Security update merged ($PR): the Release workflow starts on main in 30 minutes, unless another security update merges first (then it waits for that one)."
+          sleep 1800
       - name: Release main now
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
