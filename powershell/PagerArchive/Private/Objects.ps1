@@ -211,6 +211,78 @@ function Get-PaAliasList {
     } while ($page.more -and $rows.Count)
 }
 
+function Select-PaTemplate {
+    <#
+    .SYNOPSIS
+    The templates a command acts on: exactly the one with an Id, or those whose names match.
+
+    .DESCRIPTION
+    An Id selects exactly that template. A name is matched with wildcards,
+    case-insensitively, so 'Example Fire' also matches 'example fire'.
+    Throws no_template when an Id, or a name without wildcards, matches
+    nothing.
+    #>
+    [CmdletBinding()]
+    [OutputType('PagerArchive.Template')]
+    param(
+        # Templates already fetched.
+        [Parameter(Mandatory)]
+        [AllowEmptyCollection()]
+        [object[]] $From,
+
+        # The template's Id.
+        [Parameter(Mandatory, ParameterSetName = 'Id')]
+        [long] $Id,
+
+        # A name, with wildcards.
+        [Parameter(Mandatory, ParameterSetName = 'Name')]
+        [string] $Name
+    )
+    if ($PSCmdlet.ParameterSetName -eq 'Id') {
+        $found = $From | Where-Object -FilterScript { $_.Id -eq $Id }
+        if (-not $found) {
+            throw (New-PaErrorRecord -ErrorId 'no_template' -Category ObjectNotFound -Message "No template has the Id $Id." -TargetObject $Id)
+        }
+        return $found
+    }
+    $wild = [System.Management.Automation.WildcardPattern]::new($Name, [System.Management.Automation.WildcardOptions]::IgnoreCase)
+    $found = $From | Where-Object -FilterScript { $wild.IsMatch($_.Name) }
+    if (-not $found -and -not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($Name)) {
+        throw (New-PaErrorRecord -ErrorId 'no_template' -Category ObjectNotFound -Message "No template is called '$Name'." -TargetObject $Name)
+    }
+    $found
+}
+
+function Get-PaTemplateTarget {
+    <#
+    .SYNOPSIS
+    How a template is named in confirmation and -WhatIf messages: its name and Id.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        # The template.
+        [Parameter(Mandatory)]
+        [object] $Template
+    )
+    "$($Template.Name) (Id $($Template.Id))"
+}
+
+function Get-PaAliasTarget {
+    <#
+    .SYNOPSIS
+    How an alias is named in confirmation and -WhatIf messages: its capcode or pattern, name and Id.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        # The alias.
+        [Parameter(Mandatory)]
+        [object] $Alias
+    )
+    "$($Alias.Pattern) ($($Alias.Name), Id $($Alias.Id))"
+}
+
 function Find-PaTemplate {
     <#
     .SYNOPSIS
@@ -239,17 +311,30 @@ function Find-PaTemplate {
 function Find-PaAlias {
     <#
     .SYNOPSIS
-    The aliases a command acts on: by capcode or pattern, or by name with wildcards.
+    The aliases a command acts on: by Id, by capcode or pattern, or by name with wildcards.
     #>
     [CmdletBinding()]
     [OutputType('PagerArchive.Alias')]
     param(
+        # Ids: exactly those aliases.
+        [long[]] $Id,
+
         # Capcodes or patterns, exactly (zero-padded or not).
         [string[]] $Pattern,
 
         # Names, with wildcards.
         [string[]] $Name
     )
+    foreach ($i in $Id) {
+        try {
+            Invoke-PaApi -Method GET -Path "/api/v1/admin/aliases/$i" | ConvertTo-PaAlias
+        } catch {
+            if ($_.Exception.Data['PagerArchive.Status'] -eq 404) {
+                throw (New-PaErrorRecord -ErrorId 'no_alias' -Category ObjectNotFound -Message "No alias has the Id $i." -TargetObject $i)
+            }
+            throw
+        }
+    }
     foreach ($p in $Pattern) {
         $p = $p.Trim()
         $key = if ($p -match '^[0-9]{1,7}$') { $p.PadLeft(7, '0') } else { $p }
