@@ -103,11 +103,11 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	}
 
 	// 10:00: an Emergency page with DG0801 on job EX0000101, to an aliased
-	// capcode: one event, open, at level deployment.
+	// capcode: one event at level deployment.
 	first := e.mustPost("a", "0100001", page1, t10).MessageID
 	evs := e.largeEvents(e.user)
-	if len(evs) != 1 || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) || !evs[0].Ongoing {
-		t.Fatalf("after DG0801: %+v, want one open event at level deployment", evs)
+	if len(evs) != 1 || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) {
+		t.Fatalf("after DG0801: %+v, want one event at level deployment", evs)
 	}
 	if !levelAt(evs[0], "deployment").Equal(t10) || !evs[0].Start.Equal(t10) {
 		t.Errorf("deployment met at %v, start %v, want %v", levelAt(evs[0], "deployment"), evs[0].Start, t10)
@@ -134,20 +134,17 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 		t.Errorf("the event's pages are %v, want %v (newest first; not the unaliased or Non-emergency copy)", ids, []int64{second, first})
 	}
 
-	// No page joins until 03:01 the next day: the event has ended.
+	// No page joins until 03:01 the next day: the event takes no more pages.
 	e.advance(12*time.Hour + time.Minute)
-	if evs = e.largeEvents(e.user); evs[0].Ongoing {
-		t.Fatalf("at 03:01 the event is still ongoing: %+v", evs[0])
-	}
-	if !evs[0].End.Equal(t15) {
+	if evs = e.largeEvents(e.user); !evs[0].End.Equal(t15) {
 		t.Errorf("end %v, want its last page's %v", evs[0].End, t15)
 	}
 	// 04:00: a deployment-code page opens a new one.
 	e.advance(59 * time.Minute)
 	e.mustPost("a", "0100003", dgPage("EX0000103", "DG0803", "STN3"), e.clock())
 	evs = e.largeEvents(e.user)
-	if len(evs) != 2 || evs[1].ID != id || !evs[0].Ongoing || evs[1].Ongoing || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) {
-		t.Fatalf("at 04:00: %+v, want a new open event at deployment, newest first, and the old one ended", evs)
+	if len(evs) != 2 || evs[1].ID != id || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) {
+		t.Fatalf("at 04:00: %+v, want a new event at deployment, newest first, beside the old one", evs)
 	}
 	t.Logf("A84: event %d %v from %v to %v; then event %d at %v", id, levelNames(evs[1]), evs[1].Start, evs[1].End, evs[0].ID, evs[0].Start)
 }

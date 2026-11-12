@@ -1,5 +1,5 @@
 <script lang="ts">
-	// R87c: large events, newest first: start and end (or ongoing), the
+	// R87c: large events, newest first: its first and last pages, the
 	// levels met, and how many deployment codes, jobs and distinct units their
 	// pages hold. Every signed-in user sees them, as they see the pages.
 	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
@@ -50,7 +50,7 @@
 						<span class="icon-box"><Icon name="largeevents" /></span>
 						<span>
 							<time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time>
-							{#if ev.ongoing}<span class="ongoing">ongoing</span>{:else}to <time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time>{/if}
+							to <time datetime={isoAttr(ev.end)} title="Its last page">{span(ev, tz)}</time>
 						</span>
 					</span>
 					<span class="levels">
@@ -119,13 +119,6 @@
 		border-radius: var(--radius-button);
 		background: var(--accent-soft);
 		color: var(--accent-soft-fg);
-	}
-	.ongoing {
-		padding: var(--space-3xs) var(--space-xs);
-		border-radius: var(--radius-badge);
-		background: var(--accent-soft);
-		color: var(--accent-soft-fg);
-		font-size: var(--text-sm);
 	}
 	.levels {
 		display: flex;

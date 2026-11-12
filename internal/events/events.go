@@ -90,10 +90,6 @@ func SetUnits(ctx context.Context, q *db.Queries, n int) error {
 	return q.SetSetting(ctx, db.SetSettingParams{Key: unitsKey, Value: strconv.Itoa(n)})
 }
 
-// Ongoing reports whether an event whose last page was sent at last is still
-// open at now: no 12 hours have passed without a page joining it (R87a).
-func Ongoing(last, now time.Time) bool { return !now.After(last.Add(Window)) }
-
 // Page is a newly stored page, as ingest stored it.
 type Page struct {
 	ID        int64

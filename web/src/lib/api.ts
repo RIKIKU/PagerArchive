@@ -176,7 +176,6 @@ export interface LargeEvent {
 	start: string;
 	/** Its last page's sent time. */
 	end: string;
-	ongoing: boolean;
 	levels: { level: LargeEventLevel; label: string; at: string }[];
 	pages: number;
 	deployment_codes: number;

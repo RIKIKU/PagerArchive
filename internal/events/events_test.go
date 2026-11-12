@@ -106,16 +106,6 @@ func TestLevelsReachedOnce(t *testing.T) {
 	}
 }
 
-func TestOngoing(t *testing.T) {
-	last := at(5 * time.Hour) // 15:00
-	if !Ongoing(last, at(17*time.Hour)) {
-		t.Error("ended at exactly 12 hours")
-	}
-	if Ongoing(last, at(17*time.Hour+time.Minute)) {
-		t.Error("ongoing at 03:01 the next day (A84)")
-	}
-}
-
 func network(t *testing.T) *profile.Network {
 	t.Helper()
 	set, err := profile.LoadDir("../../profiles/example")

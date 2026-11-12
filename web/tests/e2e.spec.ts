@@ -3385,7 +3385,8 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		expect(JSON.stringify(got)).not.toContain('GRASS FIRE');
 		expect(got.text).toBeUndefined();
 
-		// The Large events page, from Tools: newest first, ongoing, its levels.
+		// The Large events page, from Tools: newest first, its first and last pages, its levels (never
+		// "ongoing": the app can't know an incident is over; owner, 2026-11-13).
 		await desk.goto('/tools');
 		await desk.getByRole('main').getByRole('link', { name: 'Large events' }).click();
 		await expect(desk.getByRole('heading', { level: 1, name: 'Large events' })).toBeVisible();
@@ -3395,7 +3396,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		]);
 		const first = desk.getByTestId('large-event').first();
 		await expect(first).toHaveAttribute('data-event-id', String(ev.id));
-		await expect(first).toContainText('ongoing');
+		await expect(first).not.toContainText(/ongoing/i);
 		await expect(first).toContainText('Deployment');
 		await expect(first).toContainText('Several deployments');
 		await expect(first).toContainText('2 deployment codes · 2 jobs');

@@ -19,16 +19,16 @@ import (
 // number is counted from the pages it still holds (R87e).
 type LargeEvent struct {
 	ID int64 `json:"id"`
-	// Start and End are its first and last pages' sent times; Ongoing, that
-	// 12 hours haven't passed since the last (R87a).
-	Start   time.Time    `json:"start"`
-	End     time.Time    `json:"end"`
-	Ongoing bool         `json:"ongoing"`
-	Levels  []EventLevel `json:"levels"` // the levels met, in R87b's order
-	Pages   int64        `json:"pages"`
-	Codes   int64        `json:"deployment_codes"`
-	Jobs    int64        `json:"jobs"`
-	Units   int64        `json:"units"`
+	// Start and End are its first and last pages' sent times. Whether it's
+	// still open to new pages (R87a) isn't shown: the app can't know whether
+	// the incident is over (R87c).
+	Start  time.Time    `json:"start"`
+	End    time.Time    `json:"end"`
+	Levels []EventLevel `json:"levels"` // the levels met, in R87b's order
+	Pages  int64        `json:"pages"`
+	Codes  int64        `json:"deployment_codes"`
+	Jobs   int64        `json:"jobs"`
+	Units  int64        `json:"units"`
 	// The event's own view only: its codes and job numbers, by first page.
 	CodeList []string `json:"deployment_code_list,omitempty"`
 	JobList  []string `json:"job_list,omitempty"`
@@ -50,7 +50,7 @@ type LargeEventPage struct {
 const eventPageSize = 50
 
 func (s *Server) toEvent(e db.LargeEvent, pages, codes, jobs, units int64) LargeEvent {
-	out := LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(), Ongoing: events.Ongoing(e.LastAt, s.Now()),
+	out := LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(),
 		Levels: []EventLevel{}, Pages: pages, Codes: codes, Jobs: jobs, Units: units}
 	for _, l := range []struct {
 		level events.Level

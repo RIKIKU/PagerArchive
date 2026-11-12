@@ -1,6 +1,5 @@
 <script lang="ts">
-	// R87c: one large event: when it started and ended (or that it's
-	// ongoing), the levels it met and when, its deployment codes and jobs, and
+	// R87c: one large event: its first and last pages' times, the levels it met and when, its deployment codes and jobs, and
 	// then its pages like the message list (P1, P2: the full text, as stored),
 	// with the scrubber over its days (R81b) and live updates as pages join.
 	import { page } from '$app/state';
@@ -47,7 +46,7 @@
 			<div class="about" data-testid="event-about">
 				<p class="when">
 					<time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time>
-					{#if ev.ongoing}<span class="ongoing">ongoing</span>{:else}to <time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time>{/if}
+					to <time datetime={isoAttr(ev.end)} title="Its last page">{span(ev, tz)}</time>
 				</p>
 				<p class="numbers">{numbers(ev)}</p>
 				<dl>
@@ -94,13 +93,6 @@
 	.when {
 		font-weight: var(--weight-strong);
 		font-variant-numeric: tabular-nums;
-	}
-	.ongoing {
-		padding: var(--space-3xs) var(--space-xs);
-		border-radius: var(--radius-badge);
-		background: var(--accent-soft);
-		color: var(--accent-soft-fg);
-		font-size: var(--text-sm);
 	}
 	.numbers,
 	.hint {
