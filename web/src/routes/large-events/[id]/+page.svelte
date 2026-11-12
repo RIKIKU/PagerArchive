@@ -134,6 +134,10 @@
 		border-radius: var(--radius-badge);
 		font-size: var(--text-sm);
 	}
+	.levels time {
+		color: var(--muted);
+		font-size: var(--text-sm);
+	}
 	.jobs {
 		display: flex;
 		flex-wrap: wrap;

@@ -346,7 +346,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
@@ -364,6 +364,9 @@ for (const scheme of ['light', 'dark'] as const) {
 			const album = await (await request.post(`${URL}/api/v1/albums`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { name: albumName, description: 'For the axe check' } })).json();
 			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}/note`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { note: 'Why it was kept' } });
+			// M22: a large event (R87c), from a made-up deployment code.
+			await post(request, '0100002', `@@${uniqueJob()} GRS3 DG98${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+			const eventID = (await (await request.get(`${URL}/api/v1/large-events`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).events[0].id;
 			// M6: a waiting alias request, so the review screen and My requests
 			// are checked with one; rejected at the end so it doesn't linger.
 			const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}`;
@@ -407,7 +410,9 @@ for (const scheme of ['light', 'dark'] as const) {
 					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
 				} else {
 					const path =
-						view === 'album'
+						view === 'large-event'
+							? `/large-events/${eventID}`
+							: view === 'album'
 							? `/albums/${album.id}`
 							: view === 'alias'
 							? `/aliases/${aliasID}`
@@ -428,6 +433,7 @@ for (const scheme of ['light', 'dark'] as const) {
 					else if (path.startsWith('/reports/capcode')) await expect(page.getByTestId('report')).toBeVisible();
 					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
 					else if (path.startsWith('/albums/')) await expect(page.getByTestId('album-note')).toBeVisible();
+					else if (path.startsWith('/large-events/')) await waitLive(page);
 					else await page.waitForTimeout(300);
 				}
 				const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
@@ -911,7 +917,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -920,7 +926,8 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Receiving clients', 'Receiving clients'],
 			['Retention', 'Retention'],
 			['Backups', 'Backups'],
-			['Integration addresses', 'Integration addresses']
+			['Integration addresses', 'Integration addresses'],
+			['Large event settings', 'Large event settings']
 		]) {
 			await screens.getByRole('link', { name: link }).click();
 			await expect(admin.getByRole('heading', { level: 1 })).toHaveText(heading);
@@ -2660,10 +2667,10 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	const origins = new Set<string>();
 	const watch = (p: Page) => p.on('request', (r) => !r.url().startsWith('data:') && origins.add(new globalThis.URL(r.url()).origin));
 	const expected = {
-		Tools: ['Print sheet', 'Unknown capcodes'],
+		Tools: ['Print sheet', 'Unknown capcodes', 'Large events'],
 		Reports: ['Capcode report'],
 		Account: ['Profile', 'Integrations', 'My requests', 'Invite someone'],
-		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses']
+		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings']
 	};
 	for (const role of ['user', 'admin'] as const) {
 		const page = await (await signedIn(browser, role, desk)).newPage();
@@ -2718,7 +2725,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	await nav.getByRole('link', { name: 'Messages', exact: true }).hover();
 	await expect(nav.locator('.tip', { hasText: 'Every page, newest first, as it arrives' })).toBeVisible();
 	await nav.getByRole('link', { name: 'Tools' }).hover();
-	await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Printing for training, and capcodes with no alias');
+	await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Printing for training, capcodes with no alias, and large events');
 	await expect(nav.getByRole('link', { name: /^Print sheet/ })).toBeVisible();
 	await page.screenshot({ path: info.outputPath('a68-shrunk-hover.png') });
 	await nav.getByRole('button', { name: 'Widen the menu' }).hover();
@@ -2863,8 +2870,8 @@ test('A70 phones', async ({ browser, request }, info) => {
 			await bar.getByRole('button', { name: 'More' }).click();
 			const more = page.getByRole('dialog', { name: 'More' });
 			await expect(more).toBeVisible();
-			for (const there of ['Unknown capcodes', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
-			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses'])
+			for (const there of ['Unknown capcodes', 'Large events', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
+			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings'])
 				await expect(more.getByRole('link', { name: gone })).toHaveCount(0);
 			await expect(more.getByText(/set up|new integration/i)).toHaveCount(0);
 			await page.screenshot({ path: info.outputPath(`a70-more-${role}.png`) });
@@ -3313,4 +3320,152 @@ test('A72 albums', async ({ browser, request }, info) => {
 	expect((await request.get(`${URL}/api/v1/albums/${bigId}`, { headers: asRole('user') })).status()).toBe(404);
 	await page.context().close();
 	await phone.context().close();
+});
+
+// A84-A86 in the browser (M22, R87c, R87d): a large-event integration set up
+// in the form fires once at its level, and the Large events page under Tools
+// lists the event; its view shows its pages with the scrubber, at 1,280 and
+// 375 px, with axe. Made-up deployment codes, one set per browser project.
+test('A86 large events in the browser', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const http = await import('node:http');
+	const received: Record<string, unknown>[] = [];
+	const receiver = http.createServer((req, res) => {
+		let data = '';
+		req.on('data', (c) => (data += c));
+		req.on('end', () => {
+			received.push(JSON.parse(data || '{}'));
+			res.writeHead(200, { 'Content-Type': 'text/plain' }).end('received');
+		});
+	});
+	await new Promise<void>((r) => receiver.listen(0, '127.0.0.1', r));
+	const port = (receiver.address() as { port: number }).port;
+	const n = ['chromium', 'firefox', 'webkit'].indexOf(info.project.name) + 1;
+	const codes = [`DG9${n}01`, `DG9${n}02`];
+	const jobs = [uniqueJob(), uniqueJob()];
+	let integrationID = 0;
+	try {
+		const allow = await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` }, data: { entries: ['127.0.0.0/8'] } });
+		expect(allow.status()).toBe(200);
+		// Earlier tests' pages may have opened an event within 12 hours: start
+		// from none, so this one opens and reaches its levels here.
+		sql('DELETE FROM large_events;');
+
+		const desk = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+		await desk.goto('/integrations');
+		await desk.getByRole('button', { name: 'New integration' }).click();
+		const name = `Several deployments ${Date.now()}`;
+		await desk.getByLabel('Name', { exact: true }).fill(name);
+		await desk.getByRole('radio', { name: /^Large events: a summary/ }).check();
+		// A summary only: no capcodes, filter or content to choose.
+		await expect(desk.getByRole('combobox', { name: 'Capcodes and aliases' })).toHaveCount(0);
+		await expect(desk.getByText('Full: the text and every field')).toHaveCount(0);
+		await desk.getByRole('radio', { name: /^Several deployments:/ }).check();
+		await desk.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
+		await desk.getByRole('button', { name: 'Save integration' }).click();
+		await expect(desk.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
+		const card = desk.getByTestId('integration').filter({ hasText: name });
+		await expect(card).toContainText('Large events at level Several deployments');
+		const list = await (await request.get(`${URL}/api/v1/integrations`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json();
+		integrationID = list.integrations.find((i: { name: string }) => i.name === name).id;
+
+		// The first code opens an event at level deployment: nothing for this
+		// integration. The second reaches several deployments: one delivery.
+		await post(request, '0100001', `@@${jobs[0]} GRS3 ${codes[0]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`);
+		await desk.waitForTimeout(1500);
+		expect(received.filter((r) => r.event_type === 'large_event')).toHaveLength(0);
+		const start = Date.now();
+		await post(request, '0100002', `@@${jobs[1]} GRS3 ${codes[1]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+		await expect.poll(() => received.filter((r) => r.event_type === 'large_event').length, { timeout: 5000 }).toBe(1);
+		console.log(`A86 (browser): the delivery came ${Date.now() - start} ms after the second code`);
+		const got = received.find((r) => r.event_type === 'large_event')!;
+		const ev = got.large_event as { level: string; deployment_codes: string[]; url: string; id: number };
+		expect(ev.level).toBe('several_deployments');
+		expect(ev.deployment_codes).toEqual(codes);
+		expect(JSON.stringify(got)).not.toContain('GRASS FIRE');
+		expect(got.text).toBeUndefined();
+
+		// The Large events page, from Tools: newest first, ongoing, its levels.
+		await desk.goto('/tools');
+		await desk.getByRole('main').getByRole('link', { name: 'Large events' }).click();
+		await expect(desk.getByRole('heading', { level: 1, name: 'Large events' })).toBeVisible();
+		expect(await crumbsOf(desk)).toEqual([
+			{ label: 'Tools', href: '/tools' },
+			{ label: 'Large events', href: null }
+		]);
+		const first = desk.getByTestId('large-event').first();
+		await expect(first).toHaveAttribute('data-event-id', String(ev.id));
+		await expect(first).toContainText('ongoing');
+		await expect(first).toContainText('Deployment');
+		await expect(first).toContainText('Several deployments');
+		await expect(first).toContainText('2 deployment codes · 2 jobs');
+		await desk.screenshot({ path: info.outputPath('large-events-list-1280.png') });
+		expect(await axeOf(desk), 'axe: Large events').toEqual([]);
+
+		// Its view: the codes, the jobs and their pages, with the scrubber.
+		await first.getByRole('link').click();
+		await expect(desk).toHaveURL(new RegExp(`/large-events/${ev.id}$`));
+		await expect(desk.getByTestId('event-codes')).toHaveText(codes.join(', '));
+		const rows = desk.getByTestId('message-list').locator('article');
+		await expect(rows).toHaveCount(2);
+		await expect(rows.first()).toContainText(jobs[1]);
+		await expect(rows.nth(1)).toContainText(jobs[0]);
+		await expect(desk.getByTestId('scrubber')).toBeVisible();
+		await waitLive(desk);
+		const crumbs = await crumbsOf(desk);
+		expect(crumbs.slice(0, 2)).toEqual([
+			{ label: 'Tools', href: '/tools' },
+			{ label: 'Large events', href: '/large-events' }
+		]);
+		expect(crumbs[2].label).toMatch(/^Large event, /);
+		// A page of one of its jobs joins it, live.
+		await post(request, '0100003', `@@${jobs[0]} GRS3 MORE CREWS NEEDED @ SAMPLE RD, MADEUPTON #STN3`);
+		await expect(rows).toHaveCount(3, { timeout: 2000 });
+		await desk.screenshot({ path: info.outputPath('large-event-view-1280.png'), fullPage: true });
+		expect(await axeOf(desk), 'axe: a large event').toEqual([]);
+
+		// A phone: both pages fit, with no horizontal scroll.
+		const phone = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 740 } })).newPage();
+		const overflow = () => phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+		await phone.goto('/large-events');
+		await expect(phone.getByTestId('large-event').first()).toContainText('Several deployments');
+		expect(await overflow()).toBeLessThanOrEqual(0);
+		await phone.screenshot({ path: info.outputPath('large-events-list-375.png') });
+		expect(await axeOf(phone), 'axe: Large events on a phone').toEqual([]);
+		await phone.getByTestId('large-event').first().getByRole('link').click();
+		await expect(phone.getByTestId('message-list').locator('article')).toHaveCount(3);
+		await waitLive(phone);
+		expect(await overflow()).toBeLessThanOrEqual(0);
+		await phone.screenshot({ path: info.outputPath('large-event-view-375.png'), fullPage: true });
+		expect(await axeOf(phone), 'axe: a large event on a phone').toEqual([]);
+		// Another code joining doesn't fire it again.
+		await post(request, '0100004', `@@${uniqueJob()} GRS3 DG9${n}03 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`);
+		await phone.waitForTimeout(1500);
+		expect(received.filter((r) => r.event_type === 'large_event')).toHaveLength(1);
+	} finally {
+		if (integrationID) await request.delete(`${URL}/api/v1/integrations/${integrationID}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+		receiver.close();
+	}
+});
+
+// R87: the admins' threshold for a big job, in Administration.
+test('A85 large event settings in Administration', async ({ browser }) => {
+	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	await admin.goto('/admin');
+	await admin.getByTestId('admin-screens').getByRole('link', { name: 'Large event settings' }).click();
+	const field = admin.getByLabel('Distinct units for a big job');
+	await expect(field).toHaveValue('20');
+	await field.fill('25');
+	await admin.getByRole('button', { name: 'Save' }).click();
+	await expect(admin.getByRole('status').filter({ hasText: 'name 25 distinct units' })).toBeVisible();
+	await admin.reload();
+	await expect(admin.getByLabel('Distinct units for a big job')).toHaveValue('25');
+	expect(await axeOf(admin), 'axe: large event settings').toEqual([]);
+	await admin.getByLabel('Distinct units for a big job').fill('20');
+	await admin.getByRole('button', { name: 'Save' }).click();
+	await expect(admin.getByRole('status').filter({ hasText: 'name 20 distinct units' })).toBeVisible();
+	// A user is refused.
+	const user = await (await signedIn(browser, 'user')).newPage();
+	await user.goto('/admin/large-events');
+	await expect(user.getByRole('alert')).toHaveText('This page is for admins only.');
 });

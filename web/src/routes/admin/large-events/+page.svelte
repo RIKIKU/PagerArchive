@@ -35,10 +35,10 @@
 	}
 </script>
 
-<svelte:head><title>Large events · Administration · PagerArchive</title></svelte:head>
+<svelte:head><title>Large event settings · PagerArchive</title></svelte:head>
 
 <div class="page">
-	<h1>Large events</h1>
+	<h1>Large event settings</h1>
 	<p class="note">
 		Admins only. A large event opens when an Emergency page carries a deployment code (the network profile's pattern), or when one job's
 		Emergency pages name this many distinct units: a big job.
