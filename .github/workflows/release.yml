@@ -14,8 +14,8 @@ name: Release
 #     ADR 0022) merges.
 #
 # Each run releases the commit it starts on (main's newest), if main changed
-# since the previous release in anything but documentation (what CI's
-# docs-only filter ignores); otherwise it says "nothing to release" and
+# since the previous release in anything but documentation (what CI
+# checks nothing for); otherwise it says "nothing to release" and
 # succeeds. scripts/ci/release-version.sh decides, and works out the version:
 # minor if a file a deployment downloads changed (compose.yaml or the
 # configuration archive's files), otherwise patch. Then ci.yml runs, as a
@@ -71,9 +71,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run == true }}
         run: |
-          git fetch --force --tags origin
+          # Network steps are tried again by themselves (ADR 0025).
+          sh scripts/ci/retry.sh git fetch --force --tags origin
           # The release GitHub marks Latest: the last one that finished.
-          PA_LATEST_RELEASE=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
+          PA_LATEST_RELEASE=$(sh scripts/ci/retry.sh gh api "repos/$GITHUB_REPOSITORY/releases/latest" --jq .tag_name)
           export PA_LATEST_RELEASE
           echo "Commit $GITHUB_SHA ($GITHUB_REF); the Latest release is $PA_LATEST_RELEASE"
           sh scripts/ci/release-version.sh "$GITHUB_SHA"
@@ -92,8 +93,10 @@ jobs:
       release: ${{ needs.plan.outputs.version }}
       dry_run: ${{ inputs.dry_run == true }}
     # The release jobs tag, create the release and push the images; the
-    # module's job needs PSGALLERY_API_KEY.
+    # module's job needs PSGALLERY_API_KEY. "All checks passed" reads the
+    # run's jobs, to list those that passed only on a re-run (ADR 0025).
     permissions:
       contents: write
       packages: write
+      actions: read
     secrets: inherit

@@ -1,8 +1,11 @@
 name: Maintenance CI failed
 
 # R85c (ADR 0022): when CI fails on an automatic update's pull request, the
-# owner is told: scripts/ci/tell-owner.sh assigns it to them. GitHub runs this
-# from main's copy of the file only.
+# owner is told: scripts/ci/tell-owner.sh assigns it to them. Only the final
+# failure counts (ADR 0025): if the CI retry workflow (ci-retry.yml) re-runs
+# the failed jobs, this waits for the re-run's own result, which comes back
+# here as attempt 2. Both ask scripts/ci/rerun-decision.sh, so they agree.
+# GitHub runs this from main's copy of the file only.
 on:
   workflow_run:
     workflows: [CI]
@@ -21,12 +24,29 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
+      actions: read
       contents: read
       issues: write
       pull-requests: write
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Will CI retry re-run it?
+        id: retry
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: sh scripts/ci/rerun-decision.sh "$RUN" "$ATTEMPT" "$EVENT" "$BRANCH" "$SHA" "$HEAD_REPO"
+      - name: Not yet, CI retry re-runs it
+        if: steps.retry.outputs.rerun == 'true'
+        run: echo "::notice::CI retry re-runs the failed jobs once; the owner is told only if the re-run fails too."
+      # Also if the question couldn't be answered: better told twice than never.
       - name: Assign the pull request to the owner
+        if: ${{ !cancelled() && steps.retry.outputs.rerun != 'true' }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BRANCH: ${{ github.event.workflow_run.head_branch }}
