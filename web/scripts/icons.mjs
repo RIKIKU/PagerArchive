@@ -56,7 +56,19 @@ const icons = {
 	// M21: the search box's Clear all, and the calendar's months (R33a).
 	clear: 'filter-x',
 	previous: 'caret-left',
-	next: 'caret-right'
+	next: 'caret-right',
+	// M14: albums (R82, R82f) and the scrubber (R81b-R81d). Earlier and later
+	// hours are carets, as the calendar's months; chevrons mean menu groups.
+	albums: 'album',
+	add: 'plus',
+	edit: 'pencil',
+	remove: 'trash',
+	note: 'note',
+	zoomin: 'zoom-in',
+	zoomout: 'zoom-out',
+	later: 'caret-up',
+	earlier: 'caret-down',
+	newest: 'chevrons-up'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

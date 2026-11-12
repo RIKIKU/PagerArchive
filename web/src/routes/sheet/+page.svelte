@@ -70,7 +70,7 @@
 		{#if sheet.notice}<p class="ok" data-testid="sheet-full">{sheet.notice}</p>{/if}
 	</div>
 	<section class="listbox" aria-label="Search for messages to print" data-testid="sheet-search">
-		<MessageList {query} level={2} title="Search results" pick scroll={false} />
+		<MessageList {query} level={2} title="Search results" pick scroll={false} scrubber={false} />
 	</section>
 	<h2 class="sheet-heading">Your sheet</h2>
 	<p class="status" data-testid="sheet-count">

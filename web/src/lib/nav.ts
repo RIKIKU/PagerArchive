@@ -1,6 +1,7 @@
 // R77: the side menu's tree, and R79: each page's place in it, for the
 // breadcrumbs. The tree is the one source for both, so a page's breadcrumbs
-// are the same however it was reached. Albums (R82) come in M14.
+// are the same however it was reached. The Albums group's pages are the
+// person's own albums (R82), added by the menu from albums.svelte.ts.
 import type { IconName } from './icons.ts';
 
 export interface Entry {
@@ -14,7 +15,7 @@ export interface Entry {
 }
 
 export interface Group {
-	id: 'tools' | 'reports' | 'account' | 'admin';
+	id: 'albums' | 'tools' | 'reports' | 'account' | 'admin';
 	label: string;
 	icon: IconName;
 	/** What's in it, in a few words: the shrunk menu's tooltip for it. */
@@ -28,6 +29,15 @@ export interface Group {
 export const messages: Entry = { href: '/', label: 'Messages', icon: 'messages', text: 'Every page, newest first, as it arrives' };
 
 export const groups: Group[] = [
+	{
+		id: 'albums',
+		label: 'Albums',
+		icon: 'albums',
+		text: 'Messages you keep, with your own notes',
+		href: '/albums',
+		// One per album, from the API (R77): see Menu.svelte.
+		entries: []
+	},
 	{
 		id: 'tools',
 		label: 'Tools',
@@ -133,6 +143,8 @@ export function crumbs(route: string, params: Record<string, string>, title: str
 			return under([top], title || 'Alias');
 		case '/capcodes/[capcode]':
 			return under([top], `Capcode ${params.capcode}`);
+		case '/albums/[id]':
+			return under([group('albums')], title || 'Album');
 		case '/admin/users/[id]':
 			return under([admin, users], title || 'User');
 		case '/admin/users/[id]/deactivate-tree':
