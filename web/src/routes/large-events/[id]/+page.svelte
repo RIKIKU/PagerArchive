@@ -44,12 +44,12 @@
 	<div class="event">
 		<MessageList {query} base={{ event: String(ev.id), ignored: 'true' }} title={title}>
 			<div class="about" data-testid="event-about">
-				<p class="when">
-					<time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time>
-					to <time datetime={isoAttr(ev.end)} title="Its last page">{span(ev, tz)}</time>
-				</p>
 				<p class="numbers">{numbers(ev)}</p>
 				<dl>
+					<dt>First page</dt>
+					<dd class="when"><time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time></dd>
+					<dt>Last page</dt>
+					<dd class="when"><time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time></dd>
 					<dt>Levels</dt>
 					<dd>
 						<ul class="levels">

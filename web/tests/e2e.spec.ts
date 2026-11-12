@@ -3414,6 +3414,10 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		const first = desk.getByTestId('large-event').first();
 		await expect(first).toHaveAttribute('data-event-id', String(ev.id));
 		await expect(first).not.toContainText(/ongoing/i);
+		// Its first and last pages' times, each on its own labelled line (owner, 2026-11-13).
+		await expect(first.locator('time')).toHaveCount(2);
+		await expect(first).toContainText('First page');
+		await expect(first).toContainText('Last page');
 		await expect(first).toContainText('Deployment');
 		await expect(first).toContainText('Several deployments');
 		// The number of Emergency pages, never an appliance count (owner, 2026-11-13).
@@ -3428,6 +3432,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await expect(desk.getByTestId('event-codes')).toHaveText(codes.join(', '));
 		await expect(desk.getByTestId('event-about')).toContainText('2 deployment codes · 2 jobs · 2 Emergency pages');
 		await expect(desk.getByTestId('event-about')).not.toContainText(/unit|appliance/i);
+		await expect(desk.getByTestId('event-about').getByRole('term')).toContainText(['First page', 'Last page', 'Levels']);
 		const rows = desk.getByTestId('message-list').locator('article');
 		await expect(rows).toHaveCount(2);
 		await expect(rows.first()).toContainText(jobs[1]);

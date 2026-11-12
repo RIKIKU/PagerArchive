@@ -48,9 +48,11 @@
 				<a class="card" href="/large-events/{ev.id}">
 					<span class="when">
 						<span class="icon-box"><Icon name="largeevents" /></span>
-						<span>
+						<span class="times">
+							<span class="label">First page</span>
 							<time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time>
-							to <time datetime={isoAttr(ev.end)} title="Its last page">{span(ev, tz)}</time>
+							<span class="label">Last page</span>
+							<time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time>
 						</span>
 					</span>
 					<span class="levels">
@@ -106,9 +108,21 @@
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
-		font-weight: var(--weight-strong);
+	}
+	/* Two labelled lines, so the first and last pages' times read apart. */
+	.times {
+		display: grid;
+		grid-template-columns: max-content max-content;
+		gap: 0 var(--space-sm);
 		font-variant-numeric: tabular-nums;
-		overflow-wrap: anywhere;
+	}
+	.times time {
+		font-weight: var(--weight-strong);
+	}
+	.label {
+		color: var(--muted);
+		font-size: var(--text-sm);
+		align-self: baseline;
 	}
 	.icon-box {
 		display: inline-grid;
