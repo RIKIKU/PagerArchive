@@ -76,6 +76,23 @@ func (q *Queries) AddIntegrationCapcodes(ctx context.Context, arg AddIntegration
 	return err
 }
 
+const addLargeEventPage = `-- name: AddLargeEventPage :exec
+INSERT INTO large_event_messages (message_id, event_id, deployment_codes)
+VALUES ($1::bigint, $2::bigint, $3::text[])
+ON CONFLICT (message_id) DO NOTHING
+`
+
+type AddLargeEventPageParams struct {
+	MessageID       int64
+	EventID         int64
+	DeploymentCodes []string
+}
+
+func (q *Queries) AddLargeEventPage(ctx context.Context, arg AddLargeEventPageParams) error {
+	_, err := q.db.Exec(ctx, addLargeEventPage, arg.MessageID, arg.EventID, arg.DeploymentCodes)
+	return err
+}
+
 const addToAlbum = `-- name: AddToAlbum :execrows
 WITH album AS (
     UPDATE albums al SET emptied_at = NULL, updated_at = now()
@@ -1371,20 +1388,21 @@ func (q *Queries) CreateClient(ctx context.Context, arg CreateClientParams) erro
 
 const createIntegration = `-- name: CreateIntegration :one
 
-INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-RETURNING id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at
+INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter, large_events)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+RETURNING id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at, large_events
 `
 
 type CreateIntegrationParams struct {
-	Uid     string
-	OwnerID int64
-	Name    string
-	Kind    string
-	Content string
-	Config  []byte
-	Secrets []byte
-	Filter  []byte
+	Uid         string
+	OwnerID     int64
+	Name        string
+	Kind        string
+	Content     string
+	Config      []byte
+	Secrets     []byte
+	Filter      []byte
+	LargeEvents *string
 }
 
 // Integrations (R47-R51c, ADR 0006).
@@ -1398,6 +1416,7 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		arg.Config,
 		arg.Secrets,
 		arg.Filter,
+		arg.LargeEvents,
 	)
 	var i Integration
 	err := row.Scan(
@@ -1419,6 +1438,7 @@ func (q *Queries) CreateIntegration(ctx context.Context, arg CreateIntegrationPa
 		&i.LastDeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LargeEvents,
 	)
 	return i, err
 }
@@ -1465,6 +1485,26 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 		&i.ResentAt,
 		&i.LinkLostAt,
 		&i.ClearedAt,
+	)
+	return i, err
+}
+
+const createLargeEvent = `-- name: CreateLargeEvent :one
+INSERT INTO large_events (first_at, last_at) VALUES ($1::timestamptz, $1::timestamptz)
+RETURNING id, first_at, last_at, deployment_at, several_deployments_at, big_job_at, created_at
+`
+
+func (q *Queries) CreateLargeEvent(ctx context.Context, at time.Time) (LargeEvent, error) {
+	row := q.db.QueryRow(ctx, createLargeEvent, at)
+	var i LargeEvent
+	err := row.Scan(
+		&i.ID,
+		&i.FirstAt,
+		&i.LastAt,
+		&i.DeploymentAt,
+		&i.SeveralDeploymentsAt,
+		&i.BigJobAt,
+		&i.CreatedAt,
 	)
 	return i, err
 }
@@ -1662,6 +1702,20 @@ func (q *Queries) DeleteEmptiedAlbums(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const deleteEmptyLargeEvents = `-- name: DeleteEmptyLargeEvents :execrows
+DELETE FROM large_events e
+WHERE NOT EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.event_id = e.id)
+`
+
+// R87e: an event goes with its last page.
+func (q *Queries) DeleteEmptyLargeEvents(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEmptyLargeEvents)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteExpiredSessions = `-- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at <= now()
 `
@@ -1687,6 +1741,16 @@ DELETE FROM integrations WHERE owner_id = $1
 // R43c: a deleted account's integrations go with it.
 func (q *Queries) DeleteIntegrationsByOwner(ctx context.Context, ownerID int64) error {
 	_, err := q.db.Exec(ctx, deleteIntegrationsByOwner, ownerID)
+	return err
+}
+
+const deleteLargeEvents = `-- name: DeleteLargeEvents :exec
+DELETE FROM large_events WHERE id = ANY($1::bigint[])
+`
+
+// The events merged into another, once their pages and deliveries moved.
+func (q *Queries) DeleteLargeEvents(ctx context.Context, ids []int64) error {
+	_, err := q.db.Exec(ctx, deleteLargeEvents, ids)
 	return err
 }
 
@@ -1763,7 +1827,7 @@ func (q *Queries) DeleteUserSessions(ctx context.Context, ids []int64) error {
 }
 
 const deliveryByKey = `-- name: DeliveryByKey :one
-SELECT integration_id, message_id, status, attempts, next_attempt_at, last_result, last_error, delivered_at, created_at, updated_at FROM deliveries WHERE integration_id = $1 AND message_id = $2
+SELECT integration_id, message_id, status, attempts, next_attempt_at, last_result, last_error, delivered_at, created_at, updated_at, event_id FROM deliveries WHERE integration_id = $1 AND message_id = $2
 `
 
 type DeliveryByKeyParams struct {
@@ -1785,6 +1849,7 @@ func (q *Queries) DeliveryByKey(ctx context.Context, arg DeliveryByKeyParams) (D
 		&i.DeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.EventID,
 	)
 	return i, err
 }
@@ -1821,7 +1886,7 @@ func (q *Queries) DistanceToStreet(ctx context.Context, arg DistanceToStreetPara
 }
 
 const dueDeliveries = `-- name: DueDeliveries :many
-SELECT integration_id, message_id, attempts
+SELECT integration_id, message_id, attempts, event_id
 FROM deliveries
 WHERE status = 'pending' AND next_attempt_at <= $1::timestamptz
 ORDER BY next_attempt_at, message_id
@@ -1832,6 +1897,7 @@ type DueDeliveriesRow struct {
 	IntegrationID int64
 	MessageID     int64
 	Attempts      int32
+	EventID       *int64
 }
 
 func (q *Queries) DueDeliveries(ctx context.Context, now time.Time) ([]DueDeliveriesRow, error) {
@@ -1843,7 +1909,12 @@ func (q *Queries) DueDeliveries(ctx context.Context, now time.Time) ([]DueDelive
 	var items []DueDeliveriesRow
 	for rows.Next() {
 		var i DueDeliveriesRow
-		if err := rows.Scan(&i.IntegrationID, &i.MessageID, &i.Attempts); err != nil {
+		if err := rows.Scan(
+			&i.IntegrationID,
+			&i.MessageID,
+			&i.Attempts,
+			&i.EventID,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -2244,6 +2315,32 @@ func (q *Queries) InsertDelivery(ctx context.Context, arg InsertDeliveryParams) 
 	return err
 }
 
+const insertEventDelivery = `-- name: InsertEventDelivery :exec
+INSERT INTO deliveries (integration_id, message_id, status, next_attempt_at, event_id)
+VALUES ($1, $2, $3, $4, $5::bigint)
+ON CONFLICT DO NOTHING
+`
+
+type InsertEventDeliveryParams struct {
+	IntegrationID int64
+	MessageID     int64
+	Status        string
+	NextAttemptAt *time.Time
+	EventID       int64
+}
+
+// R87d: an event's delivery, carried by the page that took it to the level.
+func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDeliveryParams) error {
+	_, err := q.db.Exec(ctx, insertEventDelivery,
+		arg.IntegrationID,
+		arg.MessageID,
+		arg.Status,
+		arg.NextAttemptAt,
+		arg.EventID,
+	)
+	return err
+}
+
 const insertImportReception = `-- name: InsertImportReception :exec
 INSERT INTO import_receptions (message_id, received_at, source_id) VALUES ($1, $2, $3)
 ON CONFLICT DO NOTHING
@@ -2404,7 +2501,7 @@ func (q *Queries) IntegrationAttemptFailed(ctx context.Context, arg IntegrationA
 }
 
 const integrationByID = `-- name: IntegrationByID :one
-SELECT i.id, i.uid, i.owner_id, i.name, i.kind, i.content, i.config, i.secrets, i.filter, i.status, i.paused_by, i.paused_at, i.failed_pages, i.last_error, i.last_error_at, i.last_delivered_at, i.created_at, i.updated_at, u.role AS owner_role, u.status AS owner_status
+SELECT i.id, i.uid, i.owner_id, i.name, i.kind, i.content, i.config, i.secrets, i.filter, i.status, i.paused_by, i.paused_at, i.failed_pages, i.last_error, i.last_error_at, i.last_delivered_at, i.created_at, i.updated_at, i.large_events, u.role AS owner_role, u.status AS owner_status
 FROM integrations i JOIN users u ON u.id = i.owner_id
 WHERE i.id = $1
 `
@@ -2428,6 +2525,7 @@ type IntegrationByIDRow struct {
 	LastDeliveredAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	LargeEvents     *string
 	OwnerRole       string
 	OwnerStatus     string
 }
@@ -2454,6 +2552,7 @@ func (q *Queries) IntegrationByID(ctx context.Context, id int64) (IntegrationByI
 		&i.LastDeliveredAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.LargeEvents,
 		&i.OwnerRole,
 		&i.OwnerStatus,
 	)
@@ -2548,7 +2647,7 @@ func (q *Queries) IntegrationPageFailed(ctx context.Context, arg IntegrationPage
 }
 
 const integrationsByOwner = `-- name: IntegrationsByOwner :many
-SELECT id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at FROM integrations WHERE owner_id = $1 ORDER BY created_at, id
+SELECT id, uid, owner_id, name, kind, content, config, secrets, filter, status, paused_by, paused_at, failed_pages, last_error, last_error_at, last_delivered_at, created_at, updated_at, large_events FROM integrations WHERE owner_id = $1 ORDER BY created_at, id
 `
 
 func (q *Queries) IntegrationsByOwner(ctx context.Context, ownerID int64) ([]Integration, error) {
@@ -2579,6 +2678,7 @@ func (q *Queries) IntegrationsByOwner(ctx context.Context, ownerID int64) ([]Int
 			&i.LastDeliveredAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.LargeEvents,
 		); err != nil {
 			return nil, err
 		}
@@ -2757,6 +2857,51 @@ func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]Invit
 	return items, nil
 }
 
+const jobEventPages = `-- name: JobEventPages :many
+SELECT m.id, m.sent_at, m.text, m.units, lem.event_id
+FROM messages m
+LEFT JOIN large_event_messages lem ON lem.message_id = m.id
+WHERE m.job_number = $1::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
+ORDER BY m.sent_at, m.id
+LIMIT 5000
+`
+
+type JobEventPagesRow struct {
+	ID      int64
+	SentAt  time.Time
+	Text    string
+	Units   []string
+	EventID *int64
+}
+
+// The pages of a job that count (R87: Emergency, to an aliased capcode, not a
+// heartbeat), oldest first, with the event each is in, if any.
+func (q *Queries) JobEventPages(ctx context.Context, jobNumber string) ([]JobEventPagesRow, error) {
+	rows, err := q.db.Query(ctx, jobEventPages, jobNumber)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []JobEventPagesRow
+	for rows.Next() {
+		var i JobEventPagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SentAt,
+			&i.Text,
+			&i.Units,
+			&i.EventID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const keepEarliestSentAt = `-- name: KeepEarliestSentAt :exec
 UPDATE messages SET sent_at = LEAST(sent_at, $1::timestamptz) WHERE id = $2
 `
@@ -2769,6 +2914,193 @@ type KeepEarliestSentAtParams struct {
 func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAtParams) error {
 	_, err := q.db.Exec(ctx, keepEarliestSentAt, arg.ReceivedAt, arg.ID)
 	return err
+}
+
+const largeEventByID = `-- name: LargeEventByID :one
+SELECT id, first_at, last_at, deployment_at, several_deployments_at, big_job_at, created_at FROM large_events WHERE id = $1
+`
+
+func (q *Queries) LargeEventByID(ctx context.Context, id int64) (LargeEvent, error) {
+	row := q.db.QueryRow(ctx, largeEventByID, id)
+	var i LargeEvent
+	err := row.Scan(
+		&i.ID,
+		&i.FirstAt,
+		&i.LastAt,
+		&i.DeploymentAt,
+		&i.SeveralDeploymentsAt,
+		&i.BigJobAt,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const largeEventCodeTimes = `-- name: LargeEventCodeTimes :many
+SELECT c.code::text AS code, min(m.sent_at)::timestamptz AS first_at
+FROM large_event_messages lem
+JOIN messages m ON m.id = lem.message_id
+CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c(code)
+WHERE lem.event_id = $1
+GROUP BY c.code
+ORDER BY 2, 1
+`
+
+type LargeEventCodeTimesRow struct {
+	Code    string
+	FirstAt time.Time
+}
+
+// Each deployment code an event's pages carry, with its first page's sent
+// time, earliest first.
+func (q *Queries) LargeEventCodeTimes(ctx context.Context, eventID int64) ([]LargeEventCodeTimesRow, error) {
+	rows, err := q.db.Query(ctx, largeEventCodeTimes, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEventCodeTimesRow
+	for rows.Next() {
+		var i LargeEventCodeTimesRow
+		if err := rows.Scan(&i.Code, &i.FirstAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const largeEventIntegrations = `-- name: LargeEventIntegrations :many
+SELECT i.id, i.kind, u.role AS owner_role
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.status = 'active' AND u.status = 'active' AND i.large_events = $1::text
+`
+
+type LargeEventIntegrationsRow struct {
+	ID        int64
+	Kind      string
+	OwnerRole string
+}
+
+// R87d: active integrations of active owners that select large events at a level.
+func (q *Queries) LargeEventIntegrations(ctx context.Context, level string) ([]LargeEventIntegrationsRow, error) {
+	rows, err := q.db.Query(ctx, largeEventIntegrations, level)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEventIntegrationsRow
+	for rows.Next() {
+		var i LargeEventIntegrationsRow
+		if err := rows.Scan(&i.ID, &i.Kind, &i.OwnerRole); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const largeEventJobs = `-- name: LargeEventJobs :many
+SELECT m.job_number::text AS job_number, min(m.sent_at)::timestamptz AS first_at
+FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+WHERE lem.event_id = $1 AND m.job_number IS NOT NULL
+GROUP BY m.job_number
+ORDER BY 2, 1
+`
+
+type LargeEventJobsRow struct {
+	JobNumber string
+	FirstAt   time.Time
+}
+
+// R87c, R87d: an event's jobs, from the pages it holds, by their first page.
+func (q *Queries) LargeEventJobs(ctx context.Context, eventID int64) ([]LargeEventJobsRow, error) {
+	rows, err := q.db.Query(ctx, largeEventJobs, eventID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEventJobsRow
+	for rows.Next() {
+		var i LargeEventJobsRow
+		if err := rows.Scan(&i.JobNumber, &i.FirstAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const largeEventPages = `-- name: LargeEventPages :one
+SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1
+`
+
+func (q *Queries) LargeEventPages(ctx context.Context, eventID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, largeEventPages, eventID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const largeEventUnits = `-- name: LargeEventUnits :one
+SELECT count(DISTINCT u)::bigint
+FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+CROSS JOIN LATERAL unnest(m.units) AS u
+WHERE lem.event_id = $1
+`
+
+// R87c, R87d: the distinct units an event's pages name.
+func (q *Queries) LargeEventUnits(ctx context.Context, eventID int64) (int64, error) {
+	row := q.db.QueryRow(ctx, largeEventUnits, eventID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const largeEventsNear = `-- name: LargeEventsNear :many
+SELECT id, first_at, last_at, deployment_at, several_deployments_at, big_job_at, created_at FROM large_events
+WHERE last_at >= $1::timestamptz - interval '12 hours'
+  AND first_at <= $1::timestamptz + interval '12 hours'
+ORDER BY id
+`
+
+// R87a: the events a page sent at t is within 12 hours of: from 12 hours
+// before the event's first page (a page that arrived late) to 12 hours
+// after its last. Oldest first.
+func (q *Queries) LargeEventsNear(ctx context.Context, t time.Time) ([]LargeEvent, error) {
+	rows, err := q.db.Query(ctx, largeEventsNear, t)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEvent
+	for rows.Next() {
+		var i LargeEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstAt,
+			&i.LastAt,
+			&i.DeploymentAt,
+			&i.SeveralDeploymentsAt,
+			&i.BigJobAt,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const lastMessageID = `-- name: LastMessageID :one
@@ -3068,6 +3400,76 @@ func (q *Queries) ListInvitations(ctx context.Context, inviter *int64) ([]ListIn
 	return items, nil
 }
 
+const listLargeEvents = `-- name: ListLargeEvents :many
+SELECT e.id, e.first_at, e.last_at, e.deployment_at, e.several_deployments_at, e.big_job_at, e.created_at,
+       (SELECT count(*) FROM large_event_messages lem WHERE lem.event_id = e.id)::bigint AS pages,
+       (SELECT count(DISTINCT c) FROM large_event_messages lem CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c
+        WHERE lem.event_id = e.id)::bigint AS codes,
+       (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+        WHERE lem.event_id = e.id)::bigint AS jobs,
+       (SELECT count(DISTINCT u) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+        CROSS JOIN LATERAL unnest(m.units) AS u WHERE lem.event_id = e.id)::bigint AS units
+FROM large_events e
+WHERE $1::timestamptz IS NULL
+   OR (e.first_at, e.id) < ($1::timestamptz, $2::bigint)
+ORDER BY e.first_at DESC, e.id DESC
+LIMIT $3::int
+`
+
+type ListLargeEventsParams struct {
+	BeforeFirst *time.Time
+	BeforeID    *int64
+	MaxRows     int32
+}
+
+type ListLargeEventsRow struct {
+	ID                   int64
+	FirstAt              time.Time
+	LastAt               time.Time
+	DeploymentAt         *time.Time
+	SeveralDeploymentsAt *time.Time
+	BigJobAt             *time.Time
+	CreatedAt            time.Time
+	Pages                int64
+	Codes                int64
+	Jobs                 int64
+	Units                int64
+}
+
+// R87c: events, newest first, with their numbers counted from the pages they
+// still hold (R87e). before_* is the page cursor.
+func (q *Queries) ListLargeEvents(ctx context.Context, arg ListLargeEventsParams) ([]ListLargeEventsRow, error) {
+	rows, err := q.db.Query(ctx, listLargeEvents, arg.BeforeFirst, arg.BeforeID, arg.MaxRows)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListLargeEventsRow
+	for rows.Next() {
+		var i ListLargeEventsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstAt,
+			&i.LastAt,
+			&i.DeploymentAt,
+			&i.SeveralDeploymentsAt,
+			&i.BigJobAt,
+			&i.CreatedAt,
+			&i.Pages,
+			&i.Codes,
+			&i.Jobs,
+			&i.Units,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT t.id, t.name, t.agency, t.icon_sha256, t.colour, t.agency_profile,
        (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
@@ -3271,6 +3673,19 @@ func (q *Queries) LockInvitation(ctx context.Context, id int64) (Invitation, err
 	return i, err
 }
 
+const lockLargeEvents = `-- name: LockLargeEvents :exec
+
+SELECT pg_advisory_xact_lock(4242008700)
+`
+
+// Large events (R87-R87e; ADR 0027).
+// One page's event work at a time, to its transaction's end: two pages can't
+// both open an event, or join one as it's merged.
+func (q *Queries) LockLargeEvents(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockLargeEvents)
+	return err
+}
+
 const lockUsers = `-- name: LockUsers :exec
 SELECT id FROM users WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE
 `
@@ -3324,7 +3739,7 @@ func (q *Queries) MarkInvitationLinkLost(ctx context.Context, arg MarkInvitation
 const matchingIntegrations = `-- name: MatchingIntegrations :many
 SELECT i.id, i.uid, i.kind, i.filter, u.role AS owner_role
 FROM integrations i JOIN users u ON u.id = i.owner_id
-WHERE i.status = 'active' AND u.status = 'active'
+WHERE i.status = 'active' AND u.status = 'active' AND i.large_events IS NULL
   AND (EXISTS (SELECT 1 FROM integration_capcodes c WHERE c.integration_id = i.id AND c.capcode = $1::text)
        OR ($2::bigint IS NOT NULL
            AND EXISTS (SELECT 1 FROM integration_aliases a WHERE a.integration_id = i.id AND a.alias_id = $2::bigint)))
@@ -3368,6 +3783,38 @@ func (q *Queries) MatchingIntegrations(ctx context.Context, arg MatchingIntegrat
 		return nil, err
 	}
 	return items, nil
+}
+
+const mergeLargeEvents = `-- name: MergeLargeEvents :exec
+WITH others AS (
+    SELECT id, first_at, last_at, deployment_at, several_deployments_at, big_job_at, created_at FROM large_events WHERE id = ANY($1::bigint[]) AND id <> $2::bigint
+), pages AS (
+    UPDATE large_event_messages SET event_id = $2::bigint WHERE event_id IN (SELECT id FROM others)
+), sent AS (
+    UPDATE deliveries SET event_id = $2::bigint WHERE event_id IN (SELECT id FROM others)
+), kept AS (
+    UPDATE large_events e SET
+        first_at = LEAST(e.first_at, (SELECT min(first_at) FROM others)),
+        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others)),
+        deployment_at = LEAST(e.deployment_at, (SELECT min(deployment_at) FROM others)),
+        several_deployments_at = LEAST(e.several_deployments_at, (SELECT min(several_deployments_at) FROM others)),
+        big_job_at = LEAST(e.big_job_at, (SELECT min(big_job_at) FROM others))
+    WHERE e.id = $2::bigint
+)
+SELECT 1
+`
+
+type MergeLargeEventsParams struct {
+	Others []int64
+	ID     int64
+}
+
+// R87a: a page within 12 hours of two events joins them into one, the
+// oldest. Their pages and deliveries move to it; each level keeps its
+// earliest time.
+func (q *Queries) MergeLargeEvents(ctx context.Context, arg MergeLargeEventsParams) error {
+	_, err := q.db.Exec(ctx, mergeLargeEvents, arg.Others, arg.ID)
+	return err
 }
 
 const messageIDsAfter = `-- name: MessageIDsAfter :many
@@ -3763,7 +4210,7 @@ func (q *Queries) ReactivateUser(ctx context.Context, id int64) (int64, error) {
 
 const recentDeliveries = `-- name: RecentDeliveries :many
 SELECT d.message_id, d.status, d.attempts, d.last_result, d.last_error, d.delivered_at, d.created_at, d.updated_at,
-       m.sent_at, m.capcode
+       m.sent_at, m.capcode, d.event_id
 FROM deliveries d JOIN messages m ON m.id = d.message_id
 WHERE d.integration_id = $1
 ORDER BY d.created_at DESC, d.message_id DESC
@@ -3781,6 +4228,7 @@ type RecentDeliveriesRow struct {
 	UpdatedAt   time.Time
 	SentAt      time.Time
 	Capcode     string
+	EventID     *int64
 }
 
 func (q *Queries) RecentDeliveries(ctx context.Context, integrationID int64) ([]RecentDeliveriesRow, error) {
@@ -3803,6 +4251,7 @@ func (q *Queries) RecentDeliveries(ctx context.Context, integrationID int64) ([]
 			&i.UpdatedAt,
 			&i.SentAt,
 			&i.Capcode,
+			&i.EventID,
 		); err != nil {
 			return nil, err
 		}
@@ -3858,6 +4307,23 @@ func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]Rec
 		return nil, err
 	}
 	return items, nil
+}
+
+const refreshLargeEventSpans = `-- name: RefreshLargeEventSpans :execrows
+UPDATE large_events e SET first_at = s.first_at, last_at = s.last_at
+FROM (SELECT lem.event_id, min(m.sent_at) AS first_at, max(m.sent_at) AS last_at
+      FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+      GROUP BY lem.event_id) s
+WHERE s.event_id = e.id AND (e.first_at <> s.first_at OR e.last_at <> s.last_at)
+`
+
+// R87e: after retention, each event's start and end follow the pages it still holds.
+func (q *Queries) RefreshLargeEventSpans(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, refreshLargeEventSpans)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const relinkUser = `-- name: RelinkUser :exec
@@ -4168,14 +4634,17 @@ WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   -- R82: one album's messages. Only the album's owner is given it (ADR 0026).
   AND ($39::bigint IS NULL
        OR EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = $39::bigint AND am.message_id = m.id))
-  AND ($40::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($40, $41::bigint))
+  -- R87c: one large event's pages (ADR 0027).
+  AND ($40::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.event_id = $40::bigint AND lem.message_id = m.id))
+  AND ($41::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($41, $42::bigint))
   -- R81b: after a jump, the messages newer than the list's first, which
   -- Store.SearchNewer reads oldest first (ADR 0026).
-  AND ($42::timestamptz IS NULL
-       OR (m.sent_at, m.id) > ($42, $43::bigint))
+  AND ($43::timestamptz IS NULL
+       OR (m.sent_at, m.id) > ($43, $44::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $44::int
+LIMIT $45::int
 `
 
 type SearchMessagesParams struct {
@@ -4218,6 +4687,7 @@ type SearchMessagesParams struct {
 	Flags              []string
 	Located            bool
 	AlbumID            *int64
+	EventID            *int64
 	BeforeSent         *time.Time
 	BeforeID           *int64
 	AfterSent          *time.Time
@@ -4303,6 +4773,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.Flags,
 		arg.Located,
 		arg.AlbumID,
+		arg.EventID,
 		arg.BeforeSent,
 		arg.BeforeID,
 		arg.AfterSent,
@@ -4531,6 +5002,39 @@ type SetInvitationAuthentikIDParams struct {
 
 func (q *Queries) SetInvitationAuthentikID(ctx context.Context, arg SetInvitationAuthentikIDParams) error {
 	_, err := q.db.Exec(ctx, setInvitationAuthentikID, arg.ID, arg.AuthentikID)
+	return err
+}
+
+const setLargeEvent = `-- name: SetLargeEvent :exec
+UPDATE large_events SET
+    first_at = LEAST(first_at, $1::timestamptz),
+    last_at = GREATEST(last_at, $2::timestamptz),
+    deployment_at = LEAST(deployment_at, $3::timestamptz),
+    several_deployments_at = LEAST(several_deployments_at, $4::timestamptz),
+    big_job_at = LEAST(big_job_at, $5::timestamptz)
+WHERE id = $6::bigint
+`
+
+type SetLargeEventParams struct {
+	FirstAt              time.Time
+	LastAt               time.Time
+	DeploymentAt         *time.Time
+	SeveralDeploymentsAt *time.Time
+	BigJobAt             *time.Time
+	ID                   int64
+}
+
+// An event's span and levels after a page joined it. A level, once met,
+// keeps its earliest time (R87b).
+func (q *Queries) SetLargeEvent(ctx context.Context, arg SetLargeEventParams) error {
+	_, err := q.db.Exec(ctx, setLargeEvent,
+		arg.FirstAt,
+		arg.LastAt,
+		arg.DeploymentAt,
+		arg.SeveralDeploymentsAt,
+		arg.BigJobAt,
+		arg.ID,
+	)
 	return err
 }
 
@@ -4984,17 +5488,18 @@ func (q *Queries) UpdateAlias(ctx context.Context, arg UpdateAliasParams) error 
 }
 
 const updateIntegration = `-- name: UpdateIntegration :exec
-UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, updated_at = now()
+UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, large_events = $7, updated_at = now()
 WHERE id = $1
 `
 
 type UpdateIntegrationParams struct {
-	ID      int64
-	Name    string
-	Content string
-	Config  []byte
-	Secrets []byte
-	Filter  []byte
+	ID          int64
+	Name        string
+	Content     string
+	Config      []byte
+	Secrets     []byte
+	Filter      []byte
+	LargeEvents *string
 }
 
 func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationParams) error {
@@ -5005,6 +5510,7 @@ func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationPa
 		arg.Config,
 		arg.Secrets,
 		arg.Filter,
+		arg.LargeEvents,
 	)
 	return err
 }

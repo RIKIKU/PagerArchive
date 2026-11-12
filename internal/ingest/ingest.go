@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -64,6 +65,9 @@ type Service struct {
 	// duplicate copy), so work it queues commits with the page: the
 	// integrations' deliveries (ADR 0006 §3).
 	OnStored func(ctx context.Context, q *db.Queries, messageID int64) error
+	// Events groups a new page into a large event, after OnStored and in the
+	// same transaction (R87, ADR 0027); nil groups nothing.
+	Events *events.Detector
 	// Tracer traces each step, under the caller's "ingest" span (R71); nil
 	// traces nothing.
 	Tracer trace.Tracer
@@ -190,7 +194,18 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 			return "", 0, err
 		}
 		if s.OnStored != nil {
-			return Stored, id, s.OnStored(ctx, q, id)
+			if err := s.OnStored(ctx, q, id); err != nil {
+				return "", 0, err
+			}
+		}
+		if s.Events != nil {
+			ectx, espan := tr.Start(ctx, "ingest.events")
+			err := s.Events.Stored(ectx, q, events.Page{ID: id, SentAt: d.Params.SentAt, Text: d.Params.Text, Priority: d.Params.Priority,
+				AliasID: d.Params.AliasID, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber})
+			espan.End()
+			if err != nil {
+				return "", 0, err
+			}
 		}
 		return Stored, id, nil
 	default:

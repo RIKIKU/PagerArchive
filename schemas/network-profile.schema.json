@@ -56,6 +56,11 @@
       "type": "array",
       "items": { "type": "string", "minLength": 1 }
     },
+    "deployment_code_pattern": {
+      "description": "Optional. Finds deployment codes: codes naming a pre-formed group of appliances sent together, which open large events (R87). Every match in the text a pager displays is a code; with a group named code, that group is. With no pattern, only big jobs open large events.",
+      "type": "string",
+      "minLength": 1
+    },
     "event_categories": {
       "description": "Report categories. A code ending in * matches by prefix. Unmapped codes count as Other.",
       "type": "array",

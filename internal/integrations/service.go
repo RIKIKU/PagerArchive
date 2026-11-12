@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
+	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -130,6 +131,7 @@ type prepared struct {
 	filter        Filter
 	capcodes      []string
 	aliasIDs      []int64
+	largeEvents   *string // the level, for a large-event integration (R87d)
 }
 
 var (
@@ -175,6 +177,24 @@ func (s *Service) validate(ctx context.Context, req Request, prev *loaded, prevS
 		return p, invalid("Content must be full or summary.")
 	}
 
+	// R87d: large events at one level, instead of capcodes and aliases. What
+	// it sends is a summary, never page text, whatever was asked for.
+	if lv := strings.TrimSpace(req.LargeEvents); lv != "" {
+		if !events.Level(lv).Valid() {
+			return p, invalid("Choose the level of large event: deployment, several deployments or big job.")
+		}
+		if len(req.Capcodes)+len(req.AliasIDs) > 0 {
+			return p, invalid("An integration selects either large events or capcodes and aliases, not both.")
+		}
+		p.largeEvents, p.content = &lv, Summary
+		sec := req.Secrets
+		if prev != nil {
+			sec = sec.merge(prevSec)
+		}
+		var err error
+		p.config, p.secrets, err = s.validDestination(ctx, p.kind, req.Config, sec, uid)
+		return p, err
+	}
 	// R48: a selection is required.
 	for _, c := range req.Capcodes {
 		c = strings.TrimSpace(c)
@@ -204,7 +224,7 @@ func (s *Service) validate(ctx context.Context, req Request, prev *loaded, prevS
 		}
 	}
 	if len(p.capcodes)+len(p.aliasIDs) == 0 {
-		return p, invalid("Choose at least one capcode or alias, so nothing is forwarded by accident.")
+		return p, invalid("Choose at least one capcode or alias, so nothing is forwarded by accident. Or choose large events.")
 	}
 	if len(p.capcodes)+len(p.aliasIDs) > maxSelection {
 		return p, invalid("Choose at most %d capcodes and aliases.", maxSelection)
@@ -471,7 +491,7 @@ func (s *Service) view(ctx context.Context, l loaded) (View, error) {
 	v := View{ID: l.row.ID, UID: l.row.Uid, Name: l.row.Name, Kind: l.kind, Content: l.row.Content, Filter: l.filter, Config: l.config,
 		SecretsSet: map[string]bool{}, Status: l.row.Status, PausedBy: l.row.PausedBy, PausedAt: l.row.PausedAt,
 		FailedPages: l.row.FailedPages, LastError: l.row.LastError, LastErrorAt: l.row.LastErrorAt, LastDeliveredAt: l.row.LastDeliveredAt,
-		CreatedAt: l.row.CreatedAt, UpdatedAt: l.row.UpdatedAt, Capcodes: []string{}, Aliases: []AliasRef{}}
+		CreatedAt: l.row.CreatedAt, UpdatedAt: l.row.UpdatedAt, Capcodes: []string{}, Aliases: []AliasRef{}, LargeEvents: l.row.LargeEvents}
 	if sec, err := s.secretsOf(l.row); err != nil {
 		v.SecretsError = err.Error()
 	} else {
@@ -639,7 +659,7 @@ func (s *Service) Create(ctx context.Context, owner db.User, req Request) (View,
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
 		var err error
 		row, err = q.CreateIntegration(ctx, db.CreateIntegrationParams{Uid: uid, OwnerID: owner.ID, Name: p.name, Kind: string(p.kind),
-			Content: p.content, Config: cfg, Secrets: blob, Filter: filter})
+			Content: p.content, Config: cfg, Secrets: blob, Filter: filter, LargeEvents: p.largeEvents})
 		if err != nil {
 			return dbErr("create integration", err)
 		}
@@ -686,7 +706,7 @@ func (s *Service) Update(ctx context.Context, owner db.User, id int64, req Reque
 	cfg, _ := json.Marshal(p.config)
 	filter, _ := json.Marshal(p.filter)
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
-		if err := q.UpdateIntegration(ctx, db.UpdateIntegrationParams{ID: id, Name: p.name, Content: p.content, Config: cfg, Secrets: blob, Filter: filter}); err != nil {
+		if err := q.UpdateIntegration(ctx, db.UpdateIntegrationParams{ID: id, Name: p.name, Content: p.content, Config: cfg, Secrets: blob, Filter: filter, LargeEvents: p.largeEvents}); err != nil {
 			return dbErr("update integration", err)
 		}
 		return s.writeSelection(ctx, q, id, p)
@@ -812,7 +832,7 @@ func (s *Service) Deliveries(ctx context.Context, owner db.User, id int64) ([]De
 	}
 	out := []Delivery{}
 	for _, r := range rows {
-		out = append(out, Delivery{MessageID: r.MessageID, Capcode: r.Capcode, SentAt: r.SentAt.UTC(), Status: r.Status, Attempts: r.Attempts,
+		out = append(out, Delivery{MessageID: r.MessageID, EventID: r.EventID, Capcode: r.Capcode, SentAt: r.SentAt.UTC(), Status: r.Status, Attempts: r.Attempts,
 			LastResult: r.LastResult, LastError: r.LastError, DeliveredAt: r.DeliveredAt, CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt})
 	}
 	return out, nil
@@ -854,6 +874,9 @@ func (s *Service) Test(ctx context.Context, owner db.User, id int64) (TestResult
 		link = &u
 	}
 	p := testPage(s.now(), capcode, alias, link)
+	if l.row.LargeEvents != nil {
+		p = s.testEventPage(s.now(), events.Level(*l.row.LargeEvents))
+	}
 	actx, cancel := context.WithTimeout(ctx, AttemptTimeout)
 	defer cancel()
 	start := time.Now()

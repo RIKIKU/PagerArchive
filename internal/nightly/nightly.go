@@ -253,6 +253,15 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 	if _, err := j.Store.FinishRetentionAlbums(sctx, now); err != nil {
 		return fmt.Errorf("retention albums: %s", store.SafeError(err))
 	}
+	// R87e: a large event goes with its last page, and the start and end of
+	// one that lost pages follow the pages it still holds (its numbers are
+	// counted from them as they're shown).
+	if _, err := j.Store.DeleteEmptyLargeEvents(sctx); err != nil {
+		return fmt.Errorf("retention large events: %s", store.SafeError(err))
+	}
+	if _, err := j.Store.RefreshLargeEventSpans(sctx); err != nil {
+		return fmt.Errorf("retention large events: %s", store.SafeError(err))
+	}
 	// Integrations' delivery records are kept for 30 days (ADR 0006 §1).
 	if _, err := j.Store.PruneDeliveries(sctx, now.Add(-deliveryDays*24*time.Hour)); err != nil {
 		return fmt.Errorf("delivery records: %s", store.SafeError(err))

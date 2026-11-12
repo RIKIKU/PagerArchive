@@ -38,7 +38,8 @@
                 "additionalProperties": { "anyOf": [{ "$ref": "#/$defs/text" }, { "$ref": "#/$defs/list" }] }
               },
               "parse_failed": { "type": "boolean" },
-              "address_unsplit": { "type": "boolean" }
+              "address_unsplit": { "type": "boolean" },
+              "deployment_codes": { "$ref": "#/$defs/list" }
             },
             "additionalProperties": false
           }

@@ -99,6 +99,7 @@ type Delivery struct {
 	DeliveredAt   *time.Time
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
+	EventID       *int64
 }
 
 type ImportReception struct {
@@ -126,6 +127,7 @@ type Integration struct {
 	LastDeliveredAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
+	LargeEvents     *string
 }
 
 type IntegrationAlias struct {
@@ -155,6 +157,22 @@ type Invitation struct {
 	ResentAt    *time.Time
 	LinkLostAt  *time.Time
 	ClearedAt   *time.Time
+}
+
+type LargeEvent struct {
+	ID                   int64
+	FirstAt              time.Time
+	LastAt               time.Time
+	DeploymentAt         *time.Time
+	SeveralDeploymentsAt *time.Time
+	BigJobAt             *time.Time
+	CreatedAt            time.Time
+}
+
+type LargeEventMessage struct {
+	MessageID       int64
+	EventID         int64
+	DeploymentCodes []string
 }
 
 type Locality struct {

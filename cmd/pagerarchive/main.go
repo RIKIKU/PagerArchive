@@ -35,6 +35,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
@@ -373,6 +374,7 @@ func serve(stderr io.Writer) error {
 			Streets:  ix,
 			Geo:      geocoder,
 			OnStored: integ.Enqueue,
+			Events:   &events.Detector{Network: net, Fire: integ.EnqueueEvent},
 			Tracer:   tracer,
 		},
 		Tracer:   tracer,

@@ -245,6 +245,9 @@ func (s *Server) messageFilter(w http.ResponseWriter, r *http.Request) (search.F
 	}
 	album, ok := s.albumParam(w, r)
 	f.Album = album
+	if ok {
+		f.Event, ok = s.eventParam(w, r)
+	}
 	return f, ok
 }
 
@@ -614,6 +617,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	f.Album = album
+	if f.Event, ok = s.eventParam(w, r); !ok {
+		return
+	}
 	withReceptions := q.Get("receptions") == "true"
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")

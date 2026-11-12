@@ -60,6 +60,9 @@ func priorityLabel(p page) string {
 // render formats a page for a preset. Full content leads with the text
 // without its marker; Summary never has text or an address (R50a).
 func (s *Service) render(l loaded, p page) rendered {
+	if p.Event != nil {
+		return s.renderEvent(p)
+	}
 	who := p.Capcode
 	if p.Alias != nil {
 		who = *p.Alias

@@ -33,6 +33,9 @@ type page struct {
 	Labels     map[string]string
 	Location   *Location
 	Flags      *Flags // admins' integrations only (R49)
+	// Event, for a large-event integration (R87d), is what it sends instead
+	// of the page: a summary, never page text.
+	Event *EventSummary
 }
 
 // Fields are the parsed standard fields (R8).
@@ -171,6 +174,9 @@ type summaryPayload struct {
 
 // payload is the webhook and MQTT JSON (ADR 0006 §6).
 func payload(l loaded, p page) ([]byte, error) {
+	if p.Event != nil {
+		return eventJSON(l, p)
+	}
 	kind := "page"
 	if p.Test {
 		kind = "test"

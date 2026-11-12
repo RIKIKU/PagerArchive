@@ -145,6 +145,15 @@ func networkRow(n *profile.Network, c Case) []string {
 		got["stored_text"] = p.Text
 		got["priority"] = priority(p.Priority)
 	}
+	// Deployment codes (R5, R87) are checked only when a row lists them, so
+	// existing tables need no new key.
+	if _, listed := c.Expect["deployment_codes"]; listed {
+		var codes any
+		if cs := pipeline.DeploymentCodes(n, p); len(cs) > 0 && !p.Dropped {
+			codes = cs
+		}
+		got["deployment_codes"] = codes
+	}
 	return compare(c.Expect, got, map[string]any{"heartbeat": false})
 }
 

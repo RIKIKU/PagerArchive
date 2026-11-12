@@ -27,6 +27,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
+	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
@@ -190,9 +191,10 @@ func setup(t *testing.T, with ...traced) *env {
 		AppURL: appURL, Location: time.UTC, Version: "test", Log: log, Now: e.clock, Tracer: tr}
 	e.integ.Guard = &integrations.Guard{Allow: e.integ.AllowList, Restrict: integrations.OnlyLoopback}
 	srv := &server.Server{
-		Store:        st,
-		Tracer:       tr,
-		Ingest:       &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue, Tracer: tr},
+		Store:  st,
+		Tracer: tr,
+		Ingest: &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue,
+			Events: &events.Detector{Network: n, Fire: e.integ.EnqueueEvent}, Tracer: tr},
 		Integrations: e.integ,
 		MetricsToken: metricsToken,
 		Version:      "test",
