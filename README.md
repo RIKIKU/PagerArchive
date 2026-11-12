@@ -7,10 +7,12 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
 - Per-user integrations forward new pages to your own systems (a convenience, not a replacement for your pager)
+- A year scrubber for big jumps through the archive, private albums with notes, a print sheet, capcode reports and an unknown-capcodes list
+- Admin tools in the browser and a PowerShell module; nightly, self-checked backups; an example Grafana monitoring stack
 
-**Status:** milestone M12 (telemetry: OpenTelemetry traces, logs and metrics from the API and the receiving client, with nothing private in them, and an example Grafana monitoring stack with dashboards and alerts) on top of M11 (a print sheet: find messages on the print page with its own search, tick them, and print them as a pager shows them, for training recruits) on top of M10 (templates managed in Administration; template icons stored as images in PagerArchive and shown beside aliases) on top of M9 (`Watch-PagerArchiveMessage`: new messages streamed into the PowerShell pipeline, surviving lost connections without skipping a page; a role change now reaches open live connections at once) on top of M8 (a PowerShell module for admins, signing in as yourself with no API keys: templates, aliases, imports through the pipeline and message search; `pagerarchive` keeps only server jobs) on top of M7 (invite trees in Administration, a preview before deactivating a tree with people spared by hand or by branch, trusted users, deactivation records) on top of M6 (aliases managed in the browser, with change requests, review and history), M5 (per-user integrations: webhook, MQTT with Home Assistant discovery, Discord, Telegram, Pushover and ntfy; Prometheus metrics; an Administration area) on top of M4 (map with local geocoding and self-hosted tiles, capcode reports, receiver liveness, retention and the nightly job, resource budget, images on GHCR), M3 (invite-only accounts through Authentik: invitations, emailed codes, roles, deactivation), M2 (browser UI, live updates, search, job and detail views) and M1 (client, ingest, redaction, deduplication, profiles, `validate-profile`). See [`SPEC.md`](SPEC.md).
+**Status:** in production use since v1.0.0 (November 2026), receiving a live network around the clock. Releases are cut deliberately, not on every merge: every Saturday when something changed, on demand, and straight away for a security update ([ADR 0024](docs/adr/0024-deliberate-releases.md)); each release lists what changed. What's built and what's next is in [`SPEC.md`](SPEC.md)'s delivery plan; the [releases](https://github.com/RIKIKU/PagerArchive/releases) say what each version brought.
 
-- [Deploying the server](docs/deploy.md)
+- [Deploying, upgrading and backups](docs/deploy.md)
 - [Importing messages from an existing archive](docs/import.md)
 - [Integrations](docs/integrations.md)
 - [Monitoring: telemetry and the example Grafana stack](docs/monitoring.md)
@@ -25,13 +27,13 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 Needs Go (see `go.mod`) and, for the acceptance tests, PostgreSQL with PostGIS:
 
 ```
-docker run -d --name pa-test-db -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgis/postgis:18-3.6
+docker run -d --name pa-test-db -e POSTGRES_PASSWORD=test -p 127.0.0.1:55432:5432 postgis/postgis:18-3.7
 export PAGERARCHIVE_TEST_DATABASE_URL='postgres://postgres:test@127.0.0.1:55432/postgres?sslmode=disable'
 go test ./...
 go run ./cmd/pagerarchive validate-profile -v profiles/example
 ```
 
-The acceptance tests wipe that database. Database code is generated with [sqlc](https://sqlc.dev) (`sqlc generate`) from `internal/store/queries.sql`.
+The acceptance tests wipe that database. CI runs only the checks a change affects ([ADR 0025](docs/adr/0025-ci-speed.md)); a branch never sets the version, as the Release workflow does that. Database code is generated with [sqlc](https://sqlc.dev) (`sqlc generate`) from `internal/store/queries.sql`.
 
 The browser app is in `web/` (SvelteKit, Node 24):
 
