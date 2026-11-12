@@ -42,11 +42,12 @@ export const groups: Group[] = [
 		id: 'tools',
 		label: 'Tools',
 		icon: 'tools',
-		text: 'Printing for training, and capcodes with no alias',
+		text: 'Printing for training, capcodes with no alias, and large events',
 		href: '/tools',
 		entries: [
 			{ href: '/sheet', label: 'Print sheet', icon: 'print', desktopOnly: true, text: 'Pick messages and print their text for training.' },
-			{ href: '/capcodes', label: 'Unknown capcodes', icon: 'unknown', text: 'Capcodes with no alias, how many pages each had and when.' }
+			{ href: '/capcodes', label: 'Unknown capcodes', icon: 'unknown', text: 'Capcodes with no alias, how many pages each had and when.' },
+			{ href: '/large-events', label: 'Large events', icon: 'largeevents', text: 'Times something big happened: deployment codes and big jobs, grouped by 12 hours.' }
 		]
 	},
 	{
@@ -85,7 +86,8 @@ export const groups: Group[] = [
 			{ href: '/admin/clients', label: 'Receiving clients', icon: 'clients', desktopOnly: true, text: 'Which receivers are sending pages, and which have gone quiet.' },
 			{ href: '/admin/retention', label: 'Retention', icon: 'retention', desktopOnly: true, text: 'How long messages are kept, and the nightly clean-up.' },
 			{ href: '/admin/backups', label: 'Backups', icon: 'backups', desktopOnly: true, text: 'Whether the nightly backups are working, and the last good one.' },
-			{ href: '/admin/integration-hosts', label: 'Integration addresses', icon: 'hosts', desktopOnly: true, text: 'Private hosts and ranges that integrations may reach.' }
+			{ href: '/admin/integration-hosts', label: 'Integration addresses', icon: 'hosts', desktopOnly: true, text: 'Private hosts and ranges that integrations may reach.' },
+			{ href: '/admin/large-events', label: 'Large events', icon: 'largeevents', desktopOnly: true, text: 'How many distinct units on one job open a large event.' }
 		]
 	}
 ];
@@ -143,6 +145,8 @@ export function crumbs(route: string, params: Record<string, string>, title: str
 			return under([top], title || 'Alias');
 		case '/capcodes/[capcode]':
 			return under([top], `Capcode ${params.capcode}`);
+		case '/large-events/[id]':
+			return under([group('tools'), { label: 'Large events', href: '/large-events' }], title || 'Large event');
 		case '/albums/[id]':
 			return under([group('albums')], title || 'Album');
 		case '/admin/users/[id]':

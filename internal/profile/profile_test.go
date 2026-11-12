@@ -104,6 +104,18 @@ func TestProfileErrors(t *testing.T) {
 			want: []string{"net.json", "street_typos"},
 		},
 		{
+			name: "deployment code pattern doesn't compile",
+			file: "net.json",
+			doc:  strings.Replace(net, `"deployment_code_pattern": "\\bDG[0-9]{4}\\b"`, `"deployment_code_pattern": "DG[0-9"`, 1),
+			want: []string{"net.json", "at /deployment_code_pattern", "missing closing ]"},
+		},
+		{
+			name: "deployment code pattern matches nothing at all",
+			file: "net.json",
+			doc:  strings.Replace(net, `"deployment_code_pattern": "\\bDG[0-9]{4}\\b"`, `"deployment_code_pattern": "x*"`, 1),
+			want: []string{"net.json", "at /deployment_code_pattern", "matches empty text"},
+		},
+		{
 			name: "invalid JSON",
 			file: "net.json",
 			doc:  `{"kind": "network",`,

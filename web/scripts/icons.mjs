@@ -68,7 +68,9 @@ const icons = {
 	zoomout: 'zoom-out',
 	later: 'caret-up',
 	earlier: 'caret-down',
-	newest: 'chevrons-up'
+	newest: 'chevrons-up',
+	// M22: large events (R87c), in Tools and Administration.
+	largeevents: 'flame'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;
