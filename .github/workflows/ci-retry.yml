@@ -1,0 +1,77 @@
+name: CI retry
+
+# Layer 3 of CI's retries (ADR 0025), the last resort: when a run of CI on a
+# pull request or on main fails in its first attempt, its failed jobs (and
+# those that needed them) are re-run once, as "Re-run failed jobs" would. Not
+# when what failed is always the change's (the versions, stamp, changes and
+# govulncheck jobs, and the lint steps: scripts/ci/rerun-decision.sh), not a
+# second attempt, not a manual run, and not when the branch has moved on.
+# The Release workflow's runs aren't CI's runs (CI is called inside them), so
+# a failed release is re-run by the owner. Each re-run is a notice here,
+# naming the jobs, and the re-run's "All checks passed" lists each job that
+# passed only then as flaky.
+#
+# The maintenance-failed workflow asks rerun-decision.sh the same question, so
+# the owner is told of an automatic update's failure only when there's no
+# retry, or after it. GitHub runs this from main's copy of the file only.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: read
+
+jobs:
+  rerun:
+    name: Re-run the failed jobs once
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.run_attempt == 1 &&
+      (github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+      # Only if the re-run couldn't be started: an automatic update's owner
+      # is told then, as maintenance-failed.yml left that to this re-run.
+      issues: write
+      pull-requests: write
+    steps:
+      # main's scripts, never the pull request's.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Re-run it?
+        id: decide
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+          EVENT: ${{ github.event.workflow_run.event }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          HEAD_REPO: ${{ github.event.workflow_run.head_repository.full_name }}
+        run: sh scripts/ci/rerun-decision.sh "$RUN" "$ATTEMPT" "$EVENT" "$BRANCH" "$SHA" "$HEAD_REPO"
+      - name: Re-run the failed jobs
+        if: steps.decide.outputs.rerun == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN: ${{ github.event.workflow_run.id }}
+          URL: ${{ github.event.workflow_run.html_url }}
+          JOBS: ${{ steps.decide.outputs.jobs }}
+        run: |
+          sh scripts/ci/retry.sh gh run rerun "$RUN" --failed --repo "$GITHUB_REPOSITORY"
+          echo "::notice title=CI re-run::Re-ran the failed jobs of $URL once: $JOBS"
+          printf '### Re-ran the failed jobs once\n\n%s\n\nJobs: %s\n' "$URL" "$JOBS" >>"$GITHUB_STEP_SUMMARY"
+      - name: The re-run didn't start, so tell the owner of an automatic update
+        if: failure() && steps.decide.outputs.rerun == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BRANCH: ${{ github.event.workflow_run.head_branch }}
+          RUN: ${{ github.event.workflow_run.html_url }}
+        run: sh scripts/ci/tell-owner.sh "$BRANCH" "$RUN"
+      - name: Not re-run
+        if: steps.decide.outputs.rerun != 'true'
+        env:
+          WHY: ${{ steps.decide.outputs.why }}
+        run: echo "Not re-run, $WHY"

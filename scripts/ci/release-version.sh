@@ -4,8 +4,8 @@
 # release is the newest v* tag in the commit's history, other than one on the
 # commit itself.
 #
-#   - Nothing but documentation changed since the previous release (what CI's
-#     docs-only filter ignores: SPEC.md, docs/**, other Markdown), or nothing
+#   - Nothing but documentation changed since the previous release (what CI
+#     checks nothing for: SPEC.md, docs/**, other Markdown), or nothing
 #     at all: release=false, "nothing to release".
 #   - A file a deployment downloads changed (CONFIG_PATHS, other than our own
 #     image's tag in compose.yaml): the next minor version, since a patch

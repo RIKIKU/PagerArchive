@@ -2310,6 +2310,18 @@ function crumbsOf(page: Page) {
 }
 
 async function axeOf(page: Page) {
+	// A tooltip fading in or out (app.css's .has-tip) is part-transparent, so
+	// its contrast mid-fade is no one's settled view: once, in Firefox, A82's
+	// scan caught Clear all's tooltip fading in. Every tooltip's transition,
+	// its delay included, finishes before the scan.
+	await page.waitForFunction(
+		() =>
+			document
+				.getAnimations()
+				.every((a) => !(a.effect instanceof KeyframeEffect && a.effect.target instanceof Element && a.effect.target.classList.contains('tooltip'))),
+		undefined,
+		{ timeout: 5_000 }
+	);
 	const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
 	return results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`);
 }
@@ -2610,6 +2622,15 @@ test('A82 search box', async ({ browser, request }, info) => {
 		await expect(box).toHaveValue(`alias:"Hillside North" ${marker}`);
 		await expect(form.getByRole('button', { name: `Dates: ${days.label}`, exact: true })).toBeVisible();
 		await expect(clear).toBeVisible();
+		// With the mouse, the pointer is still where Clear all was clicked, so
+		// its tooltip fades in as the button comes back. The pointer is put
+		// there for certain and the tooltip waited for until it's fully shown,
+		// so axe checks it as it's seen, not part-way through the fade (A82
+		// once failed in Firefox on .clear > .tooltip's contrast, right here).
+		if (how === 'mouse') {
+			await clear.hover();
+			await expect(form.locator('.clear > .tooltip')).toHaveCSS('opacity', '1');
+		}
 		await shot('back');
 		await axe('after Back');
 
