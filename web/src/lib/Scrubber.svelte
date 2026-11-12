@@ -522,13 +522,29 @@
 		pointer-events: none;
 		transition: opacity 120ms ease-out;
 	}
-	.bg-veil {
+	/* Something behind the strip of dots and each label only, not a whole
+	   column: the rows' text and links beside it stay in sight. */
+	.bg-veil .tools,
+	.bg-veil .track,
+	.bg-veil .label {
 		background: var(--scrubber-veil);
 		backdrop-filter: blur(var(--scrubber-blur));
-		border-left: var(--border-width) solid var(--border);
 	}
-	.bg-solid {
+	.bg-solid .tools,
+	.bg-solid .track,
+	.bg-solid .label {
 		background: var(--surface);
+	}
+	.bg-veil .label,
+	.bg-solid .label {
+		padding: 0 var(--space-2xs);
+		border-radius: var(--radius-small);
+		color: var(--fg);
+	}
+	.bg-veil .tools,
+	.bg-veil .track,
+	.bg-solid .tools,
+	.bg-solid .track {
 		border-left: var(--border-width) solid var(--border);
 	}
 	.bg-clear .label {
