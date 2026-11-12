@@ -100,6 +100,18 @@ Remove-PagerArchiveAlias -Pattern 0100005
 
 `-WhatIf` and `-Confirm` work as for built-in commands. Removing asks for confirmation.
 
+### Choosing records
+
+A template or alias piped from `Get-PagerArchiveTemplate` or `Get-PagerArchiveAlias` (or any object with an `Id`) is chosen by its **Id**: the `Remove-`, `Set-` and `Rename-` commands act on exactly that record. This matters when two templates' names differ only in case, or when several aliases share a name:
+
+```powershell
+Get-PagerArchiveTemplate -Name 'example fire' | Where-Object -Property Id -EQ 49 | Remove-PagerArchiveTemplate
+Get-PagerArchiveAlias -Name 'Brigade' | Where-Object -Property Pattern -EQ '0300002' | Rename-PagerArchiveAlias -NewName 'Brigade South'
+Set-PagerArchiveTemplate -Id 49 -Colour '#1565c0'
+```
+
+A name typed, or piped as text, is matched as before: case-insensitively and with wildcards, so `Remove-PagerArchiveTemplate -Name 'example fire'` matches both `Example Fire` and `example fire`. Confirmations and `-WhatIf` name each record with its Id (`example fire (Id 49)`, `0300002 (Brigade, Id 4)`), so you can see which one is meant. A CSV from `Export-Csv` keeps the `Id` column, so its rows piped to these commands are chosen by Id too.
+
 ### Importing
 
 The import takes rows from the pipeline, usually from `Import-Csv`, and applies them as **one batch**:

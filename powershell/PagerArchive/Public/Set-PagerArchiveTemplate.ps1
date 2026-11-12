@@ -9,6 +9,11 @@ function Set-PagerArchiveTemplate {
     (R28). A new agency profile re-parses those aliases' pages (R23a). To
     rename a template, use Rename-PagerArchiveTemplate.
 
+    A template piped from Get-PagerArchiveTemplate, or any object with an Id,
+    is chosen by its Id: exactly that template, even when another template's
+    name differs only in case. Names typed or piped as text are matched as
+    -Name says. -WhatIf and the confirmation name each template with its Id.
+
     The icon comes from a file (-Path or -LiteralPath) or a web address
     (-Uri), and replaces the template's icon; -RemoveIcon removes it. A web
     address is downloaded on this computer, once for all the templates
@@ -30,11 +35,18 @@ function Set-PagerArchiveTemplate {
     .EXAMPLE
     Get-PagerArchiveTemplate -Name 'Example*' | Set-PagerArchiveTemplate -RemoveIcon -WhatIf
 
-    What if: Performing the operation "Change template" on target "Example Fire".
+    What if: Performing the operation "Change template" on target "Example Fire (Id 1)".
+
+    .EXAMPLE
+    Set-PagerArchiveTemplate -Id 49 -Colour '#1565c0'
+
+    Changes only the template with the Id 49, even when another template's
+    name differs from its name only in case.
 
     .INPUTS
-    System.String. Template names, by value or by the Name property, such
-    as PagerArchive.Template objects.
+    PagerArchive.Template, or objects with an Id property, chosen by Id.
+    System.String template names, by value or by the Name property of
+    objects without an Id.
 
     .OUTPUTS
     None, or PagerArchive.Template with -PassThru.
@@ -48,15 +60,34 @@ function Set-PagerArchiveTemplate {
     .LINK
     Rename-PagerArchiveTemplate
     #>
-    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'Settings')]
+    [CmdletBinding(SupportsShouldProcess, ConfirmImpact = 'Medium', DefaultParameterSetName = 'IdSettings')]
     [OutputType('PagerArchive.Template')]
     param(
         # The templates to change. Accepts wildcards, matched
         # case-insensitively.
-        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'Settings')]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'Path')]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'LiteralPath')]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'Uri')]
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'RemoveIcon')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
         [string[]] $Name,
+
+        # The Ids of the templates to change, exactly. A piped object's Id
+        # property binds here, and when it does, the Id chooses the template
+        # and its Name is ignored. No wildcards.
+        [Parameter(ValueFromPipelineByPropertyName, ParameterSetName = 'Settings')]
+        [Parameter(ValueFromPipelineByPropertyName, ParameterSetName = 'Path')]
+        [Parameter(ValueFromPipelineByPropertyName, ParameterSetName = 'LiteralPath')]
+        [Parameter(ValueFromPipelineByPropertyName, ParameterSetName = 'Uri')]
+        [Parameter(ValueFromPipelineByPropertyName, ParameterSetName = 'RemoveIcon')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'IdSettings')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'IdPath')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'IdLiteralPath')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'IdUri')]
+        [Parameter(Mandatory, ValueFromPipelineByPropertyName, ParameterSetName = 'IdRemoveIcon')]
+        [long[]] $Id,
 
         # The agency's new name. Default: unchanged. No wildcards.
         [ValidateNotNullOrEmpty()]
@@ -77,6 +108,7 @@ function Set-PagerArchiveTemplate {
         # Accepts wildcards, which must match one file. Default: the icon is
         # unchanged.
         [Parameter(Mandatory, ParameterSetName = 'Path')]
+        [Parameter(Mandatory, ParameterSetName = 'IdPath')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
         [string] $Path,
@@ -84,6 +116,7 @@ function Set-PagerArchiveTemplate {
         # A new icon file, taken exactly as written: no wildcards. Default:
         # the icon is unchanged.
         [Parameter(Mandatory, ParameterSetName = 'LiteralPath')]
+        [Parameter(Mandatory, ParameterSetName = 'IdLiteralPath')]
         [Alias('PSPath')]
         [ValidateNotNullOrEmpty()]
         [string] $LiteralPath,
@@ -92,12 +125,14 @@ function Set-PagerArchiveTemplate {
         # computer (at most 100 KB, within 30 seconds) and the file
         # uploaded. No wildcards. Default: the icon is unchanged.
         [Parameter(Mandatory, ParameterSetName = 'Uri')]
+        [Parameter(Mandatory, ParameterSetName = 'IdUri')]
         [ValidateNotNull()]
         [uri] $Uri,
 
         # Removes the icon, so its aliases show their colour only. Off by
         # default.
         [Parameter(Mandatory, ParameterSetName = 'RemoveIcon')]
+        [Parameter(Mandatory, ParameterSetName = 'IdRemoveIcon')]
         [switch] $RemoveIcon,
 
         # Output the changed template. Off by default.
@@ -119,14 +154,17 @@ function Set-PagerArchiveTemplate {
         $icon = $null
     }
     process {
-        foreach ($n in $Name) {
-            $wild = [System.Management.Automation.WildcardPattern]::new($n, [System.Management.Automation.WildcardOptions]::IgnoreCase)
-            $found = @($templates | Where-Object -FilterScript { $wild.IsMatch($_.Name) })
-            if (-not $found -and -not [System.Management.Automation.WildcardPattern]::ContainsWildcardCharacters($n)) {
-                $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'no_template' -Category ObjectNotFound -Message "No template is called '$n'." -TargetObject $n))
+        # An Id, when one is bound (a piped record), wins over its Name.
+        $selectors = if ($Id) { @($Id | ForEach-Object -Process { @{ Id = $_ } }) } else { @($Name | ForEach-Object -Process { @{ Name = $_ } }) }
+        foreach ($selector in $selectors) {
+            try {
+                $found = @(Select-PaTemplate -From $templates @selector)
+            } catch {
+                $PSCmdlet.WriteError((Copy-PaErrorRecord -ErrorRecord $_ -TargetObject $_.TargetObject))
+                continue
             }
             foreach ($template in $found) {
-                if (-not $PSCmdlet.ShouldProcess($template.Name, 'Change template')) {
+                if (-not $PSCmdlet.ShouldProcess((Get-PaTemplateTarget -Template $template), 'Change template')) {
                     continue
                 }
                 if ($iconSource -and $null -eq $icon) {
