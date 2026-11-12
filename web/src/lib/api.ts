@@ -42,6 +42,8 @@ export interface Message {
 	labels: Record<string, string>;
 	location: Location | null;
 	flags?: Flags;
+	/** Its note in the album listed, if it has one (R82f). */
+	note?: string;
 	receptions?: Reception[];
 }
 
@@ -129,6 +131,34 @@ export interface Meta {
 export interface MessagePage {
 	messages: Message[];
 	next?: string;
+	/** After a jump or a page of newer ones: the cursor for newer messages, if there may be any (R81b). */
+	newer?: string;
+}
+
+/** One of the scrubber's marks (R81b-R81d): a span of time, newest first, and how many messages of the search it holds. */
+export interface Mark {
+	start: string;
+	end: string;
+	kind: 'hour' | 'day' | 'week' | 'month' | 'block';
+	count: number;
+}
+
+export interface Counts {
+	marks: Mark[];
+	/** false: counting would have taken too long; the marks have no dots. */
+	counted: boolean;
+}
+
+/** An album (R82, R82f): its creator's alone. */
+export interface Album {
+	id: number;
+	name: string;
+	description: string | null;
+	messages: number;
+	created_at: string;
+	updated_at: string;
+	/** Retention took its last message and it was kept for its description (R82a). */
+	emptied_at: string | null;
 }
 
 export interface UnaliasedCapcode {
@@ -600,7 +630,36 @@ export const api = {
 		if (before) q.set('before', before);
 		return get<MessagePage>(`/api/v1/messages?${q}`);
 	},
+	/** R81b: the messages sent before a time (a jump), or the page just newer
+	 * than a cursor. */
+	messagesAt: (query: URLSearchParams, at: string) => {
+		const q = new URLSearchParams(query);
+		q.set('at', at);
+		return get<MessagePage>(`/api/v1/messages?${q}`);
+	},
+	messagesAfter: (query: URLSearchParams, after: string) => {
+		const q = new URLSearchParams(query);
+		q.set('after', after);
+		return get<MessagePage>(`/api/v1/messages?${q}`);
+	},
+	/** R81b-R81d: the scrubber's marks for a search; hour zooms into one. */
+	counts: (query: URLSearchParams, hour?: string) => {
+		const q = new URLSearchParams(query);
+		if (hour) q.set('hour', hour);
+		return get<Counts>(`/api/v1/messages/counts?${q}`);
+	},
 	message: (id: string | number) => get<Message>(`/api/v1/messages/${encodeURIComponent(id)}`),
+	// Albums (R82-R82f).
+	albums: () => get<Album[]>('/api/v1/albums'),
+	album: (id: string | number) => get<Album>(`/api/v1/albums/${encodeURIComponent(id)}`),
+	createAlbum: (name: string, description: string) => request<Album>('POST', '/api/v1/albums', { name, description }),
+	updateAlbum: (id: number, change: { name?: string; description?: string }) => request<Album>('PATCH', `/api/v1/albums/${id}`, change),
+	deleteAlbum: (id: number) => request<void>('DELETE', `/api/v1/albums/${id}`),
+	addToAlbum: (album: number, message: number) => request<void>('PUT', `/api/v1/albums/${album}/messages/${message}`),
+	removeFromAlbum: (album: number, message: number) => request<void>('DELETE', `/api/v1/albums/${album}/messages/${message}`),
+	setNote: (album: number, message: number, note: string) =>
+		request<{ note: string | null }>('PUT', `/api/v1/albums/${album}/messages/${message}/note`, { note }),
+	messageAlbums: (message: number | string) => get<{ albums: number[] }>(`/api/v1/messages/${encodeURIComponent(message)}/albums`),
 	/** The print sheet's messages (R67): in the order asked, and the IDs of
 	 * those that no longer exist. At most MAX_SHEET IDs. */
 	messagesById: (ids: number[]) =>

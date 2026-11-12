@@ -76,6 +76,33 @@ func (q *Queries) AddIntegrationCapcodes(ctx context.Context, arg AddIntegration
 	return err
 }
 
+const addToAlbum = `-- name: AddToAlbum :execrows
+WITH album AS (
+    UPDATE albums al SET emptied_at = NULL, updated_at = now()
+    WHERE al.id = $2 AND al.owner_id = $3
+    RETURNING al.id AS album_id
+)
+INSERT INTO album_messages (album_id, message_id)
+SELECT album.album_id, m.id FROM album, messages m WHERE m.id = $1
+ON CONFLICT (album_id, message_id) DO NOTHING
+`
+
+type AddToAlbumParams struct {
+	MessageID int64
+	AlbumID   int64
+	OwnerID   int64
+}
+
+// A message added again keeps its place and its note. Adding one clears the
+// line that its messages had passed the retention period (R82a).
+func (q *Queries) AddToAlbum(ctx context.Context, arg AddToAlbumParams) (int64, error) {
+	result, err := q.db.Exec(ctx, addToAlbum, arg.MessageID, arg.AlbumID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const addTreeDeactivationPeople = `-- name: AddTreeDeactivationPeople :exec
 INSERT INTO tree_deactivation_people (deactivation_id, user_id, outcome)
 SELECT $1::bigint, unnest($2::bigint[]), unnest($3::text[])
@@ -214,6 +241,74 @@ func (q *Queries) AdminIntegrationsOfUser(ctx context.Context, ownerID int64) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const albumNotes = `-- name: AlbumNotes :many
+SELECT message_id, note::text AS note FROM album_messages
+WHERE album_id = $1 AND message_id = ANY($2::bigint[]) AND note IS NOT NULL
+`
+
+type AlbumNotesParams struct {
+	AlbumID int64
+	Ids     []int64
+}
+
+type AlbumNotesRow struct {
+	MessageID int64
+	Note      string
+}
+
+// The notes of these messages in one album (its owner's, checked by the caller).
+func (q *Queries) AlbumNotes(ctx context.Context, arg AlbumNotesParams) ([]AlbumNotesRow, error) {
+	rows, err := q.db.Query(ctx, albumNotes, arg.AlbumID, arg.Ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AlbumNotesRow
+	for rows.Next() {
+		var i AlbumNotesRow
+		if err := rows.Scan(&i.MessageID, &i.Note); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const albumsHolding = `-- name: AlbumsHolding :many
+SELECT am.album_id FROM album_messages am JOIN albums a ON a.id = am.album_id
+WHERE a.owner_id = $1 AND am.message_id = $2
+ORDER BY am.album_id
+`
+
+type AlbumsHoldingParams struct {
+	OwnerID   int64
+	MessageID int64
+}
+
+// Which of the signed-in user's albums hold a message, for "Add to album".
+func (q *Queries) AlbumsHolding(ctx context.Context, arg AlbumsHoldingParams) ([]int64, error) {
+	rows, err := q.db.Query(ctx, albumsHolding, arg.OwnerID, arg.MessageID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var album_id int64
+		if err := rows.Scan(&album_id); err != nil {
+			return nil, err
+		}
+		items = append(items, album_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -1174,6 +1269,27 @@ func (q *Queries) CountWaitingRequestsOf(ctx context.Context, requestedBy int64)
 	return count, err
 }
 
+const createAlbum = `-- name: CreateAlbum :one
+
+INSERT INTO albums (owner_id, name, description) VALUES ($1, $2, $3)
+RETURNING id
+`
+
+type CreateAlbumParams struct {
+	OwnerID     int64
+	Name        string
+	Description *string
+}
+
+// Albums (R82-R82b, R82f; ADR 0026). Every query names the album's owner,
+// so nobody else reaches an album, admins included.
+func (q *Queries) CreateAlbum(ctx context.Context, arg CreateAlbumParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createAlbum, arg.OwnerID, arg.Name, arg.Description)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
+}
+
 const createAlias = `-- name: CreateAlias :one
 INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4) RETURNING id
 `
@@ -1492,12 +1608,54 @@ func (q *Queries) DeactivateUsers(ctx context.Context, ids []int64) ([]Deactivat
 	return items, nil
 }
 
+const deleteAlbum = `-- name: DeleteAlbum :execrows
+DELETE FROM albums WHERE id = $1 AND owner_id = $2
+`
+
+type DeleteAlbumParams struct {
+	ID      int64
+	OwnerID int64
+}
+
+func (q *Queries) DeleteAlbum(ctx context.Context, arg DeleteAlbumParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteAlbum, arg.ID, arg.OwnerID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteAlbumsOf = `-- name: DeleteAlbumsOf :exec
+DELETE FROM albums WHERE owner_id = $1
+`
+
+// R82b: deleting an account deletes its albums, notes and all.
+func (q *Queries) DeleteAlbumsOf(ctx context.Context, ownerID int64) error {
+	_, err := q.db.Exec(ctx, deleteAlbumsOf, ownerID)
+	return err
+}
+
 const deleteAlias = `-- name: DeleteAlias :execrows
 DELETE FROM aliases WHERE id = $1
 `
 
 func (q *Queries) DeleteAlias(ctx context.Context, id int64) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteAlias, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteEmptiedAlbums = `-- name: DeleteEmptiedAlbums :execrows
+DELETE FROM albums a
+WHERE a.retention_touched AND a.description IS NULL
+  AND NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id)
+`
+
+// R82a: an album retention left with no messages goes, unless it has a description.
+func (q *Queries) DeleteEmptiedAlbums(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteEmptiedAlbums)
 	if err != nil {
 		return 0, err
 	}
@@ -1532,9 +1690,16 @@ func (q *Queries) DeleteIntegrationsByOwner(ctx context.Context, ownerID int64) 
 	return err
 }
 
-const deleteMessagesBefore = `-- name: DeleteMessagesBefore :execrows
-DELETE FROM messages
-WHERE id IN (SELECT id FROM messages WHERE sent_at < $1::timestamptz LIMIT $2::int)
+const deleteMessagesBefore = `-- name: DeleteMessagesBefore :one
+WITH gone AS (
+    DELETE FROM messages
+    WHERE id IN (SELECT id FROM messages WHERE sent_at < $1::timestamptz LIMIT $2::int)
+    RETURNING id
+), touched AS (
+    UPDATE albums SET retention_touched = true
+    WHERE NOT retention_touched AND id IN (SELECT am.album_id FROM album_messages am JOIN gone ON gone.id = am.message_id)
+)
+SELECT count(*)::bigint FROM gone
 `
 
 type DeleteMessagesBeforeParams struct {
@@ -1544,12 +1709,14 @@ type DeleteMessagesBeforeParams struct {
 
 // R45: one batch of messages older than the cut-off. Receptions go with them
 // (cascade); jobs and locations are columns of the message (section 14).
+// R82a: so do their places in albums, with their notes; the albums they
+// leave are marked, for FinishRetentionAlbums. The statement sees the album
+// rows as they were before it, so it finds them though the cascade removes them.
 func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBeforeParams) (int64, error) {
-	result, err := q.db.Exec(ctx, deleteMessagesBefore, arg.Cutoff, arg.Batch)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected(), nil
+	row := q.db.QueryRow(ctx, deleteMessagesBefore, arg.Cutoff, arg.Batch)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const deleteSession = `-- name: DeleteSession :exec
@@ -1877,6 +2044,26 @@ func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) 
 		arg.MessageID,
 	)
 	return err
+}
+
+const finishRetentionAlbums = `-- name: FinishRetentionAlbums :one
+WITH done AS (
+    UPDATE albums a SET retention_touched = false,
+        emptied_at = CASE WHEN NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id)
+                          THEN COALESCE(a.emptied_at, $1::timestamptz) ELSE a.emptied_at END
+    WHERE a.retention_touched
+    RETURNING NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id) AS kept
+)
+SELECT count(*)::bigint FROM done WHERE kept
+`
+
+// R82a: one kept, empty, for its description says its messages passed the
+// retention period (emptied_at). Returns how many were kept that way.
+func (q *Queries) FinishRetentionAlbums(ctx context.Context, now time.Time) (int64, error) {
+	row := q.db.QueryRow(ctx, finishRetentionAlbums, now)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const forgetImportSourceID = `-- name: ForgetImportSourceID :exec
@@ -3381,6 +3568,90 @@ func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparsePa
 	return items, nil
 }
 
+const myAlbum = `-- name: MyAlbum :one
+SELECT a.id, a.name, a.description, a.created_at, a.updated_at, a.emptied_at,
+       (SELECT count(*) FROM album_messages am WHERE am.album_id = a.id)::bigint AS messages
+FROM albums a
+WHERE a.id = $1 AND a.owner_id = $2
+`
+
+type MyAlbumParams struct {
+	ID      int64
+	OwnerID int64
+}
+
+type MyAlbumRow struct {
+	ID          int64
+	Name        string
+	Description *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	EmptiedAt   *time.Time
+	Messages    int64
+}
+
+func (q *Queries) MyAlbum(ctx context.Context, arg MyAlbumParams) (MyAlbumRow, error) {
+	row := q.db.QueryRow(ctx, myAlbum, arg.ID, arg.OwnerID)
+	var i MyAlbumRow
+	err := row.Scan(
+		&i.ID,
+		&i.Name,
+		&i.Description,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.EmptiedAt,
+		&i.Messages,
+	)
+	return i, err
+}
+
+const myAlbums = `-- name: MyAlbums :many
+SELECT a.id, a.name, a.description, a.created_at, a.updated_at, a.emptied_at,
+       (SELECT count(*) FROM album_messages am WHERE am.album_id = a.id)::bigint AS messages
+FROM albums a
+WHERE a.owner_id = $1
+ORDER BY lower(a.name), a.id
+`
+
+type MyAlbumsRow struct {
+	ID          int64
+	Name        string
+	Description *string
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+	EmptiedAt   *time.Time
+	Messages    int64
+}
+
+// The signed-in user's albums, by name, with how many messages each holds.
+func (q *Queries) MyAlbums(ctx context.Context, ownerID int64) ([]MyAlbumsRow, error) {
+	rows, err := q.db.Query(ctx, myAlbums, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MyAlbumsRow
+	for rows.Next() {
+		var i MyAlbumsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Description,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.EmptiedAt,
+			&i.Messages,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextDeliveryDue = `-- name: NextDeliveryDue :one
 SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending'
 `
@@ -3611,6 +3882,27 @@ func (q *Queries) RelinkUser(ctx context.Context, arg RelinkUserParams) error {
 		arg.InvitedBy,
 	)
 	return err
+}
+
+const removeFromAlbum = `-- name: RemoveFromAlbum :execrows
+DELETE FROM album_messages am
+USING albums a
+WHERE a.id = am.album_id AND a.id = $1 AND a.owner_id = $2
+  AND am.message_id = $3
+`
+
+type RemoveFromAlbumParams struct {
+	AlbumID   int64
+	OwnerID   int64
+	MessageID int64
+}
+
+func (q *Queries) RemoveFromAlbum(ctx context.Context, arg RemoveFromAlbumParams) (int64, error) {
+	result, err := q.db.Exec(ctx, removeFromAlbum, arg.AlbumID, arg.OwnerID, arg.MessageID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const requestReparse = `-- name: RequestReparse :exec
@@ -3873,10 +4165,17 @@ WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
        OR ('address_unsplit' = ANY($37::text[]) AND m.address_unsplit)
        OR ('location_mismatch' = ANY($37::text[]) AND m.location_mismatch))
   AND (NOT $38::bool OR m.location IS NOT NULL)
-  AND ($39::timestamptz IS NULL
-       OR (m.sent_at, m.id) < ($39, $40::bigint))
+  -- R82: one album's messages. Only the album's owner is given it (ADR 0026).
+  AND ($39::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = $39::bigint AND am.message_id = m.id))
+  AND ($40::timestamptz IS NULL
+       OR (m.sent_at, m.id) < ($40, $41::bigint))
+  -- R81b: after a jump, the messages newer than the list's first, which
+  -- Store.SearchNewer reads oldest first (ADR 0026).
+  AND ($42::timestamptz IS NULL
+       OR (m.sent_at, m.id) > ($42, $43::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
-LIMIT $41::int
+LIMIT $44::int
 `
 
 type SearchMessagesParams struct {
@@ -3918,8 +4217,11 @@ type SearchMessagesParams struct {
 	LocationMismatch   bool
 	Flags              []string
 	Located            bool
+	AlbumID            *int64
 	BeforeSent         *time.Time
 	BeforeID           *int64
+	AfterSent          *time.Time
+	AfterID            *int64
 	MaxRows            int32
 }
 
@@ -4000,8 +4302,11 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.LocationMismatch,
 		arg.Flags,
 		arg.Located,
+		arg.AlbumID,
 		arg.BeforeSent,
 		arg.BeforeID,
+		arg.AfterSent,
+		arg.AfterID,
 		arg.MaxRows,
 	)
 	if err != nil {
@@ -4148,6 +4453,34 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.SessionUsedAt,
 	)
 	return i, err
+}
+
+const setAlbumNote = `-- name: SetAlbumNote :execrows
+UPDATE album_messages am SET note = $1
+FROM albums a
+WHERE a.id = am.album_id AND a.id = $2 AND a.owner_id = $3
+  AND am.message_id = $4
+`
+
+type SetAlbumNoteParams struct {
+	Note      *string
+	AlbumID   int64
+	OwnerID   int64
+	MessageID int64
+}
+
+// R82f: a message's note in one album; NULL for none.
+func (q *Queries) SetAlbumNote(ctx context.Context, arg SetAlbumNoteParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setAlbumNote,
+		arg.Note,
+		arg.AlbumID,
+		arg.OwnerID,
+		arg.MessageID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const setAlias = `-- name: SetAlias :exec
@@ -4602,6 +4935,31 @@ func (q *Queries) UnaliasedCapcodes(ctx context.Context) ([]UnaliasedCapcodesRow
 		return nil, err
 	}
 	return items, nil
+}
+
+const updateAlbum = `-- name: UpdateAlbum :execrows
+UPDATE albums SET name = $1, description = $2, updated_at = now()
+WHERE id = $3 AND owner_id = $4
+`
+
+type UpdateAlbumParams struct {
+	Name        string
+	Description *string
+	ID          int64
+	OwnerID     int64
+}
+
+func (q *Queries) UpdateAlbum(ctx context.Context, arg UpdateAlbumParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateAlbum,
+		arg.Name,
+		arg.Description,
+		arg.ID,
+		arg.OwnerID,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateAlias = `-- name: UpdateAlias :exec

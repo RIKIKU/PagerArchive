@@ -8,6 +8,7 @@
 	import { onMount } from 'svelte';
 	import { api, type Me, type Meta } from '#lib/api.ts';
 	import AccountMenu from '#lib/AccountMenu.svelte';
+	import { refreshAlbums } from '#lib/albums.svelte.ts';
 	import BottomBar from '#lib/BottomBar.svelte';
 	import Crumbs from '#lib/Crumbs.svelte';
 	import { here } from '#lib/here.svelte.ts';
@@ -47,6 +48,8 @@
 				.then((m) => {
 					me = m;
 					unfollow = loadSheet(m.id);
+					// R77: the Albums group lists their albums.
+					refreshAlbums();
 				})
 				.catch(() => {});
 		try {
@@ -96,7 +99,7 @@
 	// R33a: the search box applies to the view it's on, if that view lists
 	// messages; elsewhere it searches the message list. On a message's own
 	// page, it shows the list's search.
-	const searchable = ['/(list)', '/map', '/aliases/[id]', '/capcodes/[capcode]', '/jobs/[job]', '/sheet'];
+	const searchable = ['/(list)', '/map', '/aliases/[id]', '/capcodes/[capcode]', '/jobs/[job]', '/albums/[id]', '/sheet'];
 	const own = $derived(searchable.includes(route));
 	const action = $derived(own ? path : '/');
 	const query = $derived(own ? criteria(page.url) : route === '/(list)/messages/[id]' ? new URLSearchParams(list.query) : new URLSearchParams());

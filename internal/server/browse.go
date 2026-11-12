@@ -77,6 +77,7 @@ type Message struct {
 	Location *Location `json:"location"` // null when not placed (R24-R25)
 
 	Flags      *Flags      `json:"flags,omitempty"`      // admins only (R35c)
+	Note       *string     `json:"note,omitempty"`       // its note in the album listed (R82f)
 	Receptions []Reception `json:"receptions,omitempty"` // detail view only
 }
 
@@ -194,6 +195,10 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 type MessagePage struct {
 	Messages []Message `json:"messages"`
 	Next     string    `json:"next,omitempty"` // cursor for the following page
+	// Newer, after a jump (at) or a page of newer messages (after), is the
+	// cursor for the messages newer than this page, if there may be any
+	// (R81b, ADR 0026).
+	Newer string `json:"newer,omitempty"`
 }
 
 // search runs a message search. ids, when not empty, keeps just those messages.
@@ -212,47 +217,123 @@ func (s *Server) search(ctx context.Context, f search.Filter, before *search.Cur
 	return rows, nil
 }
 
+// searchNewer is search for the messages after a position, the nearest first.
+func (s *Server) searchNewer(ctx context.Context, f search.Filter, after search.Cursor, limit int) ([]db.SearchMessagesRow, error) {
+	p, err := f.Params(s.Ingest.Network, nil, limit)
+	if err != nil {
+		return nil, err
+	}
+	p.AfterSent, p.AfterID = &after.SentAt, &after.ID
+	rows, err := s.Store.SearchNewer(ctx, p)
+	if err != nil {
+		return nil, fmt.Errorf("search: %s", store.SafeError(err))
+	}
+	return rows, nil
+}
+
+// messageFilter reads a message list's search from the address, with the
+// album it's kept to, if any, which must be the signed-in user's (R82). ok is
+// false when it answered the request.
+func (s *Server) messageFilter(w http.ResponseWriter, r *http.Request) (search.Filter, bool) {
+	f, err := search.Parse(r.URL.Query(), s.isAdmin(r), s.Location)
+	if err == nil {
+		_, err = f.Params(s.Ingest.Network, nil, 1)
+	}
+	if err != nil {
+		problem(w, http.StatusBadRequest, err.Error())
+		return f, false
+	}
+	album, ok := s.albumParam(w, r)
+	f.Album = album
+	return f, ok
+}
+
+// listMessages lists messages, newest first, a page at a time: from the
+// newest, after a cursor (before), or from a time the scrubber jumped to (at:
+// the messages sent before it). after gives the page of messages just newer
+// than a cursor instead, newest first (R81b).
 func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	admin := s.isAdmin(r)
-	f, err := search.Parse(r.URL.Query(), admin, s.Location)
-	if err != nil {
-		problem(w, http.StatusBadRequest, err.Error())
+	q := r.URL.Query()
+	f, ok := s.messageFilter(w, r)
+	if !ok {
 		return
 	}
-	before, err := search.DecodeCursor(r.URL.Query().Get("before"))
-	if err != nil {
-		problem(w, http.StatusBadRequest, err.Error())
-		return
+	before, err := search.DecodeCursor(q.Get("before"))
+	var after *search.Cursor
+	if err == nil {
+		after, err = search.DecodeCursor(q.Get("after"))
 	}
-	if _, err := f.Params(s.Ingest.Network, nil, 1); err != nil {
+	var at *time.Time
+	if v := q.Get("at"); err == nil && v != "" {
+		t, perr := time.Parse(time.RFC3339, v)
+		if perr != nil {
+			err = errors.New("at must be an RFC 3339 time")
+		}
+		at = &t
+	}
+	if err == nil && (before != nil && after != nil || at != nil && (before != nil || after != nil)) {
+		err = errors.New("give one of before, after and at")
+	}
+	if err != nil {
 		problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	// The PowerShell module asks for as many as it needs (-First), and for
 	// every message's receive times (R63a).
 	limit := pageSize
-	if v := r.URL.Query().Get("limit"); v != "" {
+	if v := q.Get("limit"); v != "" {
 		if limit, err = strconv.Atoi(v); err != nil || limit < 1 || limit > maxPageSize {
 			problem(w, http.StatusBadRequest, fmt.Sprintf("limit must be 1 to %d", maxPageSize))
 			return
 		}
 	}
-	rows, err := s.search(r.Context(), f, before, limit+1, nil)
+	if at != nil {
+		// (sent_at, id) < (at, 0): every message sent before at.
+		before = &search.Cursor{SentAt: at.UTC(), ID: 0}
+	}
+	page := MessagePage{Messages: []Message{}}
+	var rows []db.SearchMessagesRow
+	if after != nil {
+		rows, err = s.searchNewer(r.Context(), f, *after, limit+1)
+		if err == nil && len(rows) > limit {
+			rows = rows[:limit]
+			last := rows[limit-1]
+			page.Newer = search.EncodeCursor(search.Cursor{SentAt: last.SentAt, ID: last.ID})
+		}
+		slices.Reverse(rows)
+	} else {
+		rows, err = s.search(r.Context(), f, before, limit+1, nil)
+		if err == nil && len(rows) > limit {
+			last := rows[limit-1]
+			page.Next = search.EncodeCursor(search.Cursor{SentAt: last.SentAt, ID: last.ID})
+			rows = rows[:limit]
+		}
+		if err == nil && at != nil {
+			// Messages may have been sent since at, or at it.
+			newer := *before
+			if len(rows) > 0 {
+				newer = search.Cursor{SentAt: rows[0].SentAt, ID: rows[0].ID}
+			}
+			page.Newer = search.EncodeCursor(newer)
+		}
+	}
 	if err != nil {
 		s.Log.Error("list messages", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
 		return
 	}
-	page := MessagePage{Messages: []Message{}}
-	if len(rows) > limit {
-		last := rows[limit-1]
-		page.Next = search.EncodeCursor(search.Cursor{SentAt: last.SentAt, ID: last.ID})
-		rows = rows[:limit]
-	}
 	for _, m := range rows {
 		page.Messages = append(page.Messages, s.toMessage(m, admin))
 	}
-	if r.URL.Query().Get("receptions") == "true" {
+	if f.Album != nil {
+		if err := s.addNotes(r, *f.Album, page.Messages); err != nil {
+			s.Log.Error("album notes", "error", err.Error())
+			problem(w, http.StatusInternalServerError, "lookup failed")
+			return
+		}
+	}
+	if q.Get("receptions") == "true" {
 		if err := s.addReceptions(r.Context(), page.Messages, admin); err != nil {
 			s.Log.Error("receptions", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "lookup failed")
@@ -528,6 +609,11 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	album, ok := s.albumParam(w, r)
+	if !ok {
+		return
+	}
+	f.Album = album
 	withReceptions := q.Get("receptions") == "true"
 	rc := http.NewResponseController(w)
 	w.Header().Set("Content-Type", "text/event-stream")

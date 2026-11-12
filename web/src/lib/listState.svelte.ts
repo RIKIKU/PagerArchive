@@ -16,6 +16,8 @@ export interface Kept {
 	key: string;
 	messages: Message[];
 	next?: string;
+	/** Newer messages not loaded, after a jump (R81b). */
+	newer?: string;
 	/** Where it was: the page's scroll, and the first row in view (its ID)
 	 * and that row's distance from the top of the window. */
 	place: { scrollY: number; row?: number; top: number };

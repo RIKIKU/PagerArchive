@@ -4,18 +4,31 @@
 	import AgencyIcon from './AgencyIcon.svelte';
 	import PriorityBadge from './PriorityBadge.svelte';
 	import PrintTick from './PrintTick.svelte';
+	import AlbumNote from './AlbumNote.svelte';
 
 	// pick: a tick box for the print sheet, on the print page only (R67).
 	// selected: the message open beside the list (R80); keepScroll: opening
-	// it leaves the list where it is.
+	// it leaves the list where it is. album: the album listed, whose note on
+	// this message the row shows and edits (R82f).
 	let {
 		m,
 		tz,
 		fresh = false,
 		pick = false,
 		selected = false,
-		keepScroll = false
-	}: { m: Message; tz: string; fresh?: boolean; pick?: boolean; selected?: boolean; keepScroll?: boolean } = $props();
+		keepScroll = false,
+		album,
+		onremoved
+	}: {
+		m: Message;
+		tz: string;
+		fresh?: boolean;
+		pick?: boolean;
+		selected?: boolean;
+		keepScroll?: boolean;
+		album?: number;
+		onremoved?: (id: number) => void;
+	} = $props();
 
 	// R35d: the alias opens the alias view; a capcode with no alias opens its own.
 	const whoHref = $derived(m.alias_id != null ? `/aliases/${m.alias_id}` : `/capcodes/${m.capcode}`);
@@ -51,6 +64,7 @@
 			>{m.display_text || '(no text)'}</a
 		>
 	</p>
+	{#if album !== undefined}<AlbumNote {m} {album} {onremoved} />{/if}
 	{#if m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
 		<footer>
 			{#if m.flags?.parse_failed}<span class="flag">parse failed</span>{/if}
