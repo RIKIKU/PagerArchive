@@ -3069,6 +3069,13 @@ async function firstInView(page: Page) {
 	});
 }
 
+/** Brings the hidden scrubber out: the pointer at the list's right edge (owner, 2026-11-13). */
+async function reveal(page: Page) {
+	const box = (await page.getByTestId('message-list').boundingBox())!;
+	await page.mouse.move(box.x + box.width - 2, 450, { steps: 2 });
+	await expect(page.getByTestId('scrubber')).toHaveAttribute('data-shown', 'true');
+}
+
 /** The scrubber's marks as drawn: kind, start, count and dots. */
 async function marksOf(page: Page) {
 	return page
@@ -3132,6 +3139,7 @@ FROM generate_series(0, 2) AS p (i);`);
 	// Dragging to 20 days ago: while dragging the mark is named; the list
 	// then shows that day's messages.
 	const target = scrubber.locator(`.mark[data-kind="day"][data-start^="${melbourneDay(20)}"]`);
+	await reveal(page);
 	const from = (await scrubber.locator('.mark').first().boundingBox())!;
 	const to = (await target.boundingBox())!;
 	await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
@@ -3146,6 +3154,7 @@ FROM generate_series(0, 2) AS p (i);`);
 
 	// Yesterday's 14:00 hour, then zoom: twelve 5-minute blocks, and picking
 	// the 14:20 one moves the list there.
+	await reveal(page);
 	await scrubber.locator('.mark[data-kind="hour"]').filter({ has: page.locator('.dot') }).first().click();
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 2`);
 	await page.getByRole('button', { name: /^Zoom into Yesterday 14:00/ }).click();
@@ -3153,6 +3162,7 @@ FROM generate_series(0, 2) AS p (i);`);
 	marks = await marksOf(page);
 	expect(marks.map((m) => m.count)).toEqual([0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0]);
 	await scrubber.locator('.mark[data-kind="block"]').nth(7).click(); // 14:20 to 14:25
+	await reveal(page);
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 1`);
 	await expect(page.getByRole('button', { name: 'The hour before' })).toBeEnabled();
 	await page.screenshot({ path: info.outputPath('a71-zoom.png') });
@@ -3322,8 +3332,10 @@ test('A72 albums', async ({ browser, request }, info) => {
 	expect(await axeOf(phone), 'axe: album on a phone').toEqual([]);
 	await phone.goto('/');
 	await waitLive(phone);
-	await expect(phone.getByTestId('scrubber')).toBeVisible();
-	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll with the scrubber').toBe(true);
+	// No scrubber on a phone (owner, 2026-11-13).
+	await expect(phone.getByTestId('message-list').locator('article').first()).toBeVisible();
+	await expect(phone.getByTestId('scrubber')).toHaveCount(0);
+	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 	await phone.screenshot({ path: info.outputPath('a72-phone-list.png') });
 
 	// Deleting it.
