@@ -79,7 +79,7 @@
 	.row {
 		position: relative;
 		min-width: 0;
-		padding: var(--row-pad-y) var(--row-pad-end, var(--row-pad-x)) var(--row-pad-y) var(--row-pad-x);
+		padding: var(--row-pad-y) var(--row-pad-end) var(--row-pad-y) var(--row-pad-x);
 		border-bottom: var(--border-width) solid var(--border);
 		border-left: var(--edge-width) solid transparent;
 		background: var(--plain-row);

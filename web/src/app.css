@@ -141,6 +141,7 @@
 	--page-pad-phone: 1rem;
 	--row-pad-y: 1rem;
 	--row-pad-x: 1.25rem;
+	--row-pad-end: var(--row-pad-x); /* a row's right side: wider where the scrubber sits over it */
 	--button-pad-x: 1.25rem;
 
 	/* Lines and corners. */
