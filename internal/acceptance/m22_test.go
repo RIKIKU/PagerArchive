@@ -504,3 +504,43 @@ func TestLargeEventsSignedIn(t *testing.T) {
 		t.Errorf("the scrubber counts %d of the event's pages, want 1", total)
 	}
 }
+
+// R87, R51a: detection is cheap on the ingest path. 200 Emergency pages to
+// aliased capcodes, each on a job naming units (the pages detection reads
+// most for), are posted with detection on and off; the time each takes is
+// logged, and the slowest must stay far inside R51a's 5 seconds. A third run
+// has every page join one open event.
+func TestLargeEventsCost(t *testing.T) {
+	e := setup(t)
+	detector := e.srv.Ingest.Events
+	run := func(label string, from int, text func(i int) string) time.Duration {
+		var total, worst time.Duration
+		for i := range 200 {
+			start := time.Now()
+			e.mustPost("a", fmt.Sprintf("010000%d", i%4+1), text(from+i), e.now.Add(-time.Duration(200-i)*time.Second))
+			d := time.Since(start)
+			total += d
+			worst = max(worst, d)
+		}
+		t.Logf("%s: 200 pages, %v each on average, the slowest %v", label, (total / 200).Round(10*time.Microsecond), worst.Round(10*time.Microsecond))
+		if worst > time.Second {
+			t.Errorf("%s: a page took %v to store", label, worst)
+		}
+		return total
+	}
+	plain := func(i int) string {
+		return unitsPage(fmt.Sprintf("EX%07d", 7000000+i), "SMOKE FROM SHED", units(i%50, 5), "STN1")
+	}
+	e.srv.Ingest.Events = nil
+	off := run("detection off", 0, plain)
+	e.srv.Ingest.Events = detector
+	on := run("detection on", 1000, plain)
+	e.mustPost("a", "0100001", dgPage("EX0007999", "DG0851", "STN1"), e.now.Add(-201*time.Second))
+	joined := run("detection on, every page joining an open event", 2000, func(i int) string {
+		return dgPage(fmt.Sprintf("EX%07d", 7000000+i), fmt.Sprintf("DG%04d", i%9000), "STN1")
+	})
+	t.Logf("R87: detection added %v a page; joining an event, %v", ((on - off) / 200).Round(10*time.Microsecond), ((joined - off) / 200).Round(10*time.Microsecond))
+	if evs := e.largeEvents(e.user); len(evs) != 1 || evs[0].Pages != 201 {
+		t.Errorf("events %+v, want 1 of 201 pages", evs)
+	}
+}
