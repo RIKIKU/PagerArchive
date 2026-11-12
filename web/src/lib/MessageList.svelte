@@ -454,7 +454,7 @@
 	// the view.
 	function backToList() {
 		const edge = below();
-		const row = rowsInView().find((r) => r.getBoundingClientRect().bottom > edge);
+		const row = rowsInView().find((r) => r.getBoundingClientRect().bottom > edge + 1); // a row ending at the edge is out of view
 		row?.querySelector<HTMLElement>('a.open')?.focus({ preventScroll: true });
 	}
 
