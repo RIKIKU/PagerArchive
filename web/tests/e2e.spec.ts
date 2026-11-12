@@ -3011,3 +3011,9 @@ test('M13 screenshots', async ({ browser, request }, info) => {
 		}
 	}
 });
+
+// Throwaway (never merged): fails on its first try only, to show Playwright's
+// retry in CI and the flaky report (ADR 0025).
+test('zz throwaway: fails on its first try only', async ({}, info) => {
+	expect(info.retry, 'the first try fails on purpose').toBeGreaterThan(0);
+});
