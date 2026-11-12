@@ -5,7 +5,8 @@ Installs one PowerShell release from Microsoft's GitHub releases, for CI.
 .DESCRIPTION
 Downloads the release archive for this OS (Windows zip, or Linux x64
 tar.gz), checks it against the release's published SHA-256 hashes, and
-unpacks it into Destination. "newest" is the newest stable release, read
+unpacks it into Destination. Each download gets up to 3 tries
+(Invoke-Retried.ps1, ADR 0025). "newest" is the newest stable release, read
 from Microsoft's build information (https://aka.ms/pwsh-buildinfo-stable).
 Writes the path of the installed pwsh.
 
@@ -24,15 +25,16 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+. (Join-Path -Path $PSScriptRoot -ChildPath 'Invoke-Retried.ps1')
 if ($Version -eq 'newest') {
-    $Version = (Invoke-RestMethod -Uri 'https://aka.ms/pwsh-buildinfo-stable').ReleaseTag.TrimStart('v')
+    $Version = (Invoke-Retried -What 'Reading the newest PowerShell release' -ScriptBlock { Invoke-RestMethod -Uri 'https://aka.ms/pwsh-buildinfo-stable' }).ReleaseTag.TrimStart('v')
 }
 $file = if ($IsWindows) { "PowerShell-$Version-win-x64.zip" } else { "powershell-$Version-linux-x64.tar.gz" }
 $base = "https://github.com/PowerShell/PowerShell/releases/download/v$Version"
 $archive = Join-Path -Path ([System.IO.Path]::GetTempPath()) -ChildPath $file
-Invoke-WebRequest -Uri "$base/$file" -OutFile $archive
+Invoke-Retried -What "Downloading $file" -ScriptBlock { Invoke-WebRequest -Uri "$base/$file" -OutFile $archive }
 # hashes.sha256 is UTF-16 with a byte-order mark: "<hash> *<file>" per line.
-$hashes = (Invoke-WebRequest -Uri "$base/hashes.sha256").Content
+$hashes = (Invoke-Retried -What "Downloading hashes.sha256 for $Version" -ScriptBlock { Invoke-WebRequest -Uri "$base/hashes.sha256" }).Content
 if ($hashes -is [byte[]]) {
     $encoding = if ($hashes.Length -ge 2 -and $hashes[0] -eq 0xFF -and $hashes[1] -eq 0xFE) { [System.Text.Encoding]::Unicode } else { [System.Text.Encoding]::UTF8 }
     $hashes = $encoding.GetString($hashes).TrimStart([char]0xFEFF)

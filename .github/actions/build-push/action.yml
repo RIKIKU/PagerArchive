@@ -1,0 +1,91 @@
+name: Build and push an image, retried
+description: >-
+  docker/build-push-action, tried up to 3 times when it publishes (ADR 0025):
+  a push to GHCR once failed with "permission_denied: write_package" and
+  passed when re-run. The builder keeps the first try's layers, so a retry
+  only pushes again. A build that only builds (a pull request's, a dry run's)
+  isn't retried: its failure is the change's. A push that passed only on a
+  retry is reported as flaky. Needs the repository checked out.
+inputs:
+  context:
+    description: The build's context
+    required: true
+  file:
+    description: The Dockerfile (empty for the context's Dockerfile)
+    required: false
+    default: ""
+  platforms:
+    description: build-push-action's platforms
+    required: true
+  tags:
+    description: build-push-action's tags
+    required: false
+    default: ""
+  labels:
+    description: build-push-action's labels
+    required: false
+    default: ""
+  push:
+    description: build-push-action's push
+    required: false
+    default: "false"
+  outputs:
+    description: build-push-action's outputs
+    required: false
+    default: ""
+  retry:
+    description: "true: this build publishes, so a failed try is tried again"
+    required: true
+outputs:
+  digest:
+    description: The image's digest
+    value: ${{ steps.first.outputs.digest || steps.second.outputs.digest || steps.third.outputs.digest }}
+runs:
+  using: composite
+  steps:
+    - id: first
+      continue-on-error: ${{ inputs.retry == 'true' }}
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ inputs.tags }}
+        labels: ${{ inputs.labels }}
+        push: ${{ inputs.push }}
+        outputs: ${{ inputs.outputs }}
+    - if: steps.first.outcome == 'failure'
+      shell: bash
+      run: echo "build-push failed on try 1 of 3; trying again in 15 s" && sleep 15
+    - id: second
+      if: steps.first.outcome == 'failure'
+      continue-on-error: true
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ inputs.tags }}
+        labels: ${{ inputs.labels }}
+        push: ${{ inputs.push }}
+        outputs: ${{ inputs.outputs }}
+    - if: steps.second.outcome == 'failure'
+      shell: bash
+      run: echo "build-push failed on try 2 of 3; trying again in 45 s" && sleep 45
+    - id: third
+      if: steps.second.outcome == 'failure'
+      uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      with:
+        context: ${{ inputs.context }}
+        file: ${{ inputs.file }}
+        platforms: ${{ inputs.platforms }}
+        tags: ${{ inputs.tags }}
+        labels: ${{ inputs.labels }}
+        push: ${{ inputs.push }}
+        outputs: ${{ inputs.outputs }}
+    - if: steps.first.outcome == 'failure'
+      shell: bash
+      env:
+        WHAT: build and push ${{ inputs.file || 'Dockerfile' }} (${{ inputs.platforms }})
+        HOW: passed on try ${{ steps.second.outcome == 'success' && '2' || '3' }} of 3
+      run: sh scripts/ci/flaky.sh "$WHAT" "$HOW"
