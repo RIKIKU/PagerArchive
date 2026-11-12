@@ -377,6 +377,7 @@
 		if (!dragging) return;
 		const i = indexAt(e.clientY) ?? hover;
 		dragging = false;
+		measure();
 		hover = undefined;
 		if (i === undefined) return;
 		picked = i;
@@ -386,6 +387,7 @@
 	}
 	function cancel() {
 		dragging = false;
+		measure();
 		hover = undefined;
 	}
 
@@ -411,7 +413,8 @@
 		const r = host.getBoundingClientRect();
 		const width = document.documentElement.clientWidth;
 		const bar = document.querySelector('header.top')?.getBoundingClientRect().bottom ?? 0;
-		top = Math.round(Math.max(bar, r.top));
+		// Not while dragging: the marks stay under the pointer as the list moves.
+		if (!dragging) top = Math.round(Math.max(bar, r.top));
 		right = Math.round(Math.max(0, width - r.right));
 		edge = r.right;
 		// Only a page's padding beside it: the zone runs to the window's edge.
