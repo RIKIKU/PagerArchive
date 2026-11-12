@@ -22,19 +22,27 @@ func dgPage(job, code, group string) string {
 	return fmt.Sprintf("@@%s GRS3 %s GRASS FIRE @ SAMPLE RD, MADEUPTON #%s", job, code, group)
 }
 
-// unitsPage is an Emergency page on job naming units.
-func unitsPage(job, what string, units []string, group string) string {
-	return fmt.Sprintf("@@%s HSF1 %s @ 12 FICTION ST, MADEUPTON UNITS %s #%s", job, what, strings.Join(units, " "), group)
+// jobPage is Emergency page n of job, for group, naming appliances (R8's
+// units field) if any are given.
+func jobPage(job string, n int, group string, units ...string) string {
+	named := ""
+	if len(units) > 0 {
+		named = " UNITS " + strings.Join(units, " ")
+	}
+	return fmt.Sprintf("@@%s HSF1 SMOKE FROM FACTORY UPDATE %d @ 12 FICTION ST, MADEUPTON%s #%s", job, n, named, group)
 }
 
-// units is n made-up unit names from U<from>.
-func units(from, n int) []string {
+// appliances is n made-up appliance names from U<from>.
+func appliances(from, n int) []string {
 	var out []string
 	for i := from; i < from+n; i++ {
 		out = append(out, fmt.Sprintf("U%02d", i))
 	}
 	return out
 }
+
+// aliased is the nth of the fixture's four aliased capcodes, in turn.
+func aliased(n int) string { return fmt.Sprintf("010000%d", n%4+1) }
 
 // clocked moves the API's clock with the integrations' (e.advance), so pages
 // can be posted hours apart and an event can end (R87a).
@@ -123,7 +131,7 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	if len(evs) != 1 || evs[0].ID != id || !slices.Equal(levelNames(evs[0]), []string{"deployment", "several_deployments"}) {
 		t.Fatalf("after DG0802: %+v, want the same event at deployment and several deployments", evs)
 	}
-	if !levelAt(evs[0], "several_deployments").Equal(t15) || evs[0].Codes != 2 || evs[0].Jobs != 2 || evs[0].Pages != 2 {
+	if !levelAt(evs[0], "several_deployments").Equal(t15) || evs[0].Codes != 2 || evs[0].Jobs != 2 || evs[0].EmergencyPages != 2 {
 		t.Errorf("event %+v: want several deployments at %v, 2 codes, 2 jobs, 2 pages", evs[0], t15)
 	}
 	var ids []int64
@@ -149,31 +157,43 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	t.Logf("A84: event %d %v from %v to %v; then event %d at %v", id, levelNames(evs[1]), evs[1].Start, evs[1].End, evs[0].ID, evs[0].Start)
 }
 
-// A85. A big job opens an event.
+// A85. A big job opens an event: 20 Emergency pages of one job to aliased
+// capcodes, each stored message once (owner, 2026-11-13).
 func TestA85BigJobOpensAnEvent(t *testing.T) {
 	e := setup(t)
 	e.clocked()
 	t0 := e.clock().Add(-30 * time.Minute).Truncate(time.Second)
-	// Job EX0000201's Emergency pages name 19 distinct units (one twice).
+	// Job EX0000201's 19 Emergency pages to aliased capcodes, the first
+	// naming 25 appliances: appliances don't count, pages do.
 	var posted []int64
-	for i, us := range [][]string{units(1, 5), units(6, 5), units(11, 5), append(units(16, 4), "U01")} {
-		posted = append(posted, e.mustPost("a", fmt.Sprintf("010000%d", i+1), unitsPage("EX0000201", "SMOKE FROM FACTORY", us, fmt.Sprintf("STN%d", i+1)), t0.Add(time.Duration(i)*time.Minute)).MessageID)
+	for i := range 19 {
+		var named []string
+		if i == 0 {
+			named = appliances(1, 25)
+		}
+		posted = append(posted, e.mustPost("a", aliased(i), jobPage("EX0000201", i+1, "STN1", named...), t0.Add(time.Duration(i)*time.Minute)).MessageID)
 	}
-	// A Non-emergency follow-up of the job, which doesn't count.
-	e.mustPost("a", "0100001", "HbRE EX0000201 MORE CREWS #STN1", t0.Add(5*time.Minute))
+	// Pages that don't count: the 19th again from a second receiver (the
+	// same message, R19), a Non-emergency follow-up, and an Emergency page of
+	// the job to a capcode with no alias.
+	if dup := e.mustPost("b", aliased(18), jobPage("EX0000201", 19, "STN1"), t0.Add(18*time.Minute+2*time.Second)); dup.MessageID != posted[18] {
+		t.Fatalf("the second receiver's copy is message %d, want %d", dup.MessageID, posted[18])
+	}
+	e.mustPost("a", "0100001", "HbRE EX0000201 MORE CREWS #STN1", t0.Add(19*time.Minute))
+	e.mustPost("a", "0999999", jobPage("EX0000201", 20, "STN1"), t0.Add(19*time.Minute))
 	if evs := e.largeEvents(e.user); len(evs) != 0 {
-		t.Fatalf("19 units opened %d events", len(evs))
+		t.Fatalf("19 Emergency pages opened %d events", len(evs))
 	}
-	// One more page names a 20th unit: an event at level big job, holding the
+	// The 20th: an event at level big job, met at its time, holding the
 	// job's pages.
-	at20 := t0.Add(10 * time.Minute)
-	posted = append(posted, e.mustPost("a", "0100002", unitsPage("EX0000201", "MORE CREWS NEEDED", []string{"U20"}, "STN2"), at20).MessageID)
+	at20 := t0.Add(20 * time.Minute)
+	posted = append(posted, e.mustPost("a", aliased(19), jobPage("EX0000201", 20, "STN2"), at20).MessageID)
 	evs := e.largeEvents(e.user)
 	if len(evs) != 1 || !slices.Equal(levelNames(evs[0]), []string{"big_job"}) || !levelAt(evs[0], "big_job").Equal(at20) {
-		t.Fatalf("after the 20th unit: %+v, want one event at level big job, met at %v", evs, at20)
+		t.Fatalf("after the 20th page: %+v, want one event at level big job, met at %v", evs, at20)
 	}
-	if evs[0].Units != 20 || evs[0].Jobs != 1 || evs[0].Codes != 0 || !evs[0].Start.Equal(t0) {
-		t.Errorf("event %+v: want 20 units, 1 job, no deployment codes, starting with the job's first page", evs[0])
+	if evs[0].EmergencyPages != 20 || evs[0].Jobs != 1 || evs[0].Codes != 0 || !evs[0].Start.Equal(t0) {
+		t.Errorf("event %+v: want 20 Emergency pages, 1 job, no deployment codes, starting with the job's first page", evs[0])
 	}
 	var held []int64
 	for _, m := range e.eventPages(e.user, evs[0].ID) {
@@ -181,41 +201,91 @@ func TestA85BigJobOpensAnEvent(t *testing.T) {
 	}
 	slices.Sort(held)
 	if !slices.Equal(held, posted) {
-		t.Errorf("the event holds %v, want the job's Emergency pages %v", held, posted)
+		t.Errorf("the event holds %v, want the job's Emergency pages to aliases %v", held, posted)
+	}
+	// No appliance count in the API (owner, 2026-11-13).
+	var raw map[string]any
+	if code, _ := e.user.call(http.MethodGet, fmt.Sprintf("/api/v1/large-events/%d", evs[0].ID), nil, &raw); code != http.StatusOK || raw["emergency_pages"] != float64(20) {
+		t.Errorf("the event's JSON: %d %v", code, raw)
+	}
+	for _, k := range []string{"units", "appliances"} {
+		if _, ok := raw[k]; ok {
+			t.Errorf("the event's JSON has %q: %v", k, raw)
+		}
 	}
 
-	// Only an admin sets the threshold.
-	if code, _ := e.user.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{Units: 25}, nil); code != http.StatusForbidden {
+	// Only an admin sets the threshold, from 2 to 1,000 pages.
+	if code, _ := e.user.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: 25}, nil); code != http.StatusForbidden {
 		t.Errorf("a user setting the threshold: %d, want 403", code)
 	}
 	for _, n := range []int{0, 1, 1001} {
-		if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{Units: n}, nil); code != http.StatusUnprocessableEntity {
+		if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: n}, nil); code != http.StatusUnprocessableEntity {
 			t.Errorf("threshold %d: %d, want 422", n, code)
 		}
 	}
 	var st server.LargeEventSettings
-	if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{Units: 25}, &st); code != http.StatusOK || st.Units != 25 {
+	if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: 25}, &st); code != http.StatusOK || st.BigJobPages != 25 {
 		t.Fatalf("setting 25: %d %+v", code, st)
 	}
-	if code, _ := e.admin.call(http.MethodGet, "/api/v1/admin/large-events", nil, &st); code != http.StatusOK || st.Units != 25 {
+	if code, _ := e.admin.call(http.MethodGet, "/api/v1/admin/large-events", nil, &st); code != http.StatusOK || st.BigJobPages != 25 {
 		t.Fatalf("threshold read back: %d %+v", code, st)
 	}
-	// A new job reaching 20 units opens none, a day later and nearby alike.
+	// A new job reaching 20 Emergency pages opens none, nearby and a day
+	// later alike.
 	for _, later := range []time.Duration{0, 24 * time.Hour} {
 		e.advance(later)
 		job := "EX0000202"
 		if later > 0 {
 			job = "EX0000203"
 		}
-		base := e.clock().Add(-5 * time.Minute)
-		for i, us := range [][]string{units(30, 10), units(40, 10)} {
-			e.mustPost("a", fmt.Sprintf("010000%d", i+3), unitsPage(job, "SMOKE FROM SHED", us, "STN3"), base.Add(time.Duration(i)*time.Minute))
+		base := e.clock().Add(-25 * time.Minute)
+		for i := range 20 {
+			e.mustPost("a", aliased(i), jobPage(job, i+1, "STN3"), base.Add(time.Duration(i)*time.Minute))
 		}
 	}
 	if evs = e.largeEvents(e.user); len(evs) != 1 {
-		t.Fatalf("with the threshold at 25, jobs of 20 units gave %d events, want still 1", len(evs))
+		t.Fatalf("with the threshold at 25, jobs of 20 Emergency pages gave %d events, want still 1", len(evs))
 	}
-	t.Logf("A85: 19 units, no event; the 20th opened event %d (%d pages, %d units); at 25, 20 units opened none", evs[0].ID, evs[0].Pages, evs[0].Units)
+	t.Logf("A85: 19 Emergency pages (one naming 25 appliances, one copy from a second receiver), no event; the 20th opened event %d (%d Emergency pages); at 25, 20 pages opened none", evs[0].ID, evs[0].EmergencyPages)
+}
+
+// R87, R87a, R19: a big job's pages arriving out of order, each from two
+// receivers, give the event pages in order give: big job at the 20th page by
+// sent time, holding all 21.
+func TestBigJobOutOfOrder(t *testing.T) {
+	base := time.Now().Add(-6 * time.Hour).UTC().Truncate(time.Second)
+	sentAt := func(i int) time.Time { return base.Add(time.Duration(i) * time.Minute) }
+	run := func(order []int, twice bool) (start, bigJob time.Time, pages int64, n int) {
+		e := setup(t)
+		for _, i := range order {
+			e.mustPost("a", aliased(i), jobPage("EX0000701", i+1, "STN1"), sentAt(i))
+			if twice {
+				e.mustPost("b", aliased(i), jobPage("EX0000701", i+1, "STN1"), sentAt(i).Add(3*time.Second))
+			}
+		}
+		evs := e.largeEvents(e.user)
+		if len(evs) == 0 {
+			return time.Time{}, time.Time{}, 0, 0
+		}
+		return evs[0].Start, levelAt(evs[0], "big_job"), evs[0].EmergencyPages, len(evs)
+	}
+	var inOrder, reversed, shuffled []int
+	for i := range 21 {
+		inOrder = append(inOrder, i)
+		reversed = append(reversed, 20-i)
+		shuffled = append(shuffled, (i*8)%21) // 8 and 21 share no factor: every page once
+	}
+	for _, c := range []struct {
+		name  string
+		order []int
+		twice bool
+	}{{"in order", inOrder, false}, {"newest first, from two receivers", reversed, true}, {"shuffled, from two receivers", shuffled, true}} {
+		start, big, pages, n := run(c.order, c.twice)
+		if n != 1 || !start.Equal(sentAt(0)) || !big.Equal(sentAt(19)) || pages != 21 {
+			t.Errorf("%s: %d events, start %v, big job %v, %d Emergency pages; want 1 from %v, big job at the 20th page's %v, 21 pages",
+				c.name, n, start, big, pages, sentAt(0), sentAt(19))
+		}
+	}
 }
 
 // A86. Large-event integrations fire once.
@@ -381,7 +451,7 @@ func TestLargeEventsOutOfOrder(t *testing.T) {
 		}
 		var out []got
 		for _, ev := range e.largeEvents(e.user) {
-			out = append(out, got{ev.Start, ev.End, levelAt(ev, "several_deployments"), ev.Pages, ev.Codes})
+			out = append(out, got{ev.Start, ev.End, levelAt(ev, "several_deployments"), ev.EmergencyPages, ev.Codes})
 		}
 		return out
 	}
@@ -454,7 +524,7 @@ func TestLargeEventRetention(t *testing.T) {
 	if len(evs) != 1 {
 		t.Fatalf("after the run: %d events, want 1 (the old one gone with its pages)", len(evs))
 	}
-	if ev := evs[0]; ev.Pages != 1 || ev.Codes != 1 || ev.Jobs != 1 || !ev.Start.Equal(cut.Add(2*time.Hour)) ||
+	if ev := evs[0]; ev.EmergencyPages != 1 || ev.Codes != 1 || ev.Jobs != 1 || !ev.Start.Equal(cut.Add(2*time.Hour)) ||
 		!slices.Equal(levelNames(ev), []string{"deployment", "several_deployments"}) {
 		t.Errorf("the thinned event: %+v; want 1 page, 1 code, 1 job, starting at its remaining page, its levels kept", ev)
 	}
@@ -503,8 +573,8 @@ func TestLargeEventsSignedIn(t *testing.T) {
 }
 
 // R87, R51a: detection is cheap on the ingest path. 200 Emergency pages to
-// aliased capcodes, each on a job naming units (the pages detection reads
-// most for), are posted with detection on and off; the time each takes is
+// aliased capcodes, each on a job of its own (detection reads each one's job
+// pages), are posted with detection on and off; the time each takes is
 // logged, and the slowest must stay far inside R51a's 5 seconds. A third run
 // has every page join one open event.
 func TestLargeEventsCost(t *testing.T) {
@@ -526,7 +596,7 @@ func TestLargeEventsCost(t *testing.T) {
 		return total
 	}
 	plain := func(i int) string {
-		return unitsPage(fmt.Sprintf("EX%07d", 7000000+i), "SMOKE FROM SHED", units(i%50, 5), "STN1")
+		return jobPage(fmt.Sprintf("EX%07d", 7000000+i), 1, "STN1", appliances(i%50, 5)...)
 	}
 	e.srv.Ingest.Events = nil
 	off := run("detection off", 0, plain)
@@ -537,7 +607,7 @@ func TestLargeEventsCost(t *testing.T) {
 		return dgPage(fmt.Sprintf("EX%07d", 7000000+i), fmt.Sprintf("DG%04d", i%9000), "STN1")
 	})
 	t.Logf("R87: detection added %v a page; joining an event, %v", ((on - off) / 200).Round(10*time.Microsecond), ((joined - off) / 200).Round(10*time.Microsecond))
-	if evs := e.largeEvents(e.user); len(evs) != 1 || evs[0].Pages != 201 {
+	if evs := e.largeEvents(e.user); len(evs) != 1 || evs[0].EmergencyPages != 201 {
 		t.Errorf("events %+v, want 1 of 201 pages", evs)
 	}
 }

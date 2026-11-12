@@ -72,8 +72,9 @@ function Get-PagerArchiveMessage {
     (Emergency, Non-emergency, Admin or None), Text (as a pager shows it,
     in full), RawText (as received, with the priority marker), Group,
     JobNumber, EventType, Category, Description, Address, Locality, GridRef,
-    Units, Fields (other parsed fields), Location (Longitude, Latitude,
-    Approximate, Source), ParseFailed, AddressUnsplit, LocationMismatch,
+    Units (the appliances named, shown as Appliances), Fields (other parsed
+    fields), Location (Longitude, Latitude, Approximate, Source),
+    ParseFailed, AddressUnsplit, LocationMismatch,
     Heartbeat, Ignored and Receptions (Client, ReceivedAt).
 
     .LINK

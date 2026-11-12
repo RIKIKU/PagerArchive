@@ -2,7 +2,7 @@
 -- R87-R87e (ADR 0027): large events. An event is a group of pages, derived
 -- from them on ingest: Emergency pages to aliased capcodes that carry a
 -- deployment code or belong to a big job, and the other pages of their jobs,
--- grouped by 12 hours. Its numbers (deployment codes, jobs, units) are
+-- grouped by 12 hours. Its numbers (deployment codes, jobs, pages) are
 -- counted from the pages it still holds, so retention thins them (R87e).
 CREATE TABLE large_events (
     id         bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

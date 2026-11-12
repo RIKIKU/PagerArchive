@@ -39,7 +39,8 @@
 		['address', 'Address'],
 		['locality', 'Locality'],
 		['grid_ref', 'Grid reference'],
-		['units', 'Units'],
+		// R8: the units field, shown as Appliances (owner, 2026-11-13).
+		['units', 'Appliances'],
 		['group', 'Group']
 	];
 

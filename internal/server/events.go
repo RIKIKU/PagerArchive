@@ -3,6 +3,7 @@ package server
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -25,10 +26,11 @@ type LargeEvent struct {
 	Start  time.Time    `json:"start"`
 	End    time.Time    `json:"end"`
 	Levels []EventLevel `json:"levels"` // the levels met, in R87b's order
-	Pages  int64        `json:"pages"`
-	Codes  int64        `json:"deployment_codes"`
-	Jobs   int64        `json:"jobs"`
-	Units  int64        `json:"units"`
+	// EmergencyPages is how many pages it holds, all Emergency pages that
+	// count (R87). No appliance count is shown (owner, 2026-11-13).
+	EmergencyPages int64 `json:"emergency_pages"`
+	Codes          int64 `json:"deployment_codes"`
+	Jobs           int64 `json:"jobs"`
 	// The event's own view only: its codes and job numbers, by first page.
 	CodeList []string `json:"deployment_code_list,omitempty"`
 	JobList  []string `json:"job_list,omitempty"`
@@ -49,9 +51,9 @@ type LargeEventPage struct {
 
 const eventPageSize = 50
 
-func (s *Server) toEvent(e db.LargeEvent, pages, codes, jobs, units int64) LargeEvent {
+func (s *Server) toEvent(e db.LargeEvent, pages, codes, jobs int64) LargeEvent {
 	out := LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(),
-		Levels: []EventLevel{}, Pages: pages, Codes: codes, Jobs: jobs, Units: units}
+		Levels: []EventLevel{}, EmergencyPages: pages, Codes: codes, Jobs: jobs}
 	for _, l := range []struct {
 		level events.Level
 		at    *time.Time
@@ -89,7 +91,7 @@ func (s *Server) listLargeEvents(w http.ResponseWriter, r *http.Request) {
 	for _, e := range rows {
 		ev := db.LargeEvent{ID: e.ID, FirstAt: e.FirstAt, LastAt: e.LastAt, DeploymentAt: e.DeploymentAt,
 			SeveralDeploymentsAt: e.SeveralDeploymentsAt, BigJobAt: e.BigJobAt, CreatedAt: e.CreatedAt}
-		out.Events = append(out.Events, s.toEvent(ev, e.Pages, e.Codes, e.Jobs, e.Units))
+		out.Events = append(out.Events, s.toEvent(ev, e.Pages, e.Codes, e.Jobs))
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -109,15 +111,12 @@ func (s *Server) getLargeEvent(w http.ResponseWriter, r *http.Request) {
 	}
 	var codes []db.LargeEventCodeTimesRow
 	var jobs []db.LargeEventJobsRow
-	var units, pages int64
+	var pages int64
 	if err == nil {
 		codes, err = s.Store.LargeEventCodeTimes(ctx, id)
 	}
 	if err == nil {
 		jobs, err = s.Store.LargeEventJobs(ctx, id)
-	}
-	if err == nil {
-		units, err = s.Store.LargeEventUnits(ctx, id)
 	}
 	if err == nil {
 		pages, err = s.Store.LargeEventPages(ctx, id)
@@ -127,7 +126,7 @@ func (s *Server) getLargeEvent(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	out := s.toEvent(e, pages, int64(len(codes)), int64(len(jobs)), units)
+	out := s.toEvent(e, pages, int64(len(codes)), int64(len(jobs)))
 	out.CodeList, out.JobList = []string{}, []string{}
 	for _, c := range codes {
 		out.CodeList = append(out.CodeList, c.Code)
@@ -181,17 +180,19 @@ func (s *Server) eventRange(r *http.Request, id int64) (from, to *time.Time, err
 
 // LargeEventSettings are the admins' settings for large events (R87).
 type LargeEventSettings struct {
-	Units int `json:"units"` // the big-job threshold: distinct units on one job
+	// BigJobPages is the big-job threshold: Emergency pages on one job that
+	// count (R87; owner, 2026-11-13).
+	BigJobPages int `json:"big_job_pages"`
 }
 
 func (s *Server) getLargeEventSettings(w http.ResponseWriter, r *http.Request) {
-	n, err := events.Units(r.Context(), s.Store.Queries)
+	n, err := events.Threshold(r.Context(), s.Store.Queries)
 	if err != nil {
 		s.Log.Error("large event settings", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	writeJSON(w, http.StatusOK, LargeEventSettings{Units: n})
+	writeJSON(w, http.StatusOK, LargeEventSettings{BigJobPages: n})
 }
 
 func (s *Server) putLargeEventSettings(w http.ResponseWriter, r *http.Request) {
@@ -200,15 +201,15 @@ func (s *Server) putLargeEventSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
-	if err := events.SetUnits(r.Context(), s.Store.Queries, req.Units); err != nil {
-		if errors.Is(err, events.ErrUnits) {
-			problem(w, http.StatusUnprocessableEntity, "The number of units must be a whole number from 2 to 1000.")
+	if err := events.SetThreshold(r.Context(), s.Store.Queries, req.BigJobPages); err != nil {
+		if errors.Is(err, events.ErrThreshold) {
+			problem(w, http.StatusUnprocessableEntity, fmt.Sprintf("The number of Emergency pages must be a whole number from %d to %d.", events.MinPages, events.MaxPages))
 			return
 		}
 		s.Log.Error("large event settings", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't save")
 		return
 	}
-	s.Log.Info("large event threshold changed", "by", currentUser(r).ID, "units", req.Units)
+	s.Log.Info("large event threshold changed", "by", currentUser(r).ID, "big_job_pages", req.BigJobPages)
 	writeJSON(w, http.StatusOK, req)
 }

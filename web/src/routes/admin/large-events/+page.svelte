@@ -1,13 +1,14 @@
 <script lang="ts">
 	import { api } from '#lib/api.ts';
 
-	// R87: how many distinct units one job's Emergency pages must name to open
-	// a large event (a big job). The default is 20. Events already recorded
-	// keep their levels; new pages are judged by the new number.
+	// R87: how many Emergency pages one job must have, to aliased capcodes, to
+	// open a large event (a big job). Each stored page counts once, however
+	// many receivers heard it. The default is 20. Events already recorded keep
+	// their levels; new pages are judged by the new number.
 	const MIN = 2;
 	const MAX = 1000;
 	let current: number | undefined = $state();
-	let units = $state(0);
+	let pages = $state(0);
 	let error = $state('');
 	let saved = $state('');
 	let busy = $state(false);
@@ -15,7 +16,7 @@
 	api
 		.largeEventSettings()
 		.then((s) => {
-			current = units = s.units;
+			current = pages = s.big_job_pages;
 		})
 		.catch((e) => (error = e.message));
 
@@ -24,9 +25,9 @@
 		busy = true;
 		error = saved = '';
 		try {
-			const s = await api.setLargeEventSettings(units);
-			current = units = s.units;
-			saved = `Saved: a job opens a large event when its Emergency pages name ${s.units} distinct units.`;
+			const s = await api.setLargeEventSettings(pages);
+			current = pages = s.big_job_pages;
+			saved = `Saved: a job opens a large event when it has ${s.big_job_pages} Emergency pages.`;
 		} catch (err) {
 			error = (err as Error).message;
 		} finally {
@@ -40,17 +41,17 @@
 <div class="page">
 	<h1>Large event settings</h1>
 	<p class="note">
-		Admins only. A large event opens when an Emergency page carries a deployment code (the network profile's pattern), or when one job's
-		Emergency pages name this many distinct units: a big job.
+		Admins only. A large event opens when an Emergency page carries a deployment code (the network profile's pattern), or when one job
+		has this many Emergency pages to capcodes with an alias: a big job. A page heard by several receivers counts once.
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if current !== undefined}
 		<form onsubmit={save}>
 			<label
-				>Distinct units for a big job
-				<input type="number" bind:value={units} min={MIN} max={MAX} step="1" required disabled={busy} />
+				>Emergency pages for a big job
+				<input type="number" bind:value={pages} min={MIN} max={MAX} step="1" required disabled={busy} />
 			</label>
-			<button type="submit" disabled={busy || units === current}>Save</button>
+			<button type="submit" disabled={busy || pages === current}>Save</button>
 		</form>
 		<p class="hint">Between {MIN} and {MAX}. The default is 20. Events already recorded keep their levels; pages from now on are judged by the new number.</p>
 		<p role="status" class="saved">{saved}</p>

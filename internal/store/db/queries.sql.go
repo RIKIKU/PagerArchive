@@ -2858,7 +2858,7 @@ func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]Invit
 }
 
 const jobEventPages = `-- name: JobEventPages :many
-SELECT m.id, m.sent_at, m.text, m.units, lem.event_id
+SELECT m.id, m.sent_at, m.text, lem.event_id
 FROM messages m
 LEFT JOIN large_event_messages lem ON lem.message_id = m.id
 WHERE m.job_number = $1::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
@@ -2870,12 +2870,13 @@ type JobEventPagesRow struct {
 	ID      int64
 	SentAt  time.Time
 	Text    string
-	Units   []string
 	EventID *int64
 }
 
 // The pages of a job that count (R87: Emergency, to an aliased capcode, not a
-// heartbeat), oldest first, with the event each is in, if any.
+// heartbeat), oldest first, with the event each is in, if any. One row per
+// stored message, so a copy from another receiver (R19) counts once towards
+// a big job.
 func (q *Queries) JobEventPages(ctx context.Context, jobNumber string) ([]JobEventPagesRow, error) {
 	rows, err := q.db.Query(ctx, jobEventPages, jobNumber)
 	if err != nil {
@@ -2889,7 +2890,6 @@ func (q *Queries) JobEventPages(ctx context.Context, jobNumber string) ([]JobEve
 			&i.ID,
 			&i.SentAt,
 			&i.Text,
-			&i.Units,
 			&i.EventID,
 		); err != nil {
 			return nil, err
@@ -3043,23 +3043,9 @@ const largeEventPages = `-- name: LargeEventPages :one
 SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1
 `
 
+// R87c, R87d: how many Emergency pages an event holds (all its pages count, R87).
 func (q *Queries) LargeEventPages(ctx context.Context, eventID int64) (int64, error) {
 	row := q.db.QueryRow(ctx, largeEventPages, eventID)
-	var column_1 int64
-	err := row.Scan(&column_1)
-	return column_1, err
-}
-
-const largeEventUnits = `-- name: LargeEventUnits :one
-SELECT count(DISTINCT u)::bigint
-FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-CROSS JOIN LATERAL unnest(m.units) AS u
-WHERE lem.event_id = $1
-`
-
-// R87c, R87d: the distinct units an event's pages name.
-func (q *Queries) LargeEventUnits(ctx context.Context, eventID int64) (int64, error) {
-	row := q.db.QueryRow(ctx, largeEventUnits, eventID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -3406,9 +3392,7 @@ SELECT e.id, e.first_at, e.last_at, e.deployment_at, e.several_deployments_at, e
        (SELECT count(DISTINCT c) FROM large_event_messages lem CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c
         WHERE lem.event_id = e.id)::bigint AS codes,
        (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-        WHERE lem.event_id = e.id)::bigint AS jobs,
-       (SELECT count(DISTINCT u) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-        CROSS JOIN LATERAL unnest(m.units) AS u WHERE lem.event_id = e.id)::bigint AS units
+        WHERE lem.event_id = e.id)::bigint AS jobs
 FROM large_events e
 WHERE $1::timestamptz IS NULL
    OR (e.first_at, e.id) < ($1::timestamptz, $2::bigint)
@@ -3433,11 +3417,12 @@ type ListLargeEventsRow struct {
 	Pages                int64
 	Codes                int64
 	Jobs                 int64
-	Units                int64
 }
 
 // R87c: events, newest first, with their numbers counted from the pages they
-// still hold (R87e). before_* is the page cursor.
+// still hold (R87e). Every page an event holds is an Emergency page that
+// counts (R87), so pages is its number of Emergency pages. before_* is the
+// page cursor.
 func (q *Queries) ListLargeEvents(ctx context.Context, arg ListLargeEventsParams) ([]ListLargeEventsRow, error) {
 	rows, err := q.db.Query(ctx, listLargeEvents, arg.BeforeFirst, arg.BeforeID, arg.MaxRows)
 	if err != nil {
@@ -3458,7 +3443,6 @@ func (q *Queries) ListLargeEvents(ctx context.Context, arg ListLargeEventsParams
 			&i.Pages,
 			&i.Codes,
 			&i.Jobs,
-			&i.Units,
 		); err != nil {
 			return nil, err
 		}

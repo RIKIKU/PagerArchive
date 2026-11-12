@@ -150,7 +150,7 @@
 			</div>
 			<p class="help">
 				It sends once per event, the first time the event reaches this level: the level, when, the event's start, its deployment codes,
-				jobs and number of units, and a link to the event. Never page text.
+				jobs and number of Emergency pages, and a link to the event. Never page text.
 			</p>
 		</fieldset>
 	{:else}

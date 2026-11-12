@@ -150,7 +150,7 @@ The same JSON goes to webhooks and MQTT. This is version 1.
 | `text` | The page as a pager shows it: without its priority marker |
 | `priority` | `Emergency`, `Non-emergency`, `Admin` or `null` |
 | `category`, `event_label` | The event type's report category and display label, from the profiles |
-| `fields`, `extra`, `labels` | The parsed fields, the profile's extra fields and their display labels. Missing values are `null` |
+| `fields`, `extra`, `labels` | The parsed fields, the profile's extra fields and their display labels. Missing values are `null`. `fields.units` is the appliances the page names, shown in the app as Appliances; its key stays `units` |
 | `location` | Where the page is placed (`address`, `street`, which is approximate, or `grid`), or `null` |
 | `flags` | Only for admins' integrations: `parse_failed`, `address_unsplit`, `location_mismatch` |
 
@@ -160,13 +160,13 @@ Requests come with `User-Agent: PagerArchive/<version>`.
 
 ## Large events
 
-An integration can select **large events** instead of capcodes and aliases (SPEC.md R87–R87d; design in [ADR 0027](adr/0027-m22-large-events.md)). PagerArchive groups Emergency pages to aliased capcodes into a large event when a page carries a deployment code (the network profile's `deployment_code_pattern`) or one job's pages name enough distinct units (20 by default, set by an admin in **Administration → Large event settings**). Pages within 12 hours of each other share an event, so a busy day's incidents may share one. Every signed-in user sees them under **Tools → Large events**.
+An integration can select **large events** instead of capcodes and aliases (SPEC.md R87–R87d; design in [ADR 0027](adr/0027-m22-large-events.md)). PagerArchive groups Emergency pages to aliased capcodes into a large event when a page carries a deployment code (the network profile's `deployment_code_pattern`) or one job has enough Emergency pages to aliased capcodes, a **big job** (20 by default, set by an admin in **Administration → Large event settings**; a page heard by several receivers counts once). Pages within 12 hours of each other share an event, so a busy day's incidents may share one. Every signed-in user sees them under **Tools → Large events**.
 
 Such an integration chooses one **level**:
 
 - **Deployment**: a page in the event carries a deployment code;
 - **Several deployments**: the event's pages carry 2 or more distinct deployment codes;
-- **Big job**: one of the event's jobs has named the threshold's distinct units.
+- **Big job**: one of the event's jobs has the threshold's number of Emergency pages.
 
 It sends **once per event**: the first time the event reaches that level. A level the event reached before the integration was made never fires it. It sends a **summary of the event, never page text**, whatever its content is set to; its content is always `summary`. Timing, retries, the 5-minute cut-off, "never twice", pausing and Send test are the same as for pages, counted from the page that took the event to the level. A large-event integration has no filter.
 
@@ -190,7 +190,7 @@ The webhook and MQTT JSON:
     "started_at": "2026-11-10T00:00:00Z",
     "deployment_codes": ["DG0801", "DG0802"],
     "jobs": ["EX0000101", "EX0000102"],
-    "units": 14,
+    "emergency_pages": 5,
     "url": "https://pager.example.org/large-events/7"
   }
 }
@@ -204,7 +204,7 @@ The webhook and MQTT JSON:
 | `large_event.reached_at` | When the event first met that level: the sent time of the page that met it |
 | `large_event.started_at` | The event's first page's sent time |
 | `large_event.deployment_codes`, `jobs` | The event's deployment codes and job numbers so far, by their first page |
-| `large_event.units` | How many distinct units the event's pages have named so far |
+| `large_event.emergency_pages` | How many Emergency pages the event holds so far (every page of an event is one). There is no appliance count (owner, 2026-11-13) |
 | `url`, `large_event.url` | The event's view in PagerArchive (needs signing in) |
 
-Discord, Telegram, Pushover and ntfy get the same summary in their own format: "Large event · Several deployments", then when it was reached and started, the codes, jobs and units, and the link. Home Assistant's event entity for such an integration fires `large_event` events.
+Discord, Telegram, Pushover and ntfy get the same summary in their own format: "Large event · Several deployments", then when it was reached and started, the codes, the jobs, the number of Emergency pages and the link. Home Assistant's event entity for such an integration fires `large_event` events.

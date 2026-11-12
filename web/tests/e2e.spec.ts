@@ -108,6 +108,21 @@ test('A10 marker hidden, Emergency badge shown', async ({ page, request }) => {
 	await expect(row).toContainText('Station 1');
 });
 
+// R8: the units field is shown as Appliances in a message's detail (owner,
+// 2026-11-13); its name in the API stays units.
+test('R8 units shown as Appliances', async ({ page, request }) => {
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS T1 T2 #STN1`);
+	const res = await request.get(`${URL}/api/v1/messages?job=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	const m = (await res.json()).messages[0] as { id: number; units: string[] };
+	expect(m.units).toEqual(['T1', 'T2']);
+	await page.goto(`/messages/${m.id}`);
+	const details = page.locator('.rest dl');
+	await expect(details.locator('dt', { hasText: /^Appliances$/ })).toBeVisible();
+	await expect(details.locator('dt', { hasText: /^Appliances$/ }).locator('xpath=following-sibling::dd[1]')).toHaveText('T1, T2');
+	await expect(details).not.toContainText(/\bUnits\b/);
+});
+
 // R31: at 375 px, date, time and alias stay visible with no horizontal scroll.
 test('R31 phone width keeps date, time and alias visible', async ({ browser, request }) => {
 	const job = uniqueJob();
@@ -3379,9 +3394,11 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await expect.poll(() => received.filter((r) => r.event_type === 'large_event').length, { timeout: 5000 }).toBe(1);
 		console.log(`A86 (browser): the delivery came ${Date.now() - start} ms after the second code`);
 		const got = received.find((r) => r.event_type === 'large_event')!;
-		const ev = got.large_event as { level: string; deployment_codes: string[]; url: string; id: number };
+		const ev = got.large_event as { level: string; deployment_codes: string[]; emergency_pages: number; url: string; id: number };
 		expect(ev.level).toBe('several_deployments');
 		expect(ev.deployment_codes).toEqual(codes);
+		expect(ev.emergency_pages).toBe(2);
+		expect(ev).not.toHaveProperty('units');
 		expect(JSON.stringify(got)).not.toContain('GRASS FIRE');
 		expect(got.text).toBeUndefined();
 
@@ -3399,7 +3416,9 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await expect(first).not.toContainText(/ongoing/i);
 		await expect(first).toContainText('Deployment');
 		await expect(first).toContainText('Several deployments');
-		await expect(first).toContainText('2 deployment codes · 2 jobs');
+		// The number of Emergency pages, never an appliance count (owner, 2026-11-13).
+		await expect(first).toContainText('2 deployment codes · 2 jobs · 2 Emergency pages');
+		await expect(first).not.toContainText(/unit|appliance/i);
 		await desk.screenshot({ path: info.outputPath('large-events-list-1280.png') });
 		expect(await axeOf(desk), 'axe: Large events').toEqual([]);
 
@@ -3407,6 +3426,8 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await first.getByRole('link').click();
 		await expect(desk).toHaveURL(new RegExp(`/large-events/${ev.id}$`));
 		await expect(desk.getByTestId('event-codes')).toHaveText(codes.join(', '));
+		await expect(desk.getByTestId('event-about')).toContainText('2 deployment codes · 2 jobs · 2 Emergency pages');
+		await expect(desk.getByTestId('event-about')).not.toContainText(/unit|appliance/i);
 		const rows = desk.getByTestId('message-list').locator('article');
 		await expect(rows).toHaveCount(2);
 		await expect(rows.first()).toContainText(jobs[1]);
@@ -3454,17 +3475,17 @@ test('A85 large event settings in Administration', async ({ browser }) => {
 	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
 	await admin.goto('/admin');
 	await admin.getByTestId('admin-screens').getByRole('link', { name: 'Large event settings' }).click();
-	const field = admin.getByLabel('Distinct units for a big job');
+	const field = admin.getByLabel('Emergency pages for a big job');
 	await expect(field).toHaveValue('20');
 	await field.fill('25');
 	await admin.getByRole('button', { name: 'Save' }).click();
-	await expect(admin.getByRole('status').filter({ hasText: 'name 25 distinct units' })).toBeVisible();
+	await expect(admin.getByRole('status').filter({ hasText: 'has 25 Emergency pages' })).toBeVisible();
 	await admin.reload();
-	await expect(admin.getByLabel('Distinct units for a big job')).toHaveValue('25');
+	await expect(admin.getByLabel('Emergency pages for a big job')).toHaveValue('25');
 	expect(await axeOf(admin), 'axe: large event settings').toEqual([]);
-	await admin.getByLabel('Distinct units for a big job').fill('20');
+	await admin.getByLabel('Emergency pages for a big job').fill('20');
 	await admin.getByRole('button', { name: 'Save' }).click();
-	await expect(admin.getByRole('status').filter({ hasText: 'name 20 distinct units' })).toBeVisible();
+	await expect(admin.getByRole('status').filter({ hasText: 'has 20 Emergency pages' })).toBeVisible();
 	// A user is refused.
 	const user = await (await signedIn(browser, 'user')).newPage();
 	await user.goto('/admin/large-events');

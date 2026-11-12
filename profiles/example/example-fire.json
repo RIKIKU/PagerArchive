@@ -7,7 +7,7 @@
   "formats": [
     {
       "name": "emergency",
-      "_comment": "<job> <type> <description> @ <address>, <locality> [GRID <6 digits>] [UNITS <unit> ...] #<group>",
+      "_comment": "<job> <type> <description> @ <address>, <locality> [GRID <6 digits>] [UNITS <appliance> ...] #<group>",
       "priorities": ["Emergency"],
       "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>.+?) @ (?P<address>.+?), (?P<locality>[A-Z][A-Z ]*?)(?: GRID (?P<grid_ref>[0-9]{6}))?(?: UNITS (?P<units>[^#]+?))? #(?P<group>\\S+)$",
       "fields": {

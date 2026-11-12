@@ -13,8 +13,8 @@ import (
 
 // EventSummary is a large event as a large-event integration sends it
 // (R87d): the level reached and when, the event's start, its deployment
-// codes, jobs and distinct units so far, and a link to its view. It never
-// holds page text, an address or a location.
+// codes, jobs and Emergency pages so far, and a link to its view. It never
+// holds page text, an address, a location or an appliance count.
 type EventSummary struct {
 	ID              int64     `json:"id"`
 	Level           string    `json:"level"`
@@ -23,7 +23,7 @@ type EventSummary struct {
 	StartedAt       time.Time `json:"started_at"`
 	DeploymentCodes []string  `json:"deployment_codes"`
 	Jobs            []string  `json:"jobs"`
-	Units           int64     `json:"units"`
+	EmergencyPages  int64     `json:"emergency_pages"`
 	URL             *string   `json:"url"`
 }
 
@@ -70,7 +70,7 @@ func (s *Service) renderEvent(p page) rendered {
 	if len(e.Jobs) > 0 {
 		parts = append(parts, plural(len(e.Jobs), "job", "jobs")+" ("+strings.Join(e.Jobs, ", ")+")")
 	}
-	parts = append(parts, plural(int(e.Units), "unit", "units"))
+	parts = append(parts, plural(int(e.EmergencyPages), "Emergency page", "Emergency pages"))
 	return rendered{Title: title, Body: strings.Join(parts, " · "), Link: e.URL}
 }
 
@@ -146,7 +146,7 @@ func (s *Service) eventSummary(ctx context.Context, q *db.Queries, id int64, lev
 	for _, j := range jobs {
 		out.Jobs = append(out.Jobs, j.JobNumber)
 	}
-	if out.Units, err = q.LargeEventUnits(ctx, id); err != nil {
+	if out.EmergencyPages, err = q.LargeEventPages(ctx, id); err != nil {
 		return out, false, err
 	}
 	out.URL = s.eventURL(id)
@@ -171,6 +171,6 @@ func (s *Service) testEventPage(now time.Time, level events.Level) page {
 	}
 	return page{Test: true, SentAt: now, URL: link, Event: &EventSummary{
 		Level: string(level), LevelLabel: level.Label(), ReachedAt: now, StartedAt: now.Add(-time.Hour),
-		DeploymentCodes: []string{"TEST"}, Jobs: []string{"TEST"}, Units: 0, URL: link,
+		DeploymentCodes: []string{"TEST"}, Jobs: []string{"TEST"}, EmergencyPages: 0, URL: link,
 	}}
 }

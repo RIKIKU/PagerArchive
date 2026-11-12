@@ -1,7 +1,7 @@
 <script lang="ts">
 	// R87c: large events, newest first: its first and last pages, the
-	// levels met, and how many deployment codes, jobs and distinct units their
-	// pages hold. Every signed-in user sees them, as they see the pages.
+	// levels met, and how many deployment codes, jobs and Emergency pages they
+	// hold. Every signed-in user sees them, as they see the pages.
 	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import Icon from '#lib/Icon.svelte';
@@ -36,7 +36,7 @@
 
 <h1>Large events</h1>
 <p class="status">
-	Times something big happened on the network: an Emergency page carrying a deployment code, or one job naming many distinct units. Pages
+	Times something big happened on the network: an Emergency page carrying a deployment code, or one job with many Emergency pages. Pages
 	within 12 hours of each other are grouped, so a busy day's incidents may share one event.
 </p>
 {#if error}<p class="error" role="alert">{error}</p>{/if}

@@ -2,7 +2,6 @@ package events
 
 import (
 	"context"
-	"fmt"
 	"slices"
 	"testing"
 	"time"
@@ -17,55 +16,55 @@ func at(d time.Duration) time.Time { return t0.Add(d) }
 
 func ptr[T any](v T) *T { return &v }
 
-func jobPage(id int64, d time.Duration, units ...string) db.JobEventPagesRow {
-	return db.JobEventPagesRow{ID: id, SentAt: at(d), Units: units}
+func jobPage(id int64, d time.Duration) db.JobEventPagesRow {
+	return db.JobEventPagesRow{ID: id, SentAt: at(d)}
 }
 
+// A big job counts the job's Emergency pages that count, one per stored
+// message (owner, 2026-11-13): the threshold-th page, oldest first, is when
+// it became one. What the pages say (appliances or none) doesn't matter.
 func TestCrossing(t *testing.T) {
 	job := []db.JobEventPagesRow{
-		jobPage(1, 0, "T1", "T2"),
-		jobPage(2, time.Minute, "T2", "T3"), // T2 again: still 3
-		jobPage(3, 2*time.Minute),           // no units
-		jobPage(4, 3*time.Minute, "T4"),
+		jobPage(1, 0),
+		jobPage(2, time.Minute),
+		jobPage(3, 2*time.Minute),
+		jobPage(4, 3*time.Minute),
 	}
 	for _, c := range []struct {
 		threshold int
 		want      *time.Time
 	}{
-		{2, ptr(at(0))},
-		{3, ptr(at(time.Minute))},
+		{2, ptr(at(time.Minute))},
+		{3, ptr(at(2 * time.Minute))},
 		{4, ptr(at(3 * time.Minute))},
 		{5, nil},
+		{0, nil},
 	} {
 		got := Crossing(job, c.threshold)
 		if (got == nil) != (c.want == nil) || (got != nil && !got.Equal(*c.want)) {
 			t.Errorf("threshold %d: %v, want %v", c.threshold, got, c.want)
 		}
 	}
-	// Distinct by the literal text (P3): t1 isn't T1.
-	if got := Crossing([]db.JobEventPagesRow{jobPage(1, 0, "T1", "t1")}, 2); got == nil {
-		t.Error("T1 and t1 counted as one unit")
-	}
-	if Crossing(nil, DefaultUnits) != nil {
+	if Crossing(nil, DefaultPages) != nil {
 		t.Error("no pages crossed")
 	}
 }
 
-// A85's numbers: 19 distinct units don't make a big job; the 20th does.
+// A85's numbers: 19 Emergency pages don't make a big job; the 20th does.
 func TestCrossingAtTwenty(t *testing.T) {
 	var job []db.JobEventPagesRow
 	for i := range 19 {
-		job = append(job, jobPage(int64(i+1), time.Duration(i)*time.Minute, fmt.Sprintf("U%02d", i+1), "U01"))
+		job = append(job, jobPage(int64(i+1), time.Duration(i)*time.Minute))
 	}
-	if Crossing(job, DefaultUnits) != nil {
-		t.Fatal("19 units crossed 20")
+	if Crossing(job, DefaultPages) != nil {
+		t.Fatal("19 pages crossed 20")
 	}
-	job = append(job, jobPage(20, time.Hour, "U20"))
-	if got := Crossing(job, DefaultUnits); got == nil || !got.Equal(at(time.Hour)) {
-		t.Fatalf("the 20th unit: %v, want %v", got, at(time.Hour))
+	job = append(job, jobPage(20, time.Hour))
+	if got := Crossing(job, DefaultPages); got == nil || !got.Equal(at(time.Hour)) {
+		t.Fatalf("the 20th page: %v, want %v", got, at(time.Hour))
 	}
 	if Crossing(job, 25) != nil {
-		t.Error("20 units crossed 25")
+		t.Error("20 pages crossed 25")
 	}
 }
 

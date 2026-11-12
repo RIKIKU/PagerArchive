@@ -155,7 +155,7 @@
               <ListItem><PropertyName>Address</PropertyName></ListItem>
               <ListItem><PropertyName>Locality</PropertyName></ListItem>
               <ListItem><PropertyName>GridRef</PropertyName></ListItem>
-              <ListItem><Label>Units</Label><ScriptBlock>$_.Units -join ', '</ScriptBlock></ListItem>
+              <ListItem><Label>Appliances</Label><ScriptBlock>$_.Units -join ', '</ScriptBlock></ListItem>
               <ListItem><Label>Fields</Label><ScriptBlock>($_.Fields.PSObject.Properties | ForEach-Object -Process { "$($_.Name): $($_.Value)" }) -join "`n"</ScriptBlock></ListItem>
               <ListItem><Label>Location</Label><ScriptBlock>if ($_.Location) { "$($_.Location.Latitude), $($_.Location.Longitude)$(if ($_.Location.Approximate) { ' (approximate)' }) from $($_.Location.Source)" } else { 'None' }</ScriptBlock></ListItem>
               <ListItem><PropertyName>ParseFailed</PropertyName></ListItem>

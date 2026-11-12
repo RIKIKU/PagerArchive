@@ -1,6 +1,6 @@
 // Package events notices large events (R87-R87e, ADR 0027): Emergency pages
 // to aliased capcodes that carry a deployment code, or belong to a job that
-// has named enough distinct units, open an event; pages within 12 hours of
+// has enough of them (a big job), open an event; pages within 12 hours of
 // one join it, with the other pages of their jobs.
 //
 // Detection runs in the ingest transaction of each new page (not a duplicate
@@ -29,7 +29,7 @@ type Level string
 const (
 	Deployment         Level = "deployment"          // one deployment code
 	SeveralDeployments Level = "several_deployments" // 2 or more distinct codes
-	BigJob             Level = "big_job"             // a job with enough distinct units
+	BigJob             Level = "big_job"             // a job with enough Emergency pages
 )
 
 // Levels, in the order the app shows them.
@@ -54,40 +54,43 @@ func (l Level) Valid() bool { return slices.Contains(Levels, l) }
 // Window joins a page to an event, and ends an event with no page (R87a).
 const Window = 12 * time.Hour
 
-// The big-job threshold (R87): distinct units on one job. Admins set it.
+// The big-job threshold (R87): Emergency pages on one job that count
+// (Page.Counts), each stored message once. Admins set it. The setting's key
+// is still large_event_units, from when it counted distinct units (owner,
+// 2026-11-13): a value stored then is in the same range, so it stays valid.
 const (
-	DefaultUnits = 20
-	MinUnits     = 2
-	MaxUnits     = 1000
-	unitsKey     = "large_event_units"
+	DefaultPages = 20
+	MinPages     = 2
+	MaxPages     = 1000
+	thresholdKey = "large_event_units"
 )
 
-// Units is the big-job threshold now.
-func Units(ctx context.Context, q *db.Queries) (int, error) {
-	v, err := q.GetSetting(ctx, unitsKey)
+// Threshold is the big-job threshold now.
+func Threshold(ctx context.Context, q *db.Queries) (int, error) {
+	v, err := q.GetSetting(ctx, thresholdKey)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return DefaultUnits, nil
+		return DefaultPages, nil
 	}
 	if err != nil {
 		return 0, err
 	}
 	n, err := strconv.Atoi(v)
-	if err != nil || n < MinUnits || n > MaxUnits {
-		return DefaultUnits, nil
+	if err != nil || n < MinPages || n > MaxPages {
+		return DefaultPages, nil
 	}
 	return n, nil
 }
 
-// ErrUnits is a threshold out of range.
-var ErrUnits = fmt.Errorf("the number of units must be a whole number from %d to %d", MinUnits, MaxUnits)
+// ErrThreshold is a threshold out of range.
+var ErrThreshold = fmt.Errorf("the number of Emergency pages must be a whole number from %d to %d", MinPages, MaxPages)
 
-// SetUnits changes the big-job threshold. Events already open keep their
-// levels; new pages are judged by the new number (A85).
-func SetUnits(ctx context.Context, q *db.Queries, n int) error {
-	if n < MinUnits || n > MaxUnits {
-		return ErrUnits
+// SetThreshold changes the big-job threshold. Events already recorded keep
+// their levels; new pages are judged by the new number (A85).
+func SetThreshold(ctx context.Context, q *db.Queries, n int) error {
+	if n < MinPages || n > MaxPages {
+		return ErrThreshold
 	}
-	return q.SetSetting(ctx, db.SetSettingParams{Key: unitsKey, Value: strconv.Itoa(n)})
+	return q.SetSetting(ctx, db.SetSettingParams{Key: thresholdKey, Value: strconv.Itoa(n)})
 }
 
 // Page is a newly stored page, as ingest stored it.
@@ -140,7 +143,7 @@ func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) error {
 		if job, err = q.JobEventPages(ctx, *p.Job); err != nil {
 			return err
 		}
-		threshold, err := Units(ctx, q)
+		threshold, err := Threshold(ctx, q)
 		if err != nil {
 			return err
 		}
@@ -307,21 +310,17 @@ func codesIn(n *profile.Network, text string) []string {
 	return pipeline.DeploymentCodes(n, pipeline.Prepared{Text: text, Priority: profile.Emergency})
 }
 
-// Crossing is when a job's counting pages, oldest first, first named
-// threshold distinct units: the sent time of the page that named the last
-// of them. nil if they haven't (R87's big job).
+// Crossing is when a job became a big job (R87): the sent time of its
+// threshold-th counting page, oldest first, or nil if it has fewer. job is
+// the job's stored messages that count (Emergency, to an aliased capcode,
+// not a heartbeat), one row per message: a copy from another receiver is the
+// same message (R19), so it has no row of its own and counts once.
 func Crossing(job []db.JobEventPagesRow, threshold int) *time.Time {
-	seen := map[string]bool{}
-	for _, j := range job {
-		for _, u := range j.Units {
-			seen[u] = true
-		}
-		if len(seen) >= threshold {
-			t := j.SentAt
-			return &t
-		}
+	if threshold < 1 || len(job) < threshold {
+		return nil
 	}
-	return nil
+	t := job[threshold-1].SentAt
+	return &t
 }
 
 // SeveralAt is when an event's pages first carried 2 distinct deployment

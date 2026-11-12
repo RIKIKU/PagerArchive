@@ -1147,8 +1147,10 @@ SELECT pg_advisory_xact_lock(4242008700);
 
 -- name: JobEventPages :many
 -- The pages of a job that count (R87: Emergency, to an aliased capcode, not a
--- heartbeat), oldest first, with the event each is in, if any.
-SELECT m.id, m.sent_at, m.text, m.units, lem.event_id
+-- heartbeat), oldest first, with the event each is in, if any. One row per
+-- stored message, so a copy from another receiver (R19) counts once towards
+-- a big job.
+SELECT m.id, m.sent_at, m.text, lem.event_id
 FROM messages m
 LEFT JOIN large_event_messages lem ON lem.message_id = m.id
 WHERE m.job_number = sqlc.arg(job_number)::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
@@ -1231,24 +1233,17 @@ WHERE lem.event_id = $1 AND m.job_number IS NOT NULL
 GROUP BY m.job_number
 ORDER BY 2, 1;
 
--- name: LargeEventUnits :one
--- R87c, R87d: the distinct units an event's pages name.
-SELECT count(DISTINCT u)::bigint
-FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-CROSS JOIN LATERAL unnest(m.units) AS u
-WHERE lem.event_id = $1;
-
 -- name: ListLargeEvents :many
 -- R87c: events, newest first, with their numbers counted from the pages they
--- still hold (R87e). before_* is the page cursor.
+-- still hold (R87e). Every page an event holds is an Emergency page that
+-- counts (R87), so pages is its number of Emergency pages. before_* is the
+-- page cursor.
 SELECT e.*,
        (SELECT count(*) FROM large_event_messages lem WHERE lem.event_id = e.id)::bigint AS pages,
        (SELECT count(DISTINCT c) FROM large_event_messages lem CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c
         WHERE lem.event_id = e.id)::bigint AS codes,
        (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-        WHERE lem.event_id = e.id)::bigint AS jobs,
-       (SELECT count(DISTINCT u) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
-        CROSS JOIN LATERAL unnest(m.units) AS u WHERE lem.event_id = e.id)::bigint AS units
+        WHERE lem.event_id = e.id)::bigint AS jobs
 FROM large_events e
 WHERE sqlc.narg(before_first)::timestamptz IS NULL
    OR (e.first_at, e.id) < (sqlc.narg(before_first)::timestamptz, sqlc.narg(before_id)::bigint)
@@ -1281,4 +1276,5 @@ FROM (SELECT lem.event_id, min(m.sent_at) AS first_at, max(m.sent_at) AS last_at
 WHERE s.event_id = e.id AND (e.first_at <> s.first_at OR e.last_at <> s.last_at);
 
 -- name: LargeEventPages :one
+-- R87c, R87d: how many Emergency pages an event holds (all its pages count, R87).
 SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1;

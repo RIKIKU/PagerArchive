@@ -167,7 +167,7 @@ export type LargeEventLevel = 'deployment' | 'several_deployments' | 'big_job';
 export const largeEventLevels: { level: LargeEventLevel; label: string; text: string }[] = [
 	{ level: 'deployment', label: 'Deployment', text: 'a page carries a deployment code' },
 	{ level: 'several_deployments', label: 'Several deployments', text: '2 or more deployment codes in the event' },
-	{ level: 'big_job', label: 'Big job', text: 'one job names enough distinct units' }
+	{ level: 'big_job', label: 'Big job', text: 'one job has enough Emergency pages' }
 ];
 
 /** A large event (R87c), its numbers counted from the pages it still holds. */
@@ -177,10 +177,10 @@ export interface LargeEvent {
 	/** Its last page's sent time. */
 	end: string;
 	levels: { level: LargeEventLevel; label: string; at: string }[];
-	pages: number;
+	/** How many pages it holds, all Emergency pages (R87). No appliance count (owner, 2026-11-13). */
+	emergency_pages: number;
 	deployment_codes: number;
 	jobs: number;
-	units: number;
 	/** The event's own view only. */
 	deployment_code_list?: string[];
 	job_list?: string[];
@@ -682,8 +682,9 @@ export const api = {
 	// Large events (R87c).
 	largeEvents: (before?: string) => get<{ events: LargeEvent[]; next?: string }>(`/api/v1/large-events${before ? `?before=${encodeURIComponent(before)}` : ''}`),
 	largeEvent: (id: string | number) => get<LargeEvent>(`/api/v1/large-events/${encodeURIComponent(id)}`),
-	largeEventSettings: () => get<{ units: number }>('/api/v1/admin/large-events'),
-	setLargeEventSettings: (units: number) => request<{ units: number }>('PUT', '/api/v1/admin/large-events', { units }),
+	largeEventSettings: () => get<{ big_job_pages: number }>('/api/v1/admin/large-events'),
+	setLargeEventSettings: (pages: number) =>
+		request<{ big_job_pages: number }>('PUT', '/api/v1/admin/large-events', { big_job_pages: pages }),
 	// Albums (R82-R82f).
 	albums: () => get<Album[]>('/api/v1/albums'),
 	album: (id: string | number) => get<Album>(`/api/v1/albums/${encodeURIComponent(id)}`),
