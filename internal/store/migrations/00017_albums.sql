@@ -1,5 +1,5 @@
 -- +goose Up
--- R82-R82b, R82f (ADR 0025): albums. An album is one user's named list of
+-- R82-R82b, R82f (ADR 0026): albums. An album is one user's named list of
 -- messages, private to them: every query reads it by its owner. Its
 -- description and each message's note are the user's own words, not page
 -- text: kept as written (the redaction rules don't apply to them), never

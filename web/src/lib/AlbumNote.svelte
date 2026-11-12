@@ -11,7 +11,9 @@
 
 	let { m, album, onremoved }: { m: Message; album: number; onremoved?: (id: number) => void } = $props();
 
-	let note = $state(m.note ?? '');
+	// The note as saved; the row is keyed by its message, so it starts from it once.
+	const saved = () => m.note ?? '';
+	let note = $state(saved());
 	let editing = $state(false);
 	let draft = $state('');
 	let error = $state('');

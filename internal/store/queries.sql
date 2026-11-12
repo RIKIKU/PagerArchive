@@ -267,13 +267,13 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
        OR ('address_unsplit' = ANY(sqlc.arg(flags)::text[]) AND m.address_unsplit)
        OR ('location_mismatch' = ANY(sqlc.arg(flags)::text[]) AND m.location_mismatch))
   AND (NOT sqlc.arg(located)::bool OR m.location IS NOT NULL)
-  -- R82: one album's messages. Only the album's owner is given it (ADR 0025).
+  -- R82: one album's messages. Only the album's owner is given it (ADR 0026).
   AND (sqlc.narg(album_id)::bigint IS NULL
        OR EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = sqlc.narg(album_id)::bigint AND am.message_id = m.id))
   AND (sqlc.narg(before_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
   -- R81b: after a jump, the messages newer than the list's first, which
-  -- Store.SearchNewer reads oldest first (ADR 0025).
+  -- Store.SearchNewer reads oldest first (ADR 0026).
   AND (sqlc.narg(after_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) > (sqlc.narg(after_sent), sqlc.narg(after_id)::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
@@ -1067,7 +1067,7 @@ FROM import_receptions i
 WHERE i.message_id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY message_id, received_at, client_id;
 
--- Albums (R82-R82b, R82f; ADR 0025). Every query names the album's owner,
+-- Albums (R82-R82b, R82f; ADR 0026). Every query names the album's owner,
 -- so nobody else reaches an album, admins included.
 
 -- name: CreateAlbum :one

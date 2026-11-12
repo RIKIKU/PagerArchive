@@ -10,7 +10,7 @@ import (
 )
 
 // Mark is one of the scrubber's marks, and how many messages of the search it
-// holds (R81b-R81d, ADR 0025). Start and End are in the deployment's time
+// holds (R81b-R81d, ADR 0026). Start and End are in the deployment's time
 // zone, so the browser labels them as the list does.
 type Mark struct {
 	Start time.Time `json:"start"`

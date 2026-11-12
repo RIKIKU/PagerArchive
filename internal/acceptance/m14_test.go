@@ -12,7 +12,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
-// M14 at API level (ADR 0025): albums (R82-R82b, R82f, A72) and the
+// M14 at API level (ADR 0026): albums (R82-R82b, R82f, A72) and the
 // scrubber's counts and jumps (R81b-R81d, A71). The browser's side is in
 // web/tests/e2e.spec.ts.
 
@@ -58,7 +58,6 @@ func (m *member) albums() []server.Album {
 	}
 	return out
 }
-
 
 func texts(ms []server.Message) []string {
 	out := []string{}
@@ -611,5 +610,74 @@ func TestA71ScrubberCounts(t *testing.T) {
 	}
 	if code := e.getJSON("/api/v1/messages?at=2026-01-01T00:00:00Z&before=x", nil); code != http.StatusBadRequest {
 		t.Errorf("at with before: %d", code)
+	}
+}
+
+// a71CountsSpeed times the scrubber's counts on A75's 10 years of pages (A71:
+// within 1 second at 1,500 pages a day, here 1,250), first straight after a
+// cold start and then three times warm, for the last 30 days with the
+// searches the list is most often at; and, for the record, longer ranges,
+// which may be left uncounted (Counted false) when they'd take longer than
+// store.CountsTimeout. TestA75SearchSpeed runs it after its searches.
+func a71CountsSpeed(t *testing.T, e *env, container string) {
+	t.Helper()
+	day := func(ago int) string { return time.Now().AddDate(0, 0, -ago).Format(time.DateOnly) }
+	cases := []struct {
+		name, query string
+		a71         bool
+	}{
+		{"the last 30 days", "", true},
+		{`alias:"Station 1"`, "alias_like=" + url.QueryEscape("Station 1"), true},
+		{`alias:"Station 5", the busy alias`, "alias_like=" + url.QueryEscape("Station 5"), true},
+		{"a common term", "q=fire", true},
+		{"a term in no page", "q=ZZNOTHING", true},
+		{"a map reference without quotes", "q=" + url.QueryEscape("m 23 b4"), true},
+		{"6 months, by the week", "from=" + day(182) + "&to=" + day(0), false},
+		{"2 years, by the month", "from=" + day(730) + "&to=" + day(0), false},
+		{"10 years, by the month", "from=" + day(3650) + "&to=" + day(0), false},
+		{`10 years of alias:"Station 1"`, "from=" + day(3650) + "&to=" + day(0) + "&alias_like=" + url.QueryEscape("Station 1"), false},
+	}
+	run := func(query string) (server.Counts, time.Duration) {
+		var c server.Counts
+		t0 := time.Now()
+		if code := e.getJSON("/api/v1/messages/counts?"+query, &c); code != http.StatusOK {
+			t.Fatalf("counts?%s: %d", query, code)
+		}
+		return c, time.Since(t0)
+	}
+	for _, c := range cases {
+		a75ColdStart(t, e, container)
+		cold, coldTime := run(c.query)
+		var warm []string
+		var slowest time.Duration
+		var counts server.Counts
+		for range 3 {
+			var d time.Duration
+			counts, d = run(c.query)
+			slowest = max(slowest, d)
+			warm = append(warm, d.Round(time.Millisecond).String())
+		}
+		var total int64
+		for _, m := range counts.Marks {
+			total += m.Count
+		}
+		t.Logf("A71 counts, %-36s %3d marks, %7d pages, counted cold %v warm %v; cold %s, warm %s", c.name, len(counts.Marks), total, cold.Counted, counts.Counted,
+			coldTime.Round(time.Millisecond), strings.Join(warm, " "))
+		if c.a71 && (!cold.Counted || !counts.Counted || coldTime > time.Second || slowest > time.Second) {
+			t.Errorf("A71: the scrubber's counts for %s: cold %s (counted %v), slowest warm %s, want counted within 1 second", c.name, coldTime.Round(time.Millisecond), cold.Counted, slowest.Round(time.Millisecond))
+		}
+	}
+	// The counts are the list's: the last 30 days' total is every page sent
+	// since the oldest mark began that the list shows (no ignored aliases here).
+	c, _ := run("")
+	var total, want int64
+	for _, m := range c.Marks {
+		total += m.Count
+	}
+	if err := e.st.Pool.QueryRow(e.ctx, `SELECT count(*) FROM messages WHERE sent_at >= $1 AND sent_at < $2`, c.Marks[len(c.Marks)-1].Start, c.Marks[0].End).Scan(&want); err != nil {
+		t.Fatal(err)
+	}
+	if total != want {
+		t.Errorf("A71: the last 30 days counted %d, the table holds %d", total, want)
 	}
 }

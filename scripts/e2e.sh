@@ -148,8 +148,9 @@ status=0
 (cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?
 
 # P1: no page text in the API log, and no alias request notes, feedback or
-# names (ADR 0007 §8), or tree deactivation reasons (ADR 0008 §10).
-if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER|TRAINING DRILL' "$BIN.log"; then
+# names (ADR 0007 §8), or tree deactivation reasons (ADR 0008 §10), or albums'
+# names, descriptions and notes (ADR 0026).
+if grep -qE 'SMOKE|GARBLED|SHED FIRE|EXTREMELY_LONG|UNKNOWN PAGER|NOTE-MARKER|Wrong station|Renamed by admin|REASON-MARKER|TRAINING DRILL|Big storm|Storm notes|made-up storm|First page of the storm|Why it was kept|For the axe check' "$BIN.log"; then
 	echo "page text, a note, feedback or a name found in the API log" >&2
 	status=1
 else

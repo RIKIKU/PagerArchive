@@ -75,7 +75,7 @@ func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) (
 }
 
 // SearchNewer is SearchMessages for the messages after a position (AfterSent,
-// AfterID), the nearest first: oldest first (R81b, ADR 0025).
+// AfterID), the nearest first: oldest first (R81b, ADR 0026).
 func (s *Store) SearchNewer(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
 	return s.searchMessages(ctx, p, oldestFirst)
 }

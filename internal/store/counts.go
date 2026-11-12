@@ -15,7 +15,7 @@ import (
 )
 
 // CountsTimeout is how long counting a scrubber's marks may take before it
-// gives up (R81c, ADR 0025): the counts are an extra, and never hold up the
+// gives up (R81c, ADR 0026): the counts are an extra, and never hold up the
 // list or take more of the database than a search does.
 const CountsTimeout = 2 * time.Second
 
@@ -23,7 +23,7 @@ const CountsTimeout = 2 * time.Second
 var ErrCountsTimedOut = errors.New("counting took too long")
 
 // CountMessages counts the messages a search finds in each span of a range,
-// for the scrubber's marks (R81b, R81c; ADR 0025). bounds are the spans'
+// for the scrubber's marks (R81b, R81c; ADR 0026). bounds are the spans'
 // edges, oldest first: counts[i] is how many were sent in [bounds[i],
 // bounds[i+1]). It runs the search's own query (SearchMessages), with its
 // columns, order and limit replaced by a count per span, so the counts

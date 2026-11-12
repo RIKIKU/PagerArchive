@@ -225,6 +225,13 @@
 	--calendar-mark: 2.2rem;
 	--calendar-bar-inset: 0.2rem;
 	--preview-opacity: 0.55;
+	/* M14: the scrubber (R81b-R81d): its width on a desktop and on a phone,
+	   the edge on the mark the list is at, and its busy dots. */
+	--scrubber-width: 5.5rem;
+	--scrubber-width-phone: var(--target);
+	--scrubber-edge: 0.1875rem;
+	--scrubber-dot: 0.3125rem;
+	--scrubber-dot-colour: var(--control-border);
 }
 
 @media (pointer: coarse) {

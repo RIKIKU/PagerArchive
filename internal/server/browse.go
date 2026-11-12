@@ -197,7 +197,7 @@ type MessagePage struct {
 	Next     string    `json:"next,omitempty"` // cursor for the following page
 	// Newer, after a jump (at) or a page of newer messages (after), is the
 	// cursor for the messages newer than this page, if there may be any
-	// (R81b, ADR 0025).
+	// (R81b, ADR 0026).
 	Newer string `json:"newer,omitempty"`
 }
 

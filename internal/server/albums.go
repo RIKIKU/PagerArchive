@@ -17,7 +17,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
-// Albums (R82-R82b, R82f; ADR 0025). An album is its creator's alone: every
+// Albums (R82-R82b, R82f; ADR 0026). An album is its creator's alone: every
 // handler reads it with the signed-in user as its owner, so anyone else,
 // admins included, gets "no such album", the same as for an album that
 // doesn't exist. Names, descriptions and notes are the user's own words:

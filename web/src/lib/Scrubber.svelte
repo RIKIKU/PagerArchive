@@ -36,18 +36,26 @@
 	let picked: number | undefined = $state();
 	let track: HTMLElement | undefined = $state();
 	let error = $state('');
+	// Escape hides the tooltips until the pointer or focus moves on (WCAG 1.4.13).
+	let tipOff = $state(false);
 
 	const marks = $derived(zoom ? zoom.counts.marks : (counts?.marks ?? []));
 	const counted = $derived(zoom ? zoom.counts.counted : (counts?.counted ?? true));
 	const ms = (iso: string) => Date.parse(iso);
 
-	function load() {
+	// Counts that took too long (from a cold disk, say) are asked for once
+	// more a moment later, when what the first try read is in the caches.
+	let retry: ReturnType<typeof setTimeout> | undefined;
+	function load(again = true) {
 		const q = new URLSearchParams(query);
+		clearTimeout(retry);
 		api
 			.counts(q)
 			.then((c) => {
-				if (query === q.toString()) counts = c;
+				if (query !== q.toString()) return;
+				counts = c;
 				error = '';
+				if (!c.counted && again) retry = setTimeout(() => load(false), 3000);
 			})
 			.catch(() => (error = 'The marks couldn’t be loaded.'));
 	}
@@ -59,6 +67,7 @@
 			picked = undefined;
 			load();
 		});
+		return () => clearTimeout(retry);
 	});
 
 	function loadZoom(hour: string) {
@@ -254,18 +263,19 @@
 </script>
 
 <div class="scrubber" class:zoomed={!!zoom} data-testid="scrubber" data-counted={counted}>
-	<div class="tools">
+	<!-- svelte-ignore a11y_no_static_element_interactions (Escape hides the tooltips: WCAG 1.4.13) -->
+	<div class="tools" onkeydown={(e) => e.key === 'Escape' && (tipOff = true)} onpointerleave={() => (tipOff = false)} onfocusout={() => (tipOff = false)}>
 		{#if zoom}
-			<span class="has-tip">
+			<span class="has-tip" class:tip-off={tipOff}>
 				<button type="button" class="ghost icon-button" aria-label="Back to the days" onclick={() => (zoom = undefined)}><Icon name="zoomout" /></button>
 				<span class="tooltip" aria-hidden="true">Back to the days</span>
 			</span>
-			<span class="has-tip">
+			<span class="has-tip" class:tip-off={tipOff}>
 				<button type="button" class="ghost icon-button" aria-label="The hour after" disabled={!later} onclick={() => later && loadZoom(later)}><Icon name="later" /></button>
 				<span class="tooltip" aria-hidden="true">The hour after</span>
 			</span>
 		{:else if zoomable}
-			<span class="has-tip">
+			<span class="has-tip" class:tip-off={tipOff}>
 				<button type="button" class="ghost icon-button" aria-label="Zoom into {name(zoomable)}, by 5 minutes" onclick={() => loadZoom(zoomable.start)}
 					><Icon name="zoomin" /></button
 				>
@@ -303,8 +313,9 @@
 		{/if}
 	</div>
 	{#if zoom}
-		<div class="tools">
-			<span class="has-tip">
+		<!-- svelte-ignore a11y_no_static_element_interactions (Escape hides the tooltips: WCAG 1.4.13) -->
+	<div class="tools" onkeydown={(e) => e.key === 'Escape' && (tipOff = true)} onpointerleave={() => (tipOff = false)} onfocusout={() => (tipOff = false)}>
+			<span class="has-tip" class:tip-off={tipOff}>
 				<button type="button" class="ghost icon-button" aria-label="The hour before" disabled={!earlier} onclick={() => earlier && loadZoom(earlier)}
 					><Icon name="earlier" /></button
 				>
@@ -340,6 +351,13 @@
 	}
 	.zoomed .tools:last-of-type {
 		min-height: 0;
+	}
+	/* Tooltips open to the left, into the list, not off the screen. */
+	.tools .tooltip {
+		top: 50%;
+		left: auto;
+		right: calc(100% + var(--tip-gap));
+		transform: translateY(-50%);
 	}
 	.track {
 		position: relative;
@@ -416,7 +434,7 @@
 	}
 	@media (max-width: 47.99rem) {
 		.scrubber {
-			width: var(--scrubber-width-phone);
+			width: calc(var(--scrubber-width-phone) + var(--border-width));
 			height: calc(var(--full-height) - var(--topbar-height) - var(--bottom-bar-height));
 		}
 		.label {

@@ -40,7 +40,7 @@ type Filter struct {
 	Ignored    bool       // include pages to ignored aliases (R27)
 	Located    bool       // only messages placed on the map (R35)
 	// Album keeps one album's messages (R82). The server sets it, for the
-	// album's owner only; it never comes from the address alone (ADR 0025).
+	// album's owner only; it never comes from the address alone (ADR 0026).
 	Album *int64
 
 	// Admin only (R33): filter by flag. Each true field must be set; Flags

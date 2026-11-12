@@ -5,6 +5,7 @@
 	import { page } from '$app/state';
 	import { api, type Message, type Meta } from '#lib/api.ts';
 	import { date, dateTime, isoAttr, isoDate, time } from '#lib/format.ts';
+	import AddToAlbum from '#lib/AddToAlbum.svelte';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import { setTitle } from '#lib/here.svelte.ts';
 	import MapView from '#lib/MapView.svelte';
@@ -81,6 +82,8 @@
 				</header>
 				<!-- P2: the full message, always. -->
 				<p class="text">{m.display_text}</p>
+				<!-- R82: kept in the person's albums, from here only. -->
+				<div class="keep"><AddToAlbum message={m.id} /></div>
 			</div>
 			<!-- R35c: where it was placed, after the text so the text stays first on phones (P2). -->
 			{#if m.location && meta}
@@ -210,6 +213,9 @@
 		border-radius: var(--radius);
 		font-size: var(--text-lg);
 		line-height: var(--leading-loose);
+	}
+	.keep {
+		margin: 0 0 var(--space-lg);
 	}
 	.rest h2 {
 		margin: var(--space-xl) 0 var(--space-sm);
