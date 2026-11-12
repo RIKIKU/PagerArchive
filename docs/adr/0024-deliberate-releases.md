@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-12). The owner's decision of 2026-11-12, "merge freely, release deliberately": a merge to main is no longer a release; a Release workflow cuts one every Saturday, on "Release now", and straight away for a security update. On the branch `release-process` from main at 59be943 (VERSION 1.7.5, whose release is the last one cut by the old process). Supersedes ADR 0016's decisions 1 to 4 and 6 where they say every merge is a release and a branch sets `VERSION`, and ADR 0022's decisions 3 and 4 (an update raises `VERSION`); the rest of both stands. The PowerShell module doesn't change, so its version stays.
+Proposed (2026-11-12). The owner's decision of 2026-11-12, "merge freely, release deliberately": a merge to main is no longer a release; a Release workflow cuts one every Saturday, on "Release now", and straight away for a security update. On the branch `release-process` from main at 59be943 (VERSION 1.7.5), with main merged in at 59e9069 (VERSION 1.7.6, #15: its release, v1.7.6, is the last one cut by the old process). Supersedes ADR 0016's decisions 1 to 4 and 6 where they say every merge is a release and a branch sets `VERSION`, and ADR 0022's decisions 3 and 4 (an update raises `VERSION`); the rest of both stands. The PowerShell module doesn't change, so its version stays.
 
 ## Context
 
@@ -95,7 +95,7 @@ A77 now starts from the release GitHub marks Latest, straight from GitHub (`rele
 
 ## This branch's own version
 
-`VERSION` goes from 1.7.5 to `0.0.0-dev` and `compose.yaml`'s image from `:1.7` to `:main`, as the new `versions` check wants; nothing is raised by hand. Merging it publishes `main` and `sha-<commit>` only. The first release after it is cut by the Release workflow ("Release now", by the owner): with v1.7.5 the previous release it's **1.7.6**, a patch, as nothing a deployment downloads changes here other than our image's line.
+`VERSION` goes from 1.7.6 to `0.0.0-dev` and `compose.yaml`'s image from `:1.7` to `:main`, as the new `versions` check wants; nothing is raised by hand. Merging it publishes `main` and `sha-<commit>` only. The first release after it is cut by the Release workflow ("Release now", by the owner): with v1.7.6 the previous release (#15's, being released by the old process as this is written) it's **1.7.7**, a patch, as nothing a deployment downloads changes here other than our image's line.
 
 ## Evidence
 
