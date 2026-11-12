@@ -22,6 +22,27 @@ name: CI
 # (owner, 2026-11-12): a push to a branch with an open pull request used to
 # start two runs, one for each trigger. A branch with no pull request runs
 # nothing until one is opened (or by hand, workflow_dispatch).
+#
+# A pull request runs only the checks its changed files can affect (ADR
+# 0025): the changes job works them out (scripts/ci/changes.sh) and each
+# check job has an if on its answer. Anything in .github/workflows/,
+# .github/actions/ or scripts/ci/, the shared test fixtures, and any file
+# changes.sh doesn't know run everything. A push to main, a manual run and the
+# Release workflow's run always run every check, so nothing is released that
+# a check was skipped for. "All checks passed" accepts a check skipped only
+# when the changes job left it out.
+#
+# Retries (ADR 0025), none of which hides a failure: what passed only on a
+# retry is a warning annotation, "flaky: …", and in the job's summary.
+#   1. Network steps try again by themselves, 3 tries: apt, image pulls, GHCR
+#      pushes, artifact uploads and downloads, other downloads
+#      (scripts/ci/retry.sh, .github/actions/upload, .github/actions/build-push).
+#   2. A failed test is run once more in its job: Playwright's retries in CI,
+#      Go's tests through gotestsum's --rerun-fails (the test job), Pester's
+#      through Invoke-Tests.ps1 -RetryFailed.
+#   3. A failed run of a pull request or main has its failed jobs re-run once
+#      by the CI retry workflow (ci-retry.yml, scripts/ci/rerun-decision.sh),
+#      unless what failed is always the change's.
 on:
   push:
     branches: [main]
@@ -115,6 +136,47 @@ jobs:
             echo "publish=$publish"
           } | tee -a "$GITHUB_OUTPUT"
 
+  # Which checks run (ADR 0025): on a pull request, those its changed files
+  # can affect, from the files between the merge commit's two parents (main,
+  # and main with the pull request merged); in any other run, all of them.
+  # Each output is a check job's name, true or false. The table is in the
+  # job's summary.
+  changes:
+    name: What the change affects
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      test: ${{ steps.changes.outputs.test }}
+      search: ${{ steps.changes.outputs.search }}
+      import: ${{ steps.changes.outputs.import }}
+      web: ${{ steps.changes.outputs.web }}
+      powershell: ${{ steps.changes.outputs.powershell }}
+      stack: ${{ steps.changes.outputs.stack }}
+      stack-e2e: ${{ steps.changes.outputs.stack-e2e }}
+      upgrade: ${{ steps.changes.outputs.upgrade }}
+      install: ${{ steps.changes.outputs.install }}
+      backups: ${{ steps.changes.outputs.backups }}
+      images: ${{ steps.changes.outputs.images }}
+      budget: ${{ steps.changes.outputs.budget }}
+      monitoring: ${{ steps.changes.outputs.monitoring }}
+      govulncheck: ${{ steps.changes.outputs.govulncheck }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          fetch-depth: 2
+      - name: The checks the changed files affect
+        id: changes
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          if [ "$EVENT" != pull_request ]; then
+            sh scripts/ci/changes.sh --all "a $EVENT run checks everything"
+          elif git rev-parse -q --verify HEAD^2 >/dev/null; then
+            sh scripts/ci/changes.sh HEAD^1 HEAD
+          else
+            sh scripts/ci/changes.sh --all "HEAD isn't the pull request's merge commit, so what changed isn't known"
+          fi
+
   # The repository's own VERSION and compose.yaml are unstamped, and the
   # module's ModuleVersion is raised if the module changed since the previous
   # release (SPEC.md 12.1, R63; ADR 0024).
@@ -133,10 +195,16 @@ jobs:
         run: sh scripts/ci/release-version-checks.sh
       - name: A failed automatic update is assigned to the owner (tell-owner.sh)
         run: sh scripts/ci/tell-owner-checks.sh
+      # ADR 0025: what a pull request runs, and the retries.
+      - name: The checks each change runs (changes.sh)
+        run: sh scripts/ci/changes-checks.sh
+      - name: Retries, re-runs and govulncheck's verdict (retry.sh, rerun-decision.sh, govulncheck.sh)
+        run: sh scripts/ci/retry-checks.sh
 
   test:
     name: Tests, golden tables and acceptance checks
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.test == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
@@ -172,7 +240,25 @@ jobs:
       - name: validate-profile (example golden tables)
         run: go run ./cmd/pagerarchive validate-profile -v profiles/example
       - name: Tests (unit, golden, A2, A5, A6 storage, A7, A8, A9, A14, M2 API checks, A24-A29 API level, A30-A32, A35-A50, M9 live streams, address guard, preset stand-ins, A62-A64, A66, radio health, delivery failure causes)
-        run: go test -count=1 -v ./... 2>&1 | tee test.log; test "${PIPESTATUS[0]}" -eq 0
+        # Layer 2 of the retries (ADR 0025): gotestsum runs go test, then once
+        # more only the tests that failed (5 at most: more means something
+        # broke, and nothing is run again). A test that passes only then is
+        # flaky, reported below; one that fails again fails the step.
+        run: |
+          go run gotest.tools/gotestsum@v1.13.0 --format standard-verbose --packages ./... \
+            --rerun-fails=1 --rerun-fails-max-failures=5 --rerun-fails-report rerun.txt -- -count=1 2>&1 | tee test.log
+          status=${PIPESTATUS[0]}
+          # One line per test run again: "<package>.<test>: <runs> runs, <failures> failures".
+          if [ -s rerun.txt ]; then
+            while IFS= read -r line; do
+              runs=$(echo "$line" | sed -n 's/.*: \([0-9]*\) runs, \([0-9]*\) failures*$/\1/p')
+              failures=$(echo "$line" | sed -n 's/.*: \([0-9]*\) runs, \([0-9]*\) failures*$/\2/p')
+              if [ -n "$runs" ] && [ "$failures" -lt "$runs" ]; then
+                sh scripts/ci/flaky.sh "go test ${line%%:*}" "failed, then passed when run again"
+              fi
+            done <rerun.txt
+          fi
+          exit "$status"
         shell: bash
       - name: Acceptance check summary
         if: always()
@@ -185,7 +271,8 @@ jobs:
   # seeding 4,562,500 pages takes minutes.
   search:
     name: Search speed (A75)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.search == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
@@ -225,7 +312,8 @@ jobs:
 
   import:
     name: Importing messages (A76)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.import == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 70
     steps:
@@ -237,6 +325,8 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml
       - name: A76's file checks, through the command on the compose stack
         run: sh scripts/a76-checks.sh
       - name: Disk before
@@ -248,7 +338,7 @@ jobs:
         run: df -h /
       - name: Upload the rate, memory samples and logs
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: a76-${{ github.run_id }}-${{ github.run_attempt }}
           path: a76-results/
@@ -257,7 +347,8 @@ jobs:
 
   web:
     name: Browser app and browser tests (A1, A3, A4, A10, A22, A29, A30, A34, A40-A50, A60, R31, a role change in an open list, WCAG)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     # Microsoft's Playwright image, the exact version in web/package-lock.json
@@ -300,7 +391,7 @@ jobs:
       - name: Let git read the checkout
         run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
       - name: Install psql (the tests change the database directly)
-        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-client >/dev/null
+        run: sh scripts/ci/retry.sh -l "apt-get install postgresql-client" sh -c 'apt-get update -qq && apt-get install -y -qq --no-install-recommends postgresql-client >/dev/null'
       - name: Install dependencies
         working-directory: web
         run: npm ci --no-fund --no-audit
@@ -320,11 +411,14 @@ jobs:
       - name: Playwright is the image's version
         working-directory: web
         run: test "$(npx playwright --version)" = "Version 1.64.0"
+      # A test that passed only on its retry (flaky) keeps its report too, with
+      # the failed try's trace.
       - name: Browser tests against a real API and PostGIS
+        id: e2e
         run: sh scripts/e2e.sh
       - name: Upload Playwright report, screenshots and traces
-        if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: failure() || steps.e2e.outputs.flaky == 'true'
+        uses: ./.github/actions/upload
         with:
           name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -344,6 +438,8 @@ jobs:
       matrix:
         os: [ubuntu-24.04, windows-2025]
         pwsh: ["7.6.0", newest]
+    needs: changes
+    if: needs.changes.outputs.powershell == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
@@ -359,17 +455,19 @@ jobs:
           $pwsh = ./scripts/ci/Install-PowerShell.ps1 -Version '${{ matrix.pwsh }}' -Destination (Join-Path $env:RUNNER_TEMP 'pwsh')
           "PA_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
           ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
+      # Layer 2 of the retries (ADR 0025): up to 5 failed tests run once more,
+      # and any that pass then are reported as flaky.
       - name: PSScriptAnalyzer, meta-tests, behaviour and sign-in tests
         shell: pwsh
         run: |
           $env:PSModulePath = Join-Path $env:RUNNER_TEMP 'psmodules'
           # A watch that won't stop is dumped here, with its stack (ADR 0012).
           $env:PA_TEST_DUMP_DIR = Join-Path $env:RUNNER_TEMP 'dumps'
-          & $env:PA_PWSH -NoProfile -NonInteractive -File ./powershell/tests/Invoke-Tests.ps1 -ResultPath pester-results.xml
+          & $env:PA_PWSH -NoProfile -NonInteractive -File ./powershell/tests/Invoke-Tests.ps1 -ResultPath pester-results.xml -RetryFailed
           exit $LASTEXITCODE
       - name: Upload a dump of a stuck test
         if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: pester-dump-${{ matrix.os }}-${{ matrix.pwsh }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/dumps/
@@ -377,7 +475,7 @@ jobs:
           retention-days: 7
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: pester-${{ matrix.os }}-${{ matrix.pwsh }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: pester-results.xml
@@ -389,7 +487,8 @@ jobs:
   # PA_STACK_PART); they used to run one after the other on one stack.
   stack:
     name: Against Authentik (${{ matrix.title }})
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.stack == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -421,12 +520,15 @@ jobs:
           "PA_STACK_PWSH=$pwsh" | Out-File -FilePath $env:GITHUB_ENV -Append
           "PA_STACK_PS_MODULES=$(Join-Path $env:RUNNER_TEMP 'psmodules')" | Out-File -FilePath $env:GITHUB_ENV -Append
           ./scripts/ci/Save-TestModules.ps1 -Path (Join-Path $env:RUNNER_TEMP 'psmodules')
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml
       - name: The checks against the compose stack (API, PostgreSQL, Authentik, Mailpit)
         run: sh scripts/stack-checks.sh
 
   stack-e2e:
     name: Section 11 steps 2 and 3 in a browser, on the compose stack
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.stack-e2e == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -460,12 +562,14 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install browser
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: sh ../scripts/ci/retry.sh -l "playwright install --with-deps chromium" npx playwright install --with-deps chromium
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml
       - name: Section 11 steps 2 and 3 in a browser, on a fresh stack
         run: sh scripts/stack-e2e.sh --project=chromium
       - name: Upload Playwright report, screenshots and traces
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: stack-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -480,7 +584,8 @@ jobs:
   # upgrade is caught before a release is cut (ADR 0024). Needs the v* tags.
   upgrade:
     name: Upgrade from the latest release (A77)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.upgrade == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -495,12 +600,14 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Get the release tags
-        run: git fetch --force --tags origin
+        run: sh scripts/ci/retry.sh git fetch --force --tags origin
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A77
         run: sh scripts/a77.sh -o a77-results
       - name: Upload the upgrade's output and logs
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: a77-${{ github.run_id }}-${{ github.run_attempt }}
           path: a77-results/
@@ -512,7 +619,8 @@ jobs:
   # network.
   install:
     name: Install with no checkout (A78)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.install == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -539,12 +647,14 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install browser
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: sh ../scripts/ci/retry.sh -l "playwright install --with-deps chromium" npx playwright install --with-deps chromium
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A78
         run: sh scripts/a78.sh --project=chromium
       - name: Upload Playwright report, screenshots and traces
         if: failure()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: a78-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -558,7 +668,8 @@ jobs:
   # install. Its alert is in the monitoring job.
   backups:
     name: Backups (A80)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.backups == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -588,12 +699,14 @@ jobs:
           key: playwright-chromium-${{ runner.os }}-${{ steps.playwright.outputs.version }}
       - name: Install browser
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: sh ../scripts/ci/retry.sh -l "playwright install --with-deps chromium" npx playwright install --with-deps chromium
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A80
         run: sh scripts/a80.sh -o a80-results --project=chromium
       - name: Upload the logs, Playwright report and screenshots
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: a80-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -605,7 +718,8 @@ jobs:
 
   images:
     name: Images and client replay (${{ matrix.arch }})
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.images == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -624,6 +738,8 @@ jobs:
         env:
           PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client
       - name: Build client image (native ${{ matrix.arch }})
         run: docker build -f Dockerfile.client -t pagerarchive-client:ci .
       - name: Client --version is the build's version
@@ -651,13 +767,15 @@ jobs:
       - name: Client stdin replay (arm64 client, amd64 server image built under emulation)
         if: ${{ !matrix.server }}
         run: |
+          sh scripts/ci/retry.sh docker pull -q tonistiigi/binfmt
           docker run --privileged --rm tonistiigi/binfmt --install amd64
           docker build --platform linux/amd64 -t pagerarchive:ci .
           sh scripts/ci/client-replay.sh pagerarchive:ci pagerarchive-client:ci
 
   budget:
     name: Resource budget, short run (A15), telemetry ${{ matrix.telemetry }}
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.budget == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -682,11 +800,13 @@ jobs:
       # Full stack with Authentik, a made-up dataset of real size, 20 viewers,
       # 5 minutes of pages at 20x the 1,500/day rate, then 2 idle minutes.
       # The full 1-hour run is done by hand (docs/adr/0005).
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml
       - name: A15 short run
         run: sh scripts/a15.sh -m 5 -w 1 -i 2 -r 30000 -o a15-results ${{ matrix.flag }}
       - name: Upload memory samples and summary
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: a15-telemetry-${{ matrix.telemetry }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: a15-results/
@@ -699,7 +819,8 @@ jobs:
   # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
     name: Example monitoring stack (A78's install, A65, A67, A80's alert)
-    needs: stamp
+    needs: [stamp, changes]
+    if: needs.changes.outputs.monitoring == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -718,36 +839,99 @@ jobs:
           df -h /
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup /opt/hostedtoolcache/CodeQL
           df -h /
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml deploy/monitoring/compose.yaml scripts/install-lib.sh
       - name: The install with no checkout, A65, A67 and A80's alert on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs
         if: always()
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        uses: ./.github/actions/upload
         with:
           name: monitoring-${{ github.run_id }}-${{ github.run_attempt }}
           path: monitoring-results/
           if-no-files-found: ignore
           retention-days: 14
 
+  # Known vulnerabilities in the Go code and its modules, as govulncheck finds
+  # them (ADR 0025): only what the code can reach, unlike OSV's alerts, which
+  # name a module whether or not its vulnerable code is called. Every finding
+  # is listed in the job's summary; the job fails only for a vulnerability the
+  # code calls that has a fixed version (scripts/ci/govulncheck.sh).
+  govulncheck:
+    name: Known vulnerabilities the code calls (govulncheck)
+    needs: [stamp, changes]
+    if: needs.changes.outputs.govulncheck == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: govulncheck v1.9.0, failing only for a vulnerability the code calls that has a fix
+        run: sh scripts/ci/govulncheck.sh
+
   # The one check main's ruleset requires before a pull request merges (R85c,
   # ADR 0022), so an automatic update merges only once every check has passed.
+  # A check passes if it succeeded, or if it was skipped because the changes
+  # job left it out (ADR 0025): a skip the changes job didn't ask for (one
+  # whose needed job failed), a failure or a cancel fails it. In a re-run
+  # (attempt 2 or later), a job that failed in the attempt before and passed
+  # now is reported as flaky.
   checks:
     name: All checks passed
-    needs: [stamp, versions, test, search, import, web, powershell, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring]
+    needs: [stamp, changes, versions, test, search, import, web, powershell, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, govulncheck]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
-      - name: Every check passed
+      - name: Every check passed, or was left out as nothing it uses changed
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: |
-          failed=$(echo "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "\(.key): \(.value.result)"')
+          verdict=$(echo "$NEEDS" | jq -r '
+            (.changes.outputs // {}) as $runs
+            | to_entries[]
+            | if .value.result == "success" then "passed \(.key)"
+              elif .value.result == "skipped" and ($runs[.key] // "") == "false" then "left out \(.key)"
+              else "FAILED \(.key): \(.value.result)" end')
+          echo "$verdict"
+          left_out=$(echo "$verdict" | sed -n 's/^left out //p' | tr '\n' ' ')
+          [ -z "$left_out" ] || echo "::notice title=Checks left out::Nothing these use changed (ADR 0025): $left_out"
+          failed=$(echo "$verdict" | sed -n 's/^FAILED //p')
           if [ -n "$failed" ]; then
             echo "::error::Not every check passed: $(printf '%s' "$failed" | tr '\n' ' ')"
             exit 1
           fi
           echo "Every check passed"
+      - name: Jobs that passed only on this re-run
+        if: always() && github.run_attempt != '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          before=$((ATTEMPT - 1))
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$before/jobs" \
+            --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "cancelled") | .name' | sort -u >failed-before.txt
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/attempts/$ATTEMPT/jobs" \
+            --jq '.jobs[] | select(.conclusion == "success") | .name' | sort -u >passed-now.txt
+          comm -12 failed-before.txt passed-now.txt | grep -vx 'All checks passed' >flaky.txt || true
+          if [ -s flaky.txt ]; then
+            printf '\n### Passed only on a retry\n\nEach is a flake to look into: it failed in attempt %s and passed in this one (ADR 0025).\n\n' "$before" >>"$GITHUB_STEP_SUMMARY"
+            while IFS= read -r job; do
+              echo "::warning title=Flaky::flaky: job $job (failed in attempt $before, passed in attempt $ATTEMPT)"
+              echo "- flaky: job $job (failed in attempt $before, passed in attempt $ATTEMPT)" >>"$GITHUB_STEP_SUMMARY"
+            done <flaky.txt
+          else
+            echo "No job that failed in attempt $before passed only now."
+          fi
 
   # The release (SPEC.md 12.1; ADR 0016, ADR 0024): only in the Release
   # workflow's run, once every check passed, before anything is published.
@@ -764,7 +948,9 @@ jobs:
   # write instead.
   release:
     name: Release v<version> (tag, GitHub release, client binaries)
-    needs: [stamp, versions, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell]
+    # Every check, and none skipped: in the Release workflow's run the changes
+    # job runs them all, and a skipped need would skip this job too.
+    needs: [stamp, changes, versions, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, govulncheck]
     if: needs.stamp.outputs.mode == 'release' || needs.stamp.outputs.mode == 'dry-run'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -792,7 +978,7 @@ jobs:
         env:
           PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: |
-          git fetch --force --tags origin
+          sh scripts/ci/retry.sh git fetch --force --tags origin
           sh scripts/ci/release-plan.sh "$GITHUB_SHA" "$PA_VERSION"
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -841,7 +1027,8 @@ jobs:
             git config user.name "github-actions[bot]"
             git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
             git tag -a "$TAG" -m "PagerArchive $TAG" "$GITHUB_SHA"
-            git push origin "refs/tags/$TAG"
+            # Pushing the same tag again, after a try that got through, is a no-op.
+            sh scripts/ci/retry.sh git push origin "refs/tags/$TAG"
           fi
       - name: Create the GitHub release with the binaries
         if: env.DRY_RUN != 'true'
@@ -849,10 +1036,11 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ steps.plan.outputs.tag }}
           PREVIOUS: ${{ steps.plan.outputs.previous }}
+        # Each try finds a release an earlier one created, so none is made twice.
         run: |
-          gh release view "$TAG" >/dev/null 2>&1 ||
-            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md --generate-notes --notes-start-tag "$PREVIOUS"
-          gh release upload "$TAG" dist/* --clobber
+          sh scripts/ci/retry.sh -l "gh release create $TAG" sh -c 'gh release view "$TAG" >/dev/null 2>&1 ||
+            gh release create "$TAG" --verify-tag --latest=false --title "PagerArchive $TAG" --notes-file notes.md --generate-notes --notes-start-tag "$PREVIOUS"'
+          sh scripts/ci/retry.sh gh release upload "$TAG" dist/* --clobber
       - name: Dry run, so nothing tagged or released
         if: env.DRY_RUN == 'true'
         env:
@@ -870,8 +1058,8 @@ jobs:
   # something they need failed.
   publish-server:
     name: Publish server image (amd64)
-    needs: [stamp, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
-    if: ${{ !failure() && !cancelled() }}
+    needs: [stamp, changes, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, govulncheck, versions, release]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.images == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
@@ -904,13 +1092,15 @@ jobs:
             type=raw,value=latest,enable=${{ env.RELEASE }}
             type=raw,value=main,enable=${{ env.MAIN }}
             type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE != 'true' }}
-      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+      # Retried when it publishes (ADR 0025).
+      - uses: ./.github/actions/build-push
         with:
           context: .
           platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           push: ${{ env.PUBLISH == 'true' }}
+          retry: ${{ env.PUBLISH == 'true' }}
       - name: Summary
         env:
           MODE: ${{ needs.stamp.outputs.mode }}
@@ -921,8 +1111,8 @@ jobs:
 
   publish-client:
     name: Build client image for publishing (${{ matrix.arch }})
-    needs: [stamp, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, versions, release]
-    if: ${{ !failure() && !cancelled() }}
+    needs: [stamp, changes, test, search, import, web, stack, stack-e2e, upgrade, install, backups, images, budget, monitoring, powershell, govulncheck, versions, release]
+    if: ${{ !failure() && !cancelled() && needs.changes.outputs.images == 'true' }}
     strategy:
       matrix:
         include:
@@ -956,9 +1146,11 @@ jobs:
           images: ghcr.io/rikiku/pagerarchive-client
       # Each architecture is built natively and pushed by digest; the next
       # job joins them into one multi-arch tag.
+      # Retried when it publishes (ADR 0025).
       - id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
+        uses: ./.github/actions/build-push
         with:
+          retry: ${{ env.PUBLISH == 'true' }}
           context: .
           file: Dockerfile.client
           platforms: linux/${{ matrix.arch }}
@@ -971,7 +1163,7 @@ jobs:
           touch "digests/${DIGEST#sha256:}"
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
-      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+      - uses: ./.github/actions/upload
         if: env.PUBLISH == 'true'
         with:
           name: client-digest-${{ matrix.arch }}
@@ -991,11 +1183,42 @@ jobs:
       RELEASE: ${{ needs.stamp.outputs.mode == 'release' }}
       MAIN: ${{ needs.stamp.outputs.mode == 'main' }}
     steps:
-      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+      # The checkout is for scripts/ci's retries (ADR 0025).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Stamp the build's version
+        env:
+          PA_VERSION: ${{ needs.stamp.outputs.version }}
+        run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
+      # The digests, tried up to 3 times (GitHub's artifact service, ADR 0025).
+      - id: digests
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: digests
           pattern: client-digest-*
           merge-multiple: true
+      - if: steps.digests.outcome == 'failure'
+        run: sleep 15
+      - id: digests-again
+        if: steps.digests.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: digests
+          pattern: client-digest-*
+          merge-multiple: true
+      - if: steps.digests-again.outcome == 'failure'
+        run: sleep 45
+      - if: steps.digests-again.outcome == 'failure'
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          path: digests
+          pattern: client-digest-*
+          merge-multiple: true
+      - if: steps.digests.outcome == 'failure'
+        env:
+          HOW: passed on try ${{ steps.digests-again.outcome == 'success' && '2' || '3' }} of 3
+        run: sh scripts/ci/flaky.sh "download-artifact client-digest-*" "$HOW"
       - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
       - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4
         with:
@@ -1014,10 +1237,12 @@ jobs:
             type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE != 'true' }}
       - name: Join the architectures under the tags
         working-directory: digests
+        # Joining the same digests under the same tags again is a no-op.
         run: |
-          docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
+          # shellcheck disable=SC2046 # each tag and digest is its own word
+          sh ../scripts/ci/retry.sh -l "docker buildx imagetools create" docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
-          docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+          sh ../scripts/ci/retry.sh docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
 
   # What a deployment needs (R84): only once this release's images are on GHCR,
   # for anyone to pull, so an attached compose.yaml never names an image that
@@ -1049,19 +1274,19 @@ jobs:
       - name: The release's images are on GHCR
         if: env.DRY_RUN != 'true'
         run: |
-          docker manifest inspect "ghcr.io/rikiku/pagerarchive:$MAJOR_MINOR" >/dev/null
-          docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null
+          sh scripts/ci/retry.sh sh -c 'docker manifest inspect "ghcr.io/rikiku/pagerarchive:$MAJOR_MINOR" >/dev/null'
+          sh scripts/ci/retry.sh sh -c 'docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null'
       - name: The files for installing and upgrading
         run: sh scripts/ci/release-assets.sh dist
       - name: Attach them, check they're there, and make it the latest release
         if: env.DRY_RUN != 'true'
         run: |
-          gh release upload "$TAG" dist/* --clobber
+          sh scripts/ci/retry.sh gh release upload "$TAG" dist/* --clobber
           attached=$(gh release view "$TAG" --json assets --jq '.assets[].name')
           for asset in $(sh scripts/ci/release-assets.sh --list); do
             printf '%s\n' "$attached" | grep -qx "$asset" || { echo "::error::$TAG has no $asset attached"; exit 1; }
           done
-          gh release edit "$TAG" --latest
+          sh scripts/ci/retry.sh gh release edit "$TAG" --latest
       - name: Dry run, so nothing attached
         if: env.DRY_RUN == 'true'
         run: |

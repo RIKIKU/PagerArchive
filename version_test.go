@@ -30,6 +30,7 @@ func TestVersionIsSemantic(t *testing.T) {
 func TestEveryCIJobStampsTheVersion(t *testing.T) {
 	unstamped := []string{
 		"stamp",      // works the version out
+		"changes",    // decides which checks run, from the files alone
 		"versions",   // checks that the repository's own files are unstamped
 		"powershell", // the module has its own version (R63)
 		"publish-powershell",
