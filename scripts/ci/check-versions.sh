@@ -1,49 +1,48 @@
 #!/bin/sh
-# The version checks on a branch or pull request (SPEC.md 12.1 and R63, ADR 0016):
-#   - VERSION is MAJOR.MINOR.PATCH and higher than main's;
-#   - compose.yaml names that version's minor version's image (R84);
-#   - a patch version changes none of what a deployment downloads, since a patch
-#     release needs only pull and up (R84b);
-#   - if the branch changes powershell/PagerArchive/, the manifest's
-#     ModuleVersion is higher than main's.
-# Each failure says what to change. Needs main's history and the v* tags
-# (actions/checkout with fetch-depth: 0).
+# The version checks on a pull request (SPEC.md 12.1 and R63; ADR 0016, ADR 0024):
+#   - VERSION and compose.yaml are main's own, unstamped: VERSION says
+#     0.0.0-dev and compose.yaml names our image :main. A release's version
+#     is worked out when it's cut, and lives in its tag, so a pull request
+#     never sets one;
+#   - if the module (powershell/PagerArchive/) changed since the previous
+#     release, the manifest's ModuleVersion is higher than that release's. Two
+#     pull requests changing the module before the same release share one
+#     raise: the second finds it raised already.
+# Each failure says what to change. Run on the pull request's merge commit,
+# with its history and the v* tags (actions/checkout with fetch-depth: 0).
 #
-# usage: scripts/ci/check-versions.sh [<main>]   (default origin/main)
+# usage: scripts/ci/check-versions.sh [<commit>]   (default HEAD)
 set -eu
 cd "$(dirname "$0")/../.."
 . scripts/ci/versions-lib.sh
 
-MAIN=${1:-origin/main}
+COMMIT=${1:-HEAD}
 failed=0
 
-version=$(tr -d ' \r\n' <VERSION)
-main_version=$(version_at "$MAIN")
-echo "VERSION: $version; main's: ${main_version:-none}"
-if ! is_version "$version"; then
-	fail VERSION "VERSION is '$version', which isn't a semantic version: set it to MAJOR.MINOR.PATCH, higher than main's $main_version (a milestone raises the minor number, a fix the patch number)."
-elif [ -n "$main_version" ] && ! higher "$version" "$main_version"; then
-	fail VERSION "VERSION is $version, which isn't higher than main's $main_version: raise it (a milestone raises the minor number, a fix the patch number), so this merge is a new release."
+version=$(git show "$COMMIT:VERSION" | tr -d ' \r\n')
+echo "VERSION: $version"
+if [ "$version" != "$UNSTAMPED_VERSION" ]; then
+	fail VERSION "VERSION is '$version': set it back to $UNSTAMPED_VERSION. A pull request doesn't set the version: the Release workflow works it out from the previous release when it cuts one (ADR 0024)."
+fi
+named=$(git show "$COMMIT:compose.yaml" | tr -d '\r' | sed -n 's/^[[:space:]]*image:[[:space:]]*ghcr\.io\/rikiku\/pagerarchive:\(.*\)$/\1/p')
+if [ "$named" != "$UNSTAMPED_IMAGE_TAG" ]; then
+	fail compose.yaml "compose.yaml's API image is ghcr.io/rikiku/pagerarchive:${named:-(none)}: set it back to ghcr.io/rikiku/pagerarchive:$UNSTAMPED_IMAGE_TAG. A release writes its own MAJOR.MINOR there when it's cut (ADR 0024)."
 fi
 
-check_compose_image "$version"
-
-base=$(git merge-base "$MAIN" HEAD)
-# shellcheck disable=SC2086
-if [ "${version%.*}" = "${main_version%.*}" ] && ! git diff --quiet "$base" HEAD -- $CONFIG_PATHS; then
-	fail compose.yaml "This branch changes compose.yaml or the configuration archive's files, but VERSION $version is a patch of main's $main_version, and a patch release needs only pull and up (R84b): raise the minor number, and the API's image in compose.yaml."
-fi
-if module_changed "$base" HEAD; then
-	module_version=$(module_version_at HEAD)
-	main_module_version=$(module_version_at "$MAIN")
-	echo "The module changed (powershell/PagerArchive/). ModuleVersion: $module_version; main's: $main_module_version"
+previous=$(previous_release "$COMMIT")
+if [ -z "$previous" ]; then
+	fail VERSION "No v* tag in this commit's history: fetch the tags (actions/checkout with fetch-depth: 0)."
+elif module_changed "$previous" "$COMMIT"; then
+	module_version=$(module_version_at "$COMMIT")
+	released=$(module_version_at "$previous")
+	echo "The module changed since $previous (powershell/PagerArchive/). ModuleVersion: $module_version; $previous's: $released"
 	if ! is_version "$module_version"; then
-		fail "$MANIFEST" "ModuleVersion is '$module_version', which isn't MAJOR.MINOR.PATCH: set it in $MANIFEST, higher than main's $main_module_version."
-	elif ! higher "$module_version" "$main_module_version"; then
-		fail "$MANIFEST" "This branch changes powershell/PagerArchive/ but ModuleVersion is $module_version, which isn't higher than main's $main_module_version: raise ModuleVersion in $MANIFEST."
+		fail "$MANIFEST" "ModuleVersion is '$module_version', which isn't MAJOR.MINOR.PATCH: set it in $MANIFEST, higher than $previous's $released."
+	elif ! higher "$module_version" "$released"; then
+		fail "$MANIFEST" "powershell/PagerArchive/ changed since $previous, but ModuleVersion is $module_version, which isn't higher than $previous's $released: raise ModuleVersion in $MANIFEST, or the next release won't publish the module."
 	fi
 else
-	echo "The module didn't change (powershell/PagerArchive/): its version can stay $(module_version_at HEAD)."
+	echo "The module didn't change since $previous (powershell/PagerArchive/): its version can stay $(module_version_at "$COMMIT")."
 fi
 
 [ "$failed" -eq 0 ] && echo "Versions: OK"

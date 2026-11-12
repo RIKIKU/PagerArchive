@@ -11,6 +11,6 @@ Self-hosted archive and live browser for any POCSAG paging network. **`SPEC.md` 
 - Never commit anything named `*PRIVATE*`, `.env`, or secrets.
 - Show evidence when claiming something works: the command run and its output.
 - Docs-only pushes don't run CI (SPEC.md, docs/**, other Markdown; ADR 0014).
-- Every merge to main is a release (SPEC.md 12.1, ADR 0016): raise `VERSION`, the API's image in `compose.yaml` when the minor version changes, and `ModuleVersion` in `powershell/PagerArchive/PagerArchive.psd1` when the module changes.
+- Merge freely, release deliberately (SPEC.md 12.1, ADR 0024): a merge to main isn't a release, and a branch never sets the version. Leave `VERSION` (`0.0.0-dev`) and the API's image in `compose.yaml` (`:main`) as they are: the Release workflow works out each release's version and writes it into the build. Raise `ModuleVersion` in `powershell/PagerArchive/PagerArchive.psd1` when the module changes, once per release: CI says if it's needed.
 - Every style value is a token in web/src/app.css (R82c): colours, type sizes, fonts and weights, spacing, corner radii, borders, target and other sizes, and how each priority is shown. Components use `var(--…)` only, in style blocks, inline styles and class strings; `web/scripts/check-tokens.mjs` fails CI on a hard-coded value (A73).
 - The PowerShell module follows `docs/powershell-guidelines.md`.

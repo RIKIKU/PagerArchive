@@ -1,36 +1,38 @@
 #!/bin/sh
-# Decides what a push to main releases (SPEC.md 12.1 and R63, ADR 0016),
-# publishing nothing itself. The previous release is the newest v* tag in
-# the commit's history, other than one on this commit (a re-run's own tag);
-# a tag anywhere else doesn't count. Both checks use it:
-#   - version and tag: VERSION at the commit, tag v<VERSION>. It fails if
-#     VERSION isn't higher than the previous release, or if the tag already
-#     exists on another commit: that version was released. A tag on this
-#     same commit is a re-run finishing the release, and it goes on.
+# Decides what a release publishes (SPEC.md 12.1 and R63; ADR 0016, ADR 0024),
+# publishing nothing itself. The version is release-version.sh's. The previous
+# release is the newest v* tag in the commit's history, other than one on this
+# commit (a re-run's own tag); a tag anywhere else doesn't count. Both checks
+# use it:
+#   - version and tag: tag v<version>. It fails if the version isn't higher
+#     than the previous release, or if the tag already exists on another
+#     commit: that version was released. A tag on this same commit is a re-run
+#     finishing the release, and it goes on.
 #   - module: "publish" only if powershell/PagerArchive/ changed since the
 #     previous release and the manifest's version isn't on the PowerShell
 #     Gallery yet; otherwise "unchanged". With no previous release, the
 #     module counts as changed and the Gallery decides.
-# Needs the tags (git fetch --tags). Prints key=value lines, and appends
-# them to $GITHUB_OUTPUT when it's set.
+# Needs the tags (git fetch --tags). Prints key=value lines (previous= is the
+# previous release, where the generated notes start), and appends them to
+# $GITHUB_OUTPUT when it's set.
 #
-# usage: scripts/ci/release-plan.sh <commit>
+# usage: scripts/ci/release-plan.sh <commit> <version>
 set -eu
 cd "$(dirname "$0")/../.."
 . scripts/ci/versions-lib.sh
 
 COMMIT=$1
+version=$2
 GALLERY=${PA_GALLERY_URL:-https://www.powershellgallery.com/api/v2}
 failed=0
 
-version=$(git show "$COMMIT:VERSION" | tr -d ' \r\n')
-is_version "$version" || { fail VERSION "VERSION is '$version', not MAJOR.MINOR.PATCH: nothing is released."; exit 1; }
+is_version "$version" || { fail VERSION "The version is '$version', not MAJOR.MINOR.PATCH: nothing is released."; exit 1; }
 tag=v$version
 commit=$(git rev-parse "$COMMIT^{commit}")
 
 if tagged=$(git rev-parse -q --verify "refs/tags/$tag^{commit}"); then
 	if [ "$tagged" != "$commit" ]; then
-		fail VERSION "Tag $tag already exists, on $tagged: $version was released already, and a version is never reused. Nothing is published; raise VERSION in a new branch."
+		fail VERSION "Tag $tag already exists, on $tagged: $version was released already, and a version is never reused. Nothing is published."
 		exit 1
 	fi
 	echo "Tag $tag is already on $commit: a re-run, finishing the release."
@@ -39,10 +41,10 @@ fi
 previous=$(previous_release "$commit")
 if [ -n "$previous" ]; then
 	if ! higher "$version" "${previous#v}"; then
-		fail VERSION "VERSION is $version, which isn't higher than the previous release, $previous: every release is a new, higher version. Nothing is published; raise VERSION above ${previous#v} in a new branch."
+		fail VERSION "The version is $version, which isn't higher than the previous release, $previous: every release is a new, higher version. Nothing is published."
 		exit 1
 	fi
-	echo "VERSION $version is higher than the previous release, $previous."
+	echo "Version $version is higher than the previous release, $previous."
 fi
 
 module_version=$(module_version_at "$commit")
@@ -79,6 +81,7 @@ major_minor=${version%.*}
 tag=$tag
 module=$module
 module_version=$module_version
+previous=$previous
 notes=$notes"
 echo "$out"
 [ -n "${GITHUB_OUTPUT:-}" ] && echo "$out" >>"$GITHUB_OUTPUT"

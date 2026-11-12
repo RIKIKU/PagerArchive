@@ -51,7 +51,7 @@ Keep the client's clock in sync with NTP. The server rejects receive times more 
 
 ## Docker
 
-The image is published on GitHub's container registry for linux/amd64 and linux/arm64, and pulls without signing in: `ghcr.io/rikiku/pagerarchive-client` (`latest` follows `main`; releases are tagged with their version). To build it yourself: `docker build -f Dockerfile.client -t ghcr.io/rikiku/pagerarchive-client .`
+The image is published on GitHub's container registry for linux/amd64 and linux/arm64, and pulls without signing in: `ghcr.io/rikiku/pagerarchive-client` (`latest` is the latest release, and each release is tagged with its version; `main` is the newest build of main, which reports a version such as `1.7.6-dev+3f2c1ab`). To build it yourself: `docker build -f Dockerfile.client -t ghcr.io/rikiku/pagerarchive-client .`
 
 ```
 docker run -d --name pager-client --restart unless-stopped \

@@ -7,13 +7,15 @@
 # then find everything still there, the migrations run and a new page stored,
 # found and delivered.
 #
-# The previous release is the newest v* tag in this commit's history that's a
-# complete release: not newer than the one GitHub marks Latest, which the
-# release workflow does last, after the images and files are published. One from
-# before M17 has nothing attached (A77 starts with the release after M17's),
-# so the branch or merge that has only those makes a release of its own to
-# start from, in the throwaway registry: this checkout's code with a lower
-# VERSION, without its newest migration, and with a changed Authentik file.
+# The previous release is the one GitHub marks Latest, which the Release
+# workflow does last, after the images and files are published: the release
+# deployments run. So every pull request and every build of main upgrades
+# from it, and a change that breaks the upgrade is caught before a release is
+# cut (ADR 0024). One from before M17 has nothing attached (A77 starts with
+# the release after M17's), so a build that has only those makes a release of
+# its own to start from, in the throwaway registry: this checkout's code with
+# a lower VERSION, without its newest migration, and with a changed Authentik
+# file.
 #
 # This checkout's image goes to a throwaway registry on this machine, never to
 # GHCR. Before the upgrade the metrics role is dropped, so the API has to
@@ -44,7 +46,9 @@ export ALLOWED_EMAIL_DOMAINS=example.com INITIAL_ADMIN_EMAIL=owner@example.org
 . ./scripts/install-lib.sh
 . ./scripts/ci/versions-lib.sh
 VERSION=$(tr -d ' \r\n' <VERSION)
-IMAGE_TAG=${VERSION%.*}
+# The tag compose.yaml names our image by: the build's MAJOR.MINOR, or main
+# in the repository's own, unstamped files (ADR 0024).
+IMAGE_TAG=$(compose_image_tag)
 WORK=$(mktemp -d)
 DIR=$WORK/deployment
 MAILPIT=pa-a77-mailpit-$$
@@ -118,26 +122,10 @@ latest_release() {
 		sed -n 's#^https://github.com/RIKIKU/PagerArchive/releases/tag/\(v[0-9.]*\)$#\1#p'
 }
 
-# complete_release <rev> <latest>: the newest v* tag in the commit's history,
-# other than its own, that isn't newer than the Latest release: a newer one is
-# still being published, or failed to be.
-complete_release() {
-	_commit=$(git rev-parse "$1^{commit}")
-	git tag -l 'v*' --sort=-v:refname --merged "$_commit" | while read -r _t; do
-		[ "$(git rev-parse "$_t^{commit}")" != "$_commit" ] || continue
-		higher "${_t#v}" "${2#v}" || echo "$_t"
-	done | head -n 1
-}
-
 MADE_HERE=""
-previous=$(previous_release HEAD 2>/dev/null || true)
-if [ -n "$previous" ]; then
-	latest=$(latest_release || true)
-	[ -n "$latest" ] || { echo "FAIL: couldn't find the release marked Latest on GitHub" >&2; exit 1; }
-	newest=$previous
-	previous=$(complete_release HEAD "$latest")
-	[ "$previous" = "$newest" ] || echo "=== A77: $newest is newer than the Latest release, $latest: not finished publishing, so not used"
-fi
+previous=$(latest_release || true)
+[ -n "$previous" ] || { echo "FAIL: couldn't find the release marked Latest on GitHub" >&2; exit 1; }
+echo "=== A77: upgrading this build, $VERSION, from the latest release, $previous"
 if [ -n "$previous" ] && higher "${previous#v}" 0.14.1; then
 	previous_from_release "$previous"
 else

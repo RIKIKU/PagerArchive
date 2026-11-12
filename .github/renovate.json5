@@ -17,20 +17,22 @@
   assignees: ["RIKIKU"],
   // Commits through GitHub's API, so they're the app's and verified.
   platformCommit: "enabled",
-  // Every merge to main is a release, and of two automatic pull requests open
-  // at once, the one behind main is rebased and takes the next version.
+  // Main's ruleset merges only a branch that's up to date with main, so of two
+  // automatic pull requests open at once, the one behind main is rebased.
   rebaseWhen: "behind-base-branch",
   // GitHub merges once every required check passes (ADR 0022).
   platformAutomerge: true,
   automergeType: "pr",
   postUpdateOptions: ["gomodTidy"],
-  // R85c: every update raises VERSION as check-versions.sh wants it, run again
-  // on every rebase. allowedCommands in the workflow allows exactly this.
-  postUpgradeTasks: {
-    commands: ["sh scripts/ci/bump-version.sh"],
-    fileFilters: ["VERSION", "compose.yaml"],
-    executionMode: "branch",
-  },
+  // An update doesn't touch VERSION: the Release workflow works out a release's
+  // version when it cuts one (ADR 0024).
+  //
+  // A fix for a known vulnerability (GitHub's alerts, and the OSV database's)
+  // gets its own pull request at once, whatever the schedule, labelled
+  // "security" as well as "maintenance". When it merges, security-release.yml
+  // releases main straight away (SPEC.md 12.1).
+  vulnerabilityAlerts: {addLabels: ["security"]},
+  osvVulnerabilityAlerts: true,
   npm: {rangeStrategy: "bump"},
   // A patch is never held back by a newer minor version: it has its own pull
   // request, which merges on its own where the rules below say so.
@@ -38,7 +40,7 @@
   packageRules: [
     // R85: the base images under our own images, in every FROM, build stages
     // included, pinned by digest. A new digest or patch, daily, is one pull
-    // request that merges on its own: a patch release.
+    // request that merges on its own, in the next release.
     {
       matchManagers: ["dockerfile"],
       matchUpdateTypes: ["digest", "pinDigest", "patch"],
@@ -103,19 +105,26 @@
       allowedVersions: "/^\\d*[02468]([.-]|$)/",
     },
     // R85b: third-party images, the ones a deployment runs (compose.yaml and
-    // the monitoring stack) and the ones CI runs, on Mondays. Each image is its
-    // own pull request, as each can need "Upgrade steps" (R84a). A new minor or
-    // major version waits for the owner.
+    // the monitoring stack) and the ones CI runs, on Mondays, in one pull
+    // request for them all (owner, 2026-11-12), apart from Authentik and
+    // PostGIS, which each have their own (the next rule), as they're the ones
+    // that need the owner's "Upgrade steps" most (R84a). A new minor or major
+    // version waits for the owner.
     {
       matchManagers: ["docker-compose", "github-actions"],
       matchDatasources: ["docker"],
       // Playwright's image, and Renovate's own in maintenance.yml, are libraries.
       matchPackageNames: ["!mcr.microsoft.com/playwright", "!ghcr.io/renovatebot/renovate"],
-      groupName: null,
+      groupName: "third-party images",
+      group: {branchTopic: "third-party-images"},
       minimumReleaseAge: null,
       schedule: ["* * * * 1"],
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
+    },
+    {
+      matchPackageNames: ["ghcr.io/goauthentik/server", "postgis/postgis"],
+      groupName: null,
     },
     // R85b: images named by an exact version, which publish nothing that moves
     // within a minor version (ADR 0019): their patches, in one weekly pull
@@ -161,7 +170,7 @@
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
-    // Our own image in compose.yaml is bump-version.sh's.
+    // Our own image in compose.yaml is the release's (stamp-version.sh, ADR 0024).
     {
       matchPackageNames: ["ghcr.io/rikiku/pagerarchive", "pagerarchive"],
       enabled: false,

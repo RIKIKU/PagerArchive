@@ -123,7 +123,7 @@ services:
   api:
     # This minor version's image. `docker compose pull` gets its patch releases;
     # the next minor version's compose.yaml moves a deployment on (R84a, R84b).
-    image: ghcr.io/rikiku/pagerarchive:1.7
+    image: ghcr.io/rikiku/pagerarchive:main
     restart: unless-stopped
     environment:
       DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable

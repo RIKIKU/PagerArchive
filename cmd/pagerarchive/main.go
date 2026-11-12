@@ -70,7 +70,7 @@ func profileHash(set *profile.Set, net *profile.Network) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// version is the release's, from the VERSION file (ADR 0016).
+// version is the build's, from the VERSION file (ADR 0016, ADR 0024).
 var version = pagerarchive.Version
 
 const usage = `usage: pagerarchive <command> [arguments]
