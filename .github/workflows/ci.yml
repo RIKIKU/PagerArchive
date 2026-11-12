@@ -244,10 +244,12 @@ jobs:
         # more only the tests that failed (5 at most: more means something
         # broke, and nothing is run again). A test that passes only then is
         # flaky, reported below; one that fails again fails the step.
+        # (GitHub runs bash with -e and pipefail: the status is kept, so the
+        # flaky ones are reported when another test failed too.)
         run: |
+          status=0
           go run gotest.tools/gotestsum@v1.13.0 --format standard-verbose --packages ./... \
-            --rerun-fails=1 --rerun-fails-max-failures=5 --rerun-fails-report rerun.txt -- -count=1 2>&1 | tee test.log
-          status=${PIPESTATUS[0]}
+            --rerun-fails=1 --rerun-fails-max-failures=5 --rerun-fails-report rerun.txt -- -count=1 2>&1 | tee test.log || status=$?
           # One line per test run again: "<package>.<test>: <runs> runs, <failures> failures".
           if [ -s rerun.txt ]; then
             while IFS= read -r line; do

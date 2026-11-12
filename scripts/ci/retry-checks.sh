@@ -65,9 +65,9 @@ tab=$(printf '\t')
 
 # decision <want rerun> <attempt> <event> <branch> <jobs (name<TAB>failed steps<TAB>id per line)> [<branch now at>] [<job 7's log>]
 decision() {
-	GH_JOBS=$5 GH_BRANCH_SHA=${6:-abc123} GH_LOG=${7:-a log}
+	GH_JOBS=$5 GH_BRANCH_SHA=${6:-1111111111111111111111111111111111111111} GH_LOG=${7:-a log}
 	export GH_JOBS GH_BRANCH_SHA GH_LOG
-	got=$(sh "$repo/scripts/ci/rerun-decision.sh" 41 "$2" "$3" "$4" abc123 owner/repo)
+	got=$(sh "$repo/scripts/ci/rerun-decision.sh" 41 "$2" "$3" "$4" 1111111111111111111111111111111111111111 owner/repo)
 	if [ "$(printf '%s\n' "$got" | sed -n 's/^rerun=//p')" = "$1" ]; then
 		echo "--- $3 on $4, attempt $2: rerun=$1 ($(printf '%s\n' "$got" | sed -n 's/^why=//p'))"
 	else
@@ -82,16 +82,17 @@ decision true 1 push main "Backups (A80)${tab}Upload the logs${tab}8\nResource b
 decision false 2 pull_request ci-speed "$web$gate"
 decision false 1 workflow_dispatch ci-speed "$web$gate"
 decision false 1 push some-branch "$web$gate"
-decision false 1 pull_request ci-speed "$web$gate" def456
+decision false 1 pull_request ci-speed "$web$gate" 2222222222222222222222222222222222222222
+decision false 1 pull_request ci-speed "$web$gate" '{"message":"Branch not found","status":"404"}'
 decision false 1 pull_request ci-speed "Versions are left to the release, and the module's is raised${tab}Unstamped, and the module's version against the previous release\n$gate"
 decision false 1 pull_request ci-speed "Known vulnerabilities the code calls (govulncheck)${tab}govulncheck\n$gate"
 decision false 1 pull_request ci-speed "Tests, golden tables and acceptance checks${tab}gofmt\n$web$gate"
 decision false 1 pull_request ci-speed "Browser app and browser tests (A1, …)${tab}svelte-check|Browser tests against a real API and PostGIS\n$gate"
 decision false 1 pull_request ci-speed "$gate"
-decision true 1 pull_request ci-speed "$accounts$gate" abc123 'accepted: accepted (ak-stage-prompt): passed false, failures ["SECURITY FAILURE: the right code: accepted"]
+decision true 1 pull_request ci-speed "$accounts$gate" 1111111111111111111111111111111111111111 'accepted: accepted (ak-stage-prompt): passed false, failures ["SECURITY FAILURE: the right code: accepted"]
 --- FAIL: TestA33WithinOneFlow'
-decision false 1 pull_request ci-speed "$accounts$gate" abc123 '    a33_test.go:255: SECURITY FAILURE: the right password in a new flow after 5 wrong ones: accepted'
-decision false 1 pull_request ci-speed "$accounts$gate" abc123 'page text or an email address found in the API log'
+decision false 1 pull_request ci-speed "$accounts$gate" 1111111111111111111111111111111111111111 '    a33_test.go:255: SECURITY FAILURE: the right password in a new flow after 5 wrong ones: accepted'
+decision false 1 pull_request ci-speed "$accounts$gate" 1111111111111111111111111111111111111111 'page text or an email address found in the API log'
 
 # --- govulncheck.sh
 finding() { # finding <id> <module> <fixed or ""> <function or ""> [<package>]

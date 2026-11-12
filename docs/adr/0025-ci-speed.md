@@ -99,7 +99,74 @@ A `govulncheck` job ("Known vulnerabilities the code calls (govulncheck)") runs 
 
 ## Evidence
 
-To follow.
+Nothing was merged, tagged, released or published. The throwaway branches and pull requests below were based on `ci-speed` (so each one's diff is only its own change), never merged, and closed and deleted afterwards.
+
+**What runs.** Each throwaway pull request's run, from the jobs API (`gh api …/actions/runs/<id>/jobs`):
+
+| Change | Run | Jobs that ran | Left out by `changes` | Runner minutes | To "All checks passed" |
+|---|---|---|---|---|---|
+| a browser test (`web/tests/e2e.spec.ts`), #22 | 43160285312 | `web`, `stack-e2e`, `install`, `backups`, `images` (2), the 3 publish builds, and `stamp`, `changes`, `versions` and the gate: 13 | `test`, `search`, `import`, `powershell`, `stack`, `upgrade`, `budget`, `monitoring`, `govulncheck` | 76 | 25 min |
+| a Pester test (`powershell/tests/`), #23 | 43160289035 | `powershell` (4), `stack` (3), and the 4 that always run: 11 | everything else, the publish builds included | 40 | 21 min, up to 6 of them queued behind the other runs |
+| a Go test package (`internal/zzdemo`), #24 | 43160690117 | everything but `powershell`: 21 | `powershell` | 200 | 36 min (failed on purpose, below) |
+| this branch (`.github/`, `scripts/ci/`), #21 | 43160182166 | everything (`changes: 28 files changed; .github/actions/build-push/action.yml changed, which runs everything`) | none | 186 | 24 min (A76 failed, below) |
+
+Before, every pull request ran everything. The six pull request runs before this branch (42986822248, 43105174961, 43113284345, 43116586293, 43139437150, 43134000256) ran 25 or 26 jobs, 181-204 runner minutes, and reached "All checks passed" after 22-44 minutes; PR #10's (one Grafana dashboard) 25 jobs, 204 runner minutes, 34 minutes. A small change's wall time is now its slowest check's (the browser tests, 24 minutes, for a web change; `stack`, 11-13 minutes, for the module), and its runner time a fifth to two fifths of before, so less waits behind it when several runs start together, as these five did.
+
+The gate's notice on #23: `Nothing these use changed (ADR 0025): test search import web stack-e2e upgrade install backups images budget monitoring govulncheck`. `changes-checks.sh` and `retry-checks.sh` passed in each run's `versions` job, and on cld01.
+
+**Layer 1** (a throwaway branch's own workflow, run 43160365407):
+
+```
+retry: made-up apt-get update failed with exit status 100 on try 1 of 3; trying again in 2 s
+##[warning]flaky: made-up apt-get update (passed on try 2 of 3)
+retry: always fails failed on every try (3), the last with exit status 7
+##[error]Process completed with exit code 7.
+##[notice]an annotation written to standard error
+##[error]Failed to CreateArtifact: Received non-retryable error: Failed request: (409) Conflict: an artifact with this name already exists on the workflow run
+upload-artifact failed on try 1 of 3; trying again in 15 s
+##[warning]flaky: upload-artifact demo-1 (passed on try 2 of 3)
+```
+
+The upload's first try was made to fail by uploading one name twice; the retry, with `overwrite: true`, passed. The annotation on standard error shows `retry.sh` can report from a step whose output is captured. `pull-images.sh` pulled the client's base images in the same run.
+
+**Layer 2:**
+
+- **Playwright** (#22, a test that fails on its first try in each browser): `✘ 59 [chromium] › … zz throwaway: fails on its first try only`, then `✓ 60 … (retry #1)`, the same in Firefox and WebKit, then `##[warning]flaky: chromium › e2e.spec.ts › zz throwaway: fails on its first try only (failed 1 time(s), then passed on try 2)` and Firefox's and WebKit's. The step passed, and the report (`playwright-report-43160285312-1`, 44.7 MB, with the failed tries' traces) was uploaded because of the flaky tests.
+- **Pester** (#23, a test that fails the first time in a job): in each of the 4 jobs, `Trying the failed test(s) once more: zz throwaway.fails the first time only`, `Tried again: passed 1, failed 0, …`, `##[warning]flaky: Pester: zz throwaway.fails the first time only (PowerShell 7.6.0 on Win32NT): failed, then passed when run again` (and 7.7.0, and Unix). By hand, with a test that fails every time as well: `Tried again: passed 1, failed 1`, exit 1.
+- **Go** (#24: `TestFailsOnce` fails the first time in a job, `TestFailsInAttempt1` in a run's first attempt): gotestsum re-ran both (`=== FAIL: internal/zzdemo TestFailsInAttempt1 (re-run 1)`, `DONE 2 runs, 461 tests, 33 skipped, 3 failures`) and the job failed, as it should. Its flaky report didn't run in that attempt: GitHub runs bash with `-e` and `pipefail`, so the failed pipeline ended the script first. Fixed here (`|| status=$?`). In the re-run (attempt 2) the test job passed with `##[warning]flaky: go test github.com/RIKIKU/PagerArchive/internal/zzdemo.TestFailsOnce (failed, then passed when run again)`.
+
+**Layer 3.** The CI retry workflow runs from main's copy only, so it can't run before this merges. Its decision (`rerun-decision.sh`) was run by hand against real runs, read-only, and its `gh run rerun --failed` by hand where it said yes:
+
+```
+43133795198 (#18 on main, A15's idle CPU 5.01%), as it is:  rerun=false  why=main is now at 325daab…, not 4711439…: a newer run has it
+the same, as if its commit were still main's newest:         rerun=true   jobs=Resource budget, short run (A15), telemetry off
+43094093703 (#14 on main, 6 uploads failed), likewise:       rerun=true   jobs=Backups (A80); Resource budget, short run (A15), telemetry off; Example monitoring stack (…); Section 11 steps 2 and 3 in a browser, on the compose stack; Importing messages (A76); Resource budget, short run (A15), telemetry on
+43108950897 (renovate/base-images, the Gallery's 403s):      rerun=false  why=renovate/base-images is now at (gone), not …
+43160182166 (#21, this branch, A76 failed, below):            rerun=true   jobs=Importing messages (A76)
+43160690117 (#24, TestFailsInAttempt1):                       rerun=true   jobs=Tests, golden tables and acceptance checks
+```
+
+Run on real runs, it showed two faults, fixed before these: a job's name with commas in it was split in the list of jobs, and a deleted branch's 404 answer was taken for its newest commit.
+
+- **#21's run, re-run** (`gh run rerun 43160182166 --failed`): attempt 2 passed, and its "All checks passed" said `flaky: job Importing messages (A76) (failed in attempt 1, passed in attempt 2)`.
+- **#24's run, re-run** (`gh run rerun 43160690117 --failed`): attempt 2 passed, and "All checks passed" said `flaky: job Tests, golden tables and acceptance checks (failed in attempt 1, passed in attempt 2)`, beside `Nothing these use changed (ADR 0025): powershell`.
+- `retry-checks.sh` covers the rest with a stand-in for `gh`: a second attempt, a manual run, a moved or deleted branch, the versions and govulncheck jobs, the gofmt and svelte-check steps, a gate that failed alone, and the security and privacy findings (`a33_test.go:255: SECURITY FAILURE: …` and `page text or an email address found in the API log` aren't re-run; a passing run's logged `failures ["SECURITY FAILURE: …"]` doesn't count).
+
+**A flake seen on this branch.** #21's first attempt failed in A76's file checks, which this branch doesn't change: `import_test.go:495: the API didn't come back`, two minutes after the test's `docker compose kill -s SIGKILL api` and `start api`. It passed in the re-run. Recorded here to be looked into separately (the job keeps no API log for these checks).
+
+**A82.**
+
+- **The fault, made to happen:** a copy of A82 (on cld01, not committed) that, after Back, hovers Clear all and holds the fade with the Web Animations API, then scans as before. Held 280 ms in, the tooltip's opacity was 0.513 and the scan said exactly what CI's did, in Chromium and Firefox: `["color-contrast: .clear > .tooltip[aria-hidden=\"true\"]"]`; `axeOf`, once the fade could finish: `[]`. Held at 300 and 320 ms (opacity 0.80 and 0.94) the old scan passed: the window is narrow, which is why it failed only once.
+- **Before:** the old test 30 times in Firefox on cld01 (10, then 20 with `stress-ng --cpu 8`): 29 passed, and one failed writing Playwright's trace under the load (`file data stream has unexpected number of bytes`), not on axe. It didn't fail on its own in that many tries.
+- **After:** with `CI=true` (so with the retry) and `stress-ng --cpu 8`: Firefox `20 passed (17.2m)`, Chromium and WebKit `10 passed (6.8m)`, none flaky (no `retry #1`). `svelte-check found 0 errors and 0 warnings`; `check-tokens` clean.
+
+**govulncheck** (v1.9.0, database of 2026-11-11, Go 1.27.4):
+
+- In CI on this branch (#21): `called with a fix: 0; called, no fix: 0; imported only: 0; required only: 0`. Nothing today.
+- On main before #18 and #19 (3f984ed, in Docker on cld01): 5 vulnerabilities the code calls in golang.org/x/net v0.59.0, fixed in v0.60.0 (GO-2026-6603, -6610, -6611, -6612, -6617, all HTTP/2), which would have failed the job, and 2 only required (GO-2026-6860, -6866, html, fixed in v0.62.0). Nothing for go-jose, which OSV had flagged.
+- With cld01's own Go 1.27.2 it reports the standard library's GO-2026-6809 and GO-2026-6859 as called (fixed in 1.27.3 and 1.27.4). CI's Go, from `go.mod`'s `go 1.27`, is the newest patch, so it doesn't.
+
+**Static checks.** `actionlint` 1.7.12 with shellcheck (`rhysd/actionlint:1.7.12`) on every workflow: no findings. `shellcheck` 0.11.0 on the new scripts: none. `go test .` (the stamp and R84 tests, with `changes` added to the jobs that don't stamp): ok. `gofmt -l`: nothing.
 
 ## Consequences
 

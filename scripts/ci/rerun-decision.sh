@@ -23,7 +23,8 @@
 #
 # usage: scripts/ci/rerun-decision.sh <run id> <attempt> <event> <head branch> <head commit> <head repository>
 #   needs GH_TOKEN and GITHUB_REPOSITORY. Writes rerun=true|false, why=… and
-#   jobs=… (the failed jobs' names) to standard output and $GITHUB_OUTPUT.
+#   jobs=… (the failed jobs' names, separated by "; ") to standard output and
+#   $GITHUB_OUTPUT. "(gone)" for a branch that no longer exists.
 set -eu
 run=$1 attempt=$2 event=$3 branch=$4 sha=$5 head_repo=$6
 here=$(cd "$(dirname "$0")" && pwd)
@@ -57,12 +58,12 @@ pull_request/* | push/main) ;;
 *) decide false "a $event run on $branch: only pull requests' runs and main's are re-run" ;;
 esac
 
-now=$(sh "$here/retry.sh" -l "the branch's newest commit" gh api "repos/$head_repo/branches/$branch" --jq .commit.sha 2>/dev/null || true)
+now=$(sh "$here/retry.sh" -l "the branch's newest commit" gh api "repos/$head_repo/branches/$branch" --jq .commit.sha 2>/dev/null | grep -xE '[0-9a-f]{40}' || true)
 [ "$now" = "$sha" ] || decide false "$branch is now at ${now:-(gone)}, not $sha: a newer run has it"
 
 jobs=$(sh "$here/retry.sh" -l "the run's jobs" gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/attempts/$attempt/jobs" \
 	--jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out") | [.name, ([.steps[]? | select(.conclusion == "failure") | .name] | join("|")), .id] | @tsv')
-failed_jobs=$(printf '%s\n' "$jobs" | cut -f1 | grep -v -x "$GATE" | grep . | paste -sd ',' - | sed 's/,/, /g' || true)
+failed_jobs=$(printf '%s\n' "$jobs" | cut -f1 | grep -v -x "$GATE" | grep . | awk 'NR > 1 {printf "; "} {printf "%s", $0}' || true)
 
 [ -n "$failed_jobs" ] || decide false "no job failed but \"$GATE\""
 change=$(printf '%s\n' "$jobs" | cut -f1 | grep -E "$ALWAYS_THE_CHANGE_JOBS" | head -1 || true)
