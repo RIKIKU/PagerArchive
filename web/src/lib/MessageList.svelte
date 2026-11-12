@@ -102,11 +102,18 @@
 
 	api.meta().then((m) => (meta = m)).catch((e) => (error = e.message));
 
+	// Each new start for the rows (the first page, a jump) counts one: a
+	// page of older or newer rows asked for before it is then left out, so a
+	// scrub's quick jumps never mix two places' rows.
+	let gen = 0;
+
 	async function loadFirst(q: URLSearchParams) {
 		loading = true;
 		error = '';
+		const g = ++gen;
 		try {
 			const p = await api.messages(q);
+			if (g !== gen) return;
 			messages = p.messages;
 			next = p.next;
 			newer = undefined;
@@ -121,8 +128,10 @@
 		if (!next || loading || askedKey === undefined) return;
 		loading = true;
 		let ok = false;
+		const g = gen;
 		try {
 			const p = await api.messages(new URLSearchParams(askedKey), next);
+			if (g !== gen) return;
 			const seen = new Set(messages.map((m) => m.id));
 			messages = [...messages, ...p.messages.filter((m) => !seen.has(m.id))];
 			next = p.next;
@@ -157,9 +166,10 @@
 		const q = new URLSearchParams(askedKey);
 		loading = true;
 		error = '';
+		const g = ++gen;
 		try {
 			const p = await api.messagesAt(q, before);
-			if (askedKey !== q.toString()) return;
+			if (askedKey !== q.toString() || g !== gen) return;
 			messages = p.messages;
 			next = p.next;
 			newer = p.newer;
@@ -172,15 +182,24 @@
 		} finally {
 			loading = false;
 		}
+		// The newer rows above: the observer may not say so again, as its
+		// line was in reach before the jump too.
+		if (g === gen) nearTop();
+	}
+
+	function nearTop() {
+		if (scroll && newer && topSentinel && topSentinel.getBoundingClientRect().bottom > -window.innerHeight * AHEAD) loadNewer();
 	}
 
 	async function loadNewer() {
 		if (!newer || loadingNewer || askedKey === undefined) return;
 		const q = new URLSearchParams(askedKey);
 		loadingNewer = true;
+		const g = gen;
+		let stale = false;
 		try {
 			const p = await api.messagesAfter(q, newer);
-			if (askedKey !== q.toString()) return;
+			if (askedKey !== q.toString() || g !== gen) return void (stale = true);
 			// The rows in view stay where they are as newer ones go in above them.
 			const anchor = rowsInView().find((r) => r.getBoundingClientRect().bottom > below());
 			const top = anchor?.getBoundingClientRect().top ?? 0;
@@ -193,6 +212,8 @@
 			error = (e as Error).message;
 		} finally {
 			loadingNewer = false;
+			// Left out for a jump made meanwhile: that jump's newer rows instead.
+			if (stale) nearTop();
 		}
 	}
 
@@ -429,6 +450,14 @@
 		return () => io.disconnect();
 	});
 
+	// R81b: Escape in the scrubber puts the keyboard on the row at the top of
+	// the view.
+	function backToList() {
+		const edge = below();
+		const row = rowsInView().find((r) => r.getBoundingClientRect().bottom > edge);
+		row?.querySelector<HTMLElement>('a.open')?.focus({ preventScroll: true });
+	}
+
 	function removed(id: number) {
 		messages = messages.filter((m) => m.id !== id);
 		onremoved?.(id);
@@ -478,7 +507,7 @@
 		{/if}
 	</div>
 	{#if scrubbed && askedKey !== undefined && !blocked}
-		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} host={bodyEl} onjump={jump} />
+		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} host={bodyEl} onjump={jump} onleave={backToList} />
 	{/if}
 </div>
 

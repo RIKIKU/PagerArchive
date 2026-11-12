@@ -17,13 +17,15 @@
 	import { onMount, untrack } from 'svelte';
 	import { api, type Counts, type Mark } from './api.ts';
 	import Icon from './Icon.svelte';
+	import { scrubberHere } from './scrubberHere.svelte.ts';
 
 	let {
 		query,
 		tz,
 		at,
 		host,
-		onjump
+		onjump,
+		onleave
 	}: {
 		/** The list's API parameters, as a string (MessageList's askedKey). */
 		query: string;
@@ -35,6 +37,8 @@
 		host?: HTMLElement;
 		/** Jump the list to the messages sent before this time. */
 		onjump: (before: string) => Promise<void>;
+		/** Escape: the keyboard goes back to the list. */
+		onleave?: () => void;
 	} = $props();
 
 	// POC (2026-11-13): the choices to compare, from the address once
@@ -104,6 +108,7 @@
 		untrack(() => {
 			zoom = undefined;
 			picked = undefined;
+			want = done = undefined;
 			load();
 		});
 		return () => clearTimeout(retry);
@@ -252,18 +257,49 @@
 	const later = $derived(hourStep(1));
 	const earlier = $derived(hourStep(-1));
 
+	// Jumps go one at a time, to the latest mark wanted, at most one every
+	// 120 ms: a drag asks for many marks, and only the latest matters.
+	let want: number | undefined;
+	let done: number | undefined;
+	let pumping: Promise<void> | undefined;
+	function pump(): Promise<void> {
+		pumping ??= (async () => {
+			try {
+				while (want !== undefined && want !== done && marks[want]) {
+					const j = want;
+					done = j;
+					const t0 = performance.now();
+					await onjump(marks[j].end);
+					const rest = 120 - (performance.now() - t0);
+					if (rest > 0 && want !== j) await new Promise((r) => setTimeout(r, rest));
+				}
+			} finally {
+				pumping = undefined;
+			}
+		})();
+		return pumping;
+	}
+
 	function go(i: number) {
 		const m = marks[Math.max(0, Math.min(marks.length - 1, i))];
 		if (!m) return;
 		picked = marks.indexOf(m);
 		landed = undefined;
-		onjump(m.end).then(() => (landed = current ?? -1));
+		want = picked;
+		done = undefined;
+		pump().then(() => (landed = current ?? -1));
 	}
 
 	// The keyboard moves the mark at once and jumps after a moment, so holding
 	// an arrow key doesn't ask the API for every mark it passes.
 	let keyTimer: ReturnType<typeof setTimeout> | undefined;
 	function key(e: KeyboardEvent) {
+		// Escape: back to the list, at the row at the top of the view.
+		if (e.key === 'Escape') {
+			e.preventDefault();
+			onleave?.();
+			return;
+		}
 		if (marks.length === 0) return;
 		const from = shown ?? 0;
 		let to: number | undefined;
@@ -311,23 +347,54 @@
 		const r = track.getBoundingClientRect();
 		return Math.max(0, Math.min(marks.length - 1, Math.floor(((y - r.top) / r.height) * marks.length)));
 	}
+	// A press jumps to the mark under the pointer; holding the button and
+	// dragging scrubs: the list follows each new mark under the pointer as
+	// it goes (owner, 2026-11-13), not only on release. The pointer is
+	// captured, so the drag goes on (and the strip stays shown) when it
+	// leaves the strip, until the button is let go.
 	function down(e: PointerEvent) {
 		if (e.button !== 0 || marks.length === 0) return;
 		track?.setPointerCapture(e.pointerId);
 		track?.focus({ preventScroll: true });
 		dragging = true;
 		hover = indexAt(e.clientY);
+		picked = undefined;
+		landed = undefined;
+		want = hover;
+		done = undefined;
+		pump();
 		e.preventDefault();
 	}
 	function move(e: PointerEvent) {
-		if (dragging) hover = indexAt(e.clientY);
+		if (!dragging) return;
+		const i = indexAt(e.clientY);
+		if (i === hover) return;
+		hover = i;
+		want = i;
+		pump();
 	}
 	function up(e: PointerEvent) {
 		if (!dragging) return;
+		const i = indexAt(e.clientY) ?? hover;
 		dragging = false;
-		const i = indexAt(e.clientY);
 		hover = undefined;
-		if (i !== undefined) go(i);
+		if (i === undefined) return;
+		picked = i;
+		landed = undefined;
+		want = i;
+		pump().then(() => (landed = current ?? -1));
+	}
+	function cancel() {
+		dragging = false;
+		hover = undefined;
+	}
+
+	// Alt+J (Option+J on a Mac) from anywhere on the page, or the skip link,
+	// brings the strip out with the keyboard on it (owner, 2026-11-13: Tab
+	// walks the whole side menu first).
+	function focusStrip() {
+		focused = true;
+		track?.focus({ preventScroll: true });
 	}
 
 	const value = $derived(shown === undefined ? 0 : marks.length - 1 - shown);
@@ -394,7 +461,17 @@
 		const leave = () => (near = false);
 		window.addEventListener('pointermove', move, { passive: true });
 		document.documentElement.addEventListener('pointerleave', leave);
+		// e.code, so Option+J on a Mac (which types a letter) is J too.
+		const shortcut = (e: KeyboardEvent) => {
+			if (e.code !== 'KeyJ' || !e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+			e.preventDefault();
+			focusStrip();
+		};
+		window.addEventListener('keydown', shortcut);
+		scrubberHere.focus = focusStrip;
 		return () => {
+			window.removeEventListener('keydown', shortcut);
+			if (scrubberHere.focus === focusStrip) scrubberHere.focus = undefined;
 			fine.removeEventListener('change', change);
 			cancelAnimationFrame(frame);
 			ro.disconnect();
@@ -470,11 +547,13 @@
 		aria-valuemax={Math.max(0, marks.length - 1)}
 		aria-valuenow={value}
 		aria-valuetext={shown !== undefined && marks[shown] ? spoken(marks[shown]) : 'No marks'}
+		aria-keyshortcuts="Alt+J"
 		onkeydown={key}
 		onpointerdown={down}
 		onpointermove={move}
 		onpointerup={up}
-		onpointercancel={() => ((dragging = false), (hover = undefined))}
+		onpointercancel={cancel}
+		onlostpointercapture={() => dragging && cancel()}
 	>
 		{#each marks as m, i (m.start)}
 			{@const l = label(m, i)}

@@ -3146,6 +3146,8 @@ FROM generate_series(0, 2) AS p (i);`);
 	await page.mouse.down();
 	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
 	await expect(scrubber.locator('.bubble')).toContainText(dayName(20, { weekday: 'long', day: 'numeric', month: 'long' }));
+	// Scrubbing: while the button is held, the list is already there.
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
 	await page.mouse.up();
 	const list = page.getByTestId('message-list');
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
@@ -3172,7 +3174,12 @@ FROM generate_series(0, 2) AS p (i);`);
 
 	// The keyboard: Home and End go to the ends, Page Up a week newer.
 	const slider = scrubber.getByRole('slider', { name: 'Jump to a date' });
-	await slider.focus();
+	// Alt+J brings it out with the keyboard on it, from anywhere on the page (owner, 2026-11-13).
+	await page.mouse.move(400, 450);
+	await page.getByRole('link', { name: 'Messages', exact: true }).first().focus();
+	await page.keyboard.press('Alt+KeyJ');
+	await expect(slider).toBeFocused();
+	await expect(scrubber).toHaveAttribute('data-shown', 'true');
 	await page.keyboard.press('Home');
 	await expect(slider).toHaveAttribute('aria-valuetext', /^Today /);
 	await page.keyboard.press('End');
@@ -3181,6 +3188,14 @@ FROM generate_series(0, 2) AS p (i);`);
 	await page.keyboard.press('PageUp');
 	await expect(slider).toHaveAttribute('aria-valuetext', new RegExp(dayName(22, { day: 'numeric', month: 'long' })));
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 22 PAGE 2`);
+	// Escape puts the keyboard back on the list, on the row at the top of the view.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('message-list').locator('a.open:focus')).toContainText(`SCRUBBER ${n} DAY 22 PAGE 2`);
+	// The skip link at the top of the page goes there too.
+	await page.getByRole('link', { name: 'Skip to the date scrubber (Alt+J)' }).focus();
+	await page.keyboard.press('Enter');
+	await expect(slider).toBeFocused();
+	await page.keyboard.press('Escape');
 
 	// A 6-month range is in weeks, 2 years in months.
 	for (const [months, kind] of [
