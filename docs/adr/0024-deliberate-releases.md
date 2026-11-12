@@ -99,7 +99,57 @@ A77 now starts from the release GitHub marks Latest, straight from GitHub (`rele
 
 ## Evidence
 
-(Below.)
+Nothing was tagged, released or published. Afterwards `git ls-remote --tags origin 'v1.7.6*'` listed nothing, `gh release view v1.7.6` said `release not found`, `docker manifest inspect ghcr.io/rikiku/pagerarchive:1.7.6` failed (1.7.5's succeeded), and the Latest release was still v1.7.5.
+
+**The version scripts** (`release-version-checks.sh`, on cld01 and in CI's `versions` job), with made-up releases v9.4.1 (old style, `VERSION` and `compose.yaml` committed) and v9.4.2 in a throwaway clone:
+
+```
+--- the version leaves the repository (VERSION, our image :9.4 to :main) since v9.4.1: release=true version=9.4.2 (a patch: nothing a deployment downloads changed since v9.4.1)
+--- nothing changed since v9.4.2: release=false version=9.4.3 (nothing to release: nothing changed since v9.4.2)
+--- documentation only (docs/, SPEC.md, README.md, deploy/made-up.md): release=false version=9.4.3 (nothing to release: only documentation changed since v9.4.2)
+--- web/static/LICENSE.md (built into the server): release=true version=9.4.3 (a patch: …)
+--- code: release=true version=9.4.3 (a patch: nothing a deployment downloads changed since v9.4.2)
+--- only our image's tag in compose.yaml: release=false version=9.4.3 (nothing to release: …)
+--- our image's tag and code: release=true version=9.4.3 (a patch: …)
+--- the monitoring stack's compose.yaml: release=true version=9.5.0 (a minor version: a file a deployment downloads changed since v9.4.2)
+--- the configuration archive (deploy/authentik): release=true version=9.5.0 (a minor version: …)
+--- a release on a later commit (v9.4.3) has it: release=false version=9.4.3 (nothing to release: v9.4.3, on a later commit, has everything this one has)
+--- its own release, v9.4.3, is the Latest: release=false version=9.4.3 (nothing to release: v9.4.3 is on this commit, and released)
+--- its own release, v9.4.3, isn't the Latest yet (v9.4.2): finished: release=true version=9.4.3 (v9.4.3 is on this commit, but the Latest release is v9.4.2: finishing v9.4.3)
+--- --dev, code since v9.4.2: release=true version=9.4.3-dev+fa8bca4 (…)
+--- --dev, a minor change since v9.4.2: release=true version=9.5.0-dev+d073288 (…)
+--- --dev on a released commit (v9.4.3): release=true version=9.4.4-dev+f18cf24 (…)
+--- stamp-version.sh: VERSION 9.4.3-dev+0e9ee09, compose.yaml :9.4
+--- stamp-version.sh 0.0.0-dev: the repository's own files again
+--- VERSION set by hand: FAIL: VERSION is '9.4.3': set it back to 0.0.0-dev. …
+--- compose.yaml set by hand: FAIL: compose.yaml's API image is ghcr.io/rikiku/pagerarchive:9.4: set it back to ghcr.io/rikiku/pagerarchive:main. …
+--- the module changed, not raised: FAIL: powershell/PagerArchive/ changed since v9.4.2, but ModuleVersion is 0.12.0, which isn't higher than v9.4.2's 0.12.0: …
+--- the module changed, ModuleVersion 0.12.0 to 0.13.0: Versions: OK
+--- a second module change before the release: Versions: OK
+--- release-plan.sh, v9.4.3 on another commit: FAIL: Tag v9.4.3 already exists, on f18cf24…: 9.4.3 was released already, and a version is never reused. Nothing is published.
+Version scripts: OK
+```
+
+`go test .` (the version, A79, R84 and stamp tests) passed on both the unstamped checkout and CI's stamped ones. `actionlint` 1.7.12 on all five workflows: no findings. `renovate-config-validator --strict` (Renovate 44.222.4): `Config validated successfully`.
+
+**The dry run** (Release, Run workflow on `release-process`, `dry_run` ticked; run 43119692373, b1d2463, with v1.7.5 tagged but not yet the Latest release): success, every job. The plan:
+
+```
+Commit b1d246373916dde868cac2d309a67b9d101deaa0 (refs/heads/release-process); the Latest release is v1.7.4
+version=1.7.6  major_minor=1.7  tag=v1.7.6  previous=v1.7.5
+why=a patch: nothing a deployment downloads changed since v1.7.5
+##[notice]Dry run: v1.7.6 would be released (…). Nothing is tagged or published.
+```
+
+then the stamp job `mode=dry-run publish=false`, and all 23 check jobs passed. Every job logged `stamp-version: VERSION 1.7.6, compose.yaml names ghcr.io/rikiku/pagerarchive:1.7`; the images reported `pagerarchive 1.7.6` and `pagerarchive-client 1.7.6`. A77: `upgrading this build, 1.7.6, from the latest release, v1.7.4`, `running: pagerarchive 1.7.4`, then `1.7.6`, then the patch `1.7.99`, `A77 passed`. The release job: `Version 1.7.6 is higher than the previous release, v1.7.5.`, `module unchanged: the Gallery keeps 0.12.0`, the two binaries and `SHA256SUMS`, the notes with GitHub's generated part (`**Full Changelog**: …/compare/v1.7.5...v1.7.6`, no pull requests yet as the branch isn't merged), and `dry run: would tag b1d2463… v1.7.6, create the release "PagerArchive v1.7.6" (not yet the latest)`; the tag and release steps were skipped. `publish-server`: `mode: dry-run; published: false` with `ghcr.io/rikiku/pagerarchive:1.7.6`, `:1.7`, `:latest`; the client's manifest job and the module's were skipped. `attach-release-files`: `would attach these to v1.7.6`, R84's five files, and `its compose.yaml: image: ghcr.io/rikiku/pagerarchive:1.7`.
+
+**The guard off main:** a throwaway branch, `release-process-register`, with a `push` trigger added to `release.yml` (which also registered the workflow, so it could be dispatched before it's on main; the branch is deleted): run 43119663146 failed in its first step, `A release is made from main only, and this run is on refs/heads/release-process-register. Off main, tick "Dry run".`
+
+**This pull request's CI** (run 43119773469, b1d2463): success, all 26 jobs that run on a pull request; the release jobs, the client's manifest and the module were skipped. The stamp job gave `version=1.7.6-dev+5fd2100 mode=none publish=false` for the pull request's merge commit, the images reported `pagerarchive 1.7.6-dev+5fd2100` and `pagerarchive-client 1.7.6-dev+5fd2100`, and `publish-server` said `mode: none; published: false` with `ghcr.io/rikiku/pagerarchive:sha-5fd2100` only.
+
+**Renovate's grouping**, run locally on cld01 (`--platform=local`, a lookup only, nothing pushed) on a copy with the schedules removed and older versions of five images put in: Tempo 3.1.1, Loki 3.7, Prometheus 3.16.0 and Grafana 13.3 went in `renovate/third-party-images`; Authentik in `renovate/ghcr.io-goauthentik-server-2026.x`; PostGIS (three services) in `renovate/postgis-postgis-18.3.x`; the Tempo and Prometheus patches still in `renovate/exact-version-images-patch`; Mailpit (the test stack) still in the libraries' pull requests. With OSV on, the same run found two vulnerability branches today: `renovate/go-golang.org-x-net-vulnerability` and `renovate/go-github.com-go-jose-go-jose-v4-vulnerability`. A local run can't show labels; the `security` label is Renovate's documented `vulnerabilityAlerts` behaviour.
+
+Not run: the security trigger end to end (it needs a labelled pull request merged into main), and a real release, which the owner starts after the merge.
 
 ## Consequences
 
@@ -108,6 +158,8 @@ A77 now starts from the release GitHub marks Latest, straight from GitHub (`rele
 - A tag's own tree isn't stamped; the release's images and attached files are.
 - The schedule needs nothing from the owner, but GitHub turns off a public repository's scheduled workflows after 60 days without activity; any push turns them back on.
 - A release on Saturday runs the whole suite again on a commit main's CI already ran (about an hour of runners, once a week).
+- The first Renovate run after the merge opens two security pull requests (golang.org/x/net, go-jose; OSV), at once; each merge releases.
+- A failed scheduled run is emailed to whoever last changed the cron line (GitHub's rule for scheduled workflows).
 
 ## Questions for the owner
 
