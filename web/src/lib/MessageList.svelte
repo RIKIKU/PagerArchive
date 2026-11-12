@@ -217,8 +217,19 @@
 	let settled = false;
 	let popped = false;
 	let listEl: HTMLElement | undefined = $state();
-	function place(): Kept['place'] {
-		const first = rowsInView().find((r) => r.getBoundingClientRect().bottom > below());
+	// The row last clicked or focused: the one someone is looking at.
+	let usedRow: number | undefined;
+	function used(e: Event) {
+		const row = (e.target as Element | null)?.closest?.('article[data-message-id]') as HTMLElement | null;
+		if (row) usedRow = Number(row.dataset.messageId);
+	}
+	// opening: the message being opened. Its row, or else the row last used, if
+	// in view, is the one kept in place, as the list narrows for a message
+	// beside it (R80) or widens again and the rows wrap anew; else the first.
+	function place(opening?: number): Kept['place'] {
+		const inView = rowsInView().filter((r) => r.getBoundingClientRect().bottom > below() && r.getBoundingClientRect().top < window.innerHeight);
+		const first =
+			inView.find((r) => Number(r.dataset.messageId) === opening) ?? inView.find((r) => Number(r.dataset.messageId) === usedRow) ?? inView[0];
 		return { scrollY: window.scrollY, row: first ? Number(first.dataset.messageId) : undefined, top: first?.getBoundingClientRect().top ?? 0 };
 	}
 	function applyScroll() {
@@ -343,9 +354,10 @@
 	// itself.
 	let left: { key: string; place: Kept['place'] } | undefined;
 	if (untrack(() => remember)) {
-		beforeNavigate(() => {
+		beforeNavigate((nav) => {
 			if (askedKey === undefined) return;
-			left = { key: askedKey, place: place() };
+			const opening = nav.to?.url.pathname.match(/^\/messages\/(\d+)$/);
+			left = { key: askedKey, place: place(opening ? Number(opening[1]) : undefined) };
 			keep({ key: askedKey, messages: $state.snapshot(messages) as Message[], next, newer, place: left.place });
 		});
 		afterNavigate((nav) => {
@@ -409,7 +421,8 @@
 		{/if}
 		{#if error}<p class="error" role="alert">{error}</p>{/if}
 
-		<div class="list" data-testid="message-list" bind:this={listEl}>
+		<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions (only notes which row was used; the links do the work) -->
+		<div class="list" data-testid="message-list" bind:this={listEl} onclickcapture={used} onfocusin={used}>
 			{#each messages as m (m.id)}
 				<MessageRow {m} tz={meta?.time_zone ?? 'UTC'} fresh={fresh.has(m.id)} {pick} selected={selected === m.id} {keepScroll} {album} onremoved={removed} />
 			{/each}

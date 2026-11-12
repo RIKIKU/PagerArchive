@@ -47,6 +47,7 @@ The nightly run's batches (`DeleteMessagesBefore`) now also mark each album a de
 - Down the right of every message list that has one (the list, the alias and capcode views, the job view, an album; not the print page), sticky under the top bar, beside the rows only. On a phone it's narrower (the target's width) and has no labels, above the bottom bar.
 - Each mark has up to four dots: none for an empty mark, then one to four by its count against the busiest mark of the same kind (an hour against hours, a day against days), so the hours of today aren't all one dot beside the days. A few labels: "Today" and "Yesterday" where their hours start, a date on Mondays, the month for weeks, the year for months.
 - Where the list is: the mark holding the first row in view is marked (an edge and a tint). Clicking or dragging (pointer capture, so a drag can leave the strip) names the mark under the pointer in a bubble while dragging and jumps on release. A jump is to the messages sent before the mark's end, with the newest of them at the top of the view; the list then shows "Load newer messages" and "Newest" above them, and loads the newer ones as it's scrolled up, keeping the rows in view where they were. A live message newer than everything loaded waits for that (as one older than everything loaded waits for paging).
+- The scrubber makes the list's rows narrower, so they wrap more when a message opens beside them (R80) or closes. The list kept the first row in view in place across that (ADR 0015); a row further down then moved, by 116 to 256 px at 1,280 px (A69 caught it). It now keeps the row being opened in place, or else the row last clicked or focused, and the first row in view only when neither is in view (`MessageList.svelte`, `place`).
 - The keyboard (R81b): the strip is one vertical slider (`role="slider"`, its value text the mark's name and count): Up and Down move a mark (an hour within today and yesterday), Page Up and Page Down a week, Home and End to the ends; it jumps a moment after the last key, so holding a key doesn't ask the API for every mark.
 - Zoom (R81d): at an hour of today or yesterday, a button at the top ("Zoom into Yesterday 14:00, by 5 minutes") shows that hour's twelve blocks with their dots; "The hour after" (top) and "The hour before" (bottom) move an hour, within today and yesterday; "Back to the days" returns.
 - New icons (R77a), from Tabler as before: albums `album`, add `plus`, edit `pencil`, remove `trash`, note `note`, zoom in and out `zoom-in`, `zoom-out`, the hours after and before `caret-up`, `caret-down` (carets, as the calendar's months; chevrons are menu groups), and newest `chevrons-up`. New tokens (R82c): `--scrubber-width`, `--scrubber-width-phone`, `--scrubber-edge`, `--scrubber-dot`, `--scrubber-dot-colour`.
@@ -66,8 +67,25 @@ The nightly run's batches (`DeleteMessagesBefore`) now also mark each album a de
 
 ## Evidence
 
-See the pull request.
+**The speed check** (cld01, 8 cores, 11 GB, `TestA75SearchSpeed` with `a71CountsSpeed`, `PAGERARCHIVE_A75=1`): A75's 4,562,500 pages, the database restarted with the operating system's and PostgreSQL's caches dropped before each first run, then three runs warm. A75's own searches all still pass (the same pages, each within 1 second cold and warm), so the search query's two new conditions cost nothing when unset.
+
+| Counts for | Marks | Pages counted | Cold | Warm |
+|---|---|---|---|---|
+| the last 30 days | 60 | 37,716 | 550 ms | 18-19 ms |
+| `alias:"Station 1"` | 60 | 10,052 | 167 ms | 6-7 ms |
+| `alias:"Station 5"`, the busy alias | 60 | 661 | 104 ms | 5-6 ms |
+| a common term (`fire`) | 60 | 12,106 | 586 ms | 75-76 ms |
+| a term in no page | 60 | 0 | 115 ms | 2-3 ms |
+| a map reference without quotes (`m 23 b4`) | 60 | 1 | 204 ms | 7 ms |
+| 6 months, by the week | 59 | 228,921 | 1.254 s | 279-281 ms |
+| 2 years, by the month | 57 | 913,759 | not counted (2.08 s) | 1.10 s, then 223-225 ms |
+| 10 years, by the month | 153 | | not counted (2.18 s) | not counted (2.0 s) |
+| 10 years of `alias:"Station 1"` | 153 | 1,120,625 | not counted (2.08 s) | 537 ms, then 222-231 ms |
+
+The last 30 days, with every search A71 and A75 name, are counted within a second, cold and warm (A71). The table's total for the last 30 days equals a plain `count(*)` of the same span. Ranges of months and years are the question below.
+
+The other checks: `go test ./...` with the test database (every package passes), `scripts/e2e.sh` in Chromium, Firefox and WebKit, `npm run check`, `sqlc diff`, `gofmt -l`, `node scripts/check-tokens.mjs` (80 files) and `node scripts/icons.mjs --check` (53 icons): see the pull request for their output.
 
 ## Question for the owner
 
-Long ranges on a cold disk: see the pull request's speed check. The last 30 days, with every search A71 and A75 name, are counted within a second, cold and warm. A range of years with no filter reads up to a year of messages a second on a cold disk, so the first look at it can be uncounted (no dots) until the retry; warm, it's counted. A table of counts per day would fix that for unfiltered and alias-only ranges.
+**Long ranges.** A range of months or years with no filter reads every message in it: about 900,000 pages for 2 years and 4.5 million for 10. On a cold disk the first look at 2 years isn't counted within the 2-second limit (its marks work, without dots, and the retry 3 seconds later counts it); 10 years isn't counted even warm. Is that acceptable, as the scrubber is for "large jumps" and the last 30 days are what it shows by default? If not, the remedy is a table of counts per day and alias, kept by the database as messages are written, re-parsed and deleted, which makes unfiltered and alias-only ranges cheap (searches with text would still count as now); it costs a trigger on every message written and a rebuild when the time zone changes.

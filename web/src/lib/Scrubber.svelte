@@ -159,16 +159,16 @@
 				return !prev || prev.kind !== 'hour' || dayKey(prev.start) !== dayKey(m.start) ? whichDay(m.start) : '';
 			case 'day': {
 				const d = new Date(m.start);
-				return !prev || prev.kind !== 'day' || fmt({ weekday: 'short' }).format(d) === 'Mon' ? fmt({ day: 'numeric', month: 'short' }).format(d) : '';
+				return fmt({ weekday: 'short' }).format(d) === 'Mon' ? fmt({ day: 'numeric', month: 'short' }).format(d) : '';
 			}
 			case 'week': {
 				const month = fmt({ month: 'short' }).format(new Date(m.start));
-				return !prev || prev.kind !== 'week' || fmt({ month: 'short' }).format(new Date(prev.start)) !== month ? month : '';
+				return prev?.kind === 'week' && fmt({ month: 'short' }).format(new Date(prev.start)) !== month ? month : '';
 			}
 			case 'month': {
 				const d = new Date(m.start);
 				const month = fmt({ month: 'numeric' }).format(d);
-				return month === '1' || !prev || prev.kind !== 'month' ? fmt({ year: 'numeric' }).format(d) : '';
+				return month === '1' ? fmt({ year: 'numeric' }).format(d) : '';
 			}
 		}
 	}
