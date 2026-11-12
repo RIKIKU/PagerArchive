@@ -19,7 +19,7 @@ fail() {
 expect() {
 	want=$1
 	shift
-	got=$(printf '%s\n' "$@" | sh scripts/ci/changes.sh --files | sed -n 's/^\([a-z0-9-]*\)=true$/\1/p' | grep -vx all | tr '\n' ' ' | sed 's/ $//')
+	got=$(printf '%s\n' "$@" | sh scripts/ci/changes.sh --files | sed -n 's/^\([a-z0-9-]*\)=true$/\1/p' | grep -vx -e all -e versions | tr '\n' ' ' | sed 's/ $//')
 	every=$(sed -n 's/^CHECK_JOBS="\(.*\)"$/\1/p' scripts/ci/changes.sh)
 	case $want in
 	none) want= ;;
@@ -68,6 +68,33 @@ expect all scripts/stack-lib.sh
 expect all a-new-top-level-file
 expect all web/src/lib/SearchBox.svelte made-up/new-folder/file.txt
 
+# versions runs unless only documentation (or files no check reads) changed.
+versions() { # versions <true|false> <file>...
+	want=$1
+	shift
+	got=$(printf '%s
+' "$@" | sh scripts/ci/changes.sh --files | sed -n 's/^versions=//p')
+	if [ "$got" = "$want" ]; then echo "--- versions=$got: $*"; else fail "$*: versions=$got, want $want"; fi
+}
+versions false SPEC.md docs/adr/0025-ci-speed.md README.md
+versions false docs/a.md .github/renovate.json5
+versions true docs/a.md web/static/map/sprites/LICENSE.md
+versions true powershell/PagerArchive/PagerArchive.psd1
+versions true .github/workflows/ci.yml
+
+# A push to main: everything, or nothing for documentation alone.
+push() { # push <true|false> <files>: the jobs' answers for a commit changing them
+	work=$(mktemp -d)
+	git -C "$work" init -q && git -C "$work" -c user.name=x -c user.email=x@example.test commit -q --allow-empty -m base
+	for file in $2; do mkdir -p "$work/$(dirname "$file")" && echo x >"$work/$file"; done
+	git -C "$work" add -A && git -C "$work" -c user.name=x -c user.email=x@example.test commit -q -m change
+	got=$(cd "$work" && sh "$OLDPWD/scripts/ci/changes.sh" --all-unless-docs HEAD^ HEAD | grep -E '^(test|monitoring|versions)=' | sort -u | sed 's/^[a-z]*=//' | sort -u)
+	rm -rf "$work"
+	if [ "$got" = "$1" ]; then echo "--- a push of $2: $got"; else fail "a push of $2: got $got, want $1"; fi
+}
+push false "SPEC.md docs/x.md"
+push true "SPEC.md deploy/monitoring/grafana/x.json"
+
 # Each file in the repository: those that run everything are meant to.
 meant='^(\.github/(workflows|actions)/|scripts/ci/|profiles/|testdata/|deploy/test/|deploy/example-map/|scripts/fixture\.sql$|scripts/stack-lib\.sh$|scripts/install-lib\.sh$|scripts/test-[a-z-]*/|\.gitattributes$|\.gitignore$|LICENSE$)'
 unmeant=$(git ls-files | sh scripts/ci/changes.sh --areas | sed -n 's/^all //p' | grep -Ev "$meant" || true)
@@ -77,6 +104,7 @@ if [ -n "$unmeant" ]; then
 else
 	echo "--- every file in the repository has an area, or is meant to run everything"
 fi
+grep -qF "if: needs.changes.outputs.versions == 'true'" .github/workflows/ci.yml || fail "ci.yml's versions has no if on needs.changes.outputs.versions"
 
 # ci.yml's check jobs are CHECK_JOBS: each has an if on its own output.
 # shellcheck disable=SC2013 # CHECK_JOBS is a list of words

@@ -14,8 +14,8 @@ name: Release
 #     ADR 0022) merges.
 #
 # Each run releases the commit it starts on (main's newest), if main changed
-# since the previous release in anything but documentation (what CI's
-# docs-only filter ignores); otherwise it says "nothing to release" and
+# since the previous release in anything but documentation (what CI
+# checks nothing for); otherwise it says "nothing to release" and
 # succeeds. scripts/ci/release-version.sh decides, and works out the version:
 # minor if a file a deployment downloads changed (compose.yaml or the
 # configuration archive's files), otherwise patch. Then ci.yml runs, as a

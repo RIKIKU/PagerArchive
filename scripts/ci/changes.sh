@@ -10,27 +10,32 @@
 #     scripts/fixture.sql, scripts/stack-lib.sh, scripts/install-lib.sh and the
 #     stand-ins in scripts/test-*/).
 #   - Documentation (SPEC.md, docs/**, other Markdown, apart from
-#     web/static/**, which is built into the server) runs nothing, as CI's
-#     docs-only filter has it (ADR 0014). A pull request of documentation
-#     alone starts no run at all.
+#     web/static/**, which is built into the server) runs nothing (ADR 0014).
+#     A change of documentation alone runs no check at all, not even versions:
+#     "All checks passed" reports at once (versions=false).
 #   - Files no check reads (the scripts run only by hand, GitHub's release
 #     notes categories and Renovate's settings) run nothing either.
-#   - A run that isn't a pull request's (a push to main, a manual run, the
-#     Release workflow's) runs everything: --all.
+#   - A push to main runs everything, unless it changed only documentation
+#     (--all-unless-docs). A manual run and the Release workflow's run
+#     everything: --all.
 #
 # A new top-level file or folder runs everything until it's given an area
 # here; scripts/ci/changes-checks.sh checks the table.
 #
 # usage: scripts/ci/changes.sh --all <why>        every job
+#        scripts/ci/changes.sh --all-unless-docs <base> <head>
+#                                                  every job, or none if only documentation changed
 #        scripts/ci/changes.sh <base> <head>       the files changed between two commits
 #        scripts/ci/changes.sh --files             file names on standard input
 #        scripts/ci/changes.sh --areas             each file name on standard input with its area
-# Writes <job>=true|false for every job in CHECK_JOBS, and all=true|false, to
+# Writes <job>=true|false for every job in CHECK_JOBS, versions=true|false
+# (false only when nothing but documentation changed) and all=true|false, to
 # standard output and $GITHUB_OUTPUT, and a table of what runs and why to
 # $GITHUB_STEP_SUMMARY.
 set -eu
 
-# Every check job that can be left out. versions, stamp and changes always run.
+# Every check job that can be left out by area. versions runs unless only
+# documentation changed; stamp and changes always run.
 CHECK_JOBS="test search import web powershell stack stack-e2e upgrade install backups images budget monitoring govulncheck"
 
 area_of() {
@@ -103,6 +108,7 @@ for job in $CHECK_JOBS; do
 	eval "run_$(var_of "$job")=false why_$(var_of "$job")="
 done
 all=false
+code=false
 reason=
 
 mark() { # mark <job> <file>
@@ -124,6 +130,7 @@ classify() {
 		[ -n "$file" ] || continue
 		files=$((files + 1))
 		area=$(area_of "$file")
+		case $area in docs | none) ;; *) code=true ;; esac
 		if [ "$area" = all ] && [ "$all" = false ]; then
 			all=true
 			reason="\`$file\` changed, which runs everything"
@@ -137,11 +144,24 @@ classify() {
 
 case ${1:-} in
 --all)
-	all=true
+	all=true code=true
 	reason=${2:-every job}
 	for job in $CHECK_JOBS; do
 		eval "run_$(var_of "$job")=true"
 	done
+	;;
+--all-unless-docs)
+	list=$(git diff --name-only --no-renames "$2" "$3")
+	classify <<EOF
+$list
+EOF
+	if [ "$code" = true ]; then
+		all=true
+		reason="a push to main checks everything"
+		for job in $CHECK_JOBS; do
+			eval "run_$(var_of "$job")=true"
+		done
+	fi
 	;;
 --files)
 	classify
@@ -151,7 +171,7 @@ case ${1:-} in
 	exit 0
 	;;
 "")
-	echo "usage: changes.sh --all <why> | <base> <head> | --files" >&2
+	echo "usage: changes.sh --all <why> | --all-unless-docs <base> <head> | <base> <head> | --files | --areas" >&2
 	exit 2
 	;;
 *)
@@ -167,6 +187,7 @@ out() {
 	[ -z "${GITHUB_OUTPUT:-}" ] || echo "$1" >>"$GITHUB_OUTPUT"
 }
 out "all=$all"
+out "versions=$code"
 for job in $CHECK_JOBS; do
 	eval "out \"$job=\$run_$(var_of "$job")\""
 done
@@ -175,7 +196,9 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 	{
 		echo "### What runs"
 		echo
-		if [ "$all" = true ]; then
+		if [ "$code" = false ]; then
+			echo "No check: only documentation, or files no check reads, changed (ADR 0014, ADR 0025)."
+		elif [ "$all" = true ]; then
 			echo "Every check: $reason."
 		else
 			echo "Only the checks the changed files affect (\`scripts/ci/changes.sh\`, ADR 0025)."

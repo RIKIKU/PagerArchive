@@ -1,9 +1,11 @@
 name: CI
 
 # A push or pull request that changes only documentation (SPEC.md, docs/**,
-# other Markdown) runs nothing (owner, 2026-11-01; ADR 0014). Any other file
-# changed runs everything. The map sprites' LICENSE.md is built into the
-# server (web/web.go embeds web/build), so web/static/** counts as code.
+# other Markdown) does no work (owner, 2026-11-01; ADR 0014): its run skips
+# every check, and "All checks passed" reports at once, so a pull request of
+# documentation alone can merge (ADR 0025; it used to start no run, and the
+# required check never reported). The map sprites' LICENSE.md is built into
+# the server (web/web.go embeds web/build), so web/static/** counts as code.
 #
 # A merge to main isn't a release (SPEC.md 12.1, ADR 0024): once every check
 # has passed, its images are published as main and sha-<commit> only. A
@@ -27,7 +29,8 @@ name: CI
 # 0025): the changes job works them out (scripts/ci/changes.sh) and each
 # check job has an if on its answer. Anything in .github/workflows/,
 # .github/actions/ or scripts/ci/, the shared test fixtures, and any file
-# changes.sh doesn't know run everything. A push to main, a manual run and the
+# changes.sh doesn't know run everything. A push to main (unless it changed
+# only documentation), a manual run and the
 # Release workflow's run always run every check, so nothing is released that
 # a check was skipped for. "All checks passed" accepts a check skipped only
 # when the changes job left it out.
@@ -44,21 +47,11 @@ name: CI
 #      by the CI retry workflow (ci-retry.yml, scripts/ci/rerun-decision.sh),
 #      unless what failed is always the change's.
 on:
+  # No paths: here (ADR 0025): every push and pull request starts a run, and
+  # the changes job decides what it checks.
   push:
     branches: [main]
-    paths:
-      - "**"
-      - "!SPEC.md"
-      - "!docs/**"
-      - "!**.md"
-      - "web/static/**"
   pull_request:
-    paths:
-      - "**"
-      - "!SPEC.md"
-      - "!docs/**"
-      - "!**.md"
-      - "web/static/**"
   # Publishes the current branch's images tagged sha-<commit> only (owner, 2026-10-13).
   workflow_dispatch:
   # The Release workflow's checks and release (ADR 0024).
@@ -138,9 +131,11 @@ jobs:
 
   # Which checks run (ADR 0025): on a pull request, those its changed files
   # can affect, from the files between the merge commit's two parents (main,
-  # and main with the pull request merged); in any other run, all of them.
-  # Each output is a check job's name, true or false. The table is in the
-  # job's summary.
+  # and main with the pull request merged); on a push to main, all of them,
+  # or none if only documentation changed since the push's previous commit;
+  # in any other run, all of them. Each output is a check job's name, true
+  # or false; versions is false only for documentation alone. The table is in
+  # the job's summary.
   changes:
     name: What the change affects
     runs-on: ubuntu-24.04
@@ -160,16 +155,20 @@ jobs:
       budget: ${{ steps.changes.outputs.budget }}
       monitoring: ${{ steps.changes.outputs.monitoring }}
       govulncheck: ${{ steps.changes.outputs.govulncheck }}
+      versions: ${{ steps.changes.outputs.versions }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          fetch-depth: 2
+          fetch-depth: 0
       - name: The checks the changed files affect
         id: changes
         env:
           EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
         run: |
-          if [ "$EVENT" != pull_request ]; then
+          if [ "$EVENT" = push ] && git rev-parse -q --verify "${BEFORE:-none}^{commit}" >/dev/null; then
+            sh scripts/ci/changes.sh --all-unless-docs "$BEFORE" HEAD
+          elif [ "$EVENT" != pull_request ]; then
             sh scripts/ci/changes.sh --all "a $EVENT run checks everything"
           elif git rev-parse -q --verify HEAD^2 >/dev/null; then
             sh scripts/ci/changes.sh HEAD^1 HEAD
@@ -182,6 +181,8 @@ jobs:
   # release (SPEC.md 12.1, R63; ADR 0024).
   versions:
     name: Versions are left to the release, and the module's is raised
+    needs: changes
+    if: needs.changes.outputs.versions == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -1174,8 +1175,8 @@ jobs:
 
   publish-client-manifest:
     name: Publish client image (amd64 + arm64)
-    needs: [stamp, publish-client, release]
-    if: ${{ !failure() && !cancelled() && needs.stamp.outputs.publish == 'true' }}
+    needs: [stamp, changes, publish-client, release]
+    if: ${{ !failure() && !cancelled() && needs.stamp.outputs.publish == 'true' && needs.changes.outputs.images == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

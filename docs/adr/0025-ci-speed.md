@@ -2,9 +2,9 @@
 
 ## Status
 
-Proposed (2026-11-12). The owner's brief of 2026-11-12: a pull request runs only the checks its files affect, failures that aren't the change's are retried (and still reported), A82's Firefox flake is fixed, security releases close together go out as one, and govulncheck reports the vulnerabilities the code can reach. On the branch `ci-speed` from main at 325daab. Builds on ADR 0014 (the docs-only filter, which stands) and ADR 0024 (the Release workflow, which runs every check before it releases); the security releases' wait is a dated section of ADR 0024, as it changes that ADR's decision 4. Nothing a deployment runs changes, and the PowerShell module doesn't change (only its tests' runner), so neither version moves.
+Proposed (2026-11-12). The owner's brief of 2026-11-12: a pull request runs only the checks its files affect, failures that aren't the change's are retried (and still reported), A82's Firefox flake is fixed, security releases close together go out as one, and govulncheck reports the vulnerabilities the code can reach. On the branch `ci-speed` from main at 325daab. Builds on ADR 0014 (whose docs-only filter moves from the workflow's `paths:` into the changes job, keeping its intent) and ADR 0024 (the Release workflow, which runs every check before it releases); the security releases' wait is a dated section of ADR 0024, as it changes that ADR's decision 4. Nothing a deployment runs changes, and the PowerShell module doesn't change (only its tests' runner), so neither version moves.
 
-A new ADR rather than a section of ADR 0014: that one is about A33 and A67, and its docs-only filter is one paragraph this builds on; the path filters, the three kinds of retry and govulncheck are new decisions about how CI runs, and want one place.
+A new ADR rather than a section of ADR 0014: that one is about A33 and A67, and its docs-only filter is one paragraph this replaces with the same rule; the path filters, the three kinds of retry and govulncheck are new decisions about how CI runs, and want one place.
 
 ## Context
 
@@ -37,7 +37,7 @@ A new ADR rather than a section of ADR 0014: that one is about A33 and A67, and 
   | scripts run only by hand (`mutation-checks.sh`, `oauth-probe.py`, `scripts/example-map/*.sh`), `.github/release.yml`, `.github/renovate.json5` | nothing |
   | `.github/workflows/`, `.github/actions/`, `scripts/ci/`; the shared fixtures `profiles/` (the golden tables), `testdata/`, `deploy/test/`, `deploy/example-map/`, `scripts/fixture.sql`, `scripts/stack-lib.sh`, `scripts/install-lib.sh`, `scripts/test-*/`; anything else | everything |
 
-  `stamp`, `changes` and `versions` always run. `govulncheck` (decision 5) runs with Go. On a pull request the publish jobs (which only build there) run when `images` does.
+  `stamp` and `changes` always run, and `versions` unless only documentation changed. `govulncheck` (decision 5) runs with Go. On a pull request the publish jobs (which only build there) run when `images` does.
 - **What changed from the draft table** (the notes of 2026-11-11):
   - **Go runs `web`, `stack-e2e` and `monitoring` too.** The browser tests run the real API built from this checkout (`scripts/e2e.sh`), and `stack-e2e` and `monitoring` build the server and client images. Only the PowerShell module's own tests don't use the Go code.
   - **`web/` runs `install` and `backups` too:** A78 and A80 drive the browser app (`tests/stack.spec.ts`, `tests/a80.spec.ts`).
@@ -48,9 +48,9 @@ A new ADR rather than a section of ADR 0014: that one is about A33 and A67, and 
   - **`profiles/` runs everything, not only `test`:** the server image bundles `profiles/example` as the default profile, and the browser tests, A15, A76, A78 and the images job's `validate-profile` use it.
   - **The Dockerfiles run every job that builds their image:** the draft had `budget` and `install` only; the stacks of `stack`, `stack-e2e`, `import`, `upgrade`, `backups` and `monitoring` build the server image too, and `stack-e2e`, `install` and `monitoring` the client's.
   - **Each job's own script runs only that job,** and the scripts run only by hand run nothing.
-- **Main and the Release workflow run everything.** On anything but a pull request (a push to main, a manual run, the Release workflow's call) `changes.sh --all` says every job runs. The `release` job needs every check, and its `if` has no status function, so a skipped check would skip the release: nothing is released that a check was skipped for. So a gap in the table can at worst let a pull request merge that then fails on main, before any release.
+- **Main and the Release workflow run everything.** On anything but a pull request (a push to main, unless it changed only documentation; a manual run; the Release workflow's call) the changes job says every job runs. The `release` job needs every check, and its `if` has no status function, so a skipped check would skip the release: nothing is released that a check was skipped for. So a gap in the table can at worst let a pull request merge that then fails on main, before any release.
 - **"All checks passed"** accepts a check that succeeded, or one that was skipped and that the `changes` job said to leave out. A skip it didn't ask for (because a job it needs failed), a failure or a cancel fails it. A notice lists the checks left out.
-- **Documentation only:** unchanged (ADR 0014): a pull request or push of only documentation starts no run, by the workflow's `paths:`. Documentation in a pull request with other files runs nothing more.
+- **Documentation only** (owner, 2026-11-12): a pull request of documentation alone used to start no run (ADR 0014's workflow `paths:`), so the required "All checks passed" never reported and it couldn't merge (PR #25, `SPEC.md` only, was blocked so). The `paths:` filter is gone: every push and pull request starts a run, and when every changed file is documentation (or one no check reads), the changes job says no check runs, `versions` included (`versions=false`). Only `stamp` and `changes` run, and "All checks passed" reports success within a minute or two. ADR 0014's intent stands: no real work, and nothing published. A push to main gets the same: `changes.sh --all-unless-docs <before> HEAD` runs every check unless only documentation changed since the push's previous commit, in which case none (so no image is published for it, as before; `publish-client-manifest` now waits for the images' answer too). Documentation in a change with other files adds nothing.
 
 ### 2. Retries, none of which hides a failure
 
@@ -176,7 +176,3 @@ Run on real runs, it showed two faults, fixed before these: a job's name with co
 - A flake no longer turns a run red by itself, but every one is a warning on the run: they're there to be fixed, not ignored.
 - A security fix waits 15 minutes after its merge before the Release workflow starts.
 - govulncheck can fail a run for a vulnerability published after the change was written.
-
-## Questions for the owner
-
-1. **Docs-only pull requests start no run (ADR 0014), so "All checks passed" never reports and they can't merge without a bypass.** With the job-level filters, the workflow's `paths:` could go: a docs-only pull request would then run `stamp`, `changes` and `versions` (about a minute) and report "All checks passed". Kept as it is here, as the brief asked.
