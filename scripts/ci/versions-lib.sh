@@ -99,8 +99,8 @@ config_changed() {
 }
 
 # code_changes <from> <to>: the files that differ, other than documentation:
-# what CI's docs-only filter ignores (SPEC.md, docs/**, other Markdown), except
-# web/static/**, which is built into the server (ci.yml). A change to our
+# what CI checks nothing for (SPEC.md, docs/**, other Markdown; changes.sh), except
+# web/static/**, which is built into the server. A change to our
 # image's line in compose.yaml alone doesn't count, as for config_changed.
 code_changes() {
 	git diff --name-only "$1" "$2" | while IFS= read -r _f; do

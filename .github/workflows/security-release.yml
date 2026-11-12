@@ -7,6 +7,16 @@ name: Security release
 # made with GITHUB_TOKEN does start a run (GitHub's one exception, with
 # repository_dispatch).
 #
+# Security updates that merge close together go out as one release (owner,
+# 2026-11-12; ADR 0024's section of that date): the run waits 15 minutes
+# before starting the Release workflow, and a second security merge inside
+# that time cancels the waiting run and starts the wait again, so the one
+# release has both. (On 2026-11-12 two security merges 18 minutes apart made
+# two releases, v1.7.7 and v1.7.8.)
+# Only a merged security pull request's run joins that concurrency group:
+# every other closed pull request's run has a group of its own, so it never
+# cancels a wait.
+#
 # Its own workflow, not a trigger of release.yml: that one's runs wait for
 # each other, and a run for every closed pull request there could replace a
 # release that's waiting.
@@ -18,19 +28,32 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ${{ github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'security') && 'security-release' || format('security-release-not-{0}', github.run_id) }}
+  cancel-in-progress: true
+
 jobs:
   release:
-    name: Start the Release workflow
+    name: Start the Release workflow, 15 minutes after the last security merge
     if: github.event.pull_request.merged == true && contains(github.event.pull_request.labels.*.name, 'security')
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 25
     permissions:
       actions: write
+      contents: read
     steps:
+      # For scripts/ci/retry.sh (ADR 0025).
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - name: Wait 15 minutes for another security merge
+        env:
+          PR: ${{ github.event.pull_request.html_url }}
+        run: |
+          echo "::notice::Security update merged ($PR): the Release workflow starts on main in 15 minutes, unless another security update merges first (then it waits for that one)."
+          sleep 900
       - name: Release main now
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           PR: ${{ github.event.pull_request.html_url }}
         run: |
-          gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
+          sh scripts/ci/retry.sh gh workflow run release.yml --repo "$GITHUB_REPOSITORY" --ref main
           echo "::notice::Security update merged ($PR): the Release workflow is started on main."
