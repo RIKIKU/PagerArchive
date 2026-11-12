@@ -728,6 +728,10 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 		if err := q.DeleteIntegrationsByOwner(ctx, u.ID); err != nil {
 			return dbErr("delete integrations", err)
 		}
+		// R82b: so do their albums, with their descriptions and notes.
+		if err := q.DeleteAlbumsOf(ctx, u.ID); err != nil {
+			return dbErr("delete albums", err)
+		}
 		// R56: waiting alias requests are withdrawn. The requests stay,
 		// credited to "deleted user" (R57), but not their notes (ADR 0007 §5).
 		if _, err := q.WithdrawRequestsOf(ctx, ids); err != nil {

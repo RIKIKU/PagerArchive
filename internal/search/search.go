@@ -39,6 +39,9 @@ type Filter struct {
 	Unaliased  bool       // "capcodes with no alias"
 	Ignored    bool       // include pages to ignored aliases (R27)
 	Located    bool       // only messages placed on the map (R35)
+	// Album keeps one album's messages (R82). The server sets it, for the
+	// album's owner only; it never comes from the address alone (ADR 0025).
+	Album *int64
 
 	// Admin only (R33): filter by flag. Each true field must be set; Flags
 	// matches messages with any of the flags it names.
@@ -325,6 +328,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		LocationMismatch: f.LocationMismatch,
 		Flags:            orEmpty(f.Flags),
 		Located:          f.Located,
+		AlbumID:          f.Album,
 		CatCodes:         []string{},
 		CatPrefixes:      []string{},
 		AllCatCodes:      []string{},

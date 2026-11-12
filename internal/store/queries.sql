@@ -267,8 +267,15 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
        OR ('address_unsplit' = ANY(sqlc.arg(flags)::text[]) AND m.address_unsplit)
        OR ('location_mismatch' = ANY(sqlc.arg(flags)::text[]) AND m.location_mismatch))
   AND (NOT sqlc.arg(located)::bool OR m.location IS NOT NULL)
+  -- R82: one album's messages. Only the album's owner is given it (ADR 0025).
+  AND (sqlc.narg(album_id)::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = sqlc.narg(album_id)::bigint AND am.message_id = m.id))
   AND (sqlc.narg(before_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
+  -- R81b: after a jump, the messages newer than the list's first, which
+  -- Store.SearchNewer reads oldest first (ADR 0025).
+  AND (sqlc.narg(after_sent)::timestamptz IS NULL
+       OR (m.sent_at, m.id) > (sqlc.narg(after_sent), sqlc.narg(after_id)::bigint))
 ORDER BY m.sent_at DESC, m.id DESC
 LIMIT sqlc.arg(max_rows)::int;
 
@@ -612,11 +619,39 @@ WHERE (sqlc.narg(inviter)::bigint IS NULL OR i.invited_by = sqlc.narg(inviter)::
 ORDER BY i.created_at DESC, i.id DESC
 LIMIT 200;
 
--- name: DeleteMessagesBefore :execrows
+-- name: DeleteMessagesBefore :one
 -- R45: one batch of messages older than the cut-off. Receptions go with them
 -- (cascade); jobs and locations are columns of the message (section 14).
-DELETE FROM messages
-WHERE id IN (SELECT id FROM messages WHERE sent_at < sqlc.arg(cutoff)::timestamptz LIMIT sqlc.arg(batch)::int);
+-- R82a: so do their places in albums, with their notes; the albums they
+-- leave are marked, for FinishRetentionAlbums. The statement sees the album
+-- rows as they were before it, so it finds them though the cascade removes them.
+WITH gone AS (
+    DELETE FROM messages
+    WHERE id IN (SELECT id FROM messages WHERE sent_at < sqlc.arg(cutoff)::timestamptz LIMIT sqlc.arg(batch)::int)
+    RETURNING id
+), touched AS (
+    UPDATE albums SET retention_touched = true
+    WHERE NOT retention_touched AND id IN (SELECT am.album_id FROM album_messages am JOIN gone ON gone.id = am.message_id)
+)
+SELECT count(*)::bigint FROM gone;
+
+-- name: DeleteEmptiedAlbums :execrows
+-- R82a: an album retention left with no messages goes, unless it has a description.
+DELETE FROM albums a
+WHERE a.retention_touched AND a.description IS NULL
+  AND NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id);
+
+-- name: FinishRetentionAlbums :one
+-- R82a: one kept, empty, for its description says its messages passed the
+-- retention period (emptied_at). Returns how many were kept that way.
+WITH done AS (
+    UPDATE albums a SET retention_touched = false,
+        emptied_at = CASE WHEN NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id)
+                          THEN COALESCE(a.emptied_at, sqlc.arg(now)::timestamptz) ELSE a.emptied_at END
+    WHERE a.retention_touched
+    RETURNING NOT EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = a.id) AS kept
+)
+SELECT count(*)::bigint FROM done WHERE kept;
 
 -- name: MessagesForRedaction :many
 SELECT id, capcode, text FROM messages
@@ -1031,3 +1066,71 @@ SELECT DISTINCT i.message_id, '', 'import', i.received_at
 FROM import_receptions i
 WHERE i.message_id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY message_id, received_at, client_id;
+
+-- Albums (R82-R82b, R82f; ADR 0025). Every query names the album's owner,
+-- so nobody else reaches an album, admins included.
+
+-- name: CreateAlbum :one
+INSERT INTO albums (owner_id, name, description) VALUES ($1, $2, $3)
+RETURNING id;
+
+-- name: MyAlbums :many
+-- The signed-in user's albums, by name, with how many messages each holds.
+SELECT a.id, a.name, a.description, a.created_at, a.updated_at, a.emptied_at,
+       (SELECT count(*) FROM album_messages am WHERE am.album_id = a.id)::bigint AS messages
+FROM albums a
+WHERE a.owner_id = $1
+ORDER BY lower(a.name), a.id;
+
+-- name: MyAlbum :one
+SELECT a.id, a.name, a.description, a.created_at, a.updated_at, a.emptied_at,
+       (SELECT count(*) FROM album_messages am WHERE am.album_id = a.id)::bigint AS messages
+FROM albums a
+WHERE a.id = sqlc.arg(id) AND a.owner_id = sqlc.arg(owner_id);
+
+-- name: UpdateAlbum :execrows
+UPDATE albums SET name = sqlc.arg(name), description = sqlc.narg(description), updated_at = now()
+WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(owner_id);
+
+-- name: DeleteAlbum :execrows
+DELETE FROM albums WHERE id = sqlc.arg(id) AND owner_id = sqlc.arg(owner_id);
+
+-- name: AddToAlbum :execrows
+-- A message added again keeps its place and its note. Adding one clears the
+-- line that its messages had passed the retention period (R82a).
+WITH album AS (
+    UPDATE albums al SET emptied_at = NULL, updated_at = now()
+    WHERE al.id = sqlc.arg(album_id) AND al.owner_id = sqlc.arg(owner_id)
+    RETURNING al.id AS album_id
+)
+INSERT INTO album_messages (album_id, message_id)
+SELECT album.album_id, m.id FROM album, messages m WHERE m.id = sqlc.arg(message_id)
+ON CONFLICT (album_id, message_id) DO NOTHING;
+
+-- name: SetAlbumNote :execrows
+-- R82f: a message's note in one album; NULL for none.
+UPDATE album_messages am SET note = sqlc.narg(note)
+FROM albums a
+WHERE a.id = am.album_id AND a.id = sqlc.arg(album_id) AND a.owner_id = sqlc.arg(owner_id)
+  AND am.message_id = sqlc.arg(message_id);
+
+-- name: RemoveFromAlbum :execrows
+DELETE FROM album_messages am
+USING albums a
+WHERE a.id = am.album_id AND a.id = sqlc.arg(album_id) AND a.owner_id = sqlc.arg(owner_id)
+  AND am.message_id = sqlc.arg(message_id);
+
+-- name: AlbumNotes :many
+-- The notes of these messages in one album (its owner's, checked by the caller).
+SELECT message_id, note::text AS note FROM album_messages
+WHERE album_id = sqlc.arg(album_id) AND message_id = ANY(sqlc.arg(ids)::bigint[]) AND note IS NOT NULL;
+
+-- name: AlbumsHolding :many
+-- Which of the signed-in user's albums hold a message, for "Add to album".
+SELECT am.album_id FROM album_messages am JOIN albums a ON a.id = am.album_id
+WHERE a.owner_id = sqlc.arg(owner_id) AND am.message_id = sqlc.arg(message_id)
+ORDER BY am.album_id;
+
+-- name: DeleteAlbumsOf :exec
+-- R82b: deleting an account deletes its albums, notes and all.
+DELETE FROM albums WHERE owner_id = $1;

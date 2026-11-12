@@ -71,6 +71,16 @@ const searchOrderBy = "ORDER BY m.sent_at DESC, m.id DESC\n"
 // A search with a term too short for a trigram takes the same tries, with the
 // bigram index alone finding the pages, for all its terms (QShort).
 func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
+	return s.searchMessages(ctx, p, newestFirst)
+}
+
+// SearchNewer is SearchMessages for the messages after a position (AfterSent,
+// AfterID), the nearest first: oldest first (R81b, ADR 0025).
+func (s *Store) SearchNewer(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
+	return s.searchMessages(ctx, p, oldestFirst)
+}
+
+func (s *Store) searchMessages(ctx context.Context, p db.SearchMessagesParams, o order) ([]db.SearchMessagesRow, error) {
 	if p.AliasNameIds == nil {
 		p.AliasNameIds = []int64{}
 	}
@@ -101,27 +111,27 @@ func (s *Store) SearchMessages(ctx context.Context, p db.SearchMessagesParams) (
 		p.AliasNamesResolved, p.AliasNameIds = false, []int64{}
 	}
 	if p.QIndex1 == nil && !p.QAnyIndex && len(p.QShort) == 0 {
-		return s.searchWith(ctx, first, false, "SET LOCAL jit = off")
+		return s.searchWith(ctx, first, o, "SET LOCAL jit = off")
 	}
 	if !s.SecondTryOnly && !s.BoundedTryOnly {
-		rows, err := s.searchFirstTry(ctx, first, s.firstTry(p))
+		rows, err := s.searchFirstTry(ctx, first, o, s.firstTry(p))
 		if !searchTimedOut(ctx, err) {
 			return rows, err
 		}
 	}
 	if !s.SecondTryOnly {
-		rows, complete, err := s.searchBoundedTry(ctx, p)
+		rows, complete, err := s.searchBoundedTry(ctx, p, o)
 		if err != nil || complete {
 			return rows, err
 		}
 	}
 	if !s.SecondTryOnly && !s.BoundedTryOnly {
-		rows, err := s.searchFirstTry(ctx, first, searchFirstTryAgain)
+		rows, err := s.searchFirstTry(ctx, first, o, searchFirstTryAgain)
 		if !searchTimedOut(ctx, err) {
 			return rows, err
 		}
 	}
-	return s.searchSecondTry(ctx, p)
+	return s.searchSecondTry(ctx, p, o)
 }
 
 // searchBigrams is how many bigrams a search gives the bigram index at most.
@@ -170,8 +180,8 @@ func searchTimedOut(ctx context.Context, err error) bool {
 }
 
 // searchFirstTry runs the search as planned, for this long.
-func (s *Store) searchFirstTry(ctx context.Context, p db.SearchMessagesParams, limit time.Duration) ([]db.SearchMessagesRow, error) {
-	return s.searchWith(ctx, p, false, "SET LOCAL jit = off", "SET LOCAL statement_timeout = "+strconv.FormatInt(limit.Milliseconds(), 10))
+func (s *Store) searchFirstTry(ctx context.Context, p db.SearchMessagesParams, o order, limit time.Duration) ([]db.SearchMessagesRow, error) {
+	return s.searchWith(ctx, p, o, "SET LOCAL jit = off", "SET LOCAL statement_timeout = "+strconv.FormatInt(limit.Milliseconds(), 10))
 }
 
 // withAliasIDs adds the alias: values' aliases, looked up first, and says
@@ -219,40 +229,60 @@ func (s *Store) aliasShare(ctx context.Context, ids []int64) (float64, error) {
 // searchBoundedTry lets the index find up to searchBoundedRows pages, unordered.
 // If it finds fewer, those are all the pages that match: complete is true and
 // rows is the answer, in the search's order.
-func (s *Store) searchBoundedTry(ctx context.Context, p db.SearchMessagesParams) (rows []db.SearchMessagesRow, complete bool, err error) {
+func (s *Store) searchBoundedTry(ctx context.Context, p db.SearchMessagesParams, o order) (rows []db.SearchMessagesRow, complete bool, err error) {
 	limit := p.MaxRows
 	p.MaxRows = searchBoundedRows
 	// With no order to keep, the planner would read the table from its start,
 	// expecting to find that many soon: for terms never together, all of it.
-	rows, err = s.searchWith(ctx, p, true, "SET LOCAL jit = off", "SET LOCAL enable_indexscan = off", "SET LOCAL enable_seqscan = off", "SET LOCAL work_mem = '32MB'")
+	rows, err = s.searchWith(ctx, p, unorderedRows, "SET LOCAL jit = off", "SET LOCAL enable_indexscan = off", "SET LOCAL enable_seqscan = off", "SET LOCAL work_mem = '32MB'")
 	if err != nil || len(rows) >= searchBoundedRows {
 		return nil, false, err
 	}
 	slices.SortFunc(rows, func(a, b db.SearchMessagesRow) int {
-		if c := b.SentAt.Compare(a.SentAt); c != 0 {
-			return c
+		c := b.SentAt.Compare(a.SentAt)
+		if c == 0 {
+			c = cmp.Compare(b.ID, a.ID)
 		}
-		return cmp.Compare(b.ID, a.ID)
+		if o == oldestFirst {
+			return -c
+		}
+		return c
 	})
 	return rows[:min(len(rows), int(limit))], true, nil
 }
 
 // searchSecondTry runs the search with the index, not in order.
-func (s *Store) searchSecondTry(ctx context.Context, p db.SearchMessagesParams) ([]db.SearchMessagesRow, error) {
-	return s.searchWith(ctx, p, false, "SET LOCAL jit = off", "SET LOCAL enable_indexscan = off", "SET LOCAL work_mem = '32MB'")
+func (s *Store) searchSecondTry(ctx context.Context, p db.SearchMessagesParams, o order) ([]db.SearchMessagesRow, error) {
+	return s.searchWith(ctx, p, o, "SET LOCAL jit = off", "SET LOCAL enable_indexscan = off", "SET LOCAL work_mem = '32MB'")
 }
 
-// unordered runs the search query without its order, in a transaction.
-type unordered struct{ pgx.Tx }
+// order is the order a search's rows come in: the list's, newest first; the
+// nearest first after a position (SearchNewer); or none, for the bounded try.
+type order int
 
-func (u unordered) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
-	return u.Tx.Query(ctx, strings.Replace(sql, searchOrderBy, "", 1), args...)
+const (
+	newestFirst order = iota
+	oldestFirst
+	unorderedRows
+)
+
+// searchOldestFirst is how the search query ends for SearchNewer.
+const searchOldestFirst = "ORDER BY m.sent_at, m.id\n"
+
+// reordered runs the search query in another order, or none, in a transaction.
+type reordered struct {
+	pgx.Tx
+	orderBy string
+}
+
+func (u reordered) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	return u.Tx.Query(ctx, strings.Replace(sql, searchOrderBy, u.orderBy, 1), args...)
 }
 
 // searchWith runs the search in a transaction with these settings. With
 // AliasNamesByID, the alias: values' aliases are looked up in the search's own
 // snapshot, so they are exactly the aliases the names match there.
-func (s *Store) searchWith(ctx context.Context, p db.SearchMessagesParams, noOrder bool, set ...string) (rows []db.SearchMessagesRow, err error) {
+func (s *Store) searchWith(ctx context.Context, p db.SearchMessagesParams, o order, set ...string) (rows []db.SearchMessagesRow, err error) {
 	var opts pgx.TxOptions
 	if p.AliasNamesByID {
 		opts.IsoLevel = pgx.RepeatableRead
@@ -271,8 +301,11 @@ func (s *Store) searchWith(ctx context.Context, p db.SearchMessagesParams, noOrd
 			}
 			p.AliasNamesResolved, p.AliasNameIds = true, append([]int64{}, ids...)
 		}
-		if noOrder {
-			q = db.New(unordered{tx})
+		switch o {
+		case unorderedRows:
+			q = db.New(reordered{tx, ""})
+		case oldestFirst:
+			q = db.New(reordered{tx, searchOldestFirst})
 		}
 		rows, err = q.SearchMessages(ctx, p)
 		return err
