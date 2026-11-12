@@ -109,10 +109,15 @@ Nothing was merged, tagged, released or published. The throwaway branches and pu
 | a Pester test (`powershell/tests/`), #23 | 43160289035 | `powershell` (4), `stack` (3), and the 4 that always run: 11 | everything else, the publish builds included | 40 | 21 min, up to 6 of them queued behind the other runs |
 | a Go test package (`internal/zzdemo`), #24 | 43160690117 | everything but `powershell`: 21 | `powershell` | 200 | 36 min (failed on purpose, below) |
 | this branch (`.github/`, `scripts/ci/`), #21 | 43160182166 | everything (`changes: 28 files changed; .github/actions/build-push/action.yml changed, which runs everything`) | none | 186 | 24 min (A76 failed, below) |
+| a line in `docs/deploy.md`, #26 | 43171120071 | `stamp`, `changes`, the gate: 3 (`versions` too is left out) | every check | under 1 | 1 min, and the pull request was mergeable (`CLEAN`) |
 
 Before, every pull request ran everything. The six pull request runs before this branch (42986822248, 43105174961, 43113284345, 43116586293, 43139437150, 43134000256) ran 25 or 26 jobs, 181-204 runner minutes, and reached "All checks passed" after 22-44 minutes; PR #10's (one Grafana dashboard) 25 jobs, 204 runner minutes, 34 minutes. A small change's wall time is now its slowest check's (the browser tests, 24 minutes, for a web change; `stack`, 11-13 minutes, for the module), and its runner time a fifth to two fifths of before, so less waits behind it when several runs start together, as these five did.
 
 The gate's notice on #23: `Nothing these use changed (ADR 0025): test search import web stack-e2e upgrade install backups images budget monitoring govulncheck`. `changes-checks.sh` and `retry-checks.sh` passed in each run's `versions` job, and on cld01.
+
+A push to main of documentation alone runs nothing (no push to main was made here): `changes-checks.sh` makes a throwaway repository with a commit of `SPEC.md` and `docs/x.md` (`--all-unless-docs`: every job false) and one with a dashboard as well (every job true).
+
+**The Release workflow, dry run** (on `ci-speed`, run 43166175670): `Version 1.7.9 is higher than the previous release, v1.7.8.`, every check ran (the changes job said all), 31 jobs succeeded and the 2 that a dry run skips were skipped (the client's manifest and the module), and `dry run: would tag 855a9b0… v1.7.9, create the release "PagerArchive v1.7.9" (not yet the latest)`. Nothing was tagged or published. It also shows the called CI accepts the `actions: read` the Release workflow now grants.
 
 **Layer 1** (a throwaway branch's own workflow, run 43160365407):
 
