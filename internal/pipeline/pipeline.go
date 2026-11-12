@@ -5,6 +5,7 @@ package pipeline
 import (
 	"crypto/sha256"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -188,4 +189,21 @@ func Category(n *profile.Network, code string) string {
 		}
 	}
 	return "Other"
+}
+
+// DeploymentCodes are the network's deployment codes in a page (R5, R87), in
+// the order they first appear, each once: the literal text (P3), found in
+// the text a pager displays. A network with no pattern has none.
+func DeploymentCodes(n *profile.Network, p Prepared) []string {
+	if n == nil || n.DeploymentCodes == nil {
+		return nil
+	}
+	var out []string
+	for _, m := range n.DeploymentCodes.FindAllStringSubmatch(Body(p), -1) {
+		code := strings.TrimSpace(m[n.DeploymentCodeGroup])
+		if code != "" && !slices.Contains(out, code) {
+			out = append(out, code)
+		}
+	}
+	return out
 }

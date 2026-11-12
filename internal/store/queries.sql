@@ -270,6 +270,9 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
   -- R82: one album's messages. Only the album's owner is given it (ADR 0026).
   AND (sqlc.narg(album_id)::bigint IS NULL
        OR EXISTS (SELECT 1 FROM album_messages am WHERE am.album_id = sqlc.narg(album_id)::bigint AND am.message_id = m.id))
+  -- R87c: one large event's pages (ADR 0027).
+  AND (sqlc.narg(event_id)::bigint IS NULL
+       OR EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.event_id = sqlc.narg(event_id)::bigint AND lem.message_id = m.id))
   AND (sqlc.narg(before_sent)::timestamptz IS NULL
        OR (m.sent_at, m.id) < (sqlc.narg(before_sent), sqlc.narg(before_id)::bigint))
   -- R81b: after a jump, the messages newer than the list's first, which
@@ -706,12 +709,12 @@ ORDER BY pattern;
 -- Integrations (R47-R51c, ADR 0006).
 
 -- name: CreateIntegration :one
-INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO integrations (uid, owner_id, name, kind, content, config, secrets, filter, large_events)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: UpdateIntegration :exec
-UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, updated_at = now()
+UPDATE integrations SET name = $2, content = $3, config = $4, secrets = $5, filter = $6, large_events = $7, updated_at = now()
 WHERE id = $1;
 
 -- name: IntegrationByID :one
@@ -818,7 +821,7 @@ JOIN aliases a ON c.capcode LIKE a.pattern;
 -- Active integrations of active owners whose selection covers a stored page.
 SELECT i.id, i.uid, i.kind, i.filter, u.role AS owner_role
 FROM integrations i JOIN users u ON u.id = i.owner_id
-WHERE i.status = 'active' AND u.status = 'active'
+WHERE i.status = 'active' AND u.status = 'active' AND i.large_events IS NULL
   AND (EXISTS (SELECT 1 FROM integration_capcodes c WHERE c.integration_id = i.id AND c.capcode = sqlc.arg(capcode)::text)
        OR (sqlc.narg(alias_id)::bigint IS NOT NULL
            AND EXISTS (SELECT 1 FROM integration_aliases a WHERE a.integration_id = i.id AND a.alias_id = sqlc.narg(alias_id)::bigint)));
@@ -830,7 +833,7 @@ VALUES ($1, $2, $3, $4)
 ON CONFLICT DO NOTHING;
 
 -- name: DueDeliveries :many
-SELECT integration_id, message_id, attempts
+SELECT integration_id, message_id, attempts, event_id
 FROM deliveries
 WHERE status = 'pending' AND next_attempt_at <= sqlc.arg(now)::timestamptz
 ORDER BY next_attempt_at, message_id
@@ -887,7 +890,7 @@ WHERE id = $1 AND status = 'paused';
 
 -- name: RecentDeliveries :many
 SELECT d.message_id, d.status, d.attempts, d.last_result, d.last_error, d.delivered_at, d.created_at, d.updated_at,
-       m.sent_at, m.capcode
+       m.sent_at, m.capcode, d.event_id
 FROM deliveries d JOIN messages m ON m.id = d.message_id
 WHERE d.integration_id = $1
 ORDER BY d.created_at DESC, d.message_id DESC
@@ -1134,3 +1137,144 @@ ORDER BY am.album_id;
 -- name: DeleteAlbumsOf :exec
 -- R82b: deleting an account deletes its albums, notes and all.
 DELETE FROM albums WHERE owner_id = $1;
+
+-- Large events (R87-R87e; ADR 0027).
+
+-- name: LockLargeEvents :exec
+-- One page's event work at a time, to its transaction's end: two pages can't
+-- both open an event, or join one as it's merged.
+SELECT pg_advisory_xact_lock(4242008700);
+
+-- name: JobEventPages :many
+-- The pages of a job that count (R87: Emergency, to an aliased capcode, not a
+-- heartbeat), oldest first, with the event each is in, if any. One row per
+-- stored message, so a copy from another receiver (R19) counts once towards
+-- a big job.
+SELECT m.id, m.sent_at, m.text, lem.event_id
+FROM messages m
+LEFT JOIN large_event_messages lem ON lem.message_id = m.id
+WHERE m.job_number = sqlc.arg(job_number)::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
+ORDER BY m.sent_at, m.id
+LIMIT 5000;
+
+-- name: LargeEventsNear :many
+-- R87a: the events a page sent at t is within 12 hours of: from 12 hours
+-- before the event's first page (a page that arrived late) to 12 hours
+-- after its last. Oldest first.
+SELECT * FROM large_events
+WHERE last_at >= sqlc.arg(t)::timestamptz - interval '12 hours'
+  AND first_at <= sqlc.arg(t)::timestamptz + interval '12 hours'
+ORDER BY id;
+
+-- name: CreateLargeEvent :one
+INSERT INTO large_events (first_at, last_at) VALUES (sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz)
+RETURNING *;
+
+-- name: MergeLargeEvents :exec
+-- R87a: a page within 12 hours of two events joins them into one, the
+-- oldest. Their pages and deliveries move to it; each level keeps its
+-- earliest time.
+WITH others AS (
+    SELECT * FROM large_events WHERE id = ANY(sqlc.arg(others)::bigint[]) AND id <> sqlc.arg(id)::bigint
+), pages AS (
+    UPDATE large_event_messages SET event_id = sqlc.arg(id)::bigint WHERE event_id IN (SELECT id FROM others)
+), sent AS (
+    UPDATE deliveries SET event_id = sqlc.arg(id)::bigint WHERE event_id IN (SELECT id FROM others)
+), kept AS (
+    UPDATE large_events e SET
+        first_at = LEAST(e.first_at, (SELECT min(first_at) FROM others)),
+        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others)),
+        deployment_at = LEAST(e.deployment_at, (SELECT min(deployment_at) FROM others)),
+        several_deployments_at = LEAST(e.several_deployments_at, (SELECT min(several_deployments_at) FROM others)),
+        big_job_at = LEAST(e.big_job_at, (SELECT min(big_job_at) FROM others))
+    WHERE e.id = sqlc.arg(id)::bigint
+)
+SELECT 1;
+
+-- name: DeleteLargeEvents :exec
+-- The events merged into another, once their pages and deliveries moved.
+DELETE FROM large_events WHERE id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: AddLargeEventPage :exec
+INSERT INTO large_event_messages (message_id, event_id, deployment_codes)
+VALUES (sqlc.arg(message_id)::bigint, sqlc.arg(event_id)::bigint, sqlc.arg(deployment_codes)::text[])
+ON CONFLICT (message_id) DO NOTHING;
+
+-- name: LargeEventByID :one
+SELECT * FROM large_events WHERE id = $1;
+
+-- name: SetLargeEvent :exec
+-- An event's span and levels after a page joined it. A level, once met,
+-- keeps its earliest time (R87b).
+UPDATE large_events SET
+    first_at = LEAST(first_at, sqlc.arg(first_at)::timestamptz),
+    last_at = GREATEST(last_at, sqlc.arg(last_at)::timestamptz),
+    deployment_at = LEAST(deployment_at, sqlc.narg(deployment_at)::timestamptz),
+    several_deployments_at = LEAST(several_deployments_at, sqlc.narg(several_deployments_at)::timestamptz),
+    big_job_at = LEAST(big_job_at, sqlc.narg(big_job_at)::timestamptz)
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: LargeEventCodeTimes :many
+-- Each deployment code an event's pages carry, with its first page's sent
+-- time, earliest first.
+SELECT c.code::text AS code, min(m.sent_at)::timestamptz AS first_at
+FROM large_event_messages lem
+JOIN messages m ON m.id = lem.message_id
+CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c(code)
+WHERE lem.event_id = $1
+GROUP BY c.code
+ORDER BY 2, 1;
+
+-- name: LargeEventJobs :many
+-- R87c, R87d: an event's jobs, from the pages it holds, by their first page.
+SELECT m.job_number::text AS job_number, min(m.sent_at)::timestamptz AS first_at
+FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+WHERE lem.event_id = $1 AND m.job_number IS NOT NULL
+GROUP BY m.job_number
+ORDER BY 2, 1;
+
+-- name: ListLargeEvents :many
+-- R87c: events, newest first, with their numbers counted from the pages they
+-- still hold (R87e). Every page an event holds is an Emergency page that
+-- counts (R87), so pages is its number of Emergency pages. before_* is the
+-- page cursor.
+SELECT e.*,
+       (SELECT count(*) FROM large_event_messages lem WHERE lem.event_id = e.id)::bigint AS pages,
+       (SELECT count(DISTINCT c) FROM large_event_messages lem CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c
+        WHERE lem.event_id = e.id)::bigint AS codes,
+       (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+        WHERE lem.event_id = e.id)::bigint AS jobs
+FROM large_events e
+WHERE sqlc.narg(before_first)::timestamptz IS NULL
+   OR (e.first_at, e.id) < (sqlc.narg(before_first)::timestamptz, sqlc.narg(before_id)::bigint)
+ORDER BY e.first_at DESC, e.id DESC
+LIMIT sqlc.arg(max_rows)::int;
+
+-- name: LargeEventIntegrations :many
+-- R87d: active integrations of active owners that select large events at a level.
+SELECT i.id, i.kind, u.role AS owner_role
+FROM integrations i JOIN users u ON u.id = i.owner_id
+WHERE i.status = 'active' AND u.status = 'active' AND i.large_events = sqlc.arg(level)::text;
+
+-- name: InsertEventDelivery :exec
+-- R87d: an event's delivery, carried by the page that took it to the level.
+INSERT INTO deliveries (integration_id, message_id, status, next_attempt_at, event_id)
+VALUES (sqlc.arg(integration_id), sqlc.arg(message_id), sqlc.arg(status), sqlc.narg(next_attempt_at), sqlc.arg(event_id)::bigint)
+ON CONFLICT DO NOTHING;
+
+-- name: DeleteEmptyLargeEvents :execrows
+-- R87e: an event goes with its last page.
+DELETE FROM large_events e
+WHERE NOT EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.event_id = e.id);
+
+-- name: RefreshLargeEventSpans :execrows
+-- R87e: after retention, each event's start and end follow the pages it still holds.
+UPDATE large_events e SET first_at = s.first_at, last_at = s.last_at
+FROM (SELECT lem.event_id, min(m.sent_at) AS first_at, max(m.sent_at) AS last_at
+      FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
+      GROUP BY lem.event_id) s
+WHERE s.event_id = e.id AND (e.first_at <> s.first_at OR e.last_at <> s.last_at);
+
+-- name: LargeEventPages :one
+-- R87c, R87d: how many Emergency pages an event holds (all its pages count, R87).
+SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1;

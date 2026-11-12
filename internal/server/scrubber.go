@@ -49,7 +49,17 @@ func (s *Server) messageCounts(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		marks = search.Marks(now, s.Location, f.From, f.To)
+		from, to := f.From, f.To
+		if f.Event != nil && from == nil && to == nil {
+			// R87c: a large event's view covers its own days.
+			var err error
+			if from, to, err = s.eventRange(r, *f.Event); err != nil {
+				s.Log.Error("message counts", "error", store.SafeError(err))
+				problem(w, http.StatusInternalServerError, "counting failed")
+				return
+			}
+		}
+		marks = search.Marks(now, s.Location, from, to)
 	}
 	out := Counts{Marks: make([]Mark, len(marks)), Counted: true}
 	for i, m := range marks {

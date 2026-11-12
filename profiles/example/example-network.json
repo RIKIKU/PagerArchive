@@ -30,6 +30,7 @@
     }
   ],
   "job_number_patterns": ["\\bEX[0-9]{7}\\b"],
+  "deployment_code_pattern": "\\bDG[0-9]{4}\\b",
   "event_categories": [
     { "category": "Structure fire", "codes": ["HSF*"] },
     { "category": "Grass fire", "codes": ["GRS*"] },

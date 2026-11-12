@@ -13,6 +13,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `heartbeat_capcodes` | Capcodes or ranges of network heartbeats |
 | `redaction_rules` | Ordered `{name, pattern, must_not_match}`. Each match becomes one `REDACTED`. If the pattern has a group named `redact`, only that group is replaced, so text around it (a preceding space, a trailing `[group]`) is kept; RE2 has no lookaround. A rule that changes one of its own `must_not_match` examples stops the server |
 | `job_number_patterns` | Tried in order on every page whose format extracts no `job_number`. The first match is used |
+| `deployment_code_pattern` | Optional. Finds **deployment codes**: codes naming a pre-formed group of appliances sent together, which open **large events** (R87, ADR 0027). Every match in the text a pager displays (the marker removed) is a code, each kept once; with a group named `code`, that group is the code. No roster of groups or members is kept. Without a pattern, only big jobs open large events. The example network's is `"\\bDG[0-9]{4}\\b"` in JSON (`DG0801`) |
 | `event_categories` | `{category, codes}` for reports. `HSF*` matches by prefix. Unmapped codes count as Other |
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file. The attribution is shown in the app (R24). See [Address dataset](#address-dataset) |
 | `street_types` | Spelling to abbreviation, e.g. `"STREET": "ST"`, used to match streets |
@@ -58,7 +59,7 @@ The API loads the dataset into the database before it starts listening, but only
 
 - Formats are tried **in order** on the redacted text with the priority marker removed. The first one whose `priorities` include the page's priority and whose `match` matches parses the page. Without `priorities`, a format applies to every priority, including none.
 - An empty `match` is a **text-only format**: it matches anything and extracts nothing.
-- Each **named group** becomes a field. Standard fields: `job_number`, `event_type`, `description`, `address`, `locality`, `grid_ref`, `units` (a list), `group`. Any other name is an extra field. Groups whose names start with `_` are intermediate and never stored. Values are trimmed; empty values are null.
+- Each **named group** becomes a field. Standard fields: `job_number`, `event_type`, `description`, `address`, `locality`, `grid_ref`, `units` (a list of the appliances a page names, shown as **Appliances**), `group`. The app calls the `units` field "Appliances" wherever people see it (owner, 2026-11-13), but its name stays `units` in profiles, golden tables, schemas, the API and the database, so existing and private profiles keep working. Any other name is an extra field. Groups whose names start with `_` are intermediate and never stored. Values are trimmed; empty values are null.
 - `fields.<group>.split`: a pattern that turns the value into a list. `""` splits into single characters.
 - `fields.<group>.address_split: {"description": "...", "address": "..."}`: for formats where a description runs into an address with no delimiter. The address is the longest suffix that reads `[house number] <street> <locality>`, with the street listed in that locality in the address dataset. Everything before it is the description. If no street matches, the whole text is the description, the address is null, and the message gets the admin-only `address_unsplit` flag. See ADR 0001 section 2.
 - `labels`: display labels per field, e.g. `{"event_type": {"HSF1": "House fire"}}`.
@@ -69,7 +70,7 @@ A page whose capcode has an agency profile but matches no format is stored in fu
 
 Files named `golden-*.json` hold raw decoder lines and what they must produce. `profile` names the profile the table tests.
 
-- **Network tables** check `priority`, `stored_text` (null: dropped) and `heartbeat`.
+- **Network tables** check `priority`, `stored_text` (null: dropped) and `heartbeat`. `deployment_codes` (a list, or null for none) is checked only when a row lists it.
 - **Agency tables** check `capcode`, `priority`, every standard field, `extra` (an object of extra fields), and the flags `parse_failed` and `address_unsplit`. `format` is checked only when listed.
 - A key a row doesn't list must be null, or false for flags.
 - Rows with `"status": "proposed"` are reported but don't fail the run.

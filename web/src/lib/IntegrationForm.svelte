@@ -10,7 +10,9 @@
 		type IntegrationKind,
 		type IntegrationRequest,
 		type IntegrationSecrets,
-		type Meta
+		type LargeEventLevel,
+		type Meta,
+		largeEventLevels
 	} from './api.ts';
 	import { kindLabels, presets } from './integrations.ts';
 	import SelectionField from './SelectionField.svelte';
@@ -35,6 +37,9 @@
 	let content: Content = $state(init?.content ?? 'full');
 	let capcodes: string[] = $state([...(init?.capcodes ?? [])]);
 	let chosenAliases = $state([...(init?.aliases ?? [])]);
+	// R87d: large events at one level, instead of capcodes and aliases.
+	let selects: 'pages' | 'events' = $state(init?.large_events ? 'events' : 'pages');
+	let level: LargeEventLevel = $state(init?.large_events ?? 'deployment');
 	let coveredBy: Record<string, string> = $state({ ...(init?.covered_by ?? {}) });
 	let categories: string[] = $state([...(init?.filter.categories ?? [])]);
 	let codes = $state((init?.filter.codes ?? []).join(', '));
@@ -95,6 +100,10 @@
 			config: { ...config, target: undefined, priority: priority === 'page' ? null : Number(priority) },
 			secrets: Object.fromEntries(Object.entries(secrets).filter(([, v]) => v)) as IntegrationSecrets
 		};
+		if (selects === 'events') {
+			// A summary of the event, never page text: no filter, no content to choose.
+			Object.assign(req, { capcodes: [], alias_ids: [], large_events: level, content: 'summary', filter: {} });
+		}
 		try {
 			const out = existing ? await api.updateIntegration(existing.id, req) : await api.createIntegration(req);
 			onsaved(out);
@@ -124,90 +133,113 @@
 	</div>
 
 	<fieldset>
-		<legend>Which pages (at least one capcode or alias)</legend>
-		<SelectionField id="{id}-selection" bind:capcodes bind:aliases={chosenAliases} bind:coveredBy />
+		<legend>What it sends</legend>
+		<div class="stacked">
+			<label class="check"><input type="radio" bind:group={selects} value="pages" /> Pages from capcodes and aliases</label>
+			<label class="check"><input type="radio" bind:group={selects} value="events" /> Large events: a summary when one reaches a level</label>
+		</div>
 	</fieldset>
 
-	<fieldset>
-		<legend>Only these (optional)</legend>
-		<p class="help">Leave everything empty to send every page from the capcodes and aliases above.</p>
-		<fieldset class="inner">
-			<legend>Event categories</legend>
-			<div class="checks">
-				{#each meta.categories as cat (cat)}
-					<label class="check"
-						><input
-							type="checkbox"
-							checked={categories.includes(cat)}
-							onchange={(e) => (categories = toggle(categories, cat, e.currentTarget.checked))}
-						/>
-						{cat}</label
-					>
+	{#if selects === 'events'}
+		<fieldset>
+			<legend>Large events at this level</legend>
+			<div class="stacked">
+				{#each largeEventLevels as l (l.level)}
+					<label class="check"><input type="radio" bind:group={level} value={l.level} /> {l.label}: {l.text}</label>
 				{/each}
 			</div>
+			<p class="help">
+				It sends once per event, the first time the event reaches this level: the level, when, the event's start, its deployment codes,
+				jobs and number of Emergency pages, and a link to the event. Never page text.
+			</p>
 		</fieldset>
-		<div class="field">
-			<label for="{id}-codes">Event-type codes</label>
-			<input id="{id}-codes" bind:value={codes} placeholder="HSF1, GRS3" />
-		</div>
-		<fieldset class="inner">
-			<legend>Priority</legend>
-			<div class="checks">
-				{#each [['Emergency', 'Emergency'], ['Non-emergency', 'Non-emergency'], ['Admin', 'Admin'], ['none', 'No priority']] as [v, label] (v)}
-					<label class="check"
-						><input
-							type="checkbox"
-							checked={priorities.includes(v)}
-							onchange={(e) => (priorities = toggle(priorities, v, e.currentTarget.checked))}
-						/>
-						{label}</label
-					>
-				{/each}
-			</div>
+	{:else}
+		<fieldset>
+			<legend>Which pages (at least one capcode or alias)</legend>
+			<SelectionField id="{id}-selection" bind:capcodes bind:aliases={chosenAliases} bind:coveredBy />
 		</fieldset>
-		<div class="grid">
-			<div class="field">
-				<label for="{id}-text">Text contains</label>
-				<input id="{id}-text" bind:value={text} />
-			</div>
-			<div class="field">
-				<label for="{id}-group">Group</label>
-				<input id="{id}-group" bind:value={group} />
-			</div>
-			<div class="field">
-				<label for="{id}-agency">Agency</label>
-				<input id="{id}-agency" bind:value={agency} />
-			</div>
-			<div class="field">
-				<label for="{id}-job">Job number</label>
-				<input id="{id}-job" bind:value={job} />
-			</div>
-		</div>
-		{#if admin}
+
+		<fieldset>
+			<legend>Only these (optional)</legend>
+			<p class="help">Leave everything empty to send every page from the capcodes and aliases above.</p>
 			<fieldset class="inner">
-				<legend>Flags (admins only)</legend>
+				<legend>Event categories</legend>
 				<div class="checks">
-					<label class="check"><input type="checkbox" bind:checked={parseFailed} /> parse_failed</label>
-					<label class="check"><input type="checkbox" bind:checked={addressUnsplit} /> address_unsplit</label>
-					<label class="check"><input type="checkbox" bind:checked={locationMismatch} /> location_mismatch</label>
+					{#each meta.categories as cat (cat)}
+						<label class="check"
+							><input
+								type="checkbox"
+								checked={categories.includes(cat)}
+								onchange={(e) => (categories = toggle(categories, cat, e.currentTarget.checked))}
+							/>
+							{cat}</label
+						>
+					{/each}
 				</div>
 			</fieldset>
-		{/if}
-	</fieldset>
+			<div class="field">
+				<label for="{id}-codes">Event-type codes</label>
+				<input id="{id}-codes" bind:value={codes} placeholder="HSF1, GRS3" />
+			</div>
+			<fieldset class="inner">
+				<legend>Priority</legend>
+				<div class="checks">
+					{#each [['Emergency', 'Emergency'], ['Non-emergency', 'Non-emergency'], ['Admin', 'Admin'], ['none', 'No priority']] as [v, label] (v)}
+						<label class="check"
+							><input
+								type="checkbox"
+								checked={priorities.includes(v)}
+								onchange={(e) => (priorities = toggle(priorities, v, e.currentTarget.checked))}
+							/>
+							{label}</label
+						>
+					{/each}
+				</div>
+			</fieldset>
+			<div class="grid">
+				<div class="field">
+					<label for="{id}-text">Text contains</label>
+					<input id="{id}-text" bind:value={text} />
+				</div>
+				<div class="field">
+					<label for="{id}-group">Group</label>
+					<input id="{id}-group" bind:value={group} />
+				</div>
+				<div class="field">
+					<label for="{id}-agency">Agency</label>
+					<input id="{id}-agency" bind:value={agency} />
+				</div>
+				<div class="field">
+					<label for="{id}-job">Job number</label>
+					<input id="{id}-job" bind:value={job} />
+				</div>
+			</div>
+			{#if admin}
+				<fieldset class="inner">
+					<legend>Flags (admins only)</legend>
+					<div class="checks">
+						<label class="check"><input type="checkbox" bind:checked={parseFailed} /> parse_failed</label>
+						<label class="check"><input type="checkbox" bind:checked={addressUnsplit} /> address_unsplit</label>
+						<label class="check"><input type="checkbox" bind:checked={locationMismatch} /> location_mismatch</label>
+					</div>
+				</fieldset>
+			{/if}
+		</fieldset>
 
-	<fieldset>
-		<legend>Content</legend>
-		<div class="stacked">
-			<label class="check"><input type="radio" bind:group={content} value="full" /> Full: the text and every field</label>
-			<label class="check"
-				><input type="radio" bind:group={content} value="summary" /> Summary: alias, event type, priority, time and job number. No text
-				or address</label
-			>
-		</div>
-		{#if presets.includes(kind) && content === 'full'}
-			<p class="help warn">{kindLabels[kind]} is a third party: Full content sends it the page text and address.</p>
-		{/if}
-	</fieldset>
+		<fieldset>
+			<legend>Content</legend>
+			<div class="stacked">
+				<label class="check"><input type="radio" bind:group={content} value="full" /> Full: the text and every field</label>
+				<label class="check"
+					><input type="radio" bind:group={content} value="summary" /> Summary: alias, event type, priority, time and job number. No text
+					or address</label
+				>
+			</div>
+			{#if presets.includes(kind) && content === 'full'}
+				<p class="help warn">{kindLabels[kind]} is a third party: Full content sends it the page text and address.</p>
+			{/if}
+		</fieldset>
+	{/if}
 
 	<fieldset>
 		<legend>{kindLabels[kind]}</legend>

@@ -163,11 +163,15 @@ func (s *Service) discoveryConfig(ctx context.Context, l loaded) ([]byte, error)
 	if s.AppURL != nil {
 		device["configuration_url"] = s.AppURL.JoinPath("integrations").String()
 	}
+	types := []string{"page", "test"}
+	if l.row.LargeEvents != nil {
+		types = []string{"large_event", "test"} // R87d
+	}
 	return json.Marshal(map[string]any{
 		"name":        l.row.Name,
 		"unique_id":   "pagerarchive_" + l.row.Uid,
 		"state_topic": l.config.Topic,
-		"event_types": []string{"page", "test"},
+		"event_types": types,
 		"icon":        "mdi:pager",
 		"qos":         1,
 		"device":      device,

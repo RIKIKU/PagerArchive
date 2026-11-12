@@ -59,7 +59,7 @@ func TestValidateProfileExample(t *testing.T) {
 	if code := run([]string{"validate-profile", "-v", "../../profiles/example"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
 	}
-	for _, want := range []string{"example-network (network,", ": 7 passed, 0 failed", "example-fire (agency,", ": 4 passed, 0 failed"} {
+	for _, want := range []string{"example-network (network,", ": 10 passed, 0 failed", "example-fire (agency,", ": 4 passed, 0 failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output doesn't contain %q:\n%s", want, out.String())
 		}

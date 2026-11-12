@@ -219,7 +219,7 @@ Describe 'Table and list views (guidelines section 5)' {
         $list = $formats.Configuration.ViewDefinitions.View | Where-Object -FilterScript { $_.ViewSelectedBy.TypeName -eq 'PagerArchive.Message' -and $_.ListControl }
         $list | Should -HaveCount 1
         $labels = @($list.ListControl.ListEntries.ListEntry.ListItems.ListItem | ForEach-Object -Process { "$($_.Label)$($_.PropertyName)" })
-        foreach ($field in @('SentAt', 'Priority', 'Alias', 'Capcode', 'Agency', 'Text', 'Group', 'JobNumber', 'EventType', 'Category', 'Description', 'Address', 'Locality', 'GridRef', 'Units', 'Fields', 'Location', 'ParseFailed', 'AddressUnsplit', 'LocationMismatch', 'Receptions')) {
+        foreach ($field in @('SentAt', 'Priority', 'Alias', 'Capcode', 'Agency', 'Text', 'Group', 'JobNumber', 'EventType', 'Category', 'Description', 'Address', 'Locality', 'GridRef', 'Appliances', 'Fields', 'Location', 'ParseFailed', 'AddressUnsplit', 'LocationMismatch', 'Receptions')) {
             $labels | Should -Contain $field
         }
     }

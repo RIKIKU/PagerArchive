@@ -79,7 +79,8 @@ export const icons = {
 	zoomout: '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M7 10l6 0" /><path d="M21 21l-6 -6" />',
 	later: '<path d="M18 14l-6 -6l-6 6h12" />',
 	earlier: '<path d="M6 10l6 6l6 -6h-12" />',
-	newest: '<path d="M7 11l5 -5l5 5" /><path d="M7 17l5 -5l5 5" />'
+	newest: '<path d="M7 11l5 -5l5 5" /><path d="M7 17l5 -5l5 5" />',
+	largeevents: '<path d="M12 10.941c2.333 -3.308 .167 -7.823 -1 -8.941c0 3.395 -2.235 5.299 -3.667 6.706c-1.43 1.408 -2.333 3.294 -2.333 5.588c0 3.704 3.134 6.706 7 6.706c3.866 0 7 -3.002 7 -6.706c0 -1.712 -1.232 -4.403 -2.333 -5.588c-2.084 3.353 -3.257 3.353 -4.667 2.235" />'
 } as const;
 
 export type IconName = keyof typeof icons;

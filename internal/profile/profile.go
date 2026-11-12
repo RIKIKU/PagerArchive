@@ -47,11 +47,17 @@ type Network struct {
 	Heartbeat   []CapcodeRange
 	Redactions  []Redaction
 	JobPatterns []*regexp.Regexp
-	Categories  []Category
-	DatasetPath string // absolute or relative to the working directory
-	Attribution string
-	StreetTypes map[string]string
-	GridSystem  string // how grid references are read (R25); "" if not given
+	// DeploymentCodes finds deployment codes (R5, R87): codes naming a
+	// pre-formed group of appliances sent together. nil: the network has none,
+	// and only big jobs open large events. With a group named "code", the
+	// group is the code; otherwise the whole match is.
+	DeploymentCodes     *regexp.Regexp
+	DeploymentCodeGroup int
+	Categories          []Category
+	DatasetPath         string // absolute or relative to the working directory
+	Attribution         string
+	StreetTypes         map[string]string
+	GridSystem          string // how grid references are read (R25); "" if not given
 }
 
 // CapcodeRange is an inclusive range of capcodes.
@@ -210,6 +216,7 @@ type networkJSON struct {
 	Heartbeat      []string          `json:"heartbeat_capcodes"`
 	Redactions     []redactionJSON   `json:"redaction_rules"`
 	JobPatterns    []string          `json:"job_number_patterns"`
+	DeploymentCode string            `json:"deployment_code_pattern"`
 	Categories     []categoryJSON    `json:"event_categories"`
 	AddressDataset struct {
 		Path        string `json:"path"`
@@ -312,6 +319,20 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 			continue
 		}
 		n.JobPatterns = append(n.JobPatterns, re)
+	}
+	if j.DeploymentCode != "" {
+		re, err := regexp.Compile(j.DeploymentCode)
+		switch {
+		case err != nil:
+			fail("/deployment_code_pattern", err.Error())
+		case re.MatchString(""):
+			fail("/deployment_code_pattern", "pattern matches empty text")
+		default:
+			n.DeploymentCodes = re
+			if g := re.SubexpIndex("code"); g > 0 {
+				n.DeploymentCodeGroup = g
+			}
+		}
 	}
 	for _, c := range j.Categories {
 		n.Categories = append(n.Categories, Category{Name: c.Category, Codes: c.Codes})

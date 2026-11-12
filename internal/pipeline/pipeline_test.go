@@ -2,6 +2,7 @@ package pipeline
 
 import (
 	"bytes"
+	"slices"
 	"testing"
 
 	"github.com/RIKIKU/PagerArchive/internal/profile"
@@ -169,5 +170,41 @@ func TestCategory(t *testing.T) {
 		if got := Category(n, code); got != want {
 			t.Errorf("Category(%q) = %q, want %q", code, got, want)
 		}
+	}
+}
+
+// R5, R87: the example network's deployment codes are DG and 4 digits, found
+// in the text a pager displays, each once, in order.
+func TestDeploymentCodes(t *testing.T) {
+	n, _ := example(t)
+	for raw, want := range map[string][]string{
+		"@@EX0000101 GRS3 DG0801 GRASS FIRE #STN1":        {"DG0801"},
+		"@@EX0000102 DG0802 DG0803 DG0802 #STN1":          {"DG0802", "DG0803"},
+		"@@EX0000103 DG08011 XDG0801 DG080 #STN1":         nil,
+		"QDDG0801 ready for tomorrow":                     {"DG0801"},
+		"@@DG0804 at the start of the text after @@ only": {"DG0804"},
+	} {
+		if got := DeploymentCodes(n, Prepare(n, "0100001", raw)); !slices.Equal(got, want) {
+			t.Errorf("DeploymentCodes(%q) = %v, want %v", raw, got, want)
+		}
+	}
+	// A network with no pattern has none; a code group picks part of a match.
+	set, err := loadAgencyJSON(t, `{
+	  "kind": "network", "name": "n",
+	  "priority_markers": {"@@": "Emergency"}, "ignored_capcodes": [], "heartbeat_capcodes": [],
+	  "redaction_rules": [], "job_number_patterns": [], "event_categories": [],
+	  "deployment_code_pattern": "TEAM (?P<code>[0-9]{3})",
+	  "address_dataset": {"path": "x.json", "attribution": "x"}, "street_types": {}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := set.Networks["n"]
+	if got := DeploymentCodes(g, Prepare(g, "0100001", "@@TEAM 123 AND TEAM 456")); !slices.Equal(got, []string{"123", "456"}) {
+		t.Errorf("with a code group: %v", got)
+	}
+	g.DeploymentCodes = nil
+	if got := DeploymentCodes(g, Prepare(g, "0100001", "@@TEAM 123")); got != nil {
+		t.Errorf("no pattern: %v", got)
 	}
 }

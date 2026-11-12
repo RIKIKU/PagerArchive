@@ -129,6 +129,9 @@ func (im *Importer) Run(ctx context.Context, r io.Reader) (Report, error) {
 	// R83b: quiet, whatever service it's given.
 	quiet := *im.Ingest
 	quiet.OnStored = nil
+	// Nor do they group into large events (ADR 0027): the import stays as
+	// fast as R83f asks, and an imported page is no news.
+	quiet.Events = nil
 	im.Ingest = &quiet
 
 	conn, err := im.Store.Pool.Acquire(ctx)

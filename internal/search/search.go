@@ -42,6 +42,9 @@ type Filter struct {
 	// Album keeps one album's messages (R82). The server sets it, for the
 	// album's owner only; it never comes from the address alone (ADR 0026).
 	Album *int64
+	// Event keeps one large event's pages (R87c). The server sets it from
+	// the address's event (ADR 0027).
+	Event *int64
 
 	// Admin only (R33): filter by flag. Each true field must be set; Flags
 	// matches messages with any of the flags it names.
@@ -329,6 +332,7 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		Flags:            orEmpty(f.Flags),
 		Located:          f.Located,
 		AlbumID:          f.Album,
+		EventID:          f.Event,
 		CatCodes:         []string{},
 		CatPrefixes:      []string{},
 		AllCatCodes:      []string{},

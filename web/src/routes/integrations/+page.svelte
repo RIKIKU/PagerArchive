@@ -1,7 +1,7 @@
 <script lang="ts">
 	// R47-R51c: the signed-in user's own integrations. Nobody else sees them;
 	// admins only see that they exist.
-	import { api, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
+	import { api, type Delivery, type Integration, type Meta, type TestResult, largeEventLevels } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import IntegrationForm from '#lib/IntegrationForm.svelte';
 	import Icon from '#lib/Icon.svelte';
@@ -76,6 +76,7 @@
 	}
 
 	function selection(i: Integration): string {
+		if (i.large_events) return `Large events at level ${largeEventLevels.find((l) => l.level === i.large_events)?.label ?? i.large_events}`;
 		const parts = [...i.aliases.map((a) => a.name), ...i.capcodes.map((c) => (i.covered_by[c] ? `${c} (in ${i.covered_by[c]})` : c))];
 		return parts.length > 4 ? `${parts.slice(0, 4).join(', ')} and ${parts.length - 4} more` : parts.join(', ');
 	}
@@ -226,7 +227,7 @@
 						<ul class="deliveries">
 							{#each ds as d (d.message_id)}
 								<li>
-									<a href="/messages/{d.message_id}"><time datetime={isoAttr(d.sent_at)}>{dateTime(d.sent_at, tz)}</time></a>
+									<a href={d.event_id ? `/large-events/${d.event_id}` : `/messages/${d.message_id}`}><time datetime={isoAttr(d.sent_at)}>{dateTime(d.sent_at, tz)}</time></a>
 									<span class="dstate {d.status}">{deliveryLabels[d.status]}</span>
 									<span class="muted"
 										>{d.attempts} attempt{d.attempts === 1 ? '' : 's'}{#if d.last_error && d.status !== 'delivered'} · {d.last_error}{:else if d.last_result} · {d.last_result}{/if}</span

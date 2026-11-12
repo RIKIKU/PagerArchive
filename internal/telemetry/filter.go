@@ -125,7 +125,8 @@ var spanNames = struct {
 	"page": true, "decode": true, "buffer": true, "send": true,
 	// Ingest and what follows it (R71).
 	"ingest": true, "ingest.redact": true, "ingest.parse": true, "ingest.store": true, "ingest.dedup": true, "ingest.locate": true,
-	"live.publish": true, "integration.deliver": true,
+	"ingest.events": true, // large events (R87, ADR 0027)
+	"live.publish":  true, "integration.deliver": true,
 	// Background work (R72).
 	"nightly": true, "nightly.retention": true, "nightly.redaction": true, "nightly.vacuum": true, "reparse": true,
 }}

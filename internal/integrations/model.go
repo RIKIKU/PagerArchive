@@ -134,9 +134,12 @@ type Request struct {
 	Content  string   `json:"content"` // "" is the kind's default
 	Capcodes []string `json:"capcodes"`
 	AliasIDs []int64  `json:"alias_ids"`
-	Filter   Filter   `json:"filter"`
-	Config   Config   `json:"config"`
-	Secrets  Secrets  `json:"secrets"` // on a change, empty fields keep the saved values
+	// LargeEvents selects large events at this level instead of capcodes and
+	// aliases (R87d): deployment, several_deployments or big_job.
+	LargeEvents string  `json:"large_events,omitempty"`
+	Filter      Filter  `json:"filter"`
+	Config      Config  `json:"config"`
+	Secrets     Secrets `json:"secrets"` // on a change, empty fields keep the saved values
 }
 
 // AliasRef is a selected alias.
@@ -157,6 +160,7 @@ type View struct {
 	// CoveredBy names the range alias of each capcode that one covers (R48).
 	CoveredBy       map[string]string `json:"covered_by"`
 	Aliases         []AliasRef        `json:"aliases"`
+	LargeEvents     *string           `json:"large_events"` // the level, for a large-event integration (R87d)
 	Filter          Filter            `json:"filter"`
 	Config          Config            `json:"config"`
 	SecretsSet      map[string]bool   `json:"secrets_set"`
@@ -183,6 +187,7 @@ type Outcome struct {
 // Delivery is one page's delivery as its owner sees it.
 type Delivery struct {
 	MessageID   int64      `json:"message_id"`
+	EventID     *int64     `json:"event_id,omitempty"` // a large event's delivery (R87d)
 	Capcode     string     `json:"capcode"`
 	SentAt      time.Time  `json:"sent_at"`
 	Status      string     `json:"status"` // pending, delivered, failed, too_old, cancelled
@@ -267,7 +272,7 @@ func fromByID(r db.IntegrationByIDRow) (loaded, error) {
 		ID: r.ID, Uid: r.Uid, OwnerID: r.OwnerID, Name: r.Name, Kind: r.Kind, Content: r.Content, Config: r.Config,
 		Secrets: r.Secrets, Filter: r.Filter, Status: r.Status, PausedBy: r.PausedBy, PausedAt: r.PausedAt,
 		FailedPages: r.FailedPages, LastError: r.LastError, LastErrorAt: r.LastErrorAt, LastDeliveredAt: r.LastDeliveredAt,
-		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt,
+		CreatedAt: r.CreatedAt, UpdatedAt: r.UpdatedAt, LargeEvents: r.LargeEvents,
 	})
 	l.ownerRole, l.ownerStatus = r.OwnerRole, r.OwnerStatus
 	return l, err
