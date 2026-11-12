@@ -6,6 +6,7 @@
 	import Icon from './Icon.svelte';
 	import { keep, keptFor, type Kept } from './listState.svelte.ts';
 	import MessageRow from './MessageRow.svelte';
+	import { screen } from './screen.svelte.ts';
 	import Scrubber from './Scrubber.svelte';
 	import { apiParams, isFiltered } from './search.ts';
 
@@ -75,8 +76,11 @@
 	let sentinel: HTMLElement | undefined = $state();
 	let topSentinel: HTMLElement | undefined = $state();
 	let scrub: Scrubber | undefined = $state();
-	// When the first row in view was sent, for the scrubber's place.
-	let position: string | undefined = $state();
+	// Where the top of the view is in time (ms), for the scrubber's place.
+	let position: number | undefined = $state();
+	let bodyEl: HTMLElement | undefined = $state();
+	// R81b: no scrubber on a phone (owner, 2026-11-13).
+	const scrubbed = $derived(scrubber && !screen.phone);
 
 	$effect(() => {
 		count = messages.length;
@@ -116,17 +120,30 @@
 	async function loadMore() {
 		if (!next || loading || askedKey === undefined) return;
 		loading = true;
+		let ok = false;
 		try {
 			const p = await api.messages(new URLSearchParams(askedKey), next);
 			const seen = new Set(messages.map((m) => m.id));
 			messages = [...messages, ...p.messages.filter((m) => !seen.has(m.id))];
 			next = p.next;
+			ok = true;
 		} catch (e) {
 			error = (e as Error).message;
 		} finally {
 			loading = false;
 		}
+		// Still within reach of the bottom (a tall window, a fast scroll):
+		// the next page now, as the observer won't say so again.
+		if (ok && scroll) {
+			await tick();
+			if (sentinel && sentinel.getBoundingClientRect().top < window.innerHeight * (1 + AHEAD)) loadMore();
+		}
 	}
+
+	// Infinite scroll loads the next page while it's still this many screens
+	// away, so a scroll doesn't reach the end of the rows and stop there
+	// before they come (owner, 2026-11-13: it "hits the bottom and jolts").
+	const AHEAD = 3;
 
 	/** The bottom of the sticky top bar: rows above it are out of view. */
 	const below = () => document.querySelector('header.top')?.getBoundingClientRect().bottom ?? 0;
@@ -245,14 +262,31 @@
 		});
 	}
 
-	// R81b: where the list is, for the scrubber: the first row in view.
+	// R81b: where the list is, for the scrubber: the first row in view, and
+	// how far it has scrolled past the top, as a time between its own and the
+	// next row's. So the scrubber's place moves with every frame of a scroll,
+	// not only from one row to the next.
+	const sentAt = $derived(new Map(messages.map((m) => [m.id, Date.parse(m.sent_at)])));
 	function updatePosition() {
-		const first = rowsInView().find((r) => r.getBoundingClientRect().bottom > below());
-		const id = first ? Number(first.dataset.messageId) : undefined;
-		position = id === undefined ? undefined : messages.find((m) => m.id === id)?.sent_at;
+		const rows = rowsInView();
+		const edge = below();
+		let lo = 0;
+		let hi = rows.length;
+		while (lo < hi) {
+			const mid = (lo + hi) >> 1;
+			if (rows[mid].getBoundingClientRect().bottom > edge) hi = mid;
+			else lo = mid + 1;
+		}
+		const row = rows[lo];
+		const t = row && sentAt.get(Number(row.dataset.messageId));
+		if (t === undefined) return void (position = undefined);
+		const r = row.getBoundingClientRect();
+		const past = Math.max(0, Math.min(1, (edge - r.top) / Math.max(1, r.height)));
+		const after = rows[lo + 1] ? sentAt.get(Number(rows[lo + 1].dataset.messageId)) : undefined;
+		position = after === undefined ? t : t + past * (after - t);
 	}
 	$effect(() => {
-		if (!scrubber) return;
+		if (!scrubbed) return;
 		let frame = 0;
 		const on = () => {
 			if (!frame)
@@ -271,7 +305,7 @@
 	});
 	$effect(() => {
 		void messages.length;
-		if (scrubber) tick().then(updatePosition);
+		if (scrubbed) tick().then(updatePosition);
 	});
 
 	// Load and subscribe whenever the criteria change.
@@ -374,17 +408,23 @@
 	// Infinite scroll, both ways, with buttons as a keyboard-friendly fallback.
 	$effect(() => {
 		if (!sentinel || !scroll) return;
-		const io = new IntersectionObserver((entries) => {
-			if (entries.some((e) => e.isIntersecting)) loadMore();
-		});
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) loadMore();
+			},
+			{ rootMargin: `0% 0% ${AHEAD * 100}% 0%` }
+		);
 		io.observe(sentinel);
 		return () => io.disconnect();
 	});
 	$effect(() => {
 		if (!topSentinel || !scroll) return;
-		const io = new IntersectionObserver((entries) => {
-			if (entries.some((e) => e.isIntersecting)) loadNewer();
-		});
+		const io = new IntersectionObserver(
+			(entries) => {
+				if (entries.some((e) => e.isIntersecting)) loadNewer();
+			},
+			{ rootMargin: `${AHEAD * 100}% 0% 0% 0%` }
+		);
 		io.observe(topSentinel);
 		return () => io.disconnect();
 	});
@@ -411,7 +451,7 @@
 {@render children?.()}
 <div class="visually-hidden" aria-live="polite">{announce}</div>
 
-<div class="body" class:scrubbed={scrubber}>
+<div class="body" class:scrubbed bind:this={bodyEl}>
 	<div class="rows">
 		{#if newer}
 			<div class="newer" bind:this={topSentinel}>
@@ -437,8 +477,8 @@
 			</div>
 		{/if}
 	</div>
-	{#if scrubber && askedKey !== undefined && !blocked}
-		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} onjump={jump} />
+	{#if scrubbed && askedKey !== undefined && !blocked}
+		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} host={bodyEl} onjump={jump} />
 	{/if}
 </div>
 
@@ -487,11 +527,10 @@
 		border-top-left-radius: 0;
 		border-bottom-left-radius: 0;
 	}
-	/* R81b: the scrubber down the right of the rows. */
+	/* R81b: the scrubber sits over the rows' right edge, so their controls
+	   (the job link) keep clear of the strip that takes the pointer. */
 	.body.scrubbed {
-		display: grid;
-		grid-template-columns: minmax(0, 1fr) auto;
-		align-items: start;
+		--row-pad-end: calc(var(--scrubber-hit) + var(--space-sm));
 	}
 	.rows {
 		min-width: 0;

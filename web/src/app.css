@@ -225,13 +225,23 @@
 	--calendar-mark: 2.2rem;
 	--calendar-bar-inset: 0.2rem;
 	--preview-opacity: 0.55;
-	/* M14: the scrubber (R81b-R81d): its width on a desktop and on a phone,
-	   the edge on the mark the list is at, and its busy dots. */
-	--scrubber-width: 5.5rem;
-	--scrubber-width-phone: var(--target);
+	/* M14: the scrubber (R81b-R81d): its width with its labels, the strip
+	   that takes the pointer, the edge on the mark the list is at, and its
+	   busy dots. It sits over the list: what's behind it (a veil, a halo for
+	   its labels with nothing behind them), the line that follows the list,
+	   and the faint hint down the edge while it's hidden. */
+	--scrubber-width: 6.5rem;
+	--scrubber-hit: var(--target);
 	--scrubber-edge: 0.1875rem;
 	--scrubber-dot: 0.3125rem;
 	--scrubber-dot-colour: var(--control-border);
+	--scrubber-veil: color-mix(in srgb, var(--surface) 86%, transparent);
+	--scrubber-blur: 0.375rem;
+	--scrubber-halo: 0 0 0.125rem var(--surface), 0 0 0.25rem var(--surface), 0 0 0.375rem var(--surface);
+	--scrubber-thumb: 0.125rem;
+	--scrubber-hint: color-mix(in srgb, var(--accent) 35%, transparent);
+	--scrubber-hint-width: 0.125rem;
+	--scrubber-tick: 0.5rem;
 }
 
 @media (pointer: coarse) {

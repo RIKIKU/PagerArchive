@@ -9,7 +9,12 @@
 	// keys move a mark, Page Up and Page Down a week, Home and End to the ends.
 	// At an hour of today or yesterday, a button zooms into its twelve 5-minute
 	// blocks (R81d), with the hours either side a click away.
-	import { untrack } from 'svelte';
+	//
+	// It sits over the list's right edge, not in a column of its own. With a
+	// mouse it stays hidden until the pointer nears that edge or the keyboard
+	// focuses it, and a line across it follows the list as it scrolls. Phones
+	// and albums have none (MessageList).
+	import { onMount, untrack } from 'svelte';
 	import { api, type Counts, type Mark } from './api.ts';
 	import Icon from './Icon.svelte';
 
@@ -17,16 +22,50 @@
 		query,
 		tz,
 		at,
+		host,
 		onjump
 	}: {
 		/** The list's API parameters, as a string (MessageList's askedKey). */
 		query: string;
 		tz: string;
-		/** When the list's first row in view was sent; none at the top. */
-		at?: string;
+		/** Where the top of the list's view is, in time (ms): the first row in
+		    view's sent time, moving towards the next row's as it scrolls past. */
+		at?: number;
+		/** The list's own box: the strip sits over its right edge. */
+		host?: HTMLElement;
 		/** Jump the list to the messages sent before this time. */
-		onjump: (before: string) => void;
+		onjump: (before: string) => Promise<void>;
 	} = $props();
+
+	// POC (2026-11-13): the choices to compare, from the address once
+	// (?zone=3, ?zone=12, ?hint=0|1|2, ?bg=veil|clear|solid) and kept for
+	// the tab, so they last as the address changes.
+	// zone: how near the edge, in px, the pointer must come to show it;
+	// hint: 0 nothing while hidden, 1 a faint line down the edge, 2 the line
+	// and a tick on it where the list is; bg: veil (see-through, blurred),
+	// clear (nothing behind it, text with a halo) or solid.
+	const poc = (() => {
+		const out = { zone: 12, hint: 1, bg: 'veil' };
+		if (typeof window === 'undefined') return out;
+		try {
+			Object.assign(out, JSON.parse(sessionStorage.getItem('scrubber-poc') ?? '{}'));
+		} catch {
+			// no storage: the defaults and the address
+		}
+		const q = new URLSearchParams(location.search);
+		const zone = Number(q.get('zone'));
+		if (q.has('zone') && zone >= 1 && zone <= 64) out.zone = zone;
+		const hint = Number(q.get('hint'));
+		if (q.has('hint') && [0, 1, 2].includes(hint)) out.hint = hint;
+		const bg = q.get('bg');
+		if (bg === 'veil' || bg === 'clear' || bg === 'solid') out.bg = bg;
+		try {
+			sessionStorage.setItem('scrubber-poc', JSON.stringify(out));
+		} catch {
+			// ignore
+		}
+		return out;
+	})();
 
 	let counts: Counts | undefined = $state();
 	let zoom: { hour: string; counts: Counts } | undefined = $state();
@@ -104,13 +143,41 @@
 	// Where the list is: the mark holding its first row in view, or the newest.
 	const current = $derived.by(() => {
 		if (marks.length === 0) return undefined;
-		if (!at) return 0;
-		const t = ms(at);
+		if (at === undefined) return 0;
+		const t = at;
 		const i = marks.findIndex((m) => ms(m.start) <= t && t < ms(m.end));
 		if (i >= 0) return i;
 		return t >= ms(marks[0].end) ? 0 : t < ms(marks[marks.length - 1].start) ? marks.length - 1 : undefined;
 	});
 	const shown = $derived(dragging && hover !== undefined ? hover : (picked ?? current));
+
+	// Where the list is, as a fraction of the strip's height, moving
+	// smoothly as it scrolls: through its mark in proportion to the time.
+	const thumb = $derived.by(() => {
+		if (marks.length === 0) return undefined;
+		if (at === undefined) return 0;
+		const t = at;
+		if (t >= ms(marks[0].end)) return 0;
+		const i = marks.findIndex((m) => ms(m.start) <= t && t < ms(m.end));
+		if (i < 0) return t < ms(marks[marks.length - 1].start) ? 1 : undefined;
+		const m = marks[i];
+		return (i + (ms(m.end) - t) / (ms(m.end) - ms(m.start))) / marks.length;
+	});
+
+	// A mark the keyboard or a click picked stays picked while the list gets
+	// there (an empty mark's jump lands in an older one), and until it's
+	// scrolled to another mark: then the strip follows the list again.
+	let landed: number | undefined;
+	$effect(() => {
+		const c = current;
+		untrack(() => {
+			if (picked === undefined || landed === undefined || dragging || keyTimer !== undefined) return;
+			if (c !== landed) {
+				picked = undefined;
+				landed = undefined;
+			}
+		});
+	});
 
 	// How busy: up to four dots, against the busiest mark of the same kind
 	// (an hour against hours, a day against days).
@@ -189,7 +256,8 @@
 		const m = marks[Math.max(0, Math.min(marks.length - 1, i))];
 		if (!m) return;
 		picked = marks.indexOf(m);
-		onjump(m.end);
+		landed = undefined;
+		onjump(m.end).then(() => (landed = current ?? -1));
 	}
 
 	// The keyboard moves the mark at once and jumps after a moment, so holding
@@ -232,7 +300,10 @@
 		picked = Math.max(0, Math.min(marks.length - 1, to));
 		clearTimeout(keyTimer);
 		const i = picked;
-		keyTimer = setTimeout(() => go(i), 350);
+		keyTimer = setTimeout(() => {
+			keyTimer = undefined;
+			go(i);
+		}, 350);
 	}
 
 	function indexAt(y: number): number | undefined {
@@ -260,9 +331,113 @@
 	}
 
 	const value = $derived(shown === undefined ? 0 : marks.length - 1 - shown);
+
+	// Over the list's right edge, from the top bar (or the list's top, below
+	// it) to the bottom of the window. Measured as the page scrolls or
+	// changes size; position: fixed, so loading more rows never moves it.
+	let top = $state(0);
+	let right = $state(0);
+	let edge = 0; // the list's right edge, from the window's left
+	let outer = 0; // how far right the edge zone reaches
+	function measure() {
+		if (!host) return;
+		const r = host.getBoundingClientRect();
+		const width = document.documentElement.clientWidth;
+		const bar = document.querySelector('header.top')?.getBoundingClientRect().bottom ?? 0;
+		top = Math.round(Math.max(bar, r.top));
+		right = Math.round(Math.max(0, width - r.right));
+		edge = r.right;
+		// Only a page's padding beside it: the zone runs to the window's edge.
+		// A message open beside it (R80): the zone stops at the list's edge.
+		outer = width - r.right < 64 ? width : r.right + 4;
+	}
+
+	// Hidden until wanted, where there's a mouse to want it with. Shown at
+	// once; hidden a moment after the pointer leaves, so it doesn't flicker.
+	let hideable = $state(false);
+	let near = $state(false);
+	let over = $state(false);
+	let focused = $state(false);
+	let visible = $state(false);
+	let root: HTMLElement | undefined = $state();
+	const wanted = $derived(near || over || focused || dragging);
+	let hideTimer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		if (wanted) {
+			clearTimeout(hideTimer);
+			visible = true;
+		} else hideTimer = setTimeout(() => (visible = false), 400);
+		return () => clearTimeout(hideTimer);
+	});
+	onMount(() => {
+		const fine = window.matchMedia('(hover: hover) and (pointer: fine)');
+		hideable = fine.matches;
+		const change = (e: MediaQueryListEvent) => (hideable = e.matches);
+		fine.addEventListener('change', change);
+		let frame = 0;
+		const later = () => {
+			if (!frame)
+				frame = requestAnimationFrame(() => {
+					frame = 0;
+					measure();
+				});
+		};
+		measure();
+		const ro = new ResizeObserver(later);
+		if (host) ro.observe(host);
+		window.addEventListener('scroll', later, { passive: true });
+		window.addEventListener('resize', later, { passive: true });
+		const move = (e: PointerEvent) => {
+			if (e.pointerType === 'touch') return;
+			near = e.clientX >= edge - poc.zone && e.clientX <= outer && e.clientY >= top;
+		};
+		const leave = () => (near = false);
+		window.addEventListener('pointermove', move, { passive: true });
+		document.documentElement.addEventListener('pointerleave', leave);
+		return () => {
+			fine.removeEventListener('change', change);
+			cancelAnimationFrame(frame);
+			ro.disconnect();
+			window.removeEventListener('scroll', later);
+			window.removeEventListener('resize', later);
+			window.removeEventListener('pointermove', move);
+			document.documentElement.removeEventListener('pointerleave', leave);
+		};
+	});
+	// The keyboard shows it (it's a slider for the keyboard too, R81b); a
+	// click doesn't keep it shown.
+	function focusIn(e: FocusEvent) {
+		if ((e.target as Element).matches(':focus-visible')) focused = true;
+	}
+	function focusOut(e: FocusEvent) {
+		if (!root?.contains(e.relatedTarget as Node | null)) focused = false;
+	}
 </script>
 
-<div class="scrubber" class:zoomed={!!zoom} data-testid="scrubber" data-counted={counted}>
+{#if hideable && poc.hint > 0}
+	<!-- POC: a faint line down the edge while it's hidden, so it can be found; with hint=2 a tick where the list is. -->
+	<div class="hint" class:off={visible} style:top="{top}px" style:right="{right}px" aria-hidden="true">
+		{#if poc.hint === 2 && thumb !== undefined}<span class="tick" style:top="{thumb * 100}%"></span>{/if}
+	</div>
+{/if}
+<!-- svelte-ignore a11y_no_static_element_interactions (shows it while the pointer is over it, or a key is pressed in it) -->
+<div
+	class="scrubber bg-{poc.bg}"
+	class:zoomed={!!zoom}
+	class:hideable
+	class:shown={visible || !hideable}
+	bind:this={root}
+	style:top="{top}px"
+	style:right="{right}px"
+	data-testid="scrubber"
+	data-counted={counted}
+	data-shown={visible || !hideable}
+	onpointerenter={() => (over = true)}
+	onpointerleave={() => (over = false)}
+	onfocusin={focusIn}
+	onfocusout={focusOut}
+	onkeydown={() => (focused = true)}
+>
 	<!-- svelte-ignore a11y_no_static_element_interactions (Escape hides the tooltips: WCAG 1.4.13) -->
 	<div class="tools" onkeydown={(e) => e.key === 'Escape' && (tipOff = true)} onpointerleave={() => (tipOff = false)} onfocusout={() => (tipOff = false)}>
 		{#if zoom}
@@ -308,6 +483,7 @@
 				<span class="dots" aria-hidden="true">{#each { length: dots(m) } as _, k (k)}<span class="dot"></span>{/each}</span>
 			</div>
 		{/each}
+		{#if thumb !== undefined}<span class="thumb" style:top="{thumb * 100}%" aria-hidden="true"></span>{/if}
 		{#if dragging && hover !== undefined && marks[hover]}
 			<span class="bubble" aria-hidden="true" style:top="{((hover + 0.5) / marks.length) * 100}%">{spoken(marks[hover])}</span>
 		{/if}
@@ -328,25 +504,72 @@
 </div>
 
 <style>
-	/* Down the right of the list, in view while the page scrolls under the top
-	   bar; on a phone, above the bottom bar. */
+	/* Over the right edge of the list (fixed: measured in the script), from
+	   the top bar to the bottom of the window. Only the strip of dots on its
+	   right takes the pointer, as wide as a target; the labels to its left let
+	   clicks through to the rows, whose controls stay clear of the strip
+	   (MessageList's --row-pad-end). */
 	.scrubber {
-		position: sticky;
-		top: var(--topbar-height);
+		position: fixed;
+		bottom: 0;
+		z-index: var(--layer-content);
 		display: flex;
 		flex-direction: column;
-		align-items: stretch;
+		align-items: flex-end;
 		width: var(--scrubber-width);
-		height: calc(var(--full-height) - var(--topbar-height));
 		padding: var(--space-2xs) 0;
-		border-left: var(--border-width) solid var(--border);
-		background: var(--surface);
 		user-select: none;
+		pointer-events: none;
+		transition: opacity 120ms ease-out;
+	}
+	.bg-veil {
+		background: var(--scrubber-veil);
+		backdrop-filter: blur(var(--scrubber-blur));
+		border-left: var(--border-width) solid var(--border);
+	}
+	.bg-solid {
+		background: var(--surface);
+		border-left: var(--border-width) solid var(--border);
+	}
+	.bg-clear .label {
+		color: var(--fg);
+		text-shadow: var(--scrubber-halo);
+	}
+	.hideable:not(.shown) {
+		opacity: 0;
+		transition: opacity 200ms ease-in;
+	}
+	.hideable:not(.shown) .tools,
+	.hideable:not(.shown) .track {
+		pointer-events: none;
+	}
+	.tools,
+	.track {
+		pointer-events: auto;
+	}
+	.hint {
+		position: fixed;
+		bottom: 0;
+		width: var(--scrubber-hint-width);
+		background: var(--scrubber-hint);
+		pointer-events: none;
+		transition: opacity 200ms;
+	}
+	.hint.off {
+		opacity: 0;
+	}
+	.tick {
+		position: absolute;
+		right: 0;
+		width: var(--scrubber-tick);
+		height: var(--scrubber-hint-width);
+		background: var(--accent);
 	}
 	.tools {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
+		width: var(--scrubber-hit);
 		min-height: var(--target);
 	}
 	.zoomed .tools:last-of-type {
@@ -364,6 +587,7 @@
 		flex: 1;
 		display: flex;
 		flex-direction: column;
+		width: var(--scrubber-hit);
 		min-height: 0;
 		cursor: pointer;
 		touch-action: none;
@@ -389,9 +613,10 @@
 	.track:hover .mark.current:hover {
 		background: var(--accent-soft);
 	}
+	/* To the left of the strip, over the list: let clicks through. */
 	.label {
 		position: absolute;
-		left: var(--space-2xs);
+		right: calc(100% + var(--space-xs));
 		top: 50%;
 		transform: translateY(-50%);
 		color: var(--muted);
@@ -415,6 +640,16 @@
 	.current .dot {
 		background: var(--accent);
 	}
+	/* Where the list is, following it as it scrolls. */
+	.thumb {
+		position: absolute;
+		right: 0;
+		left: 0;
+		height: var(--scrubber-thumb);
+		transform: translateY(-50%);
+		background: var(--accent);
+		pointer-events: none;
+	}
 	.bubble {
 		position: absolute;
 		right: calc(100% + var(--space-xs));
@@ -432,21 +667,16 @@
 		outline: var(--focus-width) solid var(--focus);
 		outline-offset: calc(-1 * var(--focus-width));
 	}
-	@media (max-width: 47.99rem) {
-		.scrubber {
-			width: calc(var(--scrubber-width-phone) + var(--border-width));
-			height: calc(var(--full-height) - var(--topbar-height) - var(--bottom-bar-height));
-		}
-		.label {
-			display: none;
-		}
-		.mark {
-			justify-content: center;
-			padding-right: 0;
+	@media (prefers-reduced-motion: reduce) {
+		.scrubber,
+		.hideable:not(.shown),
+		.hint {
+			transition: none;
 		}
 	}
 	@media print {
-		.scrubber {
+		.scrubber,
+		.hint {
 			display: none;
 		}
 	}

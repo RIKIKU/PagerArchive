@@ -141,7 +141,7 @@
 		{/if}
 	</section>
 	<div class="listbox">
-		<MessageList {query} base={{ album: String(album.id), ignored: 'true' }} level={2} live={false} album={album.id} onremoved={removed} />
+		<MessageList {query} base={{ album: String(album.id), ignored: 'true' }} level={2} scrubber={false} live={false} album={album.id} onremoved={removed} />
 	</div>
 {/if}
 
