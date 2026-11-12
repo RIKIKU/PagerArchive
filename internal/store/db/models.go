@@ -15,6 +15,24 @@ type AddressPoint struct {
 	Geom     interface{}
 }
 
+type Album struct {
+	ID               int64
+	OwnerID          int64
+	Name             string
+	Description      *string
+	CreatedAt        time.Time
+	UpdatedAt        time.Time
+	EmptiedAt        *time.Time
+	RetentionTouched bool
+}
+
+type AlbumMessage struct {
+	AlbumID   int64
+	MessageID int64
+	Note      *string
+	AddedAt   time.Time
+}
+
 type Alias struct {
 	ID         int64
 	Pattern    string

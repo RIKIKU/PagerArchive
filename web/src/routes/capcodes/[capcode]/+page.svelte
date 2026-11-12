@@ -70,7 +70,7 @@
 		background: var(--surface);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius);
-		overflow: hidden;
+		overflow: clip;
 	}
 	dl {
 		display: grid;

@@ -244,6 +244,15 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 			break
 		}
 	}
+	// R82a: an album the deleted messages left empty goes too, unless it has
+	// a description; then it's kept, and says its messages have passed the
+	// retention period. A run that stopped before this is finished by the next.
+	if _, err := j.Store.DeleteEmptiedAlbums(sctx); err != nil {
+		return fmt.Errorf("retention albums: %s", store.SafeError(err))
+	}
+	if _, err := j.Store.FinishRetentionAlbums(sctx, now); err != nil {
+		return fmt.Errorf("retention albums: %s", store.SafeError(err))
+	}
 	// Integrations' delivery records are kept for 30 days (ADR 0006 §1).
 	if _, err := j.Store.PruneDeliveries(sctx, now.Add(-deliveryDays*24*time.Hour)); err != nil {
 		return fmt.Errorf("delivery records: %s", store.SafeError(err))

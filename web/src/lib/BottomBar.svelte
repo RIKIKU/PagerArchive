@@ -1,8 +1,7 @@
 <script lang="ts">
-	// R81: phones get a bottom bar with Messages, Map and More (Albums joins
-	// them in M14); More opens the rest of the menu, without the pages that
-	// are desktop only (the print sheet, Administration). They still open
-	// from a link or bookmark.
+	// R81: phones get a bottom bar with Messages, Map, Albums and More; More
+	// opens the rest of the menu, without the pages that are desktop only (the
+	// print sheet, Administration). They still open from a link or bookmark.
 	import Icon from './Icon.svelte';
 	import { entryOf, visible } from './nav.ts';
 
@@ -12,11 +11,12 @@
 	let more = $state(false);
 	const groups = $derived(
 		visible(admin)
-			.filter((g) => !g.adminOnly)
+			.filter((g) => !g.adminOnly && g.id !== 'albums')
 			.map((g) => ({ ...g, entries: g.entries.filter((e) => !e.desktopOnly) }))
 			.filter((g) => g.entries.length > 0)
 	);
-	const inMore = $derived(path !== '/' && path !== '/map' && !path.startsWith('/messages/') && entryOf(path) !== undefined);
+	const onAlbums = $derived(path === '/albums' || path.startsWith('/albums/'));
+	const inMore = $derived(path !== '/' && path !== '/map' && !onAlbums && !path.startsWith('/messages/') && entryOf(path) !== undefined);
 
 	function show() {
 		dialog.showModal();
@@ -31,6 +31,7 @@
 	<ul>
 		<li><a href={listHref} aria-current={path === '/' || path.startsWith('/messages/') ? 'page' : undefined}><Icon name="messages" /><span>Messages</span></a></li>
 		<li><a href={mapHref} aria-current={path === '/map' ? 'page' : undefined}><Icon name="map" /><span>Map</span></a></li>
+		<li><a href="/albums" aria-current={onAlbums ? 'page' : undefined}><Icon name="albums" /><span>Albums</span></a></li>
 		<li>
 			<button type="button" aria-haspopup="dialog" aria-expanded={more} aria-current={inMore ? 'page' : undefined} onclick={show}
 				><Icon name="more" /><span>More</span></button
@@ -128,7 +129,7 @@
 		}
 		.bottom ul {
 			display: grid;
-			grid-template-columns: repeat(3, 1fr);
+			grid-template-columns: repeat(4, 1fr);
 			margin: 0;
 			padding: 0;
 			list-style: none;

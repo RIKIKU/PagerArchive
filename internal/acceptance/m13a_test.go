@@ -437,6 +437,8 @@ func TestA75SearchSpeed(t *testing.T) {
 				a.first.Round(time.Millisecond), coldTime.Round(time.Millisecond))
 		}
 	}
+	// A71 on the same pages (M14, ADR 0026): the scrubber's counts.
+	a71CountsSpeed(t, e, container)
 }
 
 // R33b (ADR 0017): a search's second try, which also finds the alias:

@@ -6,6 +6,7 @@
 	// focusing it opens a panel of its pages. R44b, R55: Administration
 	// carries the count of alias requests waiting; R67: the print sheet its
 	// count of messages; R39: admins see when a receiver has gone quiet.
+	import { albums } from './albums.svelte.ts';
 	import Icon from './Icon.svelte';
 	import { entryOf, messages, visible, type Entry, type Group } from './nav.ts';
 	import { isOpen, menu, toggleGroup, toggleShrunk } from './menu.svelte.ts';
@@ -21,7 +22,7 @@
 
 	const shrunk = $derived(menu.shrunk);
 	const current = $derived(entryOf(path));
-	const holds = (g: Group) => path === g.href || current?.group?.id === g.id;
+	const holds = (g: Group) => path === g.href || current?.group?.id === g.id || (g.id === 'albums' && path.startsWith('/albums/'));
 	const isCurrent = (e: Entry) => current?.entry === e;
 	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 	const waitingName = (n: number) => (n > 0 ? `, ${plural(n, 'alias request', 'alias requests')} waiting` : '');
@@ -67,6 +68,20 @@
 				     words: its tooltip, which doesn't just repeat its name. -->
 				<ul id="menu-{g.id}" class="entries" hidden={!open}>
 					{#if shrunk}<li class="flyhead" aria-hidden="true">{g.text}</li>{/if}
+					{#if g.id === 'albums'}
+						<!-- R77: one entry per album, with how many messages it holds. -->
+						{#each albums.list as a (a.id)}
+							<li>
+								<a
+									class="item"
+									href="/albums/{a.id}"
+									aria-current={path === `/albums/${a.id}` ? 'page' : undefined}
+									aria-label="{a.name}, {plural(a.messages, 'message', 'messages')}"
+									><Icon name="albums" /><span class="label">{a.name}</span><span class="count quiet" aria-hidden="true">{a.messages}</span></a
+								>
+							</li>
+						{/each}
+					{/if}
 					{#each g.entries as e (e.href)}
 						<li>
 							{#if e.href === '/sheet'}

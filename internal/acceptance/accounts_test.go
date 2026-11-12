@@ -563,7 +563,7 @@ func TestA29SignedInAndRolesEnforced(t *testing.T) {
 	e.mustPost("a", "0100001", "@@GARBLED 123", e.now)
 	user := []string{"/api/v1/meta", "/api/v1/messages", "/api/v1/messages/1", "/api/v1/jobs/EX0000001",
 		"/api/v1/capcodes/unaliased", "/api/v1/capcodes/0999999", "/api/v1/aliases/1", "/api/v1/me", "/api/v1/invitations",
-		"/api/v1/search/values", "/api/v1/stream", "/api/v1/unknown"}
+		"/api/v1/search/values", "/api/v1/stream", "/api/v1/unknown", "/api/v1/albums", "/api/v1/albums/1", "/api/v1/messages/counts", "/api/v1/messages/1/albums"}
 	admin := []string{"/api/v1/admin/clients", "/api/v1/admin/users", "/api/v1/admin/invitations"}
 	var nobody *member
 	for _, p := range append(append([]string{}, user...), admin...) {

@@ -346,7 +346,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/signin', '/signin?error=deactivated'];
 for (const scheme of ['light', 'dark'] as const) {
 	for (const width of [375, 1280]) {
 		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
@@ -359,6 +359,11 @@ for (const scheme of ['light', 'dark'] as const) {
 			const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
 			const templates = await request.get(`${URL}/api/v1/admin/templates`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
 			const templateID = (await templates.json()).find((t: { name: string }) => t.name === 'Example Fire').id;
+			// M14: an album with a message, its description and a note (R82f).
+			const albumName = `Axe ${test.info().project.name} ${scheme} ${width} ${Date.now()}`;
+			const album = await (await request.post(`${URL}/api/v1/albums`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { name: albumName, description: 'For the axe check' } })).json();
+			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}/note`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { note: 'Why it was kept' } });
 			// M6: a waiting alias request, so the review screen and My requests
 			// are checked with one; rejected at the end so it doesn't linger.
 			const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}`;
@@ -402,7 +407,9 @@ for (const scheme of ['light', 'dark'] as const) {
 					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
 				} else {
 					const path =
-						view === 'alias'
+						view === 'album'
+							? `/albums/${album.id}`
+							: view === 'alias'
 							? `/aliases/${aliasID}`
 							: view === 'admin-user'
 								? `/admin/users/${userID}`
@@ -420,6 +427,7 @@ for (const scheme of ['light', 'dark'] as const) {
 					if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
 					else if (path.startsWith('/reports/capcode')) await expect(page.getByTestId('report')).toBeVisible();
 					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
+					else if (path.startsWith('/albums/')) await expect(page.getByTestId('album-note')).toBeVisible();
 					else await page.waitForTimeout(300);
 				}
 				const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
@@ -2668,6 +2676,9 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 		// Every group and page has its icon.
 		const bare = await nav.locator('a.item').evaluateAll((as) => as.filter((a) => !a.querySelector('svg.ui-icon')).map((a) => a.textContent));
 		expect(bare, `${role}: links without an icon`).toEqual([]);
+		// M14: Albums, a group whose pages are the person's albums (R77), one click to its start page.
+		await expect(nav.getByRole('link', { name: 'Albums', exact: true })).toHaveAttribute('href', '/albums');
+		await expect(nav.getByRole('link', { name: 'Albums', exact: true }).locator('svg.ui-icon')).toHaveCount(1);
 		await page.screenshot({ path: info.outputPath(`a68-menu-${role}.png`) });
 		// Each page in at most two clicks: its group's toggle, if closed, then the page.
 		for (const g of groups) {
@@ -2702,7 +2713,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	const nav = page.getByRole('navigation', { name: 'Main' });
 	await nav.getByRole('button', { name: 'Shrink menu' }).click();
 	await expect(nav.locator('.label').first()).toBeHidden();
-	for (const g of ['Messages', 'Tools', 'Reports', 'Account', 'Administration']) await expect(nav.getByRole('link', { name: new RegExp(`^${g}`) })).toBeVisible();
+	for (const g of ['Messages', 'Albums', 'Tools', 'Reports', 'Account', 'Administration']) await expect(nav.getByRole('link', { name: new RegExp(`^${g}`) }).first()).toBeVisible();
 	// A tooltip says what's there, not the name again (owner, 2026-11-02).
 	await nav.getByRole('link', { name: 'Messages', exact: true }).hover();
 	await expect(nav.locator('.tip', { hasText: 'Every page, newest first, as it arrives' })).toBeVisible();
@@ -2848,6 +2859,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 			const bar = page.getByRole('navigation', { name: 'Main' });
 			await expect(bar.getByRole('link', { name: 'Messages' })).toBeVisible();
 			await expect(bar.getByRole('link', { name: 'Map' })).toBeVisible();
+			await expect(bar.getByRole('link', { name: 'Albums' })).toBeVisible(); // M14 (R81)
 			await bar.getByRole('button', { name: 'More' }).click();
 			const more = page.getByRole('dialog', { name: 'More' });
 			await expect(more).toBeVisible();
@@ -3010,4 +3022,295 @@ test('M13 screenshots', async ({ browser, request }, info) => {
 			}
 		}
 	}
+});
+
+// M14 (ADR 0026). Each browser project n (projectN) uses its own alias, "Scrubber n" on
+// 07100n1, and its own album names, so the projects' runs don't mix.
+const TZ = 'Australia/Melbourne'; // scripts/e2e.sh's TZ
+
+/** The date ago days before today, in the deployment's time zone, as the API's marks start it. */
+function melbourneDay(ago: number): string {
+	const d = new Date(Date.now() - ago * 864e5);
+	const p = Object.fromEntries(
+		new Intl.DateTimeFormat('en-CA', { timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(d).map((x) => [x.type, x.value])
+	);
+	return `${p.year}-${p.month}-${p.day}`;
+}
+const dayName = (ago: number, opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-AU', { timeZone: TZ, ...opts }).format(new Date(Date.now() - ago * 864e5));
+
+/** The text of the list's first row in view, below the top bar: where a jump left it. */
+async function firstInView(page: Page) {
+	return page.evaluate(() => {
+		const below = document.querySelector('header.top')?.getBoundingClientRect().bottom ?? 0;
+		const row = [...document.querySelectorAll('[data-testid="message-list"] article')].find((r) => r.getBoundingClientRect().bottom > below + 1);
+		return row?.querySelector('p.text')?.textContent?.trim() ?? '';
+	});
+}
+
+/** The scrubber's marks as drawn: kind, start, count and dots. */
+async function marksOf(page: Page) {
+	return page
+		.getByTestId('scrubber')
+		.locator('.mark')
+		.evaluateAll((ms) =>
+			ms.map((m) => ({
+				kind: (m as HTMLElement).dataset.kind ?? '',
+				start: (m as HTMLElement).dataset.start ?? '',
+				count: Number((m as HTMLElement).dataset.count),
+				dots: m.querySelectorAll('.dot').length
+			}))
+		);
+}
+
+// A71. The scrubber: 40 days of made-up pages, one day ten times as busy.
+test('A71 scrubber', async ({ browser, request }, info) => {
+	test.setTimeout(180_000);
+	const n = projectN(test.info());
+	const capcode = `07100${n}1`;
+	const alias = `Scrubber ${n}`;
+	// 40 days back from 2 days ago: 3 pages a day at 12:00, 12:10 and 12:20;
+	// 12 days ago, 30. Yesterday: three in its 14:00 hour, at 14:05, 14:20 and 14:50.
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+WITH midnight AS (SELECT date_trunc('day', now() AT TIME ZONE '${TZ}') AS d)
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDSCRUBBER ${n} DAY ' || g.day || ' PAGE ' || p.i, 'Admin',
+       ((SELECT d FROM midnight) - g.day * interval '1 day' + interval '12 hours' + p.i * interval '10 minutes') AT TIME ZONE '${TZ}',
+       sha256(convert_to('scrubber ${n} ' || g.day || ' ' || p.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(2, 41) AS g (day)
+CROSS JOIN LATERAL generate_series(0, CASE WHEN g.day = 12 THEN 29 ELSE 2 END) AS p (i)
+UNION ALL
+SELECT '${capcode}', 'QDSCRUBBER ${n} YESTERDAY PAGE ' || p.i, 'Admin',
+       ((SELECT d FROM midnight) - interval '1 day' + interval '14 hours' + (ARRAY[5, 20, 50])[p.i + 1] * interval '1 minute') AT TIME ZONE '${TZ}',
+       sha256(convert_to('scrubber ${n} yesterday ' || p.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(0, 2) AS p (i);`);
+	const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	const counted = page.waitForResponse((r) => r.url().includes('/api/v1/messages/counts'));
+	const asked = Date.now();
+	await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+	await waitLive(page);
+	const res = await counted;
+	const scrubber = page.getByTestId('scrubber');
+	await expect(scrubber.locator('.mark').first()).toBeVisible();
+	console.log(`A71: the scrubber's counts answered ${Date.now() - asked} ms after the page was asked for (${(await res.request().timing()).responseEnd.toFixed(0)} ms for the request)`);
+	let marks = await marksOf(page);
+	// The last 30 days: 28 days and today's and yesterday's hours; nothing older.
+	expect(marks.filter((m) => m.kind === 'day')).toHaveLength(28);
+	expect(marks.filter((m) => m.kind !== 'day' && m.kind !== 'hour')).toHaveLength(0);
+	expect(marks.at(-1)!.start.slice(0, 10)).toBe(melbourneDay(29));
+	expect(marks.reduce((s, m) => s + m.count, 0), 'counted: 27 days of 3, the busy day 30 and yesterday 3').toBe(27 * 3 + 30 + 3);
+	// The busy day shows more dots than its neighbours.
+	const dayMark = (ago: number) => marks.find((m) => m.kind === 'day' && m.start.startsWith(melbourneDay(ago)))!;
+	expect(dayMark(12).dots).toBeGreaterThan(dayMark(11).dots);
+	expect(dayMark(12).dots).toBeGreaterThan(dayMark(13).dots);
+	await page.screenshot({ path: info.outputPath('a71-scrubber.png') });
+	expect(await axeOf(page), 'axe with the scrubber').toEqual([]);
+
+	// Dragging to 20 days ago: while dragging the mark is named; the list
+	// then shows that day's messages.
+	const target = scrubber.locator(`.mark[data-kind="day"][data-start^="${melbourneDay(20)}"]`);
+	const from = (await scrubber.locator('.mark').first().boundingBox())!;
+	const to = (await target.boundingBox())!;
+	await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+	await page.mouse.down();
+	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+	await expect(scrubber.locator('.bubble')).toContainText(dayName(20, { weekday: 'long', day: 'numeric', month: 'long' }));
+	await page.mouse.up();
+	const list = page.getByTestId('message-list');
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
+	await expect(target).toHaveClass(/current/);
+	await expect(page.getByRole('button', { name: 'Load newer messages' })).toBeVisible();
+
+	// Yesterday's 14:00 hour, then zoom: twelve 5-minute blocks, and picking
+	// the 14:20 one moves the list there.
+	await scrubber.locator('.mark[data-kind="hour"]').filter({ has: page.locator('.dot') }).first().click();
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 2`);
+	await page.getByRole('button', { name: /^Zoom into Yesterday 14:00/ }).click();
+	await expect(scrubber.locator('.mark[data-kind="block"]')).toHaveCount(12);
+	marks = await marksOf(page);
+	expect(marks.map((m) => m.count)).toEqual([0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0]);
+	await scrubber.locator('.mark[data-kind="block"]').nth(7).click(); // 14:20 to 14:25
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 1`);
+	await expect(page.getByRole('button', { name: 'The hour before' })).toBeEnabled();
+	await page.screenshot({ path: info.outputPath('a71-zoom.png') });
+	expect(await axeOf(page), 'axe zoomed in').toEqual([]);
+	await page.getByRole('button', { name: 'Back to the days' }).click();
+	await expect(scrubber.locator('.mark[data-kind="block"]')).toHaveCount(0);
+
+	// The keyboard: Home and End go to the ends, Page Up a week newer.
+	const slider = scrubber.getByRole('slider', { name: 'Jump to a date' });
+	await slider.focus();
+	await page.keyboard.press('Home');
+	await expect(slider).toHaveAttribute('aria-valuetext', /^Today /);
+	await page.keyboard.press('End');
+	await expect(slider).toHaveAttribute('aria-valuetext', new RegExp(dayName(29, { day: 'numeric', month: 'long' })));
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 29 PAGE 2`);
+	await page.keyboard.press('PageUp');
+	await expect(slider).toHaveAttribute('aria-valuetext', new RegExp(dayName(22, { day: 'numeric', month: 'long' })));
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 22 PAGE 2`);
+
+	// A 6-month range is in weeks, 2 years in months.
+	for (const [months, kind] of [
+		[6, 'week'],
+		[24, 'month']
+	] as const) {
+		const start = new Date();
+		start.setMonth(start.getMonth() - months);
+		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}&from=${melbourneDay(Math.round((Date.now() - start.getTime()) / 864e5))}&to=${melbourneDay(0)}`);
+		await waitLive(page);
+		await expect(scrubber.locator(`.mark[data-kind="${kind}"]`).first()).toBeVisible();
+		marks = await marksOf(page);
+		expect(marks.filter((m) => m.kind === 'day'), `${months} months: no days`).toHaveLength(0);
+		expect(marks.filter((m) => m.kind === kind).length, `${months} months`).toBeGreaterThanOrEqual(months === 6 ? 26 : 24);
+		expect(marks.reduce((s, m) => s + m.count, 0), `${months} months: every page`).toBe(39 * 3 + 30 + 3);
+	}
+
+	// alias:"Station 1": the counts are only Station 1's, as the API counts them.
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
+	await page.goto('/?alias=%22Station+1%22');
+	await waitLive(page);
+	await expect(scrubber.locator('.mark').first()).toBeVisible();
+	const sum = (c: { marks: { count: number }[] }) => c.marks.reduce((s, m) => s + m.count, 0);
+	const station1 = await (await request.get(`${URL}/api/v1/messages/counts?alias_like=${encodeURIComponent('Station 1')}`, { headers: asRole('user') })).json();
+	const all = await (await request.get(`${URL}/api/v1/messages/counts`, { headers: asRole('user') })).json();
+	await expect.poll(async () => (await marksOf(page)).reduce((s, m) => s + m.count, 0)).toBe(sum(station1));
+	expect(sum(station1)).toBeLessThan(sum(all));
+	// A live page to Station 1 adds to the current hour's mark (R81c).
+	const before = (await marksOf(page))[0].count;
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM SHED @ 4 FICTION ST, MADEUPTON #STN1`);
+	await expect.poll(async () => (await marksOf(page))[0].count).toBe(before + 1);
+	await page.context().close();
+});
+
+// A72. Albums in the browser: made, added to from the detail view, in the
+// menu, private, with a description and notes, and on a phone.
+test('A72 albums', async ({ browser, request }, info) => {
+	test.setTimeout(180_000);
+	const n = projectN(test.info());
+	const big = `Big storm ${n}`;
+	const notes = `Storm notes ${n}`;
+	// An earlier run's albums of these names go first.
+	sql(`DELETE FROM albums WHERE lower(name) IN (lower('${big}'), lower('${big} renamed'), lower('${notes}')) AND owner_id = (SELECT id FROM users WHERE subject = 'e2e-user');`);
+	const stamp = Date.now();
+	const texts = [1, 2, 3].map((i) => `QDALBUM ${n} PAGE ${i} ${stamp}`);
+	const ids: number[] = [];
+	for (const t of texts) {
+		await post(request, '0100003', t);
+		const r = await request.get(`${URL}/api/v1/messages?q=${encodeURIComponent(`"${t.slice(2)}"`)}`, { headers: asRole('user') });
+		ids.push((await r.json()).messages[0].id);
+	}
+	const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	// B creates "Big storm" from the Albums page.
+	await page.goto('/albums');
+	await page.getByLabel('Name').fill(big);
+	await page.getByRole('button', { name: 'Create album' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: big })).toBeVisible();
+	const bigId = Number(new globalThis.URL(page.url()).pathname.split('/').pop());
+	expect(await crumbsOf(page)).toEqual([
+		{ label: 'Albums', href: '/albums' },
+		{ label: big, href: null }
+	]);
+	// And adds 3 messages, each from its detail view.
+	for (const id of ids) {
+		await page.goto(`/messages/${id}`);
+		await page.getByRole('button', { name: 'Add to album' }).click();
+		const dialog = page.getByRole('dialog', { name: 'Add to album' });
+		await dialog.getByRole('checkbox', { name: new RegExp(`^${big}`) }).check();
+		await expect(dialog.getByRole('status')).toHaveText(`Added to ${big}.`);
+		if (id === ids[0]) expect(await axeOf(page), 'axe: Add to album').toEqual([]);
+		await dialog.getByRole('button', { name: 'Close' }).click();
+		await expect(page.getByTestId('in-albums')).toHaveText('In 1 album');
+	}
+	// It's under Albums in the menu, with 3 messages.
+	const nav = page.getByRole('navigation', { name: 'Main' });
+	await expect(nav.getByRole('link', { name: `${big}, 3 messages` })).toBeVisible();
+	await nav.getByRole('link', { name: `${big}, 3 messages` }).click();
+	await expect(page.getByTestId('album-count')).toHaveText('3 messages');
+	const list = page.getByTestId('message-list');
+	await expect(list.locator('article p.text')).toHaveText([...texts].reverse().map((t) => t.slice(2)));
+	// User C and an admin are refused by the API.
+	for (const who of ['userC', 'admin'] as const) {
+		expect((await request.get(`${URL}/api/v1/albums/${bigId}`, { headers: asRole(who) })).status(), who).toBe(404);
+		expect((await request.get(`${URL}/api/v1/messages?album=${bigId}`, { headers: asRole(who) })).status(), who).toBe(404);
+	}
+
+	// "Storm notes": a description, 2 messages, a note on one.
+	await page.goto('/albums');
+	await page.getByLabel('Name').fill(notes);
+	await page.getByLabel(/^Description/).fill('Pages from the made-up storm');
+	await page.getByRole('button', { name: 'Create album' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: notes })).toBeVisible();
+	const notesId = Number(new globalThis.URL(page.url()).pathname.split('/').pop());
+	for (const id of ids.slice(0, 2)) expect((await request.put(`${URL}/api/v1/albums/${notesId}/messages/${id}`, { headers: asRole('user') })).status()).toBe(204);
+	await page.reload();
+	await expect(page.getByTestId('album-description')).toHaveText('Pages from the made-up storm');
+	const row = list.locator('article', { hasText: texts[0].slice(2) });
+	await row.getByRole('button', { name: 'Add note' }).click();
+	await row.getByLabel(/^Note on this message/).fill('First page of the storm');
+	await row.getByRole('button', { name: 'Save note' }).click();
+	await expect(row.getByTestId('album-note')).toHaveText('First page of the storm');
+	await page.reload();
+	await expect(page.getByTestId('album-description')).toHaveText('Pages from the made-up storm');
+	await expect(list.locator('article', { hasText: texts[0].slice(2) }).getByTestId('album-note')).toHaveText('First page of the storm');
+	await expect(list.locator('article', { hasText: texts[1].slice(2) }).getByTestId('album-note')).toHaveCount(0);
+	await page.screenshot({ path: info.outputPath('a72-album.png'), fullPage: true });
+	expect(await axeOf(page), 'axe: album view').toEqual([]);
+	// User C can read neither.
+	expect((await request.get(`${URL}/api/v1/albums/${notesId}`, { headers: asRole('userC') })).status()).toBe(404);
+	expect((await request.get(`${URL}/api/v1/messages?album=${notesId}`, { headers: asRole('userC') })).status()).toBe(404);
+	// In Big storm, the same message has no note.
+	await page.goto(`/albums/${bigId}`);
+	await expect(list.locator('article')).toHaveCount(3);
+	await expect(list.getByTestId('album-note')).toHaveCount(0);
+	// The search box's storm finds nothing from a description or a note.
+	await page.goto('/?q=storm');
+	await waitLive(page);
+	await expect(page.getByText('No messages match this search.')).toBeVisible();
+
+	// Retention took both of its messages (as the nightly run does, in
+	// TestA72Albums): kept, empty, with its description and the line.
+	sql(`DELETE FROM messages WHERE id IN (${ids[0]}, ${ids[1]}); UPDATE albums SET emptied_at = now() WHERE id = ${notesId};`);
+	await page.goto(`/albums/${notesId}`);
+	await expect(page.getByTestId('album-count')).toHaveText('0 messages');
+	await expect(page.getByTestId('album-description')).toHaveText('Pages from the made-up storm');
+	await expect(page.getByTestId('album-emptied')).toContainText('Its messages have passed the retention period');
+
+	// Renaming, from the album view, reaches the menu.
+	await page.goto(`/albums/${bigId}`);
+	await page.getByRole('button', { name: 'Rename or describe' }).click();
+	await page.getByLabel('Name').fill(`${big} renamed`);
+	await page.getByRole('button', { name: 'Save' }).click();
+	await expect(page.getByRole('heading', { level: 1, name: `${big} renamed` })).toBeVisible();
+	await expect(nav.getByRole('link', { name: `${big} renamed, 1 message` })).toBeVisible();
+
+	// On a phone: the bottom bar's Albums tab, and the album view.
+	const phone = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 812 }, hasTouch: true })).newPage();
+	await phone.goto('/');
+	await waitLive(phone);
+	const bar = phone.getByRole('navigation', { name: 'Main' });
+	await bar.getByRole('link', { name: 'Albums' }).tap();
+	await expect(phone.getByRole('heading', { level: 1, name: 'Albums' })).toBeVisible();
+	await expect(bar.getByRole('link', { name: 'Albums' })).toHaveAttribute('aria-current', 'page');
+	expect(await axeOf(phone), 'axe: albums on a phone').toEqual([]);
+	await phone.getByRole('link', { name: notes }).tap();
+	await expect(phone.getByTestId('album-description')).toBeVisible();
+	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
+	await phone.screenshot({ path: info.outputPath('a72-phone-album.png'), fullPage: true });
+	expect(await axeOf(phone), 'axe: album on a phone').toEqual([]);
+	await phone.goto('/');
+	await waitLive(phone);
+	await expect(phone.getByTestId('scrubber')).toBeVisible();
+	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll with the scrubber').toBe(true);
+	await phone.screenshot({ path: info.outputPath('a72-phone-list.png') });
+
+	// Deleting it.
+	await page.goto(`/albums/${bigId}`);
+	await page.getByRole('button', { name: 'Delete album' }).click();
+	await page.getByRole('group', { name: /^Delete/ }).getByRole('button', { name: 'Delete album' }).click();
+	await expect(page).toHaveURL(/\/albums$/);
+	await expect(nav.getByRole('link', { name: new RegExp(`^${big}`) })).toHaveCount(0);
+	expect((await request.get(`${URL}/api/v1/albums/${bigId}`, { headers: asRole('user') })).status()).toBe(404);
+	await page.context().close();
+	await phone.context().close();
 });

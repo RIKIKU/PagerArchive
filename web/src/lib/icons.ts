@@ -69,7 +69,17 @@ export const icons = {
 	signout: '<path d="M14 8v-2a2 2 0 0 0 -2 -2h-7a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7a2 2 0 0 0 2 -2v-2" /><path d="M9 12h12l-3 -3" /><path d="M18 15l3 -3" />',
 	clear: '<path d="M13.758 19.414l-4.758 1.586v-8.5l-4.48 -4.928a2 2 0 0 1 -.52 -1.345v-2.227h16v2.172a2 2 0 0 1 -.586 1.414l-4.414 4.414v1.5" /><path d="M22 22l-5 -5" /><path d="M17 22l5 -5" />',
 	previous: '<path d="M14 6l-6 6l6 6v-12" />',
-	next: '<path d="M10 18l6 -6l-6 -6v12" />'
+	next: '<path d="M10 18l6 -6l-6 -6v12" />',
+	albums: '<path d="M4 6a2 2 0 0 1 2 -2h12a2 2 0 0 1 2 2v12a2 2 0 0 1 -2 2h-12a2 2 0 0 1 -2 -2l0 -12" /><path d="M12 4v7l2 -2l2 2v-7" />',
+	add: '<path d="M12 5l0 14" /><path d="M5 12l14 0" />',
+	edit: '<path d="M4 20h4l10.5 -10.5a2.828 2.828 0 1 0 -4 -4l-10.5 10.5v4" /><path d="M13.5 6.5l4 4" />',
+	remove: '<path d="M4 7l16 0" /><path d="M10 11l0 6" /><path d="M14 11l0 6" /><path d="M5 7l1 12a2 2 0 0 0 2 2h8a2 2 0 0 0 2 -2l1 -12" /><path d="M9 7v-3a1 1 0 0 1 1 -1h4a1 1 0 0 1 1 1v3" />',
+	note: '<path d="M13 20l7 -7" /><path d="M13 20v-6a1 1 0 0 1 1 -1h6v-7a2 2 0 0 0 -2 -2h-12a2 2 0 0 0 -2 2v12a2 2 0 0 0 2 2h7" />',
+	zoomin: '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M7 10l6 0" /><path d="M10 7l0 6" /><path d="M21 21l-6 -6" />',
+	zoomout: '<path d="M3 10a7 7 0 1 0 14 0a7 7 0 1 0 -14 0" /><path d="M7 10l6 0" /><path d="M21 21l-6 -6" />',
+	later: '<path d="M18 14l-6 -6l-6 6h12" />',
+	earlier: '<path d="M6 10l6 6l6 -6h-12" />',
+	newest: '<path d="M7 11l5 -5l5 5" /><path d="M7 17l5 -5l5 5" />'
 } as const;
 
 export type IconName = keyof typeof icons;
