@@ -427,9 +427,12 @@
 		right = beside ? 0 : Math.round(width - r.right);
 		edge = beside ? width : r.right;
 		outer = beside ? Infinity : r.right + 4;
-		// Touch: how far the tab can move, unless a drag is on (its mapping is
-		// fixed then).
-		if (touch && root && !dragging) travel = Math.max(0, Math.round(root.getBoundingClientRect().height - (track?.offsetHeight || 48)));
+		// Touch: the rail's bottom and the tab's height, for how far the tab
+		// can move (travel; a drag keeps the one it started with).
+		if (touch && root) {
+			railBottom = root.getBoundingClientRect().bottom;
+			tabHeight = track?.offsetHeight || 48;
+		}
 	}
 
 	// Hidden until wanted, where there's a mouse to want it with. Shown at
@@ -526,7 +529,11 @@
 	type Level = 'day' | 'week' | 'month' | 'year';
 	let scrolling = $state(false);
 	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
-	let travel = $state(0); // px the tab can move: the rail less the tab
+	// px the tab can move: the rail, from its top (as just set) to its bottom
+	// (measured; it doesn't move with the top), less the tab.
+	let railBottom = $state(0);
+	let tabHeight = $state(0);
+	const travel = $derived(Math.max(0, Math.round(railBottom - top - tabHeight)));
 	const railShown = $derived(scrolling || dragging || focused);
 	$effect(() => {
 		if (!touch) return;
