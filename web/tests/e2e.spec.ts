@@ -3317,9 +3317,10 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		await expect
 			.poll(async () => {
 				const below = await page.evaluate(() => document.querySelector('header.top')!.getBoundingClientRect().bottom);
+				// (A row showing 4 px or less under the top bar is out of view: WebKit leaves a sliver.)
 				for (const r of await first.all()) {
 					const b = (await r.boundingBox())!;
-					if (b.y + b.height > below + 1) return (await r.locator('time .date').textContent())!.trim().split(' ').slice(0, 2).join(' ');
+					if (b.y + b.height > below + 4) return (await r.locator('time .date').textContent())!.trim().split(' ').slice(0, 2).join(' ');
 				}
 				return '';
 			})
