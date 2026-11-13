@@ -117,7 +117,7 @@
 
 	<div class="field">
 		<label for="{id}-name">Name</label>
-		<input id="{id}-name" bind:value={name} required maxlength="80" />
+		<input id="{id}-name" bind:value={name} required maxlength="80" autocomplete="off" />
 	</div>
 
 	<div class="field">
@@ -168,7 +168,7 @@
 			</fieldset>
 			<div class="field">
 				<label for="{id}-codes">Event-type codes</label>
-				<input id="{id}-codes" bind:value={codes} placeholder="HSF1, GRS3" />
+				<input id="{id}-codes" bind:value={codes} placeholder="HSF1, GRS3" autocomplete="off" autocapitalize="characters" spellcheck="false" />
 			</div>
 			<fieldset class="inner">
 				<legend>Priority</legend>
@@ -188,19 +188,19 @@
 			<div class="grid">
 				<div class="field">
 					<label for="{id}-text">Text contains</label>
-					<input id="{id}-text" bind:value={text} />
+					<input id="{id}-text" bind:value={text} autocomplete="off" />
 				</div>
 				<div class="field">
 					<label for="{id}-group">Group</label>
-					<input id="{id}-group" bind:value={group} />
+					<input id="{id}-group" bind:value={group} autocomplete="off" autocapitalize="characters" spellcheck="false" />
 				</div>
 				<div class="field">
 					<label for="{id}-agency">Agency</label>
-					<input id="{id}-agency" bind:value={agency} />
+					<input id="{id}-agency" bind:value={agency} autocomplete="off" />
 				</div>
 				<div class="field">
 					<label for="{id}-job">Job number</label>
-					<input id="{id}-job" bind:value={job} />
+					<input id="{id}-job" bind:value={job} autocomplete="off" autocapitalize="characters" spellcheck="false" />
 				</div>
 			</div>
 			{#if admin}
@@ -235,7 +235,7 @@
 		{#if kind === 'webhook'}
 			<div class="field">
 				<label for="{id}-url">URL</label>
-				<input id="{id}-url" type="url" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://'} aria-describedby="{id}-url-help" />
+				<input id="{id}-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://'} aria-describedby="{id}-url-help" />
 				<p id="{id}-url-help" class="help">
 					{#if existing?.config.target}Saved: {existing.config.target}/…{/if}
 					The URL is kept secret once saved. Use http:// only on your own network.
@@ -244,7 +244,7 @@
 			<div class="grid">
 				<div class="field">
 					<label for="{id}-hname">Auth header name (optional)</label>
-					<input id="{id}-hname" bind:value={config.auth_header} placeholder="Authorization" />
+					<input id="{id}-hname" bind:value={config.auth_header} placeholder="Authorization" autocomplete="off" autocapitalize="off" spellcheck="false" />
 				</div>
 				<div class="field">
 					<label for="{id}-hvalue">Auth header value</label>
@@ -254,16 +254,16 @@
 		{:else if kind === 'mqtt'}
 			<div class="field">
 				<label for="{id}-broker">Broker</label>
-				<input id="{id}-broker" bind:value={config.broker} required placeholder="mqtt://broker.example.org or mqtts://…:8883" />
+				<input id="{id}-broker" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.broker} required placeholder="mqtt://broker.example.org or mqtts://…:8883" />
 			</div>
 			<div class="field">
 				<label for="{id}-topic">Topic</label>
-				<input id="{id}-topic" bind:value={config.topic} placeholder={existing ? '' : 'pagerarchive/<made for you>'} />
+				<input id="{id}-topic" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.topic} placeholder={existing ? '' : 'pagerarchive/<made for you>'} />
 			</div>
 			<div class="grid">
 				<div class="field">
 					<label for="{id}-user">User name (optional)</label>
-					<input id="{id}-user" bind:value={config.username} autocomplete="off" />
+					<input id="{id}-user" bind:value={config.username} autocomplete="off" autocapitalize="off" spellcheck="false" />
 				</div>
 				<div class="field">
 					<label for="{id}-pass">Password</label>
@@ -272,19 +272,19 @@
 			</div>
 			<div class="field">
 				<label for="{id}-ca">CA certificate (optional, mqtts:// only)</label>
-				<textarea id="{id}-ca" rows="3" bind:value={config.ca_cert} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+				<textarea id="{id}-ca" rows="3" autocapitalize="off" spellcheck="false" bind:value={config.ca_cert} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
 			</div>
 			<label class="check"><input type="checkbox" bind:checked={config.ha_discovery} /> Home Assistant discovery: an event entity for this integration</label>
 			{#if config.ha_discovery}
 				<div class="field">
 					<label for="{id}-prefix">Discovery prefix</label>
-					<input id="{id}-prefix" bind:value={config.ha_prefix} placeholder="homeassistant" />
+					<input id="{id}-prefix" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.ha_prefix} placeholder="homeassistant" />
 				</div>
 			{/if}
 		{:else if kind === 'discord'}
 			<div class="field">
 				<label for="{id}-durl">Webhook URL</label>
-				<input id="{id}-durl" type="url" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://discord.com/api/webhooks/…'} aria-describedby="{id}-durl-help" />
+				<input id="{id}-durl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://discord.com/api/webhooks/…'} aria-describedby="{id}-durl-help" />
 				<p id="{id}-durl-help" class="help">In Discord: Server settings → Integrations → Webhooks → Copy webhook URL.</p>
 			</div>
 		{:else if kind === 'telegram'}
@@ -295,7 +295,7 @@
 				</div>
 				<div class="field">
 					<label for="{id}-chat">Chat ID</label>
-					<input id="{id}-chat" bind:value={config.chat_id} required placeholder="-1001234567890 or @channel" />
+					<input id="{id}-chat" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.chat_id} required placeholder="-1001234567890 or @channel" />
 				</div>
 			</div>
 		{:else if kind === 'pushover'}
@@ -323,7 +323,7 @@
 			<div class="grid">
 				<div class="field">
 					<label for="{id}-server">Server</label>
-					<input id="{id}-server" type="url" bind:value={config.server} placeholder="https://ntfy.sh" />
+					<input id="{id}-server" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.server} placeholder="https://ntfy.sh" />
 				</div>
 				<div class="field">
 					<label for="{id}-ntopic">Topic</label>
@@ -390,9 +390,11 @@
 		display: block;
 		margin-bottom: var(--space-2xs);
 	}
+	/* Side by side where there's room; one column, never wider than the form,
+	   where there isn't (a phone). */
 	.grid {
 		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(var(--card-min), 1fr));
+		grid-template-columns: repeat(auto-fit, minmax(min(var(--card-min), 100%), 1fr));
 		gap: 0 var(--space-md);
 	}
 	.checks {
@@ -441,5 +443,28 @@
 		display: flex;
 		flex-wrap: wrap;
 		gap: var(--space-sm);
+	}
+	/* A phone (R81) or a finger (owner, 2026-11-14): the form keeps its width
+	   for the fields, and each radio and checkbox, with its label, is a whole
+	   target to tap (R82c). The box itself keeps its size. */
+	@media (max-width: 47.99rem) {
+		.integration-form {
+			padding: var(--space-sm);
+		}
+		fieldset {
+			padding: var(--space-2xs) var(--space-sm) var(--space-sm);
+		}
+	}
+	@media (max-width: 47.99rem), (pointer: coarse) {
+		.check {
+			min-height: var(--target);
+			align-items: center;
+		}
+		.checks {
+			gap: 0 var(--space-lg);
+		}
+		.stacked {
+			gap: 0;
+		}
 	}
 </style>

@@ -397,9 +397,8 @@ for (const scheme of ['light', 'dark'] as const) {
 			const adminPage = await ctx.newPage();
 			const userPage = await userCtx.newPage();
 			for (const view of views) {
-				// R81 (M13): phones can't set up an integration, so its form is
-				// checked on a desktop only.
-				if (width === 375 && (view === 'integration-form' || view === 'selection')) continue;
+				// The integration form and its selection field are checked at
+				// 375 px too: phones set up integrations (owner, 2026-11-14).
 				const page = view === 'detail' || view.startsWith('admin-') || view.startsWith('/admin') ? adminPage : userPage;
 				if (view === 'detail') {
 					// A located message, so its small map is checked too (R35c).
@@ -2864,17 +2863,30 @@ test('A69 using the width', async ({ browser, request }, info) => {
 	}
 });
 
-// A70. Phones: the bottom bar, More without the desktop-only pages, the
-// integration switch, and the print page from its address.
+// A70. Phones: the bottom bar, More without the print sheet or Administration,
+// integrations set up, edited, tested, paused, resumed and deleted on a 375 px
+// phone by touch (owner, 2026-11-14), and the print page from its address.
 test('A70 phones', async ({ browser, request }, info) => {
-	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: asRole('admin'), data: { entries: ['127.0.0.0/8'] } });
-	const name = `Phone switch ${Date.now()}`;
-	const made = await request.post(`${URL}/api/v1/integrations`, {
-		headers: asRole('user'),
-		data: { name, kind: 'webhook', capcodes: ['0500009'], secrets: { url: 'http://127.0.0.1:9/hook' } }
+	test.setTimeout(120_000);
+	const http = await import('node:http');
+	const received: Record<string, unknown>[] = [];
+	const receiver = http.createServer((req, res) => {
+		let data = '';
+		req.on('data', (c) => (data += c));
+		req.on('end', () => {
+			received.push(JSON.parse(data || '{}'));
+			res.writeHead(200, { 'Content-Type': 'text/plain' }).end('received');
+		});
 	});
-	expect(made.status()).toBe(201);
-	const id = (await made.json()).id as number;
+	await new Promise<void>((r) => receiver.listen(0, '127.0.0.1', r));
+	const port = (receiver.address() as { port: number }).port;
+	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: asRole('admin'), data: { entries: ['127.0.0.0/8'] } });
+	const stamp = Date.now();
+	const name = `Phone webhook ${stamp}`;
+	const renamed = `Phone webhook edited ${stamp}`;
+	const events = `Phone large events ${stamp}`;
+	type Mine = { id: number; name: string; status: string; capcodes: string[]; aliases: { name: string }[] };
+	const mine = async (): Promise<Mine[]> => (await (await request.get(`${URL}/api/v1/integrations`, { headers: asRole('user') })).json()).integrations;
 	try {
 		for (const role of ['user', 'admin'] as const) {
 			const page = await (await signedIn(browser, role, { viewport: { width: 375, height: 740 }, hasTouch: true })).newPage();
@@ -2890,30 +2902,170 @@ test('A70 phones', async ({ browser, request }, info) => {
 			for (const there of ['Unknown capcodes', 'Large events', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
 			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings'])
 				await expect(more.getByRole('link', { name: gone })).toHaveCount(0);
-			await expect(more.getByText(/set up|new integration/i)).toHaveCount(0);
 			await page.screenshot({ path: info.outputPath(`a70-more-${role}.png`) });
 			expect(await axeOf(page), `${role}: axe with More open`).toEqual([]);
 			if (role === 'user') {
-				await more.getByRole('link', { name: 'Integrations', exact: true }).click();
-				await expect(page.getByRole('heading', { level: 1, name: 'Integrations' })).toBeVisible();
-				await expect(page.getByRole('button', { name: 'New integration' })).toHaveCount(0);
-				const sw = page.getByRole('switch', { name: `${name}: sending` });
-				await expect(sw).toHaveAttribute('aria-checked', 'true');
-				await sw.tap();
-				await expect(sw).toHaveAttribute('aria-checked', 'false');
-				await expect(sw).toContainText('Paused');
-				const saved = (await (await request.get(`${URL}/api/v1/integrations`, { headers: asRole('user') })).json()).integrations.find((i: { id: number }) => i.id === id);
-				expect(saved.status).toBe('paused');
-				await page.screenshot({ path: info.outputPath('a70-integrations.png') });
+				await phoneIntegrations(page);
 				await page.goto('/sheet');
 				await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
 				await waitLive(page);
-				console.log(`A70: paused "${name}" with its switch on a 375 px phone (API: ${saved.status}); /sheet opened from its address`);
+				console.log('A70: /sheet opened from its address');
 			}
 			await page.context().close();
 		}
 	} finally {
-		await request.delete(`${URL}/api/v1/integrations/${id}`, { headers: asRole('user') });
+		receiver.close();
+		for (const i of await mine()) if (i.name.endsWith(String(stamp))) await request.delete(`${URL}/api/v1/integrations/${i.id}`, { headers: asRole('user') });
+	}
+
+	/** How far the page scrolls sideways (0: not at all). */
+	function sideways(page: Page) {
+		return page.evaluate(() => Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth));
+	}
+
+	/** The form's controls that are too small for a finger (R82c's --target):
+	 * buttons, fields, each radio's and checkbox's label, and suggestions. */
+	async function tooSmall(form: Locator) {
+		return form.evaluate((f) => {
+			const probe = document.createElement('div');
+			probe.style.height = 'var(--target)';
+			document.body.append(probe);
+			const target = probe.getBoundingClientRect().height;
+			probe.remove();
+			const small: string[] = [];
+			const controls = f.querySelectorAll(
+				'button, select, textarea, input:not([type="checkbox"]):not([type="radio"]), label:has(> input[type="checkbox"]), label:has(> input[type="radio"]), [role="option"]'
+			);
+			for (const el of controls) {
+				const r = el.getBoundingClientRect();
+				if (r.width === 0 && r.height === 0) continue; // not shown
+				if (r.height < target - 0.5 || r.width < target - 0.5)
+					small.push(`${el.tagName.toLowerCase()} "${(el.textContent || el.getAttribute('aria-label') || el.id).trim().slice(0, 40)}" ${Math.round(r.width)}x${Math.round(r.height)} px`);
+			}
+			return { target, small, measured: controls.length };
+		});
+	}
+
+	async function phoneIntegrations(page: Page) {
+		const more = page.getByRole('dialog', { name: 'More' });
+		await more.getByRole('link', { name: 'Integrations', exact: true }).tap();
+		await expect(page.getByRole('heading', { level: 1, name: 'Integrations' })).toBeVisible();
+
+		// Set up: a webhook to the test receiver, its selection chosen by touch.
+		await page.getByRole('button', { name: 'New integration' }).tap();
+		const form = page.locator('form.integration-form');
+		await expect(form.getByRole('heading', { name: 'New integration' })).toBeVisible();
+		await form.getByLabel('Name', { exact: true }).fill(name);
+		const field = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		const options = form.getByRole('listbox', { name: 'Suggestions' }).getByRole('option');
+		const chosen = form.getByRole('list', { name: 'Chosen capcodes and aliases' }).getByTestId('chosen');
+		for (const [typed, option] of [
+			['0100001', 'Station 1 (0100001)'],
+			['Station 2', 'Station 2 (0100002)'],
+			['Station 3', 'Station 3 (0100003)'],
+			['0100009', '0100009']
+		]) {
+			await field.fill(typed);
+			await expect(options.filter({ hasText: option })).toHaveCount(1);
+			if (typed === '0100009') {
+				// The suggestions, open: each a target for a finger, nothing sideways.
+				const open = await tooSmall(form);
+				expect(open.small, `suggestions open (target ${open.target} px)`).toEqual([]);
+				expect(await sideways(page), 'suggestions open: no sideways scroll').toBe(0);
+			}
+			await options.filter({ hasText: option }).tap();
+			await expect(field).toHaveValue('');
+		}
+		await expect(chosen).toHaveCount(4);
+		// A chip comes off with a tap.
+		await form.getByRole('button', { name: 'Remove Station 3 (0100003)' }).tap();
+		await expect(chosen).toHaveText([/^Station 1 \(0100001\)/, /^Station 2 \(0100002\)/, /^0100009\s*in Stations block/]);
+		const url = form.getByLabel('URL', { exact: true });
+		await expect(url).toHaveAttribute('type', 'url');
+		await expect(url).toHaveAttribute('autocapitalize', 'off');
+		await url.fill(`http://127.0.0.1:${port}/hook/PH0NES3CRET`);
+		// The whole form at 375 px: no sideways scroll, every control a target
+		// for a finger, and axe.
+		expect(await sideways(page), 'the form: no sideways scroll').toBe(0);
+		const sizes = await tooSmall(form);
+		expect(sizes.small, `the form (target ${sizes.target} px)`).toEqual([]);
+		await page.screenshot({ path: info.outputPath('a70-integration-form.png'), fullPage: true });
+		expect(await axeOf(page), 'axe: the form at 375 px').toEqual([]);
+		await form.getByRole('button', { name: 'Save integration' }).tap();
+		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
+		let card = page.getByTestId('integration').filter({ hasText: name });
+		await expect(card).toContainText('Station 1, Station 2, 0100009 (in Stations block)');
+		await expect(page.locator('body')).not.toContainText('PH0NES3CRET'); // the URL is a secret once saved
+		expect(await sideways(page), 'the list: no sideways scroll').toBe(0);
+
+		// Edit: a new name, and one fewer alias.
+		await card.getByRole('button', { name: 'Edit' }).tap();
+		const edit = card.locator('form.integration-form');
+		await expect(edit.getByRole('heading', { name: `Edit “${name}”` })).toBeVisible();
+		await expect(edit.getByLabel('URL', { exact: true })).toHaveValue(''); // never shown again (R51)
+		await edit.getByLabel('Name', { exact: true }).fill(renamed);
+		await edit.getByRole('button', { name: 'Remove Station 2 (0100002)' }).tap();
+		expect(await sideways(page), 'the edit form: no sideways scroll').toBe(0);
+		expect((await tooSmall(edit)).small, 'the edit form').toEqual([]);
+		await edit.getByRole('button', { name: 'Save changes' }).tap();
+		await expect(page.getByRole('status').filter({ hasText: `Saved “${renamed}”` })).toBeVisible();
+		card = page.getByTestId('integration').filter({ hasText: renamed });
+		await expect(card).toContainText('Station 1, 0100009 (in Stations block)');
+		const saved = (await mine()).find((i) => i.name === renamed)!;
+		expect(saved.aliases.map((a) => a.name)).toEqual(['Station 1']);
+		expect(saved.capcodes).toEqual(['0100009']);
+
+		// Send test (R51c): the receiver gets it, marked "test": true, and B sees the answer.
+		await card.getByRole('button', { name: 'Send test' }).tap();
+		const answer = card.getByTestId('test-answer');
+		await expect(answer).toContainText('Delivered.');
+		await expect(answer).toContainText('HTTP 200 OK');
+		expect(received.at(-1)?.test).toBe(true);
+
+		// Pause and resume with the switch (R81).
+		const sw = page.getByRole('switch', { name: `${renamed}: sending` });
+		await expect(sw).toHaveAttribute('aria-checked', 'true');
+		await sw.tap();
+		await expect(sw).toHaveAttribute('aria-checked', 'false');
+		await expect(sw).toContainText('Paused');
+		expect((await mine()).find((i) => i.id === saved.id)?.status).toBe('paused');
+		await sw.tap();
+		await expect(sw).toHaveAttribute('aria-checked', 'true');
+		await expect(sw).toContainText('Active');
+		expect((await mine()).find((i) => i.id === saved.id)?.status).toBe('active');
+
+		// A large-event integration (R87d), set up the same way.
+		await page.getByRole('button', { name: 'New integration' }).tap();
+		await form.getByLabel('Name', { exact: true }).fill(events);
+		const large = form.getByRole('radio', { name: /^Large events: a summary/ });
+		await large.tap();
+		await expect(large).toBeChecked();
+		await expect(form.getByRole('combobox', { name: 'Capcodes and aliases' })).toHaveCount(0);
+		await expect(page.getByTestId('large-event-help')).toContainText('once for each large event, when the event opens');
+		await form.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/events`);
+		expect(await sideways(page), 'the large-event form: no sideways scroll').toBe(0);
+		expect((await tooSmall(form)).small, 'the large-event form').toEqual([]);
+		await form.screenshot({ path: info.outputPath('a70-large-event-form.png') });
+		await form.getByRole('button', { name: 'Save integration' }).tap();
+		await expect(page.getByRole('status').filter({ hasText: `Saved “${events}”` })).toBeVisible();
+		await expect(page.getByTestId('integration').filter({ hasText: events })).toContainText('Large events, each when it opens');
+
+		// The list: no sideways scroll, and axe.
+		expect(await sideways(page), 'the list: no sideways scroll').toBe(0);
+		await page.screenshot({ path: info.outputPath('a70-integrations.png'), fullPage: true });
+		expect(await axeOf(page), 'axe: the list at 375 px').toEqual([]);
+
+		// Delete both.
+		for (const n of [renamed, events]) {
+			const c = page.getByTestId('integration').filter({ hasText: n });
+			await c.getByRole('button', { name: 'Delete…' }).tap();
+			await c.getByRole('button', { name: 'Yes, delete it' }).tap();
+			await expect(c).toHaveCount(0);
+		}
+		expect((await mine()).filter((i) => i.name.endsWith(String(stamp)))).toEqual([]);
+		console.log(
+			`A70: at 375 px by touch, set up "${name}", edited it to "${renamed}", sent a test (receiver: test ${received.at(-1)?.test}), paused and resumed it with its switch, set up "${events}", deleted both; every control at least ${sizes.target} px (${sizes.measured} in the form), no sideways scroll`
+		);
 	}
 });
 
