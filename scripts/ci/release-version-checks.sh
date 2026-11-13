@@ -5,7 +5,10 @@
 #   - release-version.sh: nothing changed, or only documentation, is nothing
 #     to release; code is a patch, and so is the first release after the
 #     version left the repository (our image's tag in compose.yaml going from
-#     MAJOR.MINOR to main); a file a deployment downloads is a minor version;
+#     MAJOR.MINOR to main); a file a deployment downloads, a migration added
+#     or a pull request labelled feature (a stand-in for gh) is a minor
+#     version, and why names each; GitHub not answering fails a release and
+#     leaves the labels out of --dev;
 #     web/static/ counts as code; a release on a later commit, or this
 #     commit's own finished release, is nothing to release, and its own
 #     unfinished one is finished; --dev is <next>-dev+<commit>;
@@ -27,6 +30,20 @@ fail() {
 }
 
 git clone -q --no-hardlinks "$repo" "$work/r"
+# A stand-in for gh: the pull requests labelled feature are $GH_FEATURE_PRS
+# ("<number> <merge commit>" per line); GH_DOWN=1 is GitHub not answering.
+mkdir -p "$work/bin"
+cat >"$work/bin/gh" <<'GH'
+#!/bin/sh
+case "$*" in
+"pr list "*"--label feature"*)
+	[ -z "${GH_DOWN:-}" ] || exit 1
+	printf '%s\n' "${GH_FEATURE_PRS:-}" | sed '/^$/d' ;;
+*) echo "gh stand-in: unexpected: $*" >&2; exit 2 ;;
+esac
+GH
+chmod +x "$work/bin/gh"
+export PATH="$work/bin:$PATH" PA_RETRY_WAIT=0 GH_FEATURE_PRS="" GITHUB_REPOSITORY=owner/repo
 cd "$work/r"
 git remote remove origin
 git tag -l | xargs -r git tag -d >/dev/null
@@ -51,16 +68,17 @@ git checkout -q -B main old
 git checkout -q "$here" -- VERSION compose.yaml
 git commit -qam "the version leaves the repository: VERSION 0.0.0-dev, compose.yaml :main"
 
-# expect <what> <args> <release> <version>: release-version.sh's answer.
+# expect <what> <args> <release> <version> [<text why has>]: release-version.sh's answer.
 expect() {
-	_what=$1 _args=$2 _release=$3 _version=$4
+	_what=$1 _args=$2 _release=$3 _version=$4 _because=${5:-}
 	# shellcheck disable=SC2086
 	_out=$(sh scripts/ci/release-version.sh $_args)
 	_got_release=$(printf '%s\n' "$_out" | sed -n 's/^release=//p')
 	_got_version=$(printf '%s\n' "$_out" | sed -n 's/^version=//p')
 	_why=$(printf '%s\n' "$_out" | sed -n 's/^why=//p')
-	if [ "$_got_release" != "$_release" ] || [ "$_got_version" != "$_version" ]; then
-		fail "$_what: release=$_got_release version=$_got_version ($_why), want release=$_release version=$_version"
+	if [ "$_got_release" != "$_release" ] || [ "$_got_version" != "$_version" ] ||
+		! printf '%s\n' "$_why" | grep -qF -- "$_because"; then
+		fail "$_what: release=$_got_release version=$_got_version ($_why), want release=$_release version=$_version${_because:+, with why saying \"$_because\"}"
 	else
 		echo "--- $_what: release=$_got_release version=$_got_version ($_why)"
 	fi
@@ -89,17 +107,52 @@ expect "documentation only (docs/, SPEC.md, README.md, deploy/made-up.md)" HEAD 
 commit static web/static/LICENSE.md "made-up licence line"
 expect "web/static/LICENSE.md (built into the server)" HEAD true 9.4.3
 commit code internal/made_up.go "package internal"
-expect "code" HEAD true 9.4.3
+expect "code, no migration, no feature: a patch" HEAD true 9.4.3 "a patch: since v9.4.2 no file a deployment downloads changed, no migration was added and no pull request labelled feature merged"
 code=$(git rev-parse HEAD)
 commit our-image compose.yaml 's|\(image: ghcr\.io/rikiku/pagerarchive:\).*|\19.9|'
 expect "only our image's tag in compose.yaml" HEAD false 9.4.3
 printf 'package x\n' >made_up.go && git add -A && git commit -qm "and code"
 expect "our image's tag and code" HEAD true 9.4.3
 commit monitoring deploy/monitoring/compose.yaml 's|prom/prometheus:v[0-9.]*|prom/prometheus:v9.99.9|'
-expect "the monitoring stack's compose.yaml" HEAD true 9.5.0
+expect "the monitoring stack's compose.yaml" HEAD true 9.5.0 "a minor version, since v9.4.2: a file a deployment downloads changed (deploy/monitoring/compose.yaml)"
 commit authentik deploy/authentik/blueprints/pagerarchive.yaml "# made-up change"
-expect "the configuration archive (deploy/authentik)" HEAD true 9.5.0
+expect "the configuration archive (deploy/authentik)" HEAD true 9.5.0 "a file a deployment downloads changed (deploy/authentik/blueprints/pagerarchive.yaml)"
 config=$(git rev-parse HEAD)
+
+# A migration added (owner, 2026-11-14); one changed isn't a new one.
+commit migration internal/store/migrations/99999_made_up.sql "-- +goose Up"
+expect "a migration added" HEAD true 9.5.0 "a minor version, since v9.4.2: a migration was added (99999_made_up.sql)"
+git checkout -q -B migration-changed "$release"
+first=$(ls internal/store/migrations/*.sql | head -n 1)
+printf -- '-- a made-up comment\n' >>"$first" && git commit -qam "a migration changed"
+expect "a migration changed, none added" HEAD true 9.4.3 "a patch"
+
+# A pull request labelled feature (owner, 2026-11-14): only one merged since
+# the previous release counts, by its merge (or squash) commit.
+git checkout -q "$code"
+GH_FEATURE_PRS="12 $code"
+expect "a pull request labelled feature, merged since v9.4.2" HEAD true 9.5.0 "a minor version, since v9.4.2: a pull request labelled feature merged (#12)"
+GH_FEATURE_PRS="11 $here
+13 0123456789012345678901234567890123456789"
+expect "labelled feature, but merged before v9.4.2, or not in this history" HEAD true 9.4.3 "a patch"
+GH_FEATURE_PRS="12 $code"
+expect "--dev, a pull request labelled feature" "--dev HEAD" true "9.5.0-dev+$(git rev-parse --short=7 HEAD)" "a pull request labelled feature merged (#12)"
+git checkout -q -B everything "$config"
+printf -- '-- +goose Up\n' >internal/store/migrations/99999_made_up.sql && git add -A && git commit -qm "and a migration"
+GH_FEATURE_PRS="12 $(git rev-parse HEAD)"
+expect "all three at once" HEAD true 9.5.0 "since v9.4.2: a file a deployment downloads changed (deploy/authentik/blueprints/pagerarchive.yaml); a migration was added (99999_made_up.sql); a pull request labelled feature merged (#12)"
+GH_FEATURE_PRS=""
+# GitHub not answering: a release can't be worked out; a build that isn't one
+# gets a version without the labels, and says so.
+git checkout -q "$code"
+export GH_DOWN=1
+if sh scripts/ci/release-version.sh HEAD >"$work/out" 2>&1; then
+	fail "release-version.sh worked out a release's version without the pull requests' labels"
+else
+	echo "--- GitHub not answering, a release: $(grep FAIL "$work/out" | head -n 1)"
+fi
+expect "GitHub not answering, --dev" "--dev HEAD" true "9.4.3-dev+$(git rev-parse --short=7 HEAD)" "the pull requests' labels not checked"
+unset GH_DOWN
 
 # Releases on the commit, or after it.
 git checkout -q -B later "$code"

@@ -7,10 +7,15 @@
 #   - Nothing but documentation changed since the previous release (what CI
 #     checks nothing for: SPEC.md, docs/**, other Markdown), or nothing
 #     at all: release=false, "nothing to release".
-#   - A file a deployment downloads changed (CONFIG_PATHS, other than our own
-#     image's tag in compose.yaml): the next minor version, since a patch
-#     release needs only pull and up (R84b).
+#   - The next minor version (owner, 2026-11-14) if, since the previous
+#     release, a file a deployment downloads changed (CONFIG_PATHS, other
+#     than our own image's tag in compose.yaml: a patch release needs only
+#     pull and up, R84b), or a migration was added (internal/store/migrations),
+#     or a pull request labelled "feature" merged (asked of GitHub with gh,
+#     so GH_TOKEN is needed). "why" names each rule that fired, and what it
+#     found.
 #   - Anything else: the next patch version.
+#   - Never a major version: that's the owner's, by hand.
 #   - A release on a later commit already has this one (a run that waited
 #     behind a newer release): nothing to release.
 #   - A v* tag on the commit itself: if it's the release GitHub marks Latest
@@ -56,12 +61,35 @@ fi
 prev=${previous#v}
 major=${prev%%.*} rest=${prev#*.}
 minor=${rest%%.*} patch=${rest#*.}
-if config_changed "$previous" "$commit"; then
+# joined: stdin's lines as "a, b, c", or "a, b, c and 4 more".
+joined() {
+	awk 'NF { n++; if (n <= 3) s = s (n > 1 ? ", " : "") $0 } END { if (n > 3) s = s " and " (n - 3) " more"; print s }'
+}
+# Each rule that makes a minor version, and what it found (owner, 2026-11-14).
+reasons=""
+because() { reasons=${reasons:+$reasons; }$1; }
+files=$(changed_config "$previous" "$commit" | joined)
+[ -z "$files" ] || because "a file a deployment downloads changed ($files)"
+migrations=$(added_migrations "$previous" "$commit" | joined)
+[ -z "$migrations" ] || because "a migration was added ($migrations)"
+unchecked=""
+if prs=$(feature_prs "$previous" "$commit"); then
+	prs=$(printf '%s\n' "$prs" | joined)
+	[ -z "$prs" ] || because "a pull request labelled $FEATURE_LABEL merged ($prs)"
+elif [ -n "$DEV" ]; then
+	# A build that isn't a release still gets a version, without the labels.
+	echo "warning: couldn't ask GitHub for the pull requests labelled $FEATURE_LABEL, so this build's version leaves them out" >&2
+	unchecked=" (the pull requests' labels not checked: GitHub didn't answer)"
+else
+	fail VERSION "Couldn't ask GitHub for the pull requests labelled $FEATURE_LABEL since $previous, so the version can't be worked out. Run it again."
+	exit 1
+fi
+if [ -n "$reasons" ]; then
 	version=$major.$((minor + 1)).0
-	why="a minor version: a file a deployment downloads changed since $previous"
+	why="a minor version, since $previous: $reasons"
 else
 	version=$major.$minor.$((patch + 1))
-	why="a patch: nothing a deployment downloads changed since $previous"
+	why="a patch: since $previous no file a deployment downloads changed, no migration was added and no pull request labelled $FEATURE_LABEL merged$unchecked"
 fi
 release=true
 

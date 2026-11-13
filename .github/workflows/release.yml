@@ -17,8 +17,11 @@ name: Release
 # since the previous release in anything but documentation (what CI
 # checks nothing for); otherwise it says "nothing to release" and
 # succeeds. scripts/ci/release-version.sh decides, and works out the version:
-# minor if a file a deployment downloads changed (compose.yaml or the
-# configuration archive's files), otherwise patch. Then ci.yml runs, as a
+# minor if, since the previous release, a file a deployment downloads
+# changed (compose.yaml or the configuration archive's files), a migration
+# was added, or a pull request labelled "feature" merged; otherwise patch
+# (owner, 2026-11-14). Never major: that's the owner's, by hand. Then
+# ci.yml runs, as a
 # called workflow, with that version: every check on the commit, then the
 # tag, the GitHub release with its notes and files, the images, the module,
 # and the release made the latest.
@@ -53,6 +56,11 @@ jobs:
     name: What to release
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # pull-requests: which merged pull requests are labelled feature
+    # (release-version.sh).
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       release: ${{ steps.version.outputs.release }}
       version: ${{ steps.version.outputs.version }}
@@ -78,11 +86,19 @@ jobs:
           export PA_LATEST_RELEASE
           echo "Commit $GITHUB_SHA ($GITHUB_REF); the Latest release is $PA_LATEST_RELEASE"
           sh scripts/ci/release-version.sh "$GITHUB_SHA"
+          # The version and why (each rule that made it a minor version, and
+          # what it found), on the run's page and in its summary.
+          tag=$(sed -n 's/^tag=//p' "$GITHUB_OUTPUT")
+          why=$(sed -n 's/^why=//p' "$GITHUB_OUTPUT")
           if grep -qx 'release=false' "$GITHUB_OUTPUT"; then
-            echo "::notice::Nothing to release: $(sed -n 's/^why=//p' "$GITHUB_OUTPUT")"
+            said="Nothing to release: $why"
           elif [ "$DRY_RUN" = true ]; then
-            echo "::notice::Dry run: $(sed -n 's/^tag=//p' "$GITHUB_OUTPUT") would be released ($(sed -n 's/^why=//p' "$GITHUB_OUTPUT")). Nothing is tagged or published."
+            said="Dry run: $tag would be released ($why). Nothing is tagged or published."
+          else
+            said="Releasing $tag ($why)."
           fi
+          echo "::notice::$said"
+          printf '### What to release\n\n%s\n' "$said" >>"$GITHUB_STEP_SUMMARY"
 
   checks:
     name: Checks and release
@@ -95,8 +111,11 @@ jobs:
     # The release jobs tag, create the release and push the images; the
     # module's job needs PSGALLERY_API_KEY. "All checks passed" reads the
     # run's jobs, to list those that passed only on a re-run (ADR 0025).
+    # Its stamp job reads merged pull requests' labels (pull-requests: read;
+    # a called workflow's jobs get no more than this grants).
     permissions:
       contents: write
       packages: write
+      pull-requests: read
       actions: read
     secrets: inherit

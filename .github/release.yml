@@ -1,12 +1,22 @@
 # What GitHub's generated release notes list (the release job's
 # --generate-notes, owner 2026-11-12): the pull requests merged since the
-# previous release, Renovate's automatic updates (label "maintenance",
-# ADR 0022) in a section of their own.
+# previous release, those labelled "feature" first, Renovate's automatic
+# updates (label "maintenance", ADR 0022) in a section of their own.
+#
+# Label a pull request "feature" when it adds something a person can use or
+# see that wasn't there before (a new screen, setting, command or check), not
+# for a fix, a refactor, CI or documentation. Its merge makes the next release
+# a minor version (owner, 2026-11-14; ADR 0024, scripts/ci/release-version.sh),
+# so a deployment downloads that release's compose.yaml (docs/deploy.md). Add
+# the label before the release is cut: the Release workflow reads the labels
+# then.
 changelog:
   categories:
+    - title: New features
+      labels: [feature]
     - title: Changes
       labels: ["*"]
       exclude:
-        labels: [maintenance]
+        labels: [maintenance, feature]
     - title: Dependency updates
       labels: [maintenance]

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-12). The owner's decision of 2026-11-12, "merge freely, release deliberately": a merge to main is no longer a release; a Release workflow cuts one every Saturday, on "Release now", and straight away for a security update. On the branch `release-process` from main at 59be943 (VERSION 1.7.5), with main merged in at 59e9069 (VERSION 1.7.6, #15: its release, v1.7.6, is the last one cut by the old process). Supersedes ADR 0016's decisions 1 to 4 and 6 where they say every merge is a release and a branch sets `VERSION`, and ADR 0022's decisions 3 and 4 (an update raises `VERSION`); the rest of both stands. The PowerShell module doesn't change, so its version stays. Amended the same day (ADR 0025): security updates that merge within 30 minutes of each other go out as one release (the section of that date).
+Proposed (2026-11-12). The owner's decision of 2026-11-12, "merge freely, release deliberately": a merge to main is no longer a release; a Release workflow cuts one every Saturday, on "Release now", and straight away for a security update. On the branch `release-process` from main at 59be943 (VERSION 1.7.5), with main merged in at 59e9069 (VERSION 1.7.6, #15: its release, v1.7.6, is the last one cut by the old process). Supersedes ADR 0016's decisions 1 to 4 and 6 where they say every merge is a release and a branch sets `VERSION`, and ADR 0022's decisions 3 and 4 (an update raises `VERSION`); the rest of both stands. The PowerShell module doesn't change, so its version stays. Amended the same day (ADR 0025): security updates that merge within 30 minutes of each other go out as one release (the section of that date). Amended 2026-11-14 (owner): a migration or a pull request labelled `feature` also makes a minor version (the section of 2026-11-13).
 
 ## Context
 
@@ -36,7 +36,7 @@ It shows wherever the version did: `pagerarchive version`, `pagerarchive-client 
 `scripts/ci/release-version.sh <commit>` decides, from the **previous release**: the newest `v*` tag in the commit's history, other than one on the commit itself (as ADR 0016).
 
 - **Nothing to release** if nothing changed since it, or only documentation did: what CI's docs-only filter ignores (`SPEC.md`, `docs/**`, other Markdown, apart from `web/static/**`, built into the server). Also if a release on a later commit already has this one (a run that waited behind a newer release), or if this commit's own tag is the release GitHub marks Latest (released already).
-- **The next minor version** if a file a deployment downloads changed (`CONFIG_PATHS`: `compose.yaml`, the monitoring stack's `compose.yaml` and the configuration archive's folders), as ADR 0016's rule had it: a patch release needs only pull and up (R84b). A change to our image's line in `compose.yaml` alone doesn't count (`git diff -I`), as a release stamps it: so the first release after this branch, whose `compose.yaml` went from `:1.7` to `:main`, is a patch.
+- **The next minor version** if a file a deployment downloads changed (`CONFIG_PATHS`: `compose.yaml`, the monitoring stack's `compose.yaml` and the configuration archive's folders), as ADR 0016's rule had it: a patch release needs only pull and up (R84b). A change to our image's line in `compose.yaml` alone doesn't count (`git diff -I`), as a release stamps it: so the first release after this branch, whose `compose.yaml` went from `:1.7` to `:main`, is a patch. **Amended 2026-11-14 (owner):** also when a migration was added or a pull request labelled `feature` merged (the section of 2026-11-13, below).
 - **The next patch version** otherwise.
 - **This commit's own tag, not yet the Latest release:** a release that failed partway; the run finishes it as the same version (as "Re-run all jobs" did under ADR 0016).
 
@@ -179,11 +179,11 @@ Not run: the security trigger end to end (it needs a labelled pull request merge
 2. **Saturday 05:17 (daylight saving) or 04:17, your time:** fine, or another time?
 3. **Security releases' wait** (2026-11-12): 15 minutes, as briefed, joins security merges up to 15 minutes apart. #18 and #19 were 18 minutes apart, so they'd still have been two releases. 20 or 30 minutes instead? **Answered (owner, 2026-11-12): 30 minutes.**
 
-## How a release's number is worked out (2026-11-13)
+## How a release's number is worked out (2026-11-13; decided by the owner, 2026-11-14)
 
 The owner asked how releases are versioned: v1.7.10 (large events, the scrubber, two migrations) came out as a patch of v1.7.9.
 
-**The rule now** (decision 3, `scripts/ci/release-version.sh`, `config_changed` in `versions-lib.sh`): from the previous release, the next **minor** version if a file a deployment downloads changed (`CONFIG_PATHS`: `compose.yaml` other than our own image's line, the monitoring stack's `compose.yaml`, and the configuration archive's folders under `deploy/`); otherwise the next **patch**. Nothing else is looked at: not the pull requests, their labels, the notes or the migrations. There's no major. So minor means "download this release's `compose.yaml` and archive first" (R84b, docs/deploy.md's Upgrading), not "new features". Every release since ADR 0024 was a patch, as none changed a downloaded file:
+**The rule until 2026-11-14** (decision 3, `scripts/ci/release-version.sh`, `config_changed` in `versions-lib.sh`): from the previous release, the next **minor** version if a file a deployment downloads changed (`CONFIG_PATHS`: `compose.yaml` other than our own image's line, the monitoring stack's `compose.yaml`, and the configuration archive's folders under `deploy/`); otherwise the next **patch**. Nothing else is looked at: not the pull requests, their labels, the notes or the migrations. There's no major. So minor means "download this release's `compose.yaml` and archive first" (R84b, docs/deploy.md's Upgrading), not "new features". Every release since ADR 0024 was a patch, as none changed a downloaded file:
 
 | Release | Downloaded files changed | New migrations | What came in |
 |---|---|---|---|
@@ -194,13 +194,30 @@ The owner asked how releases are versioned: v1.7.10 (large events, the scrubber,
 
 **Predicting it:** every build of main reports the version a release of it would get, with `-dev+<commit>` (`pagerarchive version`, the `main` image; decision 2): main at b369af4 says `1.7.11-dev+b369af4`, "patch: nothing a deployment downloads changed since v1.7.10". A dry run of the Release workflow says the same in its notice ("Dry run: v1.7.11 would be released (a patch: …)"), so nothing needs adding to see it before a release.
 
-**A proposal (Claude), not adopted; the owner decides:**
+**The rule from 2026-11-14 (owner, choosing Claude's proposal of 2026-11-13):**
 
-- **Minor** when a downloaded file changed (as now: it must stay at least a minor, R84b), **or** a migration was added since the previous release (`internal/store/migrations/`: a database a release has migrated may not run on the release before it, so going back is no longer a patch's "pull an older one"), **or** a pull request merged since the previous release has the label `feature` (or whatever the owner prefers), which GitHub's notes could also list under "New features" (`.github/release.yml`).
+- **Minor** when a downloaded file changed (as now: it must stay at least a minor, R84b), **or** a migration was added since the previous release (`internal/store/migrations/`: a database a release has migrated may not run on the release before it, so going back is no longer a patch's "pull an older one"), **or** a pull request merged since the previous release has the label `feature`, which GitHub's notes now list under "New features" (`.github/release.yml`).
 - **Patch** otherwise: fixes, CI and test changes, dependency and image updates (`maintenance`), security updates.
-- **Major** only by hand, as now (a "Release now" input, say, rather than a tag made by hand).
+- **Major** only by hand: nothing in the workflow makes one.
 - Under it, v1.7.9 would have been 1.8.0 (the albums migration) and v1.7.10 1.9.0.
 
-**What it costs:** `compose.yaml` names our image by `MAJOR.MINOR` (R84, decision 1), so `docker compose pull` gets patches only. Today a deployment that only pulls gets every feature, because features come as patches. If features make minors, a deployment that only pulls stays on the minor it has (and its patches) until someone downloads the new `compose.yaml`: most weekly releases would then need that step, and a pull-only deployment falls behind silently. The alternative keeps the number as the upgrade signal it is and shows features in the notes only (a `feature` label and a "New features" section, version unchanged).
+**What it costs:** `compose.yaml` names our image by `MAJOR.MINOR` (R84, decision 1), so `docker compose pull` gets patches only. Until 2026-11-14 a deployment that only pulled got every feature, because features came as patches. Now that features make minors, a deployment that only pulls stays on the minor it has (and its patches) until someone downloads the new `compose.yaml`: most weekly releases would then need that step, and a pull-only deployment falls behind silently. The alternative keeps the number as the upgrade signal it is and shows features in the notes only (a `feature` label and a "New features" section, version unchanged).
 
-**Question for the owner:** should a minor version mean "new features or a migration" (the proposal, with the extra download step for every minor), or stay "download new files" (now), with features shown in the release notes instead? Either way the dry run already shows the number and why before a release.
+**Decided (owner, 2026-11-14):** a minor version means new features, a migration or new files to download. docs/deploy.md's Upgrading says plainly that a minor release needs its `compose.yaml` and archive downloaded first.
+
+**How it's built (2026-11-14):**
+
+- `release-version.sh` checks the three rules from the previous release to the commit (`versions-lib.sh`). It looks for changed downloaded files (`changed_config`, as before) and migrations added under `internal/store/migrations/` (`added_migrations`, `git diff --diff-filter=A`: a changed migration isn't a new one). For the label (`feature_prs`), it lists the merged pull requests labelled `feature` with `gh pr list` (retried), and counts those whose merge or squash commit is in the commit's history but not in the previous release's.
+- `why` names each rule that fired and what it found, such as `a minor version, since v1.7.10: a migration was added (00020_….sql); a pull request labelled feature merged (#41)`. A patch says that none fired. The Release workflow's `plan` job prints it as a notice, and in the run's summary, for a dry run ("Dry run: v1.8.0 would be released (…)"), a real release ("Releasing v1.8.0 (…)") and "Nothing to release" alike. Main's builds report the same next version (`<next>-dev+<commit>`).
+- **If GitHub doesn't answer**, after `retry.sh`'s three tries, a release fails before anything starts: its version can't be worked out without the labels. A build that isn't a release (the `stamp` job's `--dev`) still gets a version, without the labels, and its `why` says so.
+- **Permissions:** `pull-requests: read` on the `plan` job and on ci.yml's `stamp` job, which also gets `GH_TOKEN`. release.yml's `checks` job grants it too, as a called workflow's jobs get no more than their caller.
+- **The label** `feature` exists in the repository (created 2026-11-14). `.github/release.yml` says when to use it and lists those pull requests first, under "New features". CLAUDE.md asks for it on a pull request that adds a feature. It's read when the release is cut, so a label added after the merge but before the release still counts.
+- `release-version-checks.sh` (the `versions` job) checks each rule in its throwaway clone, with a stand-in for `gh`, and checks each `why`:
+  - a downloaded file: 9.5.0;
+  - a migration added: 9.5.0, while a migration changed but none added: 9.4.3;
+  - a `feature` pull request merged since the previous release: 9.5.0, while one merged before it, or not in the history: 9.4.3;
+  - all three at once: 9.5.0, with all three in `why`;
+  - none: 9.4.3;
+  - GitHub not answering: a release fails, and `--dev` gives 9.4.3-dev+… "the pull requests' labels not checked".
+
+DRYRUN
