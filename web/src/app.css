@@ -243,12 +243,10 @@
 	--scrubber-hint: color-mix(in srgb, var(--accent) 35%, transparent);
 	--scrubber-hint-width: 0.125rem;
 	--scrubber-tick: 0.5rem;
-	/* On a touch screen: the grab tab (its hit area at least a target), held,
-	   and how far it keeps from the edge. */
+	/* On a touch screen: the grab tab (its hit area at least a target), held. */
 	--scrubber-tab-height: 3rem;
 	--scrubber-tab-width: 3.125rem; /* 2.5 times the first try (owner, 2026-11-13) */
 	--scrubber-tab-width-held: 3.5rem;
-	--scrubber-tab-inset: 0.75rem; /* off the edge, clear of the browser's own scroll indicator */
 	--scrubber-grip-gap: 0.375rem;
 	--scrollbar-gap: 0px; /* the room the hidden scroll bar had: measured (Scrubber.svelte) */
 	--scrubber-tab-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 30%, transparent);

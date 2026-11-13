@@ -17,6 +17,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { api, type Counts, type Mark } from './api.ts';
 	import Icon from './Icon.svelte';
+	import { screen } from './screen.svelte.ts';
 	import { ownEdge, scrubberHere } from './scrubberHere.svelte.ts';
 
 	let {
@@ -263,17 +264,20 @@
 
 	// Jumps go one at a time, to the latest mark wanted, at most one every
 	// 120 ms: a drag asks for many marks, and only the latest matters.
-	let want: number | undefined;
-	let done: number | undefined;
+	// The ends of the marks (or, on a touch screen, the steps) wanted and last
+	// jumped to: a time, so either can ask.
+	let want: string | undefined;
+	let done: string | undefined;
+	const endOf = (i: number | undefined) => (i === undefined ? undefined : marks[i]?.end);
 	let pumping: Promise<void> | undefined;
 	function pump(): Promise<void> {
 		// .finally runs after the assignment even when there's nothing to do.
 		pumping ??= (async () => {
-			while (want !== undefined && want !== done && marks[want]) {
+			while (want !== undefined && want !== done) {
 				const j = want;
 				done = j;
 				const t0 = performance.now();
-				await onjump(marks[j].end);
+				await onjump(j);
 				const rest = 120 - (performance.now() - t0);
 				if (rest > 0 && want !== j) await new Promise((r) => setTimeout(r, rest));
 			}
@@ -286,7 +290,7 @@
 		if (!m) return;
 		picked = marks.indexOf(m);
 		landed = undefined;
-		want = picked;
+		want = marks[picked].end;
 		done = undefined;
 		pump().then(() => (landed = current ?? -1));
 	}
@@ -361,7 +365,7 @@
 		hover = indexAt(e.clientY);
 		picked = undefined;
 		landed = undefined;
-		want = hover;
+		want = endOf(hover);
 		done = undefined;
 		pump();
 		e.preventDefault();
@@ -371,7 +375,7 @@
 		const i = indexAt(e.clientY);
 		if (i === hover) return;
 		hover = i;
-		want = i;
+		want = endOf(i);
 		pump();
 	}
 	function up(e: PointerEvent) {
@@ -383,7 +387,7 @@
 		if (i === undefined) return;
 		picked = i;
 		landed = undefined;
-		want = i;
+		want = endOf(i);
 		pump().then(() => (landed = current ?? -1));
 	}
 	function cancel() {
@@ -423,6 +427,9 @@
 		right = beside ? 0 : Math.round(width - r.right);
 		edge = beside ? width : r.right;
 		outer = beside ? Infinity : r.right + 4;
+		// Touch: how far the tab can move, unless a drag is on (its mapping is
+		// fixed then).
+		if (touch && root && !dragging) travel = Math.max(0, Math.round(root.getBoundingClientRect().height - (track?.offsetHeight || 48)));
 	}
 
 	// Hidden until wanted, where there's a mouse to want it with. Shown at
@@ -502,13 +509,25 @@
 	// have. Nothing until the list scrolls; then a tab at the right edge, at
 	// the list's place in time, which fades a moment after the scrolling
 	// stops. Dragging it scrubs, through the same jumps as a drag on the
-	// strip, with a bubble naming the day (or, over weeks and months, the
-	// month) under the finger. No dots or marks.
+	// strip, with a bubble naming the step the drag will land on. No dots.
+	//
+	// The rail is steps a thumb can hold: whole days (today and yesterday
+	// aren't split into hours here), or, when a day would get less than
+	// MIN_STEP px of the rail, weeks, then months, then years. During a drag
+	// the tab is under the finger, the finger's place on the rail picks the
+	// step through a mapping fixed when the drag starts (the list loading
+	// rows, or the browser's bars coming and going, don't change it), and a
+	// step changes only once the finger is well into the next one, so the
+	// day doesn't flicker at a boundary. The list follows the step, never the
+	// other way round.
+	const MIN_STEP = 16; // px of the rail per step
+	const HOLD = 0.3; // of a step, past its edge, before the next is picked
+	type Step = { start: number; end: number; endIso: string; label: string };
+	type Level = 'day' | 'week' | 'month' | 'year';
 	let scrolling = $state(false);
-	let dragAt: number | undefined = $state(); // the tab's place while dragged, 0 to 1
 	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+	let travel = $state(0); // px the tab can move: the rail less the tab
 	const railShown = $derived(scrolling || dragging || focused);
-	const tabAt = $derived(dragging && dragAt !== undefined ? dragAt : thumb);
 	$effect(() => {
 		if (!touch) return;
 		const scrolled = () => {
@@ -522,54 +541,139 @@
 			window.removeEventListener('scroll', scrolled);
 		};
 	});
-	// The day for a range of days (the last 30 days, say), the month and year
-	// for one of weeks or months: what a finger can aim at.
-	function coarse(m: Mark): string {
-		if (m.kind === 'week' || m.kind === 'month') return fmt({ month: 'long', year: 'numeric' }).format(new Date(m.start));
-		return whichDay(m.start);
+	// The tab's own height, once it's drawn.
+	$effect(() => {
+		if (!touch) return;
+		void steps.length;
+		const f = requestAnimationFrame(measure);
+		return () => cancelAnimationFrame(f);
+	});
+	const weekdays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+	const monday = (t: number) => t + 432e5 - weekdays.indexOf(fmt({ weekday: 'short' }).format(new Date(t))) * 864e5;
+	function keyOf(level: Level, t: number): string {
+		const d = new Date(t);
+		switch (level) {
+			case 'day':
+				return dayKey(d.toISOString());
+			case 'week':
+				return dayKey(new Date(monday(t)).toISOString());
+			case 'month':
+				return fmt({ year: 'numeric', month: '2-digit' }).format(d);
+			case 'year':
+				return fmt({ year: 'numeric' }).format(d);
+		}
 	}
-	let grab = { y: 0, at: 0, height: 1 };
+	function labelOf(level: Level, t: number): string {
+		const d = new Date(t);
+		switch (level) {
+			case 'day':
+				return whichDay(d.toISOString());
+			case 'week':
+				return `Week of ${fmt({ day: 'numeric', month: 'short' }).format(new Date(monday(t)))}`;
+			case 'month':
+				return fmt({ month: 'long', year: 'numeric' }).format(d);
+			case 'year':
+				return fmt({ year: 'numeric' }).format(d);
+		}
+	}
+	function stepsOf(level: Level): Step[] {
+		const out: Step[] = [];
+		let key = '';
+		for (const m of counts?.marks ?? []) {
+			const k = keyOf(level, ms(m.start));
+			if (k === key) out[out.length - 1].start = ms(m.start);
+			else out.push({ start: ms(m.start), end: ms(m.end), endIso: m.end, label: '' });
+			key = k;
+		}
+		for (const s of out) s.label = labelOf(level, s.start);
+		return out;
+	}
+	// The finest level whose steps get MIN_STEP px each; nothing finer than
+	// the marks themselves (weeks over 90 days, months over a year).
+	const steps = $derived.by(() => {
+		const marked = counts?.marks ?? [];
+		if (marked.length === 0 || !touch) return [];
+		// A phone: the last 7 days, unless a range is chosen (owner, 2026-11-13:
+		// "30 days is a long time for a phone sized screen"). Only the rail: the
+		// list scrolls on past them, with the tab at the bottom.
+		const ranged = /(^|&)(from|to)=/.test(query);
+		if (screen.phone && !ranged) return stepsOf('day').slice(0, 7);
+		const kinds = new Set(marked.map((m) => m.kind));
+		const levels: Level[] = kinds.has('month') ? ['month', 'year'] : kinds.has('week') ? ['week', 'month', 'year'] : ['day', 'week', 'month', 'year'];
+		let out: Step[] = [];
+		for (const level of levels) {
+			out = stepsOf(level);
+			if (travel <= 0 || travel / out.length >= MIN_STEP) break;
+		}
+		return out;
+	});
+	// Where the list is, on the rail (0 to 1).
+	function placeOf(list: Step[], t: number | undefined): number {
+		if (list.length === 0 || t === undefined || t >= list[0].end) return 0;
+		const i = list.findIndex((s) => s.start <= t && t < s.end);
+		if (i < 0) return 1;
+		return (i + (list[i].end - t) / (list[i].end - list[i].start)) / list.length;
+	}
+	// While dragging: the steps and the px per step fixed at the start, the
+	// finger's place, and the step picked.
+	let drag: { steps: Step[]; travel: number; y: number; at: number } | undefined;
+	let fingerAt = $state(0);
+	let chosen: number | undefined = $state();
+	const restAt = $derived(placeOf(steps, at));
+	const tabTop = $derived(dragging && drag ? fingerAt * drag.travel : restAt * travel);
+	const chosenStep = $derived(dragging && drag && chosen !== undefined ? drag.steps[chosen] : undefined);
+	const restStep = $derived(steps.find((s) => at !== undefined && s.start <= at && at < s.end) ?? steps[0]);
 	function tabDown(e: PointerEvent) {
-		if (marks.length === 0 || !root || (e.pointerType === 'mouse' && e.button !== 0)) return;
+		if (steps.length === 0 || !root || (e.pointerType === 'mouse' && e.button !== 0)) return;
 		try {
 			(e.currentTarget as Element).setPointerCapture(e.pointerId);
 		} catch {
 			// a pointer the browser doesn't know (a test's): the events still come here
 		}
-		const tab = (e.currentTarget as Element).getBoundingClientRect();
-		grab = { y: e.clientY, at: tabAt ?? 0, height: Math.max(1, root.getBoundingClientRect().height - tab.height) };
+		drag = { steps, travel: Math.max(1, travel), y: e.clientY, at: restAt };
+		fingerAt = restAt;
+		chosen = Math.min(steps.length - 1, Math.floor(restAt * steps.length));
 		dragging = true;
-		dragAt = grab.at;
-		hover = Math.min(marks.length - 1, Math.floor(grab.at * marks.length));
 		picked = undefined;
 		landed = undefined;
-		want = done = hover; // touching it doesn't jump; moving it does
+		want = done = steps[chosen].endIso; // touching it doesn't jump; moving it does
 		e.preventDefault();
 	}
 	function tabMove(e: PointerEvent) {
-		if (!dragging) return;
-		dragAt = Math.max(0, Math.min(1, grab.at + (e.clientY - grab.y) / grab.height));
-		const i = Math.min(marks.length - 1, Math.floor(dragAt * marks.length));
-		if (i === hover) return;
-		hover = i;
-		want = i;
+		if (!dragging || !drag || chosen === undefined) return;
+		fingerAt = Math.max(0, Math.min(1, drag.at + (e.clientY - drag.y) / drag.travel));
+		const raw = fingerAt * drag.steps.length;
+		if (raw >= chosen - HOLD && raw < chosen + 1 + HOLD) return;
+		chosen = Math.max(0, Math.min(drag.steps.length - 1, Math.floor(raw)));
+		want = drag.steps[chosen].endIso;
 		pump();
 	}
 	function tabUp() {
 		if (!dragging) return;
-		const i = hover;
+		const step = chosenStep;
 		dragging = false;
-		dragAt = undefined;
-		hover = undefined;
-		if (i === undefined) return;
-		picked = i;
-		landed = undefined;
-		want = i;
-		pump().then(() => (landed = current ?? -1));
+		drag = undefined;
+		chosen = undefined;
+		measure();
+		if (step) {
+			want = step.endIso;
+			pump();
+		}
 		// It fades as after a scroll.
 		scrolling = true;
 		clearTimeout(scrollTimer);
 		scrollTimer = setTimeout(() => (scrolling = false), 1500);
+	}
+	// The keyboard on the tab: a step at a time, Home and End to the ends.
+	function tabKey(e: KeyboardEvent) {
+		if (e.key === 'Escape') return key(e);
+		const i = restStep ? steps.indexOf(restStep) : 0;
+		const to = { ArrowUp: i - 1, ArrowRight: i - 1, ArrowDown: i + 1, ArrowLeft: i + 1, Home: 0, End: steps.length - 1 }[e.key];
+		if (to === undefined || steps.length === 0) return;
+		e.preventDefault();
+		want = steps[Math.max(0, Math.min(steps.length - 1, to))].endIso;
+		done = undefined;
+		pump();
 	}
 </script>
 
@@ -588,9 +692,10 @@
 		onfocusout={focusOut}
 		onkeydown={() => (focused = true)}
 	>
-		{#if tabAt !== undefined}
-			<div class="tab-place" style:top="{tabAt * 100}%" style:transform="translateY(-{tabAt * 100}%)">
-				{#if dragging && hover !== undefined && marks[hover]}<span class="tab-bubble" class:low={(tabAt ?? 0) < 0.15} aria-hidden="true">{coarse(marks[hover])}</span>{/if}
+		{#if steps.length > 0}
+			{@const showing = chosenStep ?? restStep}
+			<div class="tab-place" style:top="{tabTop}px" data-steps={steps.length}>
+				{#if chosenStep}<span class="tab-bubble" class:low={tabTop < 48} aria-hidden="true">{chosenStep.label}</span>{/if}
 				<div
 					class="tab"
 					class:held={dragging}
@@ -601,10 +706,10 @@
 					aria-orientation="vertical"
 					aria-keyshortcuts="Alt+J"
 					aria-valuemin={0}
-					aria-valuemax={Math.max(0, marks.length - 1)}
-					aria-valuenow={value}
-					aria-valuetext={shown !== undefined && marks[shown] ? spoken(marks[shown]) : 'No marks'}
-					onkeydown={key}
+					aria-valuemax={steps.length - 1}
+					aria-valuenow={showing ? steps.length - 1 - Math.max(0, (drag?.steps ?? steps).indexOf(showing)) : 0}
+					aria-valuetext={showing?.label ?? 'No dates'}
+					onkeydown={tabKey}
 					onpointerdown={tabDown}
 					onpointermove={tabMove}
 					onpointerup={tabUp}
@@ -896,7 +1001,6 @@
 		bottom: 0;
 		z-index: var(--layer-content);
 		width: max(var(--target), var(--scrubber-tab-width-held));
-		margin-right: var(--scrubber-tab-inset);
 		pointer-events: none;
 		opacity: 0;
 		transition: opacity 400ms ease-in;
@@ -930,7 +1034,7 @@
 		justify-content: center;
 		width: var(--scrubber-tab-width);
 		height: 100%;
-		border-radius: var(--radius);
+		border-radius: var(--radius) 0 0 var(--radius); /* against the edge */
 		background: var(--accent);
 		box-shadow: var(--scrubber-tab-shadow);
 	}
