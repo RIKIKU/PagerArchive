@@ -3298,7 +3298,7 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 				if (days.at(-1) !== d) days.push(d);
 			}
 		}
-		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most`);
+		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most (${off.map((o) => Math.round(o)).join(",")})`);
 		expect(Math.max(...off), 'the tab stays under the finger').toBeLessThanOrEqual(1.5);
 		expect(days.length, 'several days passed').toBeGreaterThanOrEqual(width < 768 ? 2 : 5);
 		expect(new Set(days).size, 'no day came back: no flicker').toBe(days.length);
