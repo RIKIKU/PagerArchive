@@ -3279,7 +3279,7 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		const bubble = scrubber.locator('.tab-bubble');
 		await expect(bubble).toBeVisible();
 		const day = (await bubble.textContent())!.trim();
-		expect(day, 'the day, as "Fri 23 Oct"').toMatch(/^\w{3} \d{1,2} \w{3}$/);
+		expect(day, 'the day, as "Fri, 23 Oct"').toMatch(/^\w{3},? \d{1,2} \w{3}$/);
 		// While the finger is down the list has already moved there.
 		await expect.poll(() => firstInView(page)).not.toBe(before);
 		await page.screenshot({ path: info.outputPath(`touch-${width}-dragging.png`) });
