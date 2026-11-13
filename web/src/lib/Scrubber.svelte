@@ -616,7 +616,7 @@
 	}
 	// While dragging: the steps and the px per step fixed at the start, the
 	// finger's place, and the step picked.
-	let drag: { steps: Step[]; travel: number; y: number; at: number } | undefined;
+	let drag: { steps: Step[]; travel: number; y: number; at: number } | undefined = $state.raw();
 	let fingerAt = $state(0);
 	let chosen: number | undefined = $state();
 	const restAt = $derived(placeOf(steps, at));

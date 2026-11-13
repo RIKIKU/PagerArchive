@@ -3264,31 +3264,52 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		const box = (await tab.boundingBox())!;
 		expect(box.width, 'a target wide').toBeGreaterThanOrEqual(44);
 		expect(box.height, 'a target tall').toBeGreaterThanOrEqual(44);
-		// Wide enough to find with a thumb, off the very edge, and the page's own
-		// scroll bar hidden while the tab stands in for it (owner, 2026-11-13).
+		// Wide enough to find with a thumb, hard against the edge, and the page's
+		// own scroll bar hidden while the tab stands in for it (owner, 2026-11-13).
 		expect((await tab.locator('.grip').boundingBox())!.width, 'the tab as drawn').toBeGreaterThanOrEqual(50);
-		expect(box.x + box.width, 'off the edge').toBeLessThanOrEqual(width - 12);
+		expect(Math.abs(box.x + box.width - width), 'against the edge').toBeLessThanOrEqual(1);
+		// The rail: the last 7 days on a phone, 30 on a tablet, whole days.
+		await expect(scrubber.locator('.tab-place')).toHaveAttribute('data-steps', width < 768 ? '7' : '30');
 		expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth)).toBe('none');
 		await page.screenshot({ path: info.outputPath(`touch-${width}-shown.png`) });
 		const before = await firstInView(page);
-		// Tap and drag the tab down a quarter of the rail, a step at a time.
-		const rail = (await scrubber.boundingBox())!;
+		// Tap and drag the tab down in small moves (4 px, as a thumb creeps), while
+		// the list jumps and loads under it: the tab stays under the finger, and
+		// the days in the bubble go steadily older, never back (owner, 2026-11-13:
+		// it "bounces around under your thumb").
 		const x = box.x + box.width / 2;
 		const y0 = box.y + box.height / 2;
 		const touch = { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x };
-		await tab.dispatchEvent('pointerdown', { ...touch, clientY: y0 });
-		for (let k = 1; k <= 8; k++) {
-			await tab.dispatchEvent('pointermove', { ...touch, clientY: y0 + (k * rail.height) / 32 });
-			await page.waitForTimeout(60);
-		}
 		const bubble = scrubber.locator('.tab-bubble');
-		await expect(bubble).toBeVisible();
-		const day = (await bubble.textContent())!.trim();
+		const tabY = async () => {
+			const b = (await tab.boundingBox())!;
+			return b.y + b.height / 2;
+		};
+		await tab.dispatchEvent('pointerdown', { ...touch, clientY: y0 });
+		const days: string[] = [];
+		const off: number[] = [];
+		for (let k = 1; k <= 60; k++) {
+			const y = y0 + 4 * k;
+			await tab.dispatchEvent('pointermove', { ...touch, clientY: y });
+			await page.waitForTimeout(25);
+			off.push(Math.abs((await tabY()) - y));
+			if (await bubble.isVisible()) {
+				const d = (await bubble.textContent())!.trim();
+				if (days.at(-1) !== d) days.push(d);
+			}
+		}
+		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most`);
+		expect(Math.max(...off), 'the tab stays under the finger').toBeLessThanOrEqual(1.5);
+		expect(days.length, 'several days passed').toBeGreaterThanOrEqual(width < 768 ? 2 : 5);
+		expect(new Set(days).size, 'no day came back: no flicker').toBe(days.length);
+		const ms = (d: string) => Date.parse(`${d.replace(/^\w+,? /, '')} ${new Date().getFullYear()}`);
+		for (let k = 1; k < days.length; k++) expect(ms(days[k]), `${days[k]} is older than ${days[k - 1]}`).toBeLessThan(ms(days[k - 1]));
+		const day = days.at(-1)!;
 		expect(day, 'the day, as "Fri, 23 Oct"').toMatch(/^\w{3},? \d{1,2} \w{3}$/);
 		// While the finger is down the list has already moved there.
 		await expect.poll(() => firstInView(page)).not.toBe(before);
 		await page.screenshot({ path: info.outputPath(`touch-${width}-dragging.png`) });
-		await tab.dispatchEvent('pointerup', { ...touch, buttons: 0, clientY: y0 + rail.height / 4 });
+		await tab.dispatchEvent('pointerup', { ...touch, buttons: 0, clientY: y0 + 240 });
 		const first = page.getByTestId('message-list').locator('article').filter({ hasText: `TOUCH ${n} DAY` });
 		await expect
 			.poll(async () => {
@@ -3302,6 +3323,15 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 			.toBe(day.replace(',', '').split(' ').slice(1).join(' '));
 		// It fades once the scrolling has stopped.
 		await expect(scrubber).toHaveAttribute('data-shown', 'false', { timeout: 5000 });
+		if (width < 768) {
+			// The rail stops at 7 days; the list doesn't: scrolled on past them, the
+			// tab waits at the bottom of the rail.
+			for (let k = 0; k < 6; k++) await page.evaluate(() => window.scrollBy(0, 2500));
+			await expect.poll(() => firstInView(page)).toMatch(/DAY (9|[1-9]\d) /);
+			const rail = (await scrubber.boundingBox())!;
+			await expect.poll(async () => Math.round(rail.y + rail.height - ((await tab.boundingBox())!.y + (await tab.boundingBox())!.height))).toBeLessThanOrEqual(1);
+			await page.screenshot({ path: info.outputPath(`touch-${width}-past-the-rail.png`) });
+		}
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 		await ctx.close();
 	}
