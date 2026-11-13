@@ -1575,7 +1575,7 @@ func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeac
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look
 `
 
 type CreateUserParams struct {
@@ -1611,6 +1611,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.DeletedAt,
 		&i.TrustedAt,
 		&i.TrustedBy,
+		&i.Look,
 	)
 	return i, err
 }
@@ -1804,7 +1805,8 @@ func (q *Queries) DeleteTemplate(ctx context.Context, id int64) (int64, error) {
 
 const deleteUserAccount = `-- name: DeleteUserAccount :exec
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
-    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
+    look = 'harbour'
 WHERE id = $1
 `
 
@@ -4802,7 +4804,7 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
@@ -4821,6 +4823,7 @@ type SessionUserRow struct {
 	DeletedAt     *time.Time
 	TrustedAt     *time.Time
 	TrustedBy     *int64
+	Look          string
 	SessionUsedAt time.Time
 }
 
@@ -4841,6 +4844,7 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.DeletedAt,
 		&i.TrustedAt,
 		&i.TrustedBy,
+		&i.Look,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -5001,6 +5005,24 @@ type SetTemplateIconParams struct {
 // R65: a 64×64 PNG the API encoded and its SHA-256, or NULL for none.
 func (q *Queries) SetTemplateIcon(ctx context.Context, arg SetTemplateIconParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setTemplateIcon, arg.Png, arg.Sha256, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setUserLook = `-- name: SetUserLook :execrows
+UPDATE users SET look = $2 WHERE id = $1 AND status <> 'deleted'
+`
+
+type SetUserLookParams struct {
+	ID   int64
+	Look string
+}
+
+// R82d: the look the user chose in the account menu.
+func (q *Queries) SetUserLook(ctx context.Context, arg SetUserLookParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserLook, arg.ID, arg.Look)
 	if err != nil {
 		return 0, err
 	}
@@ -5525,7 +5547,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -5545,12 +5567,13 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.DeletedAt,
 		&i.TrustedAt,
 		&i.TrustedBy,
+		&i.Look,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -5570,13 +5593,14 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.DeletedAt,
 		&i.TrustedAt,
 		&i.TrustedBy,
+		&i.Look,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -5597,6 +5621,7 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.DeletedAt,
 		&i.TrustedAt,
 		&i.TrustedBy,
+		&i.Look,
 	)
 	return i, err
 }

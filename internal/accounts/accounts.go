@@ -529,7 +529,7 @@ func (s *Service) Session(ctx context.Context, token string) (db.User, error) {
 		}
 	}
 	return db.User{ID: r.ID, Subject: r.Subject, Email: r.Email, EmailKey: r.EmailKey, Name: r.Name, Role: r.Role,
-		Status: r.Status, InvitedBy: r.InvitedBy, CreatedAt: r.CreatedAt}, nil
+		Status: r.Status, InvitedBy: r.InvitedBy, CreatedAt: r.CreatedAt, Look: r.Look}, nil
 }
 
 // EndSession signs one browser out.

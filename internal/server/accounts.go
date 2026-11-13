@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"time"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/store"
+	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
 // accountsError answers a failed account operation: a refusal with its
@@ -50,11 +52,26 @@ type Me struct {
 	Name      *string `json:"name"`
 	Role      string  `json:"role"`
 	InvitedBy *string `json:"invited_by"` // name, or "deleted user"; null for the first admin
+	// Look is the look they chose (R82d): one of Looks.
+	Look string `json:"look"`
+}
+
+// Looks are the looks a user can choose (R82d, ADR 0028), the default
+// first. The database's CHECK on users.look names the same ones.
+var Looks = []string{"harbour", "console"}
+
+// MeUpdate is the body of PATCH /api/v1/me: the settings a user changes on
+// their own account. Only the look, for now.
+type MeUpdate struct {
+	Look string `json:"look"`
 }
 
 func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
-	u := currentUser(r)
-	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role}
+	s.writeMe(w, r, currentUser(r))
+}
+
+func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
+	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Look: u.Look}
 	if u.InvitedBy != nil {
 		inv, err := s.Store.UserByID(r.Context(), *u.InvitedBy)
 		if err != nil {
@@ -333,4 +350,26 @@ func (s *Server) setRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// patchMe changes the signed-in user's own settings: their look (R82d),
+// saved on the account so it follows them to every browser and device. It
+// answers with the account, as GET /api/v1/me does.
+func (s *Server) patchMe(w http.ResponseWriter, r *http.Request) {
+	var req MeUpdate
+	if !decodeBody(w, r, &req) {
+		return
+	}
+	if !slices.Contains(Looks, req.Look) {
+		problem(w, http.StatusBadRequest, "look: harbour or console")
+		return
+	}
+	u := currentUser(r)
+	if _, err := s.Store.SetUserLook(r.Context(), db.SetUserLookParams{ID: u.ID, Look: req.Look}); err != nil {
+		s.Log.ErrorContext(r.Context(), "set look", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
+		return
+	}
+	u.Look = req.Look
+	s.writeMe(w, r, u)
 }

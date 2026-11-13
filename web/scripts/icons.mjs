@@ -49,6 +49,8 @@ const icons = {
 	auto: 'device-desktop',
 	light: 'sun',
 	dark: 'moon',
+	// M15: the look (R82d), in the account menu.
+	look: 'palette',
 	location: 'map-pin',
 	list: 'list',
 	warning: 'alert-triangle',

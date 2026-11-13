@@ -26,6 +26,18 @@ async function signedIn(browser: Browser, role: Role = 'user', opts: BrowserCont
 	return ctx;
 }
 
+/** R82d: saves role's look on their account, through the API. */
+async function setLook(request: APIRequestContext, role: Role, look: 'harbour' | 'console') {
+	const res = await request.patch(`${URL}/api/v1/me`, { headers: { Cookie: `pa_session=${SESSIONS[role]}` }, data: { look } });
+	expect(res.status(), `${role} chooses ${look}`).toBe(200);
+}
+
+/** The user's and the admin's look: a test that sets Console puts Harbour back after, pass or fail. */
+async function setLooks(request: APIRequestContext, look: 'harbour' | 'console') {
+	await setLook(request, 'user', look);
+	await setLook(request, 'admin', look);
+}
+
 // The page fixture is signed in as the user.
 test.beforeEach(async ({ context }) => {
 	await context.addCookies([sessionCookie('user')]);
@@ -362,106 +374,117 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
 const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
-for (const scheme of ['light', 'dark'] as const) {
-	for (const width of [375, 1280]) {
-		test(`axe: every view, ${scheme}, ${width}px`, async ({ browser, request }) => {
-			test.setTimeout(360_000); // 35 views
-			await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
-			await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
-			const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
-			const aliasID = (await res.json()).messages[0].alias_id;
-			const users = await request.get(`${URL}/api/v1/admin/users`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
-			const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
-			const templates = await request.get(`${URL}/api/v1/admin/templates`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
-			const templateID = (await templates.json()).find((t: { name: string }) => t.name === 'Example Fire').id;
-			// M14: an album with a message, its description and a note (R82f).
-			const albumName = `Axe ${test.info().project.name} ${scheme} ${width} ${Date.now()}`;
-			const album = await (await request.post(`${URL}/api/v1/albums`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { name: albumName, description: 'For the axe check' } })).json();
-			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
-			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}/note`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { note: 'Why it was kept' } });
-			// M22: a large event (R87c), from a made-up code.
-			await post(request, '0100002', `@@${uniqueJob()} GRS3 DG98${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
-			const eventID = (await (await request.get(`${URL}/api/v1/large-events`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).events[0].id;
-			// M6: a waiting alias request, so the review screen and My requests
-			// are checked with one; rejected at the end so it doesn't linger.
-			const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}`;
-			const made = await request.post(`${URL}/api/v1/alias-requests`, {
-				headers: { Cookie: `pa_session=${SESSIONS.user}` },
-				data: { kind: 'add', pattern: reqPattern, name: `Axe ${reqPattern}`, note: 'NOTE-MARKER axe' }
-			});
-			expect(made.status()).toBe(201);
-			const reqID = (await made.json()).id;
-			// Admin views need the admin; the rest are seen as the user.
-			const ctx = await signedIn(browser, 'admin', { colorScheme: scheme, viewport: { width, height: 900 } });
-			const userCtx = await signedIn(browser, 'user', { colorScheme: scheme, viewport: { width, height: 900 } });
-			const adminPage = await ctx.newPage();
-			const userPage = await userCtx.newPage();
-			for (const view of views) {
-				// The integration form and its selection field are checked at
-				// 375 px too: phones set up integrations (owner, 2026-11-14).
-				const page = view === 'detail' || view.startsWith('admin-') || view.startsWith('/admin') ? adminPage : userPage;
-				if (view === 'detail') {
-					// A located message, so its small map is checked too (R35c).
-					await page.goto('/?q=SMOKE+FROM+ROOF');
-					await page.getByTestId('message-list').locator('article a.open').first().click();
-					await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
-					await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
-				} else if (view === 'alias-request') {
-					// R54: the request form, open on the alias view.
-					await page.goto(`/aliases/${aliasID}`);
-					await waitLive(page);
-					await page.getByRole('button', { name: 'Request a change' }).click();
-					await expect(page.getByRole('heading', { name: 'Request a change' })).toBeVisible();
-				} else if (view === 'selection') {
-					// R48: the selection field with its suggestions open.
-					await page.goto('/integrations');
-					await page.getByRole('button', { name: 'New integration' }).click();
-					await page.getByRole('combobox', { name: 'Capcodes and aliases' }).fill('Station');
-					await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option').first()).toBeVisible();
-				} else if (view === 'integration-form') {
-					await page.goto('/integrations');
-					await page.getByRole('button', { name: 'New integration' }).click();
-					await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
-				} else {
-					const path =
-						view === 'large-event'
-							? `/large-events/${eventID}`
-							: view === 'album'
-							? `/albums/${album.id}`
-							: view === 'alias'
-							? `/aliases/${aliasID}`
-							: view === 'admin-user'
-								? `/admin/users/${userID}`
-								: view === 'admin-tree-preview'
-									? `/admin/users/${userID}/deactivate-tree`
-									: view === 'admin-alias'
-										? `/admin/aliases/${aliasID}`
-										: view === 'admin-template'
-											? `/admin/templates/${templateID}`
-											: view;
-					await page.goto(path);
-					// Pages with a live stream never go network-idle; wait for content.
-					await expect(page.locator('main h1').first()).toBeVisible();
-					if (view === 'admin-user' || view === 'admin-tree-preview') await expect(page.getByTestId('tree-person').first()).toBeVisible();
-					if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
-					else if (path.startsWith('/reports/capcode')) await expect(page.getByTestId('report')).toBeVisible();
-					else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
-					else if (path.startsWith('/albums/')) await expect(page.getByTestId('album-note')).toBeVisible();
-					else if (path.startsWith('/large-events/')) await waitLive(page);
-					else await page.waitForTimeout(300);
+for (const look of ['harbour', 'console'] as const) {
+	for (const scheme of ['light', 'dark'] as const) {
+		for (const width of [375, 1280]) {
+			test(`axe: every view${look === 'console' ? ', Console' : ''}, ${scheme}, ${width}px`, async ({ browser, request }) => {
+				test.setTimeout(360_000); // 35 views
+				// M15: in each look (R82d), on the accounts the views are seen as.
+				await setLooks(request, look);
+				try {
+					await post(request, '0100001', `@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+					await post(request, '0999999', 'QDPAGE TO AN UNKNOWN PAGER');
+					const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+					const aliasID = (await res.json()).messages[0].alias_id;
+					const users = await request.get(`${URL}/api/v1/admin/users`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
+					const userID = (await users.json()).find((u: { email: string }) => u.email === 'user@example.test').id;
+					const templates = await request.get(`${URL}/api/v1/admin/templates`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` } });
+					const templateID = (await templates.json()).find((t: { name: string }) => t.name === 'Example Fire').id;
+					// M14: an album with a message, its description and a note (R82f).
+					const albumName = `Axe ${test.info().project.name} ${scheme} ${width} ${Date.now()}`;
+					const album = await (await request.post(`${URL}/api/v1/albums`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { name: albumName, description: 'For the axe check' } })).json();
+					await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+					await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}/note`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { note: 'Why it was kept' } });
+					// M22: a large event (R87c), from a made-up code.
+					await post(request, '0100002', `@@${uniqueJob()} GRS3 DG9${look === 'console' ? 7 : 8}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+					const eventID = (await (await request.get(`${URL}/api/v1/large-events`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).events[0].id;
+					// M6: a waiting alias request, so the review screen and My requests
+					// are checked with one; rejected at the end so it doesn't linger.
+					const reqPattern = `049${['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1}${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2}${look === 'console' ? 2 : 1}`;
+					const made = await request.post(`${URL}/api/v1/alias-requests`, {
+						headers: { Cookie: `pa_session=${SESSIONS.user}` },
+						data: { kind: 'add', pattern: reqPattern, name: `Axe ${reqPattern}`, note: 'NOTE-MARKER axe' }
+					});
+					expect(made.status()).toBe(201);
+					const reqID = (await made.json()).id;
+					// Admin views need the admin; the rest are seen as the user.
+					const ctx = await signedIn(browser, 'admin', { colorScheme: scheme, viewport: { width, height: 900 } });
+					const userCtx = await signedIn(browser, 'user', { colorScheme: scheme, viewport: { width, height: 900 } });
+					const adminPage = await ctx.newPage();
+					const userPage = await userCtx.newPage();
+					for (const view of views) {
+						// The integration form and its selection field are checked at
+						// 375 px too: phones set up integrations (owner, 2026-11-14).
+						const page = view === 'detail' || view.startsWith('admin-') || view.startsWith('/admin') ? adminPage : userPage;
+						if (view === 'detail') {
+							// A located message, so its small map is checked too (R35c).
+							await page.goto('/?q=SMOKE+FROM+ROOF');
+							await page.getByTestId('message-list').locator('article a.open').first().click();
+							await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+							await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+						} else if (view === 'alias-request') {
+							// R54: the request form, open on the alias view.
+							await page.goto(`/aliases/${aliasID}`);
+							await waitLive(page);
+							await page.getByRole('button', { name: 'Request a change' }).click();
+							await expect(page.getByRole('heading', { name: 'Request a change' })).toBeVisible();
+						} else if (view === 'selection') {
+							// R48: the selection field with its suggestions open.
+							await page.goto('/integrations');
+							await page.getByRole('button', { name: 'New integration' }).click();
+							await page.getByRole('combobox', { name: 'Capcodes and aliases' }).fill('Station');
+							await expect(page.getByRole('listbox', { name: 'Suggestions' }).getByRole('option').first()).toBeVisible();
+						} else if (view === 'integration-form') {
+							await page.goto('/integrations');
+							await page.getByRole('button', { name: 'New integration' }).click();
+							await expect(page.getByRole('heading', { name: 'New integration' })).toBeVisible();
+						} else {
+							const path =
+								view === 'large-event'
+									? `/large-events/${eventID}`
+									: view === 'album'
+									? `/albums/${album.id}`
+									: view === 'alias'
+									? `/aliases/${aliasID}`
+									: view === 'admin-user'
+										? `/admin/users/${userID}`
+										: view === 'admin-tree-preview'
+											? `/admin/users/${userID}/deactivate-tree`
+											: view === 'admin-alias'
+												? `/admin/aliases/${aliasID}`
+												: view === 'admin-template'
+													? `/admin/templates/${templateID}`
+													: view;
+							await page.goto(path);
+							// Pages with a live stream never go network-idle; wait for content.
+							await expect(page.locator('main h1').first()).toBeVisible();
+							if (view === 'admin-user' || view === 'admin-tree-preview') await expect(page.getByTestId('tree-person').first()).toBeVisible();
+							if (path === '/map') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+							else if (path.startsWith('/reports/capcode')) await expect(page.getByTestId('report')).toBeVisible();
+							else if (path.startsWith('/?') || path === '/' || path.startsWith('/aliases/') || path.startsWith('/capcodes/')) await waitLive(page);
+							else if (path.startsWith('/albums/')) await expect(page.getByTestId('album-note')).toBeVisible();
+							else if (path.startsWith('/large-events/')) await waitLive(page);
+							else await page.waitForTimeout(300);
+						}
+						// The look the view is drawn in: the account's, or Harbour before sign-in.
+						if (view.startsWith('/signin')) expect(await page.locator('html').getAttribute('data-look'), view).toBeNull();
+						else await expect(page.locator('html'), view).toHaveAttribute('data-look', look);
+						const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+						const summary = results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`);
+						expect(summary, `${view} (${look}, ${scheme}, ${width}px)`).toEqual([]);
+					}
+					// Each context holds a live stream and, since M4, a map with a WebGL
+					// context; left open they slow the following tests down.
+					await request.post(`${URL}/api/v1/admin/alias-requests/${reqID}/reject`, {
+						headers: { Cookie: `pa_session=${SESSIONS.admin}` },
+						data: { feedback: 'Wrong station: axe test' }
+					});
+					await Promise.all([ctx.close(), userCtx.close()]);
+				} finally {
+					await setLooks(request, 'harbour');
 				}
-				const results = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
-				const summary = results.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`);
-				expect(summary, `${view} (${scheme}, ${width}px)`).toEqual([]);
-			}
-			// Each context holds a live stream and, since M4, a map with a WebGL
-			// context; left open they slow the following tests down.
-			await request.post(`${URL}/api/v1/admin/alias-requests/${reqID}/reject`, {
-				headers: { Cookie: `pa_session=${SESSIONS.admin}` },
-				data: { feedback: 'Wrong station: axe test' }
 			});
-			await Promise.all([ctx.close(), userCtx.close()]);
-		});
+		}
 	}
 }
 
@@ -3071,80 +3094,237 @@ test('A70 phones', async ({ browser, request }, info) => {
 
 // WCAG 2.1 AA: 4.5:1 for text (1.4.3), 3:1 for focus rings, control borders
 // and the marks that show priority (1.4.11), each token as the browser
-// resolves it, light and dark. Priorities carry their names in words, so
-// none relies on colour alone (1.4.1).
+// resolves it, in each look (R82d), light and dark. Priorities carry their
+// names in words, so none relies on colour alone (1.4.1).
 const colourTokens = [
 	...['bg', 'surface', 'surface-2', 'fg', 'muted', 'border', 'control-border', 'accent', 'accent-fg', 'accent-hover', 'accent-pressed', 'accent-soft', 'accent-soft-fg'],
 	...['hover', 'focus', 'warn-bg', 'warn-fg', 'ok-fg', 'danger', 'danger-fg', 'danger-hover', 'danger-text', 'heartbeat-fg', 'highlight'],
-	...['emergency', 'nonemergency', 'admin'].flatMap((p) => ['bg', 'edge', 'dot', 'row', 'row-hover', 'badge-bg', 'badge-fg'].map((t) => `${p}-${t}`))
+	...['emergency', 'nonemergency', 'admin'].flatMap((p) => ['bg', 'edge', 'dot', 'row', 'row-hover', 'badge-bg', 'badge-fg', 'badge-border'].map((t) => `${p}-${t}`))
 ];
-test('M13: WCAG AA contrast of Harbour, light and dark', async ({ browser }) => {
+test('M13, M15: WCAG AA contrast of every look, light and dark', async ({ browser, request }) => {
 	const report: string[] = [];
 	const failures: string[] = [];
-	for (const scheme of ['light', 'dark'] as const) {
-		const page = await (await signedIn(browser, 'user', { colorScheme: scheme })).newPage();
-		await page.goto('/');
-		await waitLive(page);
-		const t: Record<string, string> = await page.evaluate((names) => {
-			const root = getComputedStyle(document.documentElement);
-			const probe = document.createElement('span');
-			document.body.append(probe);
-			const out: Record<string, string> = {};
-			for (const n of names) {
-				probe.style.color = `var(--${n})`;
-				out[n] = root.getPropertyValue(`--${n}`).trim() === 'transparent' ? 'transparent' : getComputedStyle(probe).color;
+	for (const look of ['harbour', 'console'] as const) {
+		await setLook(request, 'user', look);
+		try {
+			for (const scheme of ['light', 'dark'] as const) {
+				const page = await (await signedIn(browser, 'user', { colorScheme: scheme })).newPage();
+				await page.goto('/');
+				await waitLive(page);
+				await expect(page.locator('html')).toHaveAttribute('data-look', look);
+				// Whether the look draws a dot in its labels at all.
+				const dots = await page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--badge-dot').trim() !== 'none');
+				const t: Record<string, string> = await page.evaluate((names) => {
+					const root = getComputedStyle(document.documentElement);
+					const probe = document.createElement('span');
+					document.body.append(probe);
+					const out: Record<string, string> = {};
+					for (const n of names) {
+						probe.style.color = `var(--${n})`;
+						out[n] = root.getPropertyValue(`--${n}`).trim() === 'transparent' ? 'transparent' : getComputedStyle(probe).color;
+					}
+					probe.remove();
+					return out;
+				}, colourTokens);
+				// A transparent row is drawn on the page or on a card.
+				const on = (names: string[]) => names.flatMap((n) => (t[n] === 'transparent' ? ['bg', 'surface'] : [n]));
+				const rgb = (n: string) => t[n].match(/[\d.]+/g)!.slice(0, 3).map(Number);
+				const lum = (c: number[]) =>
+					c.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+				const ratio = (a: string, b: string) => {
+					const [x, y] = [lum(rgb(a)), lum(rgb(b))].sort((p, q) => q - p);
+					return (x + 0.05) / (y + 0.05);
+				};
+				const pairs: { what: string; fg: string; on: string[]; min: number }[] = [
+					{ what: 'Text', fg: 'fg', on: ['bg', 'surface', 'surface-2', 'hover', 'highlight'], min: 4.5 },
+					{ what: 'Secondary text', fg: 'muted', on: ['bg', 'surface', 'surface-2', 'hover'], min: 4.5 },
+					{ what: 'Links', fg: 'accent', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
+					{ what: 'Button text', fg: 'accent-fg', on: ['accent', 'accent-hover', 'accent-pressed'], min: 4.5 },
+					{ what: 'Current page, pressed', fg: 'accent-soft-fg', on: ['accent-soft'], min: 4.5 },
+					{ what: 'Danger button text', fg: 'danger-fg', on: ['danger', 'danger-hover'], min: 4.5 },
+					{ what: 'Error text', fg: 'danger-text', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
+					{ what: 'Live, saved', fg: 'ok-fg', on: ['bg', 'surface'], min: 3 },
+					{ what: 'Tooltip', fg: 'bg', on: ['fg'], min: 4.5 },
+					{ what: 'Warnings and flags', fg: 'warn-fg', on: ['warn-bg'], min: 4.5 },
+					{ what: 'Heartbeat label', fg: 'heartbeat-fg', on: ['bg', 'surface'], min: 4.5 },
+					{ what: 'Focus ring', fg: 'focus', on: ['bg', 'surface', 'surface-2'], min: 3 },
+					{ what: 'Control borders', fg: 'control-border', on: ['bg', 'surface', 'surface-2'], min: 3 },
+					{ what: 'Switch on', fg: 'accent', on: ['surface-2'], min: 3 }
+				];
+				for (const p of ['emergency', 'nonemergency', 'admin']) {
+					const rows = on([`${p}-row`, `${p}-row-hover`]);
+					pairs.push(
+						{ what: `${p}: label`, fg: `${p}-badge-fg`, on: on([`${p}-badge-bg`]), min: 4.5 },
+						{ what: `${p}: map marker`, fg: `${p}-bg`, on: ['bg', 'surface'], min: 3 },
+						{ what: `${p}: text on its row`, fg: 'fg', on: rows, min: 4.5 },
+						{ what: `${p}: secondary text on its row`, fg: 'muted', on: rows, min: 4.5 },
+						{ what: `${p}: links on its row`, fg: 'accent', on: rows, min: 4.5 }
+					);
+					if (t[`${p}-edge`] !== 'transparent') pairs.push({ what: `${p}: row edge`, fg: `${p}-edge`, on: rows, min: 3 });
+					if (dots) pairs.push({ what: `${p}: dot`, fg: `${p}-dot`, on: on([`${p}-badge-bg`]), min: 3 });
+					if (t[`${p}-badge-border`] !== 'transparent') pairs.push({ what: `${p}: label border`, fg: `${p}-badge-border`, on: rows, min: 3 });
+				}
+				report.push(`${look === 'console' ? 'Console' : 'Harbour'}, ${scheme}`);
+				for (const p of pairs) {
+					const each = p.on.map((b) => ({ b, r: ratio(p.fg, b) }));
+					const worst = each.reduce((w, e) => (e.r < w.r ? e : w));
+					report.push(`  ${p.what}: ${worst.r.toFixed(2)}:1 at worst (--${p.fg} on --${worst.b}; needs ${p.min}:1) [${each.map((e) => `${e.b} ${e.r.toFixed(2)}`).join(', ')}]`);
+					if (worst.r < p.min) failures.push(`${look}, ${scheme}: ${p.what}: --${p.fg} on --${worst.b} is ${worst.r.toFixed(2)}:1, needs ${p.min}:1`);
+				}
+				await page.context().close();
 			}
-			probe.remove();
-			return out;
-		}, colourTokens);
-		// A transparent row is drawn on the page or on a card.
-		const on = (names: string[]) => names.flatMap((n) => (t[n] === 'transparent' ? ['bg', 'surface'] : [n]));
-		const rgb = (n: string) => t[n].match(/[\d.]+/g)!.slice(0, 3).map(Number);
-		const lum = (c: number[]) =>
-			c.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
-		const ratio = (a: string, b: string) => {
-			const [x, y] = [lum(rgb(a)), lum(rgb(b))].sort((p, q) => q - p);
-			return (x + 0.05) / (y + 0.05);
-		};
-		const pairs: { what: string; fg: string; on: string[]; min: number }[] = [
-			{ what: 'Text', fg: 'fg', on: ['bg', 'surface', 'surface-2', 'hover', 'highlight'], min: 4.5 },
-			{ what: 'Secondary text', fg: 'muted', on: ['bg', 'surface', 'surface-2', 'hover'], min: 4.5 },
-			{ what: 'Links', fg: 'accent', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
-			{ what: 'Button text', fg: 'accent-fg', on: ['accent', 'accent-hover', 'accent-pressed'], min: 4.5 },
-			{ what: 'Current page, pressed', fg: 'accent-soft-fg', on: ['accent-soft'], min: 4.5 },
-			{ what: 'Danger button text', fg: 'danger-fg', on: ['danger', 'danger-hover'], min: 4.5 },
-			{ what: 'Error text', fg: 'danger-text', on: ['bg', 'surface', 'surface-2'], min: 4.5 },
-			{ what: 'Live, saved', fg: 'ok-fg', on: ['bg', 'surface'], min: 3 },
-			{ what: 'Tooltip', fg: 'bg', on: ['fg'], min: 4.5 },
-			{ what: 'Warnings and flags', fg: 'warn-fg', on: ['warn-bg'], min: 4.5 },
-			{ what: 'Heartbeat label', fg: 'heartbeat-fg', on: ['bg', 'surface'], min: 4.5 },
-			{ what: 'Focus ring', fg: 'focus', on: ['bg', 'surface', 'surface-2'], min: 3 },
-			{ what: 'Control borders', fg: 'control-border', on: ['bg', 'surface', 'surface-2'], min: 3 },
-			{ what: 'Switch on', fg: 'accent', on: ['surface-2'], min: 3 }
-		];
-		for (const p of ['emergency', 'nonemergency', 'admin']) {
-			const rows = on([`${p}-row`, `${p}-row-hover`]);
-			pairs.push(
-				{ what: `${p}: label`, fg: `${p}-badge-fg`, on: on([`${p}-badge-bg`]), min: 4.5 },
-				{ what: `${p}: dot`, fg: `${p}-dot`, on: on([`${p}-badge-bg`]), min: 3 },
-				{ what: `${p}: map marker`, fg: `${p}-bg`, on: ['bg', 'surface'], min: 3 },
-				{ what: `${p}: text on its row`, fg: 'fg', on: rows, min: 4.5 },
-				{ what: `${p}: secondary text on its row`, fg: 'muted', on: rows, min: 4.5 },
-				{ what: `${p}: links on its row`, fg: 'accent', on: rows, min: 4.5 }
-			);
-			if (t[`${p}-edge`] !== 'transparent') pairs.push({ what: `${p}: row edge`, fg: `${p}-edge`, on: rows, min: 3 });
+		} finally {
+			await setLook(request, 'user', 'harbour');
 		}
-		report.push(`Harbour, ${scheme}`);
-		for (const p of pairs) {
-			const each = p.on.map((b) => ({ b, r: ratio(p.fg, b) }));
-			const worst = each.reduce((w, e) => (e.r < w.r ? e : w));
-			report.push(`  ${p.what}: ${worst.r.toFixed(2)}:1 at worst (--${p.fg} on --${worst.b}; needs ${p.min}:1) [${each.map((e) => `${e.b} ${e.r.toFixed(2)}`).join(', ')}]`);
-			if (worst.r < p.min) failures.push(`${scheme}: ${p.what}: --${p.fg} on --${worst.b} is ${worst.r.toFixed(2)}:1, needs ${p.min}:1`);
-		}
-		await page.context().close();
 	}
 	console.log(report.join('\n'));
 	expect(failures).toEqual([]);
+});
+
+// A74. Choosing a look (R82d, ADR 0028). Given user B on Harbour, B chooses
+// Console in the account menu on a PC, and the page changes without
+// reloading; B then signs in on a phone (a new session, in a new browser in
+// dark mode), and its first paint is already Console; user C still sees
+// Harbour. axe and contrast in both looks, light and dark, are the all-views
+// check and the contrast check above.
+test('A74 choosing a look', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const phoneToken = `e2e-a74-${info.project.name}-${Date.now()}`;
+	await setLook(request, 'user', 'harbour');
+	await setLook(request, 'userC', 'harbour');
+	try {
+		// B on a PC, on Harbour.
+		const pc = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+		await pc.goto('/');
+		await waitLive(pc);
+		const root = pc.locator('html');
+		await expect(root).toHaveAttribute('data-look', 'harbour');
+		const menu = pc.getByRole('button', { name: /^Account menu/ });
+		const drawn = async () => ({
+			corner: await menu.evaluate((b) => getComputedStyle(b).borderTopLeftRadius),
+			font: await pc.evaluate(() => getComputedStyle(document.body).fontFamily),
+			bg: await pc.evaluate(() => getComputedStyle(document.body).backgroundColor)
+		});
+		const harbourDrawn = await drawn();
+		// Gone if the page reloads.
+		await pc.evaluate(() => ((window as unknown as { a74: boolean }).a74 = true));
+		await menu.click();
+		const choice = pc.getByRole('combobox', { name: 'Look', exact: true });
+		await expect(choice).toHaveValue('harbour');
+		await choice.selectOption('console');
+		await expect(root).toHaveAttribute('data-look', 'console');
+		const consoleDrawn = await drawn();
+		expect(harbourDrawn.corner).toBe('10px');
+		expect(consoleDrawn.corner).toBe('2px');
+		expect(consoleDrawn.font).not.toBe(harbourDrawn.font);
+		expect(consoleDrawn.bg).toBe('rgb(255, 255, 255)');
+		expect(await pc.evaluate(() => (window as unknown as { a74?: boolean }).a74), 'no reload').toBe(true);
+		// Saved on the account.
+		await expect
+			.poll(async () => (await (await request.get(`${URL}/api/v1/me`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).look)
+			.toBe('console');
+		expect(await axeOf(pc), 'axe: the account menu, Console').toEqual([]);
+		await pc.context().close();
+
+		// B signs in on a phone: a new session, in a new browser, in dark mode.
+		sql(
+			`INSERT INTO sessions (token_hash, user_id, expires_at) SELECT sha256(convert_to('${phoneToken}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';`
+		);
+		// The page comes from the server already in Console...
+		const sent = await (await request.get(`${URL}/`, { headers: { Cookie: `pa_session=${phoneToken}` } })).text();
+		expect(sent).toMatch(/<html data-look="console"/);
+		const phoneCtx = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
+		await phoneCtx.addCookies([{ name: 'pa_session', value: phoneToken, url: URL }]);
+		// ...so the first frame is Console, and the look never changes after:
+		// any change of data-look on the root is recorded.
+		await phoneCtx.addInitScript(() => {
+			const w = window as unknown as { looks: (string | null)[]; first?: string | null };
+			w.looks = [];
+			new MutationObserver((rs) => {
+				for (const r of rs) w.looks.push((r.target as Element).getAttribute('data-look'));
+			}).observe(document, { subtree: true, attributes: true, attributeFilter: ['data-look'] });
+			requestAnimationFrame(() => (w.first = document.documentElement.getAttribute('data-look')));
+		});
+		const phone = await phoneCtx.newPage();
+		await phone.goto('/');
+		await waitLive(phone);
+		const seen = await phone.evaluate(() => {
+			const w = window as unknown as { looks: (string | null)[]; first?: string | null };
+			return { looks: w.looks, first: w.first };
+		});
+		expect(seen.first, 'the first frame').toBe('console');
+		expect(seen.looks.filter((l) => l !== 'console'), 'the look after the first frame').toEqual([]);
+		expect(await phone.evaluate(() => getComputedStyle(document.body).backgroundColor), 'Console dark').toBe('rgb(20, 20, 20)');
+		await phone.getByRole('button', { name: /^Account menu/ }).click();
+		await expect(phone.getByRole('combobox', { name: 'Look', exact: true })).toHaveValue('console');
+		await phoneCtx.close();
+
+		// C signs in: still Harbour.
+		const c = await (await signedIn(browser, 'userC', { colorScheme: 'dark' })).newPage();
+		await c.goto('/');
+		await waitLive(c);
+		await expect(c.locator('html')).toHaveAttribute('data-look', 'harbour');
+		expect(await c.evaluate(() => getComputedStyle(document.body).backgroundColor), 'Harbour dark').toBe('rgb(15, 22, 20)');
+		await c.context().close();
+	} finally {
+		await setLook(request, 'user', 'harbour');
+		sql(`DELETE FROM sessions WHERE token_hash = sha256(convert_to('${phoneToken}', 'UTF8'));`);
+	}
+	console.log(`A74 (${info.project.name}): Console chosen on a PC without reloading; a new phone session's page sent and first drawn in Console (dark); C on Harbour`);
+});
+
+// The evidence for M15 (ADR 0028): with PA_M15_SHOTS set to a folder,
+// Console, light and dark, at 1,280 and 375 px: the message list, a message
+// open, the map, Administration, and the account menu with the choice.
+// Chromium only.
+test('M15 screenshots', async ({ browser, request }, info) => {
+	const dir = process.env.PA_M15_SHOTS;
+	test.skip(!dir || info.project.name !== 'chromium', 'only with PA_M15_SHOTS set, in Chromium');
+	test.setTimeout(300_000);
+	// One page of each kind, the newest last: made-up pages (SPEC.md section 10).
+	const pages: [string, string][] = [
+		['0000050', 'Network heartbeat 000123'],
+		['0100003', 'QDPAGER TEST, PLEASE IGNORE'],
+		['0100002', `Hb${uniqueJob()} CREWS RETURNING #STN2`],
+		['0100002', `@@${uniqueJob()} GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`],
+		['0100001', `@@${uniqueJob()} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1`]
+	];
+	for (const [capcode, text] of pages) await post(request, capcode, text);
+	const shot = async (page: Page, name: string) => page.screenshot({ path: join(dir!, `${name}.png`) });
+	await setLooks(request, 'console');
+	try {
+		for (const scheme of ['light', 'dark'] as const) {
+			for (const width of [1280, 375]) {
+				const size = { viewport: { width, height: width === 375 ? 812 : 900 }, colorScheme: scheme, hasTouch: width === 375 };
+				const page = await (await signedIn(browser, 'admin', size)).newPage();
+				const base = `console-${scheme}-${width}`;
+				await page.goto('/');
+				await waitLive(page);
+				await expect(page.locator('html')).toHaveAttribute('data-look', 'console');
+				await shot(page, `${base}-list`);
+				await page.getByTestId('message-list').locator('article a.open').first().click();
+				await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+				await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+				await page.waitForTimeout(800);
+				await shot(page, `${base}-message`);
+				await page.goto('/map');
+				await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+				await page.waitForTimeout(800);
+				await shot(page, `${base}-map`);
+				await page.goto('/admin');
+				await expect(page.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
+				await shot(page, `${base}-administration`);
+				await page.goto('/');
+				await waitLive(page);
+				await page.getByRole('button', { name: /^Account menu/ }).click();
+				await expect(page.getByRole('combobox', { name: 'Look', exact: true })).toHaveValue('console');
+				await shot(page, `${base}-account-menu`);
+				await page.context().close();
+			}
+		}
+	} finally {
+		await setLooks(request, 'harbour');
+	}
 });
 
 // The evidence for ADR 0015: with PA_M13_SHOTS set to a folder, screenshots

@@ -1,7 +1,11 @@
 /* Every value that styles the UI is a token here, and only here (R82c,
    ADR 0015): components use var(--…) and nothing else, and
    scripts/check-tokens.mjs fails CI if one doesn't. A look is the set of
-   tokens below, in light and dark; M13 builds Harbour only.
+   tokens below, in light and dark: Harbour, the default, and Console
+   (R82d), chosen in the account menu and saved on the account. The server
+   writes the signed-in user's look into the page as data-look on the root
+   before it's sent, so the first paint is already theirs (ADR 0028).
+   Console defines every token Harbour does (check-tokens.mjs checks).
 
    Colours are written once, light-dark(light, dark): the root's
    color-scheme picks one, following the system unless data-theme says
@@ -26,11 +30,17 @@
 	--print-pad: 0.75rem;
 	--print-gap: 1.5rem;
 	--print-text: 1rem;
+	/* Controls are at least --target high and wide: the look's --target-min,
+	   or its --target-coarse on a touch screen (below). */
+	--target: var(--target-min);
+	/* The room the hidden scroll bar had: measured (scrubberHere.svelte.ts). */
+	--scrollbar-gap: 0px;
 }
 
-/* Harbour (ADR 0015): airy, with larger type, more room and big targets,
-   and a forest-green accent. Priority is a soft tinted label with a dot;
-   rows have no edge or tint. */
+/* Harbour (ADR 0015), the default look: airy, with larger type, more room
+   and big targets, and a forest-green accent. Priority is a soft tinted
+   label with a dot; rows have no edge or tint. It's the look of every page
+   before sign-in, and of a user whose account says harbour (R82d). */
 :root {
 	color-scheme: light dark;
 
@@ -163,7 +173,6 @@
 	   at least --target high and wide, and 44 px on touch screens. */
 	--target-min: 2.75rem;
 	--target-coarse: 2.75rem;
-	--target: var(--target-min);
 	--control-check: 1.1rem;
 	--icon-size: 1.25em;
 	--icon-stroke: 1.5;
@@ -242,8 +251,215 @@
 	--scrubber-tab-width: 3.125rem; /* 2.5 times the first try (owner, 2026-11-13) */
 	--scrubber-tab-width-held: 3.5rem;
 	--scrubber-grip-gap: 0.375rem;
-	--scrollbar-gap: 0px; /* the room the hidden scroll bar had: measured (Scrubber.svelte) */
 	--scrubber-tab-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 30%, transparent);
+}
+
+/* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
+   on white or white on ink, square and dense, the most messages on screen.
+   No accent colour: the accent is the text colour, and the focus ring is
+   blue. Priority is the only colour: an edge down every row and an outlined
+   capital label. System type, with times, groups and labels in monospace.
+   Every token Harbour has, so nothing of Harbour shows through. */
+:root[data-look='console'] {
+	/* Surfaces and text. */
+	--bg: light-dark(#ffffff, #141414);
+	--surface: light-dark(#f1f1f0, #1c1c1c);
+	--surface-2: light-dark(#fafaf9, #181818);
+	--fg: light-dark(#111111, #ededed);
+	--muted: light-dark(#545454, #a8a8a8);
+	--border: light-dark(#dcdcdc, #2f2f2f);
+	--control-border: light-dark(#767676, #8a8a8a);
+	--hover: light-dark(#f2f2f2, #222222);
+	--highlight: light-dark(#fff3b0, #47400f);
+	--scrim: light-dark(#0000008c, #000000b3);
+	/* Template icons sit on a light tile in both themes (R66). */
+	--icon-tile: #ffffff;
+
+	/* The accent is ink: links, primary buttons, the current page. Focus is
+	   the one blue. */
+	--accent: light-dark(#111111, #f2f2f2);
+	--accent-fg: light-dark(#ffffff, #111111);
+	--accent-hover: light-dark(#363636, #cfcfcf);
+	--accent-pressed: light-dark(#000000, #b5b5b5);
+	--accent-soft: light-dark(#e6e6e6, #303030);
+	--accent-soft-fg: light-dark(#111111, #f2f2f2);
+	--focus: light-dark(#1d5bd6, #7ea8ff);
+
+	/* States. */
+	--warn-bg: light-dark(#fff0d6, #3d2a00);
+	--warn-fg: light-dark(#6b3d00, #ffd58a);
+	--ok-fg: light-dark(#111111, #ededed);
+	--danger: light-dark(#b31818, #ff7a7a);
+	--danger-fg: light-dark(#ffffff, #1f0000);
+	--danger-hover: light-dark(#8f1212, #ff9a9a);
+	--danger-text: light-dark(#b31818, #ff8585);
+
+	/* How each priority is shown (R82c): a 4 px edge down the row and an
+	   outlined capital label, no dot, no tint. --<priority>-bg is the
+	   priority's own colour, also the map's marker for it. */
+	--emergency-bg: light-dark(#d42020, #ff5c5c);
+	--emergency-dot: var(--emergency-bg);
+	--emergency-edge: var(--emergency-bg);
+	--emergency-row: transparent;
+	--emergency-row-hover: var(--hover);
+	--emergency-badge-bg: transparent;
+	--emergency-badge-fg: light-dark(#b31818, #ff8585);
+	--emergency-badge-border: var(--emergency-edge);
+	--nonemergency-bg: light-dark(#c26700, #f2a33a);
+	--nonemergency-dot: var(--nonemergency-bg);
+	--nonemergency-edge: var(--nonemergency-bg);
+	--nonemergency-row: transparent;
+	--nonemergency-row-hover: var(--hover);
+	--nonemergency-badge-bg: transparent;
+	--nonemergency-badge-fg: light-dark(#8a4a00, #f5b660);
+	--nonemergency-badge-border: var(--nonemergency-edge);
+	--admin-bg: light-dark(#2a6fb0, #6aa9e6);
+	--admin-dot: var(--admin-bg);
+	--admin-edge: var(--admin-bg);
+	--admin-row: transparent;
+	--admin-row-hover: var(--hover);
+	--admin-badge-bg: transparent;
+	--admin-badge-fg: light-dark(#1f5c94, #8fc0ee);
+	--admin-badge-border: var(--admin-edge);
+	--plain-row: transparent;
+	--plain-row-hover: var(--hover);
+	--heartbeat-fg: var(--muted);
+	--heartbeat-border: var(--control-border);
+	--edge-width: 0.25rem;
+	--badge-dot: none;
+	--badge-dot-size: 0.6em;
+	--badge-case: uppercase;
+	--badge-tracking: 0.06em;
+	--badge-pad-x: 0.35rem;
+	--badge-pad-y: 0.0625rem;
+
+	/* Type: the system's own, nothing downloaded; times, groups and labels
+	   in monospace, as the page text. Slightly smaller than Harbour's. */
+	--font-ui: system-ui, -apple-system, 'Segoe UI', Roboto, 'Noto Sans', 'Liberation Sans', sans-serif;
+	--font-mono: ui-monospace, 'Cascadia Mono', 'Segoe UI Mono', 'Liberation Mono', Menlo, Consolas, monospace;
+	--font-page: var(--font-mono);
+	--font-meta: var(--font-mono);
+	--text-xxs: 0.75rem;
+	--text-xs: 0.8rem;
+	--text-sm: 0.85rem;
+	--text-md: 0.9rem;
+	--text-base: 1rem;
+	--text-lg: 1.05rem;
+	--text-xl: 1.1rem;
+	--text-2xl: 1.25rem;
+	--text-page: 0.9rem;
+	--weight-normal: 400;
+	--weight-strong: 700;
+	--weight-heavy: 700;
+	--leading: 1.4;
+	--leading-tight: 1.2;
+	--leading-loose: 1.5;
+
+	/* Spacing: dense. */
+	--space-3xs: 0.125rem;
+	--space-2xs: 0.25rem;
+	--space-xs: 0.3125rem;
+	--space-sm: 0.5rem;
+	--space-md: 0.625rem;
+	--space-lg: 0.875rem;
+	--space-xl: 1rem;
+	--space-2xl: 1.25rem;
+	--space-3xl: 1.75rem;
+	--page-pad: 1rem;
+	--page-pad-phone: 0.75rem;
+	--row-pad-y: 0.5rem;
+	--row-pad-x: 0.875rem;
+	--row-pad-end: var(--row-pad-x); /* a row's right side: wider where the scrubber sits over it */
+	--button-pad-x: 0.875rem;
+
+	/* Lines and corners: square. */
+	--border-width: 1px;
+	--border-width-strong: 2px;
+	--focus-width: 3px;
+	--focus-offset: 2px;
+	--agency-bar: 0.25rem;
+	--rule-width: 0.25rem;
+	--radius: 2px;
+	--radius-button: 2px;
+	--radius-badge: 2px;
+	--radius-small: 2px;
+	--radius-pill: 999rem;
+	--radius-round: 50%;
+	--press-shift: 1px;
+
+	/* Targets and sizes: 36 px controls, 44 px on touch screens. */
+	--target-min: 2.25rem;
+	--target-coarse: 2.75rem;
+	--control-check: 1.1rem;
+	--icon-size: 1.25em;
+	--icon-stroke: 2;
+	--tile-size: 1.25em;
+	--tile-size-large: 2.75rem;
+	--tile-pad: 0.125rem;
+	--avatar-size: 2rem;
+	--pulse-size: 0.55rem;
+	--count-min: 1.5rem;
+	--switch-width: 2.75rem;
+	--switch-height: 1.5rem;
+	--switch-inset: 0.1875rem;
+	--menu-width: 15rem;
+	--menu-width-shrunk: 4rem;
+	--flyout-width: 15rem;
+	--list-min: 26rem;
+	--detail-map-width: 20rem;
+	--full-height: 100dvh;
+	--sheet-height: 85dvh;
+	--map-height: min(65dvh, 40rem);
+	--map-min-height: 18rem;
+	/* The map's own drawing of messages (MapView reads these). */
+	--map-point-radius: 7px;
+	--map-cluster-radius-small: 13px;
+	--map-cluster-radius-medium: 17px;
+	--map-cluster-radius-large: 22px;
+	--map-stroke: 2px;
+	--map-ring-stroke: 4px;
+	--map-cluster-distance: 36px;
+	--map-font: 'Noto Sans Medium';
+	--map-height-small: 16rem;
+	--swatch-size: 1.5rem;
+	--swatch-size-small: 0.9rem;
+	--panel-max: calc(100vw - 2rem);
+	--field-search: 24rem;
+	--field-narrow: 9rem;
+	--bottom-bar-height: 4rem;
+	--suggestions-height: 20rem;
+	--pre-height: 12rem;
+	--list-height: 14rem;
+	--measure: 44rem;
+	--measure-narrow: 32rem;
+	--measure-wide: 56rem;
+	--field-min: 10rem;
+	--field-wide: 14rem;
+	--label-min: 7rem;
+	--card-min: 12rem;
+	--dialog-width: 32rem;
+	--disabled-opacity: 0.6;
+	/* The search row (R33a). */
+	--icon-size-large: 1.5rem;
+	--tip-gap: 0.375rem;
+	--calendar-width: 21rem;
+	--calendar-day: 2.6rem;
+	--calendar-mark: 2.2rem;
+	--calendar-bar-inset: 0.2rem;
+	--preview-opacity: 0.55;
+	/* The scrubber (R81b-R81e). */
+	--scrubber-width: 6.5rem;
+	--scrubber-hit: var(--target);
+	--scrubber-edge: 0.1875rem;
+	--scrubber-dot: 0.3125rem;
+	--scrubber-dot-colour: var(--control-border);
+	--scrubber-halo: 0 0 0.125rem var(--bg), 0 0 0.25rem var(--bg), 0 0 0.375rem var(--bg);
+	--scrubber-thumb: 0.125rem;
+	--scrubber-tab-height: 3rem;
+	--scrubber-tab-width: 3.125rem;
+	--scrubber-tab-width-held: 3.5rem;
+	--scrubber-grip-gap: 0.375rem;
+	--scrubber-tab-shadow: 0 0.0625rem 0.25rem color-mix(in srgb, var(--fg) 35%, transparent);
 }
 
 @media (pointer: coarse) {

@@ -247,16 +247,20 @@
 			map.on('mouseenter', id, () => (map!.getCanvas().style.cursor = 'pointer'));
 			map.on('mouseleave', id, () => (map!.getCanvas().style.cursor = ''));
 		}
-		// Follow the colour theme.
+		// Follow the colour theme and the look (R82d), when one of them has
+		// changed: a restyle that changes nothing would only restart the map.
+		const drawnIn = () => `${dark()} ${document.documentElement.dataset.look ?? ''}`;
+		let styledIn = drawnIn();
 		const restyle = () => {
-			if (!map) return;
+			if (!map || drawnIn() === styledIn) return;
+			styledIn = drawnIn();
 			map.setStyle(style());
 			map.once('style.load', addMessageLayers);
 		};
 		const mq = matchMedia('(prefers-color-scheme: dark)');
 		mq.addEventListener('change', restyle);
 		const mo = new MutationObserver(restyle);
-		mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+		mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-look'] });
 		return () => {
 			mq.removeEventListener('change', restyle);
 			mo.disconnect();
