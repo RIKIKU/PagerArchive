@@ -228,4 +228,7 @@ The owner asked how releases are versioned: v1.7.10 (large events, the scrubber,
   - none: 9.4.3;
   - GitHub not answering: a release fails, and `--dev` gives 9.4.3-dev+… "the pull requests' labels not checked".
 
-DRYRUN
+**Evidence (2026-11-14):**
+- `release-version-checks.sh` passed on cld01 with every case above, on main with #38 to #41 merged in. So did actionlint 1.7.12 (with shellcheck), `go test .`, `retry-checks.sh` and `changes-checks.sh`.
+- The dry run on this branch (Release, run 43507601036, at bac1145, with M15's migration on main) said in its `plan` job, which had `PullRequests: read`: `Dry run: v1.8.0 would be released (a minor version, since v1.7.10: a migration was added (00020_looks.sql)). Nothing is tagged or published.` No merged pull request carried the `feature` label yet; the label is new.
+- The pull request's own CI run gave `version=1.8.0-dev+51e8ff9` in its `stamp` job, with the labels read.
