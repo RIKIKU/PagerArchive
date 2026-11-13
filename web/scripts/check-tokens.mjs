@@ -32,6 +32,8 @@
 // too. Selectors and @media, @container and @supports conditions aren't
 // values: a breakpoint can't be a token in CSS. Unitless numbers (flex: 1,
 // opacity), percentages, fr, times and angles are layout, not look.
+// And every look in src/app.css sets the same tokens as the default one
+// (R82d), so a second look leaves no default value behind.
 //
 // usage: node scripts/check-tokens.mjs [file …]   (default: all of src)
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -324,6 +326,31 @@ function checkCss(file, text, report, name) {
 	}
 }
 
+// R82d: a look is a whole set of tokens. The default look (Harbour) is the
+// top-level :root rule that sets --bg; every other look, a rule
+// :root[data-look='name'], sets exactly the same tokens, no fewer (or a
+// default value would show through) and no more.
+function checkLooks(file, text, name) {
+	const wrapped = `<style>${text}</style>`;
+	const ast = parse(wrapped, { modern: true, filename: file });
+	const looks = [];
+	for (const rule of ast.css.children) {
+		if (rule.type !== 'Rule') continue;
+		const selector = wrapped.slice(rule.prelude.start, rule.prelude.end).trim();
+		const tokens = rule.block.children.filter((c) => c.type === 'Declaration' && c.property.startsWith('--')).map((c) => c.property);
+		const look = selector === ':root' && tokens.includes('--bg') ? '' : /^:root\[data-look='([a-z]+)'\]$/.exec(selector)?.[1];
+		if (look !== undefined) looks.push({ look, tokens: new Set(tokens), line: lineOf(text, rule.start - '<style>'.length) });
+	}
+	const problems = [];
+	const base = looks.find((l) => l.look === '');
+	if (!base) return [`${name}: no default look (a :root rule setting --bg)`];
+	for (const l of looks.filter((l) => l.look !== '')) {
+		for (const t of base.tokens) if (!l.tokens.has(t)) problems.push(`${name}:${l.line}: look ${l.look} doesn't set ${t}, which the default look sets`);
+		for (const t of l.tokens) if (!base.tokens.has(t)) problems.push(`${name}:${l.line}: look ${l.look} sets ${t}, which the default look doesn't`);
+	}
+	return problems;
+}
+
 function files(dir) {
 	return readdirSync(dir).flatMap((name) => {
 		const p = join(dir, name);
@@ -346,9 +373,10 @@ for (const file of [tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
 	else checkCss(file, text, report, name);
 }
 for (const u of uses) if (!defined.has(u.token)) found.push(`${u.name}:${u.line}: unknown token ${u.token} in ${u.where}`);
+if (targets.includes(tokenFile)) found.push(...checkLooks(tokenFile, readFileSync(tokenFile, 'utf8'), relative(web, tokenFile).replaceAll('\\', '/')));
 if (found.length) {
 	console.error(found.join('\n'));
-	console.error(`\n${found.length} problem(s): use a token from src/app.css instead (R82c, A73).`);
+	console.error(`\n${found.length} problem(s): use a token from src/app.css instead, and give every look every token (R82c, R82d, A73).`);
 	process.exit(1);
 }
 console.log(`check-tokens: ${targets.length} files, no hard-coded colours, sizes, spacing, radii or type (R82c)`);

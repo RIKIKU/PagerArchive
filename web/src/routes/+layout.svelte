@@ -6,7 +6,7 @@
 	import '../app.css';
 	import { page } from '$app/state';
 	import { onMount } from 'svelte';
-	import { api, type Me, type Meta } from '#lib/api.ts';
+	import { api, type Look, type Me, type Meta } from '#lib/api.ts';
 	import AccountMenu from '#lib/AccountMenu.svelte';
 	import { refreshAlbums } from '#lib/albums.svelte.ts';
 	import BottomBar from '#lib/BottomBar.svelte';
@@ -26,6 +26,9 @@
 	let meta: Meta | undefined = $state();
 	let me: Me | undefined = $state();
 	let theme: 'system' | 'light' | 'dark' = $state('system');
+	// R82d: the user's look, from their account. The server sent the page
+	// with it already on the root (data-look), so the first paint is theirs.
+	let look: Look | undefined = $state();
 	let topHeight = $state(0);
 
 	// The sign-in page works without a session, and has no frame.
@@ -48,6 +51,7 @@
 				.me()
 				.then((m) => {
 					me = m;
+					look = m.look;
 					unfollow = loadSheet(m.id);
 					// R77: the Albums group lists their albums.
 					refreshAlbums();
@@ -73,6 +77,13 @@
 		} catch {
 			// ignore
 		}
+	});
+
+	// A look chosen in the account menu applies at once, without reloading
+	// (R82d). Pages before sign-in are Harbour.
+	$effect(() => {
+		if (signedOut) delete document.documentElement.dataset.look;
+		else if (look && document.documentElement.dataset.look !== look) document.documentElement.dataset.look = look;
 	});
 
 	// R39: admins see at a glance when a receiver has gone quiet; R55: and how
@@ -131,7 +142,7 @@
 			<Crumbs {trail} listHref={listHref()} />
 			<div class="tools">
 				{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} timeZone={meta.time_zone} firstPage={meta.first_page} lastPage={meta.last_page} />{/if}
-				<AccountMenu {me} bind:theme />
+				<AccountMenu {me} bind:theme bind:look />
 			</div>
 		</header>
 		<main id="main">

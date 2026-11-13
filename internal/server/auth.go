@@ -312,3 +312,23 @@ func (s *Server) firstAdmin(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, Next{Redirect: link})
 }
+
+// PageLook is the look (R82d) the app's page is sent with: the signed-in
+// user's, so its first paint is already theirs (ADR 0028), or "" (Harbour)
+// before sign-in, on the sign-in page, and whenever the session can't be
+// read. It never refuses anything: the page itself loads without a session,
+// and the app then sends the visitor to sign in.
+func (s *Server) PageLook(r *http.Request) string {
+	if s.Accounts == nil || strings.HasPrefix(r.URL.Path, "/signin") {
+		return ""
+	}
+	c, err := r.Cookie(sessionCookie)
+	if err != nil {
+		return ""
+	}
+	u, err := s.Accounts.Session(r.Context(), c.Value)
+	if err != nil {
+		return ""
+	}
+	return u.Look
+}
