@@ -412,7 +412,8 @@
 
 	// Hidden until wanted, where there's a mouse to want it with. Shown at
 	// once; hidden a moment after the pointer leaves, so it doesn't flicker.
-	let hideable = $state(false);
+	// Known from the start, so a page never shows the strip and then fades it out.
+	let hideable = $state(typeof window !== 'undefined' && window.matchMedia('(hover: hover) and (pointer: fine)').matches);
 	let near = $state(false);
 	let over = $state(false);
 	let focused = $state(false);
