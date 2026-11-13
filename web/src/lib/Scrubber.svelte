@@ -25,7 +25,8 @@
 		at,
 		host,
 		onjump,
-		onleave
+		onleave,
+		touch = false
 	}: {
 		/** The list's API parameters, as a string (MessageList's askedKey). */
 		query: string;
@@ -39,32 +40,35 @@
 		onjump: (before: string) => Promise<void>;
 		/** Escape: the keyboard goes back to the list. */
 		onleave?: () => void;
+		/** A touch screen (no hover, or a coarse pointer): a grab tab that
+		    shows while the list scrolls, instead of the strip of marks. */
+		touch?: boolean;
 	} = $props();
 
 	// POC (2026-11-13): the choices to compare, from the address once
-	// (?zone=3, ?zone=12, ?hint=0|1|2, ?bg=veil|clear|solid) and kept for
-	// the tab, so they last as the address changes.
+	// (?zone=50, ?hint=0|1|2, ?bg=clear|veil|solid) and kept for the tab, so
+	// they last as the address changes. The owner's picks are the defaults.
 	// zone: how near the edge, in px, the pointer must come to show it;
 	// hint: 0 nothing while hidden, 1 a faint line down the edge, 2 the line
-	// and a tick on it where the list is; bg: veil (see-through, blurred),
-	// clear (nothing behind it, text with a halo) or solid.
+	// and a tick on it where the list is; bg: clear (nothing behind it, text
+	// with a halo), veil (see-through, blurred) or solid.
 	const poc = (() => {
-		const out = { zone: 12, hint: 1, bg: 'veil' };
+		const out = { zone: 50, hint: 0, bg: 'clear' };
 		if (typeof window === 'undefined') return out;
 		try {
-			Object.assign(out, JSON.parse(sessionStorage.getItem('scrubber-poc') ?? '{}'));
+			Object.assign(out, JSON.parse(sessionStorage.getItem('scrubber-poc-2') ?? '{}'));
 		} catch {
 			// no storage: the defaults and the address
 		}
 		const q = new URLSearchParams(location.search);
 		const zone = Number(q.get('zone'));
-		if (q.has('zone') && zone >= 1 && zone <= 64) out.zone = zone;
+		if (q.has('zone') && zone >= 1 && zone <= 120) out.zone = zone;
 		const hint = Number(q.get('hint'));
 		if (q.has('hint') && [0, 1, 2].includes(hint)) out.hint = hint;
 		const bg = q.get('bg');
 		if (bg === 'veil' || bg === 'clear' || bg === 'solid') out.bg = bg;
 		try {
-			sessionStorage.setItem('scrubber-poc', JSON.stringify(out));
+			sessionStorage.setItem('scrubber-poc-2', JSON.stringify(out));
 		} catch {
 			// ignore
 		}
@@ -489,8 +493,125 @@
 	function focusOut(e: FocusEvent) {
 		if (!root?.contains(e.relatedTarget as Node | null)) focused = false;
 	}
+
+	// Touch screens (owner, 2026-11-13): a fast-scroll tab, as photo apps
+	// have. Nothing until the list scrolls; then a tab at the right edge, at
+	// the list's place in time, which fades a moment after the scrolling
+	// stops. Dragging it scrubs, through the same jumps as a drag on the
+	// strip, with a bubble naming the day (or, over weeks and months, the
+	// month) under the finger. No dots or marks.
+	let scrolling = $state(false);
+	let dragAt: number | undefined = $state(); // the tab's place while dragged, 0 to 1
+	let scrollTimer: ReturnType<typeof setTimeout> | undefined;
+	const railShown = $derived(scrolling || dragging || focused);
+	const tabAt = $derived(dragging && dragAt !== undefined ? dragAt : thumb);
+	$effect(() => {
+		if (!touch) return;
+		const scrolled = () => {
+			scrolling = true;
+			clearTimeout(scrollTimer);
+			scrollTimer = setTimeout(() => (scrolling = false), 1500);
+		};
+		window.addEventListener('scroll', scrolled, { passive: true });
+		return () => {
+			clearTimeout(scrollTimer);
+			window.removeEventListener('scroll', scrolled);
+		};
+	});
+	// The day for a range of days (the last 30 days, say), the month and year
+	// for one of weeks or months: what a finger can aim at.
+	function coarse(m: Mark): string {
+		if (m.kind === 'week' || m.kind === 'month') return fmt({ month: 'long', year: 'numeric' }).format(new Date(m.start));
+		return whichDay(m.start);
+	}
+	let grab = { y: 0, at: 0, height: 1 };
+	function tabDown(e: PointerEvent) {
+		if (marks.length === 0 || !root || (e.pointerType === 'mouse' && e.button !== 0)) return;
+		try {
+			(e.currentTarget as Element).setPointerCapture(e.pointerId);
+		} catch {
+			// a pointer the browser doesn't know (a test's): the events still come here
+		}
+		const tab = (e.currentTarget as Element).getBoundingClientRect();
+		grab = { y: e.clientY, at: tabAt ?? 0, height: Math.max(1, root.getBoundingClientRect().height - tab.height) };
+		dragging = true;
+		dragAt = grab.at;
+		hover = Math.min(marks.length - 1, Math.floor(grab.at * marks.length));
+		picked = undefined;
+		landed = undefined;
+		want = done = hover; // touching it doesn't jump; moving it does
+		e.preventDefault();
+	}
+	function tabMove(e: PointerEvent) {
+		if (!dragging) return;
+		dragAt = Math.max(0, Math.min(1, grab.at + (e.clientY - grab.y) / grab.height));
+		const i = Math.min(marks.length - 1, Math.floor(dragAt * marks.length));
+		if (i === hover) return;
+		hover = i;
+		want = i;
+		pump();
+	}
+	function tabUp() {
+		if (!dragging) return;
+		const i = hover;
+		dragging = false;
+		dragAt = undefined;
+		hover = undefined;
+		if (i === undefined) return;
+		picked = i;
+		landed = undefined;
+		want = i;
+		pump().then(() => (landed = current ?? -1));
+		// It fades as after a scroll.
+		scrolling = true;
+		clearTimeout(scrollTimer);
+		scrollTimer = setTimeout(() => (scrolling = false), 1500);
+	}
 </script>
 
+{#if touch}
+	<!-- svelte-ignore a11y_no_static_element_interactions (the tab within is the control) -->
+	<div
+		class="rail"
+		class:shown={railShown}
+		bind:this={root}
+		style:top="{top}px"
+		style:right="{right}px"
+		data-testid="scrubber"
+		data-touch="true"
+		data-shown={railShown}
+		onfocusin={focusIn}
+		onfocusout={focusOut}
+		onkeydown={() => (focused = true)}
+	>
+		{#if tabAt !== undefined}
+			<div class="tab-place" style:top="{tabAt * 100}%" style:transform="translateY(-{tabAt * 100}%)">
+				{#if dragging && hover !== undefined && marks[hover]}<span class="tab-bubble" aria-hidden="true">{coarse(marks[hover])}</span>{/if}
+				<div
+					class="tab"
+					class:held={dragging}
+					bind:this={track}
+					role="slider"
+					tabindex="0"
+					aria-label="Jump to a date"
+					aria-orientation="vertical"
+					aria-keyshortcuts="Alt+J"
+					aria-valuemin={0}
+					aria-valuemax={Math.max(0, marks.length - 1)}
+					aria-valuenow={value}
+					aria-valuetext={shown !== undefined && marks[shown] ? spoken(marks[shown]) : 'No marks'}
+					onkeydown={key}
+					onpointerdown={tabDown}
+					onpointermove={tabMove}
+					onpointerup={tabUp}
+					onpointercancel={tabUp}
+				>
+					<span class="grip" aria-hidden="true"></span>
+				</div>
+			</div>
+		{/if}
+	</div>
+{:else}
 {#if hideable && poc.hint > 0}
 	<!-- POC: a faint line down the edge while it's hidden, so it can be found; with hint=2 a tick where the list is. -->
 	<div class="hint" class:off={visible} style:top="{top}px" style:right="{right}px" aria-hidden="true">
@@ -581,6 +702,7 @@
 	{#if !counted}<p class="visually-hidden">These marks aren't counted: this search over this range would take too long to count.</p>{/if}
 	{#if error}<p class="visually-hidden" role="status">{error}</p>{/if}
 </div>
+{/if}
 
 <style>
 	/* Over the right edge of the list (fixed: measured in the script), from
@@ -762,16 +884,99 @@
 		outline: var(--focus-width) solid var(--focus);
 		outline-offset: calc(-1 * var(--focus-width));
 	}
+	/* Touch: the rail down the right edge holds the grab tab; only the tab
+	   takes a finger, and only while it shows. On a phone, above the bottom
+	   bar. */
+	.rail {
+		position: fixed;
+		bottom: 0;
+		z-index: var(--layer-content);
+		width: var(--target);
+		pointer-events: none;
+		opacity: 0;
+		transition: opacity 400ms ease-in;
+	}
+	.rail.shown {
+		opacity: 1;
+		transition: opacity 120ms ease-out;
+	}
+	.rail.shown .tab {
+		pointer-events: auto;
+	}
+	.tab-place {
+		position: absolute;
+		right: 0;
+		display: flex;
+		align-items: center;
+	}
+	.tab {
+		display: flex;
+		align-items: center;
+		justify-content: flex-end;
+		width: var(--target);
+		height: var(--scrubber-tab-height);
+		touch-action: none;
+		cursor: grab;
+		user-select: none;
+	}
+	.grip {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: var(--scrubber-tab-width);
+		height: 100%;
+		border-radius: var(--radius) 0 0 var(--radius);
+		background: var(--accent);
+		box-shadow: var(--scrubber-tab-shadow);
+	}
+	/* Two short lines across it: something to take hold of. */
+	.grip::before {
+		content: '';
+		width: 45%;
+		height: var(--scrubber-grip-gap);
+		border-top: var(--border-width-strong) solid var(--accent-fg);
+		border-bottom: var(--border-width-strong) solid var(--accent-fg);
+	}
+	.tab.held .grip {
+		width: var(--scrubber-tab-width-held);
+	}
+	.tab:focus-visible {
+		outline: none;
+	}
+	.tab:focus-visible .grip {
+		outline: var(--focus-width) solid var(--focus);
+		outline-offset: var(--focus-offset);
+	}
+	.tab-bubble {
+		position: absolute;
+		right: calc(100% + var(--space-sm));
+		padding: var(--space-xs) var(--space-md);
+		border-radius: var(--radius-small);
+		background: var(--fg);
+		color: var(--bg);
+		font-size: var(--text-md);
+		font-weight: var(--weight-strong);
+		white-space: nowrap;
+		pointer-events: none;
+	}
+	@media (max-width: 47.99rem) {
+		.rail {
+			bottom: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom));
+		}
+	}
 	@media (prefers-reduced-motion: reduce) {
 		.scrubber,
 		.hideable:not(.shown),
-		.hint {
+		.hint,
+		.rail,
+		.rail.shown {
 			transition: none;
 		}
 	}
 	@media print {
 		.scrubber,
-		.hint {
+		.hint,
+		.rail {
 			display: none;
 		}
 	}

@@ -79,8 +79,9 @@
 	// Where the top of the view is in time (ms), for the scrubber's place.
 	let position: number | undefined = $state();
 	let bodyEl: HTMLElement | undefined = $state();
-	// R81b: no scrubber on a phone (owner, 2026-11-13).
-	const scrubbed = $derived(scrubber && !screen.phone);
+	// R81b: on a touch screen, a grab tab at any width; with a mouse, the
+	// strip, but none in a phone-width window (owner, 2026-11-13).
+	const scrubbed = $derived(scrubber && (screen.touch || !screen.phone));
 
 	$effect(() => {
 		count = messages.length;
@@ -480,7 +481,7 @@
 {@render children?.()}
 <div class="visually-hidden" aria-live="polite">{announce}</div>
 
-<div class="body" class:scrubbed bind:this={bodyEl}>
+<div class="body" class:scrubbed={scrubbed && !screen.touch} bind:this={bodyEl}>
 	<div class="rows">
 		{#if newer}
 			<div class="newer" bind:this={topSentinel}>
@@ -507,7 +508,7 @@
 		{/if}
 	</div>
 	{#if scrubbed && askedKey !== undefined && !blocked}
-		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} host={bodyEl} onjump={jump} onleave={backToList} />
+		<Scrubber bind:this={scrub} query={askedKey} tz={meta?.time_zone ?? 'UTC'} at={position} host={bodyEl} onjump={jump} onleave={backToList} touch={screen.touch} />
 	{/if}
 </div>
 

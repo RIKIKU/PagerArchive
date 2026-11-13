@@ -3230,6 +3230,78 @@ FROM generate_series(0, 2) AS p (i);`);
 	await page.context().close();
 });
 
+// The scrubber on a touch screen (owner, 2026-11-13): at 375 and 1,024 px,
+// nothing until the list scrolls, then a grab tab with no marks; dragging it
+// scrubs the list while the finger moves, with a bubble naming the day; it
+// fades after the scrolling stops. (Firefox can't emulate a touch screen.)
+test('Touch scrubber', async ({ browser, browserName }, info) => {
+	test.skip(browserName === 'firefox', 'Firefox has no isMobile');
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07200${n}1`;
+	const alias = `Touch ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+WITH midnight AS (SELECT date_trunc('day', now() AT TIME ZONE '${TZ}') AS d)
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDTOUCH ${n} DAY ' || g.day || ' PAGE ' || p.i, 'Admin',
+       ((SELECT d FROM midnight) - g.day * interval '1 day' + interval '12 hours' + p.i * interval '10 minutes') AT TIME ZONE '${TZ}',
+       sha256(convert_to('touch ${n} ' || g.day || ' ' || p.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i);`);
+	for (const width of [375, 1024]) {
+		const ctx = await signedIn(browser, 'user', { viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
+		const page = await ctx.newPage();
+		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+		await waitLive(page);
+		const scrubber = page.getByTestId('scrubber');
+		await expect(scrubber).toHaveAttribute('data-touch', 'true');
+		await expect(scrubber).toHaveAttribute('data-shown', 'false');
+		await expect(scrubber.locator('.mark'), 'no marks on a touch screen').toHaveCount(0);
+		await page.evaluate(() => window.scrollBy(0, 400));
+		await expect(scrubber).toHaveAttribute('data-shown', 'true');
+		const tab = scrubber.getByRole('slider', { name: 'Jump to a date' });
+		const box = (await tab.boundingBox())!;
+		expect(box.width, 'a target wide').toBeGreaterThanOrEqual(44);
+		expect(box.height, 'a target tall').toBeGreaterThanOrEqual(44);
+		await page.screenshot({ path: info.outputPath(`touch-${width}-shown.png`) });
+		const before = await firstInView(page);
+		// Tap and drag the tab down a quarter of the rail, a step at a time.
+		const rail = (await scrubber.boundingBox())!;
+		const x = box.x + box.width / 2;
+		const y0 = box.y + box.height / 2;
+		const touch = { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x };
+		await tab.dispatchEvent('pointerdown', { ...touch, clientY: y0 });
+		for (let k = 1; k <= 8; k++) {
+			await tab.dispatchEvent('pointermove', { ...touch, clientY: y0 + (k * rail.height) / 32 });
+			await page.waitForTimeout(60);
+		}
+		const bubble = scrubber.locator('.tab-bubble');
+		await expect(bubble).toBeVisible();
+		const day = (await bubble.textContent())!.trim();
+		expect(day, 'the day, as "Fri 23 Oct"').toMatch(/^\w{3} \d{1,2} \w{3}$/);
+		// While the finger is down the list has already moved there.
+		await expect.poll(() => firstInView(page)).not.toBe(before);
+		await page.screenshot({ path: info.outputPath(`touch-${width}-dragging.png`) });
+		await tab.dispatchEvent('pointerup', { ...touch, buttons: 0, clientY: y0 + rail.height / 4 });
+		const first = page.getByTestId('message-list').locator('article').filter({ hasText: `TOUCH ${n} DAY` });
+		await expect
+			.poll(async () => {
+				const below = await page.evaluate(() => document.querySelector('header.top')!.getBoundingClientRect().bottom);
+				for (const r of await first.all()) {
+					const b = (await r.boundingBox())!;
+					if (b.y + b.height > below + 1) return (await r.locator('time .date').textContent())!.trim().split(' ').slice(0, 2).join(' ');
+				}
+				return '';
+			})
+			.toBe(day.split(' ').slice(1).join(' '));
+		// It fades once the scrolling has stopped.
+		await expect(scrubber).toHaveAttribute('data-shown', 'false', { timeout: 5000 });
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
+		await ctx.close();
+	}
+});
+
 // A72. Albums in the browser: made, added to from the detail view, in the
 // menu, private, with a description and notes, and on a phone.
 test('A72 albums', async ({ browser, request }, info) => {
@@ -3342,14 +3414,18 @@ test('A72 albums', async ({ browser, request }, info) => {
 	expect(await axeOf(phone), 'axe: albums on a phone').toEqual([]);
 	await phone.getByRole('link', { name: notes }).tap();
 	await expect(phone.getByTestId('album-description')).toBeVisible();
+	await expect(phone.getByTestId('scrubber'), 'no scrubber in an album (owner, 2026-11-13)').toHaveCount(0);
 	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 	await phone.screenshot({ path: info.outputPath('a72-phone-album.png'), fullPage: true });
 	expect(await axeOf(phone), 'axe: album on a phone').toEqual([]);
 	await phone.goto('/');
 	await waitLive(phone);
-	// No scrubber on a phone (owner, 2026-11-13).
+	// The list on a phone (owner, 2026-11-13): with a mouse no scrubber; with a
+	// finger only the grab tab, hidden until the list scrolls ("Touch scrubber").
 	await expect(phone.getByTestId('message-list').locator('article').first()).toBeVisible();
-	await expect(phone.getByTestId('scrubber')).toHaveCount(0);
+	if (await phone.evaluate(() => matchMedia('(hover: none), (pointer: coarse)').matches))
+		await expect(phone.getByTestId('scrubber')).toHaveAttribute('data-shown', 'false');
+	else await expect(phone.getByTestId('scrubber')).toHaveCount(0);
 	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 	await phone.screenshot({ path: info.outputPath('a72-phone-list.png') });
 
