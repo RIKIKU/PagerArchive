@@ -3439,6 +3439,7 @@ FROM generate_series(1, 320) AS g (i);`);
 	await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
 	await waitLive(page);
 	await expect(page.getByTestId('scrubber').locator('.mark').first()).toBeAttached();
+	await expect(page.getByTestId('message-list').locator('article').first()).toBeVisible();
 	await page.evaluate(() => {
 		const w = window as unknown as { frames_: object[] };
 		w.frames_ = [];
@@ -3468,9 +3469,7 @@ FROM generate_series(1, 320) AS g (i);`);
 	expect(new Set(scrolled.map((f) => Math.round(f.strip))).size, 'the scrubber never moved').toBe(1);
 	expect(frames.at(-1)!.h, 'older rows loaded on the way').toBeGreaterThan(frames[0].h * 3);
 	// Frames at the end of the loaded rows, with more still to come: none.
-	const stuckAt = frames.filter((f) => f.more && f.h - f.y - 900 < 2);
-	console.log('jolt: heights', [...new Set(frames.map((f) => f.h))].join(' '), 'stuck at', [...new Set(stuckAt.map((f) => f.h))].join(' '));
-	const stuck = stuckAt.length;
+	const stuck = frames.filter((f) => f.more && f.h - f.y - 900 < 2).length;
 	expect(stuck, 'frames stopped at the end of the rows before more came').toBeLessThanOrEqual(2);
 	// The line: downwards with the list, a little on most frames, never back.
 	const lines = scrolled.map((f) => f.line);
