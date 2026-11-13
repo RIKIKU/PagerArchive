@@ -418,9 +418,10 @@
 		if (!dragging) top = Math.round(Math.max(bar, r.top));
 		right = Math.round(Math.max(0, width - r.right));
 		edge = r.right;
-		// Only a page's padding beside it: the zone runs to the window's edge.
-		// A message open beside it (R80): the zone stops at the list's edge.
-		outer = width - r.right < 64 ? width : r.right + 4;
+		// Only a page's padding beside it: the zone runs to the window's edge and
+		// on over the scroll bar (owner, 2026-11-13). A message open beside it
+		// (R80): the zone stops at the list's edge.
+		outer = width - r.right < 64 ? Infinity : r.right + 4;
 	}
 
 	// Hidden until wanted, where there's a mouse to want it with. Shown at
