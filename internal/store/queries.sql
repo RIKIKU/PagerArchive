@@ -402,6 +402,10 @@ WHERE id = $1;
 -- name: SetUserName :exec
 UPDATE users SET name = $2 WHERE id = $1 AND status <> 'deleted';
 
+-- name: SetUserLook :execrows
+-- R82d: the look the user chose in the account menu.
+UPDATE users SET look = $2 WHERE id = $1 AND status <> 'deleted';
+
 -- name: ClearUserSubject :exec
 UPDATE users SET subject = NULL WHERE id = $1;
 
@@ -510,7 +514,8 @@ UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted';
 -- R43c: only an anonymous placeholder stays, so the invite tree stays
 -- connected (owner, 2026-10-13).
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
-    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL
+    email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
+    look = 'harbour'
 WHERE id = $1;
 
 -- name: ScrubInvitationsTo :exec

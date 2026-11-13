@@ -112,6 +112,7 @@
 		type="text"
 		role="combobox"
 		autocomplete="off"
+		autocapitalize="off"
 		spellcheck="false"
 		aria-autocomplete="list"
 		aria-expanded={open && shown.length > 0}
@@ -136,12 +137,14 @@
 				onmousedown={(e) => e.preventDefault()}
 				onclick={() => choose(s)}
 			>
-				{#if s.kind === 'alias'}
-					{aliasLabel(s)}{#if s.range}<span class="muted"> range</span>{/if}
-				{:else}
-					<span class="mono">{s.capcode}</span>
-					<span class="muted">capcode{s.covered_by ? ` · in ${s.covered_by}` : ''}</span>
-				{/if}
+<span
+					>{#if s.kind === 'alias'}
+						{aliasLabel(s)}{#if s.range}<span class="muted"> range</span>{/if}
+					{:else}
+						<span class="mono">{s.capcode}</span>
+						<span class="muted">capcode{s.covered_by ? ` · in ${s.covered_by}` : ''}</span>
+					{/if}</span
+				>
 			</li>
 		{/each}
 	</ul>
@@ -221,5 +224,18 @@
 		color: var(--muted);
 		font-size: var(--text-sm);
 		margin: var(--space-2xs) 0;
+	}
+	/* A phone (R81) or a finger (owner, 2026-11-14): each chip's remove button
+	   and each suggestion is a whole target to tap (R82c). */
+	@media (max-width: 47.99rem), (pointer: coarse) {
+		.remove {
+			min-height: var(--target);
+			min-width: var(--target);
+		}
+		.options li {
+			display: flex;
+			align-items: center;
+			min-height: var(--target);
+		}
 	}
 </style>

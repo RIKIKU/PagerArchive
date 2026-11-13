@@ -577,7 +577,7 @@ func TestA29SignedInAndRolesEnforced(t *testing.T) {
 		}
 	}
 	for _, w := range []struct{ method, path string }{
-		{http.MethodPost, "/api/v1/invitations"}, {http.MethodDelete, "/api/v1/me"},
+		{http.MethodPost, "/api/v1/invitations"}, {http.MethodDelete, "/api/v1/me"}, {http.MethodPatch, "/api/v1/me"},
 		{http.MethodPost, "/api/v1/admin/users/1/deactivate"}, {http.MethodPut, "/api/v1/admin/users/1/role"},
 		{http.MethodGet, "/api/v1/admin/users/1/deactivation-preview"}, {http.MethodPost, "/api/v1/admin/users/1/deactivate-tree"},
 		{http.MethodPut, "/api/v1/admin/users/1/trusted"},

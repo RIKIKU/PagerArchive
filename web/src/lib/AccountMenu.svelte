@@ -1,10 +1,14 @@
 <script lang="ts">
 	// The account menu (R77a): who's signed in, their profile, the colour
-	// theme (ADR 0015, decision 5) and signing out.
-	import { api, type Me } from './api.ts';
+	// theme (ADR 0015, decision 5), the look (R82d) and signing out.
+	import { api, type Look, type Me } from './api.ts';
 	import Icon from './Icon.svelte';
 
-	let { me, theme = $bindable() }: { me: Me | undefined; theme: 'system' | 'light' | 'dark' } = $props();
+	let {
+		me,
+		theme = $bindable(),
+		look = $bindable()
+	}: { me: Me | undefined; theme: 'system' | 'light' | 'dark'; look: Look | undefined } = $props();
 
 	let box: HTMLDivElement;
 	let toggle: HTMLButtonElement;
@@ -19,6 +23,22 @@
 			.map((w) => w[0].toUpperCase())
 			.join('') || '?'
 	);
+
+	// R82d: a look applies at once (the layout puts it on the page's root)
+	// and is saved on the account; if it can't be saved, the old one comes
+	// back and the menu says so.
+	let lookError = $state('');
+	async function choose(next: Look) {
+		const before = look;
+		look = next;
+		lookError = '';
+		try {
+			await api.setLook(next);
+		} catch {
+			look = before;
+			lookError = "Couldn't save the look. Try again.";
+		}
+	}
 
 	// Closes when focus or a click goes elsewhere, or on Escape.
 	function outside(ev: Event) {
@@ -57,6 +77,14 @@
 				<option value="dark">Dark</option>
 			</select>
 		</label>
+		<label class="theme">
+			<span class="row-label"><Icon name="look" />Look</span>
+			<select value={look ?? 'harbour'} disabled={!me} onchange={(e) => choose(e.currentTarget.value as Look)}>
+				<option value="harbour">Harbour</option>
+				<option value="console">Console</option>
+			</select>
+		</label>
+		{#if lookError}<p class="error look-error" role="alert">{lookError}</p>{/if}
 		<button class="row" type="button" onclick={() => api.signOut()}><Icon name="signout" />Sign out</button>
 	</div>
 </div>
@@ -139,6 +167,11 @@
 		flex-direction: column;
 		gap: var(--space-2xs);
 		padding: var(--space-xs) var(--space-md);
+	}
+	.look-error {
+		margin: 0;
+		padding: var(--space-2xs) var(--space-md);
+		font-size: var(--text-sm);
 	}
 	.row-label {
 		display: flex;

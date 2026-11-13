@@ -39,20 +39,17 @@
       "expect": { "priority": null, "stored_text": "Plain text with no marker" }
     },
     {
-      "name": "deployment code found (R87)",
-      "status": "proposed",
+      "name": "large-event code found (R87)",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000101 GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1",
       "expect": { "priority": "Emergency", "stored_text": "@@EX0000101 GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", "deployment_codes": ["DG0801"] }
     },
     {
-      "name": "two deployment codes, each once, in order (R87)",
-      "status": "proposed",
+      "name": "two large-event codes, each once, in order (R87)",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000102 GRS3 DG0802 DG0803 DG0802 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1",
       "expect": { "priority": "Emergency", "stored_text": "@@EX0000102 GRS3 DG0802 DG0803 DG0802 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", "deployment_codes": ["DG0802", "DG0803"] }
     },
     {
-      "name": "not a deployment code: 5 digits, or letters run on (R87)",
-      "status": "proposed",
+      "name": "not a large-event code: 5 digits, or letters run on (R87)",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000103 GRS3 DG08011 XDG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1",
       "expect": { "priority": "Emergency", "stored_text": "@@EX0000103 GRS3 DG08011 XDG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", "deployment_codes": null }
     }

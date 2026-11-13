@@ -281,4 +281,5 @@ type User struct {
 	DeletedAt     *time.Time
 	TrustedAt     *time.Time
 	TrustedBy     *int64
+	Look          string
 }

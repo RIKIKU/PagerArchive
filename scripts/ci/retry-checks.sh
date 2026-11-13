@@ -8,6 +8,7 @@
 #     manual run, a run whose branch has moved on, one where a job or step
 #     that only the change can fix failed, one where only the gate failed, or
 #     one whose failed job logged a security or privacy finding;
+#   - pull-images.sh: the images it finds in each kind of file, and by name;
 #   - govulncheck.sh, on made-up findings: it fails only for a vulnerability
 #     the code calls that has a fix.
 #
@@ -117,6 +118,41 @@ out=$(sh "$repo/scripts/ci/govulncheck.sh" "$work/vuln.json") || status=$?
 [ "$status" -eq 1 ] || fail "govulncheck.sh passed with GO-4 called and fixed: $out"
 printf '%s\n' "$out" | grep -q '^::error title=Vulnerability the code calls::GO-4 in example.test/d v1.0.0, fixed in v1.0.1' || fail "no error for GO-4: $out"
 echo "--- called with a fix: fails, $(printf '%s\n' "$out" | tail -1)"
+
+# --- pull-images.sh: what each kind of file names, each pull through retry.sh
+cat >"$work/Dockerfile" <<'DOCKERFILE'
+FROM --platform=$BUILDPLATFORM example.test/build:1@sha256:0000000000000000000000000000000000000000000000000000000000000001 AS build
+FROM build AS test
+FROM example.test/run:2
+DOCKERFILE
+cat >"$work/stack.yaml" <<'YAML'
+services:
+  api:
+    image: ghcr.io/rikiku/pagerarchive:main
+  db:
+    image: "example.test/db:3"
+  other:
+    image: ${OTHER_IMAGE}
+YAML
+cat >"$work/test.sh" <<'SH'
+PROXY_IMAGE=example.test/proxy:4
+	CURL_IMAGE=example.test/curl:5
+IMAGE_NAME=example.test/x:6
+docker run example.test/pinned:7@sha256:0000000000000000000000000000000000000000000000000000000000000007
+SH
+out=$(PULL_DRY_RUN=1 sh "$repo/scripts/ci/pull-images.sh" "$work/Dockerfile" "$work/stack.yaml" "$work/test.sh" ghcr.io/rikiku/pagerarchive:1.7 | sed 's/.* docker pull -q //')
+want="example.test/build:1@sha256:0000000000000000000000000000000000000000000000000000000000000001
+example.test/curl:5
+example.test/db:3
+example.test/pinned:7@sha256:0000000000000000000000000000000000000000000000000000000000000007
+example.test/proxy:4
+example.test/run:2
+ghcr.io/rikiku/pagerarchive:1.7"
+[ "$out" = "$want" ] || fail "pull-images.sh would pull:
+$out
+not:
+$want"
+echo "--- pull-images.sh: Dockerfile FROMs, compose images, a script's <NAME>_IMAGE= and pinned images, and an image by name (ours too); not our image in a file, a stage or a variable"
 
 [ "$failed" -eq 0 ] || exit 1
 echo "Retry checks: OK"

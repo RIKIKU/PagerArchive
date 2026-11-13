@@ -398,7 +398,6 @@ func serve(stderr io.Writer) error {
 		},
 		AppURL:           auth.appURL,
 		AccountURL:       auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
-		UI:               web.Handler(),
 		Nightly:          job,
 		BackupStatusFile: os.Getenv("BACKUP_STATUS_FILE"),
 		Started:          time.Now(),
@@ -409,6 +408,8 @@ func serve(stderr io.Writer) error {
 		Locks:            locks,
 		Version:          version,
 	}
+	// The app's page is sent in the signed-in user's look (R82d).
+	srv.UI = web.Handler(srv.PageLook)
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)

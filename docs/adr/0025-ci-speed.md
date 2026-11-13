@@ -58,7 +58,7 @@ What passed only on a retry is reported, every time: a warning annotation, `flak
 
 1. **Network steps try again by themselves**, 3 tries, 15 seconds and then 45 apart:
    - `scripts/ci/retry.sh <command>`: `apt-get` (the web job's `psql`, and `npx playwright install --with-deps chromium` in `stack-e2e`, `install` and `backups`), `git fetch` of the tags, GitHub's API in the release jobs and the Release workflow's plan, the tag push, the release's create (which first looks for one an earlier try made), upload and Latest, `docker manifest inspect`, `docker buildx imagetools create`, and the CI retry workflow's `gh run rerun`.
-   - **Image pulls:** `scripts/ci/pull-images.sh` pulls, through `retry.sh`, the images each job's builds and stacks use (the `FROM` lines of the Dockerfiles it builds, the `image:` lines of the compose files it starts, and `install-lib.sh`'s registry), so the build and `docker compose up` find them already there. The runner itself retries the service and job containers' pulls. Not covered: the few images a script starts with `docker run` that no compose file names (`nginx` in A78, `curl` in the client replay), and an older release's images that A77 pulls.
+   - **Image pulls:** `scripts/ci/pull-images.sh` pulls, through `retry.sh`, the images each job's builds and stacks use (the `FROM` lines of the Dockerfiles it builds, the `image:` lines of the compose files it starts, and `install-lib.sh`'s registry), so the build and `docker compose up` find them already there. The runner itself retries the service and job containers' pulls. A script's own images are covered too (2026-11-13): those pinned by digest, and those it names on a line of their own as `<NAME>_IMAGE=<image>` (`NGINX_IMAGE` in A78, `CURL_IMAGE` in the client replay), the install and images jobs passing those scripts; and A77 pulls the previous release's images (its `compose.yaml`'s, and ours from GHCR) the same way, once it knows which release that is.
    - **Actions:** `.github/actions/upload` wraps `actions/upload-artifact` (every upload in `ci.yml`), each try after the first with `overwrite: true`; `.github/actions/build-push` wraps `docker/build-push-action`, retried only when it publishes (a pull request's build-only failure is the change's, so it fails at once); the client's digests are downloaded with three `download-artifact` steps.
    - **PowerShell:** `scripts/ci/Invoke-Retried.ps1`, for `Install-PowerShell.ps1`'s downloads and `Save-TestModules.ps1`'s Gallery requests (which had 3 tries 10 seconds apart; the Gallery's 403s lasted longer than that).
    - npm (`npm ci`, which retries its own fetches), `setup-go`, `setup-node` and `actions/checkout` retry by themselves already, and Go modules come from setup-go's cache.
@@ -181,3 +181,39 @@ Run on real runs, it showed two faults, fixed before these: a job's name with co
 - A flake no longer turns a run red by itself, but every one is a warning on the run: they're there to be fixed, not ignored.
 - A security fix waits 30 minutes after its merge before the Release workflow starts.
 - govulncheck can fail a run for a vulnerability published after the change was written.
+
+## Follow-ups (2026-11-13)
+
+### A76's restart after the kill
+
+The flake: `TestA76FileChecks` failed once in about 70 runs of CI since 2026-11-10 (run 43160182166, attempt 1, PR #21), with `the API didn't come back`: the API never answered `/healthz` in the 2 minutes after `docker compose start api`, though it had started in 2 s at the beginning of the same job. It passed on the re-run. The job's log has nothing more: the test logged no state, and the stack was taken down on the failure.
+
+Not reproduced: on cld01 the test passed every time (below), and the API answered within a second of its start. Two ways the wait could fail, and what changed for each:
+
+- **`start` before the container has stopped.** `docker compose kill` returns once the signal is sent, and the test went on as soon as the `exec`'d import ended, which can be before Docker has marked the container exited. `start` on a container still running does nothing and succeeds, and once the container stops nothing brings it back: the restart policy doesn't apply after a kill. The test now waits for the container's state to be `exited` (up to a minute) before `start`, and logs the state it found once the import ended.
+- **A `/healthz` request that never returns** (`http.Get` has no time limit): each try now has 5 s.
+
+And when the API still doesn't come back, the test logs why before failing: the container's state, the end of the API's log (which never has page text, R69) and what each database session is doing (state, wait event, transaction age; no query text).
+
+**On cld01** (`sh scripts/a76-checks.sh` over and over), before the change: 15 runs, 15 passed, and the API was back within a second (the last 10 runs timed it). After it: 6 passed on an idle machine, and 6 more with all 8 cores kept busy by spinning shells (about 105 s a run instead of 78). Every run logged `once the command ended, the API's container was "exited"` and `the API answered 1s after its start`. So the race needs a Docker slower than this one: `docker kill` waits a while for a container to stop before it returns. The wait costs nothing when the container has stopped already, and if the flake comes back, its log will say which of the two it was.
+
+### Image pre-pulls
+
+`pull-images.sh` now also pulls a script's images that it names as `<NAME>_IMAGE=<image>` on a line of its own (`NGINX_IMAGE=nginx:1.29-alpine` in A78, `CURL_IMAGE=curlimages/curl:latest` in the client replay). The install and images jobs pass those scripts. An image given by name is always pulled, ours too, so A77 pulls the previous release's images (that release's `compose.yaml`, and `ghcr.io/rikiku/pagerarchive:<its MAJOR.MINOR>` from GHCR) through it once it has the release's files, before `up`. `retry-checks.sh` checks what it finds in each kind of file. The client replay's PostGIS isn't pre-pulled: on the arm64 runner it runs as amd64 under emulation, and a plain pull there would get the arm64 image.
+
+### Missed pull request runs
+
+On 2026-11-13 GitHub started no `pull_request` run for #32 after a push, and none for #35 after it was opened, until each was closed and reopened. Nothing in the workflows explains it:
+
+- ci.yml's `pull_request` trigger has no `types`, `branches` or `paths`, so opening, pushing and reopening all start a run.
+- Concurrency only cancels: a run cancelled by the group shows as cancelled, and there was no such run for either.
+- security-release.yml runs on `closed` only, in a group of its own (`security-release…`), so it can't touch CI's (`ci-<branch>`).
+- **#32: GitHub never processed the push.** The branch's activity (`GET /repos/…/activity?ref=refs/heads/m22`) lists its creation, the push of 4c8ef6c at 21:54:32 UTC (which started a run) and its deletion, but no push of 6385e1a, though 6385e1a was the branch's head when it merged. When the pull request was closed at 22:45:32, the closed event (security-release.yml's run 43322847260) still carried 4c8ef6c as the head. The reopen started a run for 4c8ef6c, and a second later one for 6385e1a, which cancelled it. So GitHub hadn't moved the pull request's head to the pushed commit, and without that there is no `synchronize` event and so no run. Closing and reopening made it catch up.
+- **#35: too soon to tell.** It was closed 52 s after `gh pr create` (opened 04:38:01, closed 04:38:53, reopened 04:38:54, all UTC). The reopen's run (04:38:56) was cancelled 68 s later by another run for the same commit (04:40:04), with no push in between: most likely the opened event's own run, about 2 minutes late.
+- GitHub's status page lists no incident at either time.
+
+No change: it isn't in our files, and a bot or app is ruled out. What helps is a check in the merge routine: once a push or `gh pr create` is a few minutes old, `gh pr view --json headRefOid` should be the commit pushed, and `gh run list --commit <sha>` should list a run. If the head is stale, close and reopen (or push again). Allow more than a minute before deciding there's no run.
+
+### Layer 3 (ci-retry.yml)
+
+Live from main since #21 merged (2026-11-12 07:20 UTC). Up to 2026-11-13 13:40 UTC it ran 27 times, once for each completed CI run of a pull request or main (25 passed, 2 cancelled by a reopen), and skipped the job every time, as its `if` wants: no first attempt failed in that time. It hasn't re-run anything yet, so there's nothing to judge beyond that. The one re-run in the history, the A76 flake's run's attempt 2, was made by hand before layer 3 existed.

@@ -2,8 +2,13 @@
 # Pulls the third-party images a job's builds and stacks use, each through
 # retry.sh (ADR 0025), so a registry that fails to answer once doesn't fail
 # the check that needed it. The builds and `docker compose up` then find them
-# here. Our own images (built by the job) and ones named by a variable are
-# left out.
+# here. Our own images found in a file (built by the job) and ones named by a
+# variable are left out; an image given by name is always pulled (A77's
+# previous release's, ghcr.io/rikiku/pagerarchive:<its MAJOR.MINOR>).
+#
+# A script's images are those pinned by digest (install-lib.sh's registry)
+# and those it names in a line of their own, <NAME>_IMAGE=<image>, such as
+# a78.sh's NGINX_IMAGE=nginx:1.29-alpine.
 #
 # usage: scripts/ci/pull-images.sh <Dockerfile | compose file | script | image>...
 #   (PULL_DRY_RUN=1: only list what it would pull)
@@ -11,7 +16,7 @@
 set -eu
 here=$(cd "$(dirname "$0")" && pwd)
 
-images=$(for arg in "$@"; do
+found=$(for arg in "$@"; do
 	case $arg in
 	*Dockerfile*)
 		# FROM [--platform=…] <image> [AS <stage>]; a stage's own name isn't an image.
@@ -24,13 +29,19 @@ images=$(for arg in "$@"; do
 		tr -d '\r' <"$arg" | sed -n 's/^[[:space:]]*image:[[:space:]]*"\{0,1\}\([^"[:space:]]*\)"\{0,1\}[[:space:]]*$/\1/p'
 		;;
 	*.sh)
-		# A script's own images, pinned by digest (install-lib.sh's registry).
 		grep -oE '[a-z0-9][a-z0-9./_-]*:[A-Za-z0-9._-]+@sha256:[0-9a-f]{64}' "$arg" || true
+		tr -d '\r' <"$arg" | sed -n 's/^[[:space:]]*[A-Z][A-Z0-9_]*_IMAGE=\([a-z0-9][^[:space:]$]*\)[[:space:]]*$/\1/p'
 		;;
+	esac
+done | grep -v -e '\$' -e '^ghcr\.io/rikiku/' || true)
+
+named=$(for arg in "$@"; do
+	case $arg in
+	*Dockerfile* | *.yaml | *.yml | *.sh) ;;
 	*) echo "$arg" ;;
 	esac
-done | grep -v -e '\$' -e '^ghcr\.io/rikiku/' | sort -u)
+done)
 
-for image in $images; do
+for image in $(printf '%s\n%s\n' "$found" "$named" | grep -v '^$' | sort -u); do
 	${PULL_DRY_RUN:+echo} sh "$here/retry.sh" -l "docker pull $image" docker pull -q "$image"
 done

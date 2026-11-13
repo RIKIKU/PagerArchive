@@ -335,12 +335,17 @@ export interface ClientStatus {
 	receiving: boolean;
 }
 
+/** The looks a user can choose (R82d): Harbour, the default, and Console. */
+export type Look = 'harbour' | 'console';
+
 export interface Me {
 	id: number;
 	email: string;
 	name: string | null;
 	role: 'admin' | 'user';
 	invited_by: string | null;
+	/** The look they chose (R82d), saved on the account. */
+	look: Look;
 }
 
 export interface Invitation {
@@ -719,6 +724,8 @@ export const api = {
 	// Accounts (R40-R44).
 	me: (fresh = false) => (fresh || !mePromise ? (mePromise = get<Me>('/api/v1/me')) : mePromise),
 	deleteMe: () => request<void>('DELETE', '/api/v1/me'),
+	/** R82d: saves the user's look on their account. */
+	setLook: (look: Look) => request<Me>('PATCH', '/api/v1/me', { look }).then((m) => ((mePromise = Promise.resolve(m)), m)),
 	invitations: () => get<Invitation[]>('/api/v1/invitations'),
 	invite: (email: string) => request<Invitation>('POST', '/api/v1/invitations', { email }),
 	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),
