@@ -112,47 +112,26 @@
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if notice}<p class="ok" role="status">{notice}</p>{/if}
 
-{#if screen.phone}
-	<!-- R81: on a phone, a Pause/Resume switch for each, and nothing else;
-	     setting one up or editing it is for a desktop. -->
-	{#if loaded && list.length === 0}<p class="status">You have no integrations yet.</p>{/if}
-	<ul class="switches" data-testid="integration-switches">
-		{#each list as i (i.id)}
-			{@const on = i.status === 'active'}
-			<li>
-				<span class="name">{i.name}</span>
-				<button
-					class="switch"
-					type="button"
-					role="switch"
-					aria-checked={on}
-					aria-label="{i.name}: sending"
-					disabled={!enabled || (!on && i.paused_by === 'admin')}
-					onclick={() =>
-						act(() => (on ? api.pauseIntegration(i.id) : api.resumeIntegration(i.id)), `${on ? 'Paused' : 'Resumed'} “${i.name}”.`)}
-					><span class="knob" aria-hidden="true"></span><span data-testid="integration-status">{statusLabel(i)}</span></button
-				>
-			</li>
-		{/each}
-	</ul>
-{:else}
-	{#if enabled && meta && editing === undefined}
-		<div class="actions top">
-			<button type="button" onclick={() => ((editing = 'new'), (notice = ''))}><Icon name="integrations" />New integration</button>
-		</div>
-	{/if}
-	{#if meta && editing === 'new'}
-		<IntegrationForm {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
-	{/if}
-
-	{#if loaded && list.length === 0 && editing !== 'new'}
-		<p class="status">You have no integrations yet.</p>
-	{/if}
+<!-- The same screen on a desktop and a phone (owner, 2026-11-14): set up,
+     edit, Send test, deliveries and delete everywhere. On a phone (R81) each
+     integration's Pause/Resume is a switch, in place of the status and the
+     Pause and Resume buttons. -->
+{#if enabled && meta && editing === undefined}
+	<div class="actions top">
+		<button type="button" onclick={() => ((editing = 'new'), (notice = ''))}><Icon name="integrations" />New integration</button>
+	</div>
+{/if}
+{#if meta && editing === 'new'}
+	<IntegrationForm {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
 {/if}
 
-{#if !screen.phone}
+{#if loaded && list.length === 0 && editing !== 'new'}
+	<p class="status">You have no integrations yet.</p>
+{/if}
+
 <ul class="cards">
 	{#each list as i (i.id)}
+		{@const on = i.status === 'active'}
 		<li data-testid="integration">
 			{#if meta && editing === i.id}
 				<IntegrationForm existing={i} {meta} onsaved={saved} oncancel={() => (editing = undefined)} />
@@ -160,7 +139,21 @@
 				<div class="head">
 					<h2>{i.name}</h2>
 					<span class="kind">{kindLabels[i.kind]} · {i.content === 'full' ? 'Full' : 'Summary'}</span>
-					<span class="state" class:paused={i.status === 'paused'} data-testid="integration-status">{statusLabel(i)}</span>
+					{#if screen.phone}
+						<button
+							class="switch"
+							type="button"
+							role="switch"
+							aria-checked={on}
+							aria-label="{i.name}: sending"
+							disabled={!enabled || (!on && i.paused_by === 'admin')}
+							onclick={() =>
+								act(() => (on ? api.pauseIntegration(i.id) : api.resumeIntegration(i.id)), `${on ? 'Paused' : 'Resumed'} “${i.name}”.`)}
+							><span class="knob" aria-hidden="true"></span><span data-testid="integration-status">{statusLabel(i)}</span></button
+						>
+					{:else}
+						<span class="state" class:paused={i.status === 'paused'} data-testid="integration-status">{statusLabel(i)}</span>
+					{/if}
 				</div>
 				<dl>
 					<dt>Pages from</dt>
@@ -189,7 +182,9 @@
 						{testing === i.id ? 'Sending…' : 'Send test'}
 					</button>
 					<button type="button" class="secondary" onclick={() => ((editing = i.id), (notice = ''))} disabled={!enabled}>Edit</button>
-					{#if i.status === 'active'}
+					{#if screen.phone}
+						<!-- the switch above pauses and resumes -->
+					{:else if i.status === 'active'}
 						<button type="button" class="secondary" onclick={() => act(() => api.pauseIntegration(i.id), `Paused “${i.name}”.`)}>Pause</button>
 					{:else if i.paused_by !== 'admin'}
 						<button type="button" class="secondary" onclick={() => act(() => api.resumeIntegration(i.id), `Resumed “${i.name}”.`)}>Resume</button>
@@ -241,7 +236,6 @@
 		</li>
 	{/each}
 </ul>
-{/if}
 
 <style>
 	.convenience {
@@ -267,8 +261,7 @@
 	.actions.top {
 		margin: var(--space-lg) 0;
 	}
-	.cards,
-	.switches {
+	.cards {
 		display: grid;
 		gap: var(--space-md);
 		list-style: none;
@@ -280,26 +273,17 @@
 		background: var(--surface);
 		border: var(--border-width) solid var(--border);
 		border-radius: var(--radius);
+		min-width: 0;
 	}
-	.switches {
-		margin-top: var(--space-lg);
-	}
-	.switches li {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: var(--space-lg);
-		padding: var(--space-sm) var(--space-lg);
-		background: var(--surface);
-		border: var(--border-width) solid var(--border);
-		border-radius: var(--radius);
-	}
-	.name {
-		font-weight: var(--weight-strong);
-		overflow-wrap: anywhere;
+	/* A phone (R81): less room around a card, so its form has the width. */
+	@media (max-width: 47.99rem) {
+		.cards > li {
+			padding: var(--space-md);
+		}
 	}
 	.switch {
 		flex: none;
+		margin-left: auto;
 		gap: var(--space-sm);
 		padding: 0 var(--space-2xs);
 		border: 0;
