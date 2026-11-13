@@ -604,6 +604,8 @@ jobs:
           go-version-file: go.mod
       - name: Get the release tags
         run: sh scripts/ci/retry.sh git fetch --force --tags origin
+      # The previous release's images: a77.sh pulls them the same way, once it
+      # knows which release that is.
       - name: Pull the images (retried)
         run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A77
@@ -652,7 +654,7 @@ jobs:
         working-directory: web
         run: sh ../scripts/ci/retry.sh -l "playwright install --with-deps chromium" npx playwright install --with-deps chromium
       - name: Pull the images (retried)
-        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml scripts/install-lib.sh scripts/a78.sh
       - name: A78
         run: sh scripts/a78.sh --project=chromium
       - name: Upload Playwright report, screenshots and traces
@@ -742,7 +744,7 @@ jobs:
           PA_VERSION: ${{ needs.stamp.outputs.version }}
         run: sh scripts/ci/stamp-version.sh "$PA_VERSION"
       - name: Pull the images (retried)
-        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client scripts/ci/client-replay.sh
       - name: Build client image (native ${{ matrix.arch }})
         run: docker build -f Dockerfile.client -t pagerarchive-client:ci .
       - name: Client --version is the build's version

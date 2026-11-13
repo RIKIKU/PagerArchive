@@ -6,6 +6,8 @@
 #
 # usage: scripts/ci/client-replay.sh <api-image> <client-image>
 set -eu
+# The health check's image, pre-pulled by the images job (scripts/ci/pull-images.sh).
+CURL_IMAGE=curlimages/curl:latest
 
 API_IMAGE=$1
 CLIENT_IMAGE=$2
@@ -41,7 +43,7 @@ docker run -d --platform "$SERVER_PLATFORM" --name "pa-api-$$" --network "$NET" 
 	-e AUTHENTIK_API_TOKEN=unused -e ALLOWED_EMAIL_DOMAINS=example.test \
 	-v "$PWD/profiles/example:/profiles:ro" "$API_IMAGE" >/dev/null
 i=0
-until docker run --rm --network "$NET" curlimages/curl:latest -sf "http://pa-api-$$:8080/healthz" >/dev/null 2>&1; do
+until docker run --rm --network "$NET" "$CURL_IMAGE" -sf "http://pa-api-$$:8080/healthz" >/dev/null 2>&1; do
 	i=$((i + 1)); [ "$i" -lt 60 ] || { docker logs "pa-api-$$"; echo "API didn't start"; exit 1; }
 	sleep 1
 done

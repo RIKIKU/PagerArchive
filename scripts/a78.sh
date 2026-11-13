@@ -28,6 +28,8 @@ WORK=$(mktemp -d)
 DIR=$WORK/deployment
 MAILPIT=pa-a78-mailpit-$$
 NGINX=pa-a78-nginx-$$
+# The reverse proxy's image, pre-pulled by the job (scripts/ci/pull-images.sh).
+NGINX_IMAGE=nginx:1.29-alpine
 stack_compose() { in_folder "$DIR" "$@"; }
 
 proxy_made=""
@@ -117,7 +119,7 @@ run_install() {
 # Behind the proxy: nothing published, and the database out of its reach.
 start_proxy() {
 	docker run -d --name "$NGINX" --network proxy -p 127.0.0.1:8080:8080 -p 127.0.0.1:9000:9000 \
-		-v "$PWD/deploy/test/a78-proxy.conf:/etc/nginx/conf.d/default.conf:ro" nginx:1.29-alpine >/dev/null
+		-v "$PWD/deploy/test/a78-proxy.conf:/etc/nginx/conf.d/default.conf:ro" "$NGINX_IMAGE" >/dev/null
 	published=$(docker ps --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" --format '{{.Names}} {{.Ports}}' | grep -- '->' || true)
 	if [ -n "$published" ]; then
 		echo "FAIL: published with the override: $published" >&2
