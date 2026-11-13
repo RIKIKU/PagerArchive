@@ -178,3 +178,29 @@ Not run: the security trigger end to end (it needs a labelled pull request merge
 1. **OSV alerts on:** fine, or only GitHub's alerts (which would need turning on, and the app's "Dependabot alerts: read" permission)?
 2. **Saturday 05:17 (daylight saving) or 04:17, your time:** fine, or another time?
 3. **Security releases' wait** (2026-11-12): 15 minutes, as briefed, joins security merges up to 15 minutes apart. #18 and #19 were 18 minutes apart, so they'd still have been two releases. 20 or 30 minutes instead? **Answered (owner, 2026-11-12): 30 minutes.**
+
+## How a release's number is worked out (2026-11-13)
+
+The owner asked how releases are versioned: v1.7.10 (large events, the scrubber, two migrations) came out as a patch of v1.7.9.
+
+**The rule now** (decision 3, `scripts/ci/release-version.sh`, `config_changed` in `versions-lib.sh`): from the previous release, the next **minor** version if a file a deployment downloads changed (`CONFIG_PATHS`: `compose.yaml` other than our own image's line, the monitoring stack's `compose.yaml`, and the configuration archive's folders under `deploy/`); otherwise the next **patch**. Nothing else is looked at: not the pull requests, their labels, the notes or the migrations. There's no major. So minor means "download this release's `compose.yaml` and archive first" (R84b, docs/deploy.md's Upgrading), not "new features". Every release since ADR 0024 was a patch, as none changed a downloaded file:
+
+| Release | Downloaded files changed | New migrations | What came in |
+|---|---|---|---|
+| v1.7.7 | no | none | the Release workflow, a security update |
+| v1.7.8 | no | none | a security update |
+| v1.7.9 | no | `00017_albums` | CI speed, the scrubber and albums, large events' spec, the module |
+| v1.7.10 | no | `00018_large_events`, `00019_large_events_simple` | large events, the scrubber's second round |
+
+**Predicting it:** every build of main reports the version a release of it would get, with `-dev+<commit>` (`pagerarchive version`, the `main` image; decision 2): main at b369af4 says `1.7.11-dev+b369af4`, "patch: nothing a deployment downloads changed since v1.7.10". A dry run of the Release workflow says the same in its notice ("Dry run: v1.7.11 would be released (a patch: …)"), so nothing needs adding to see it before a release.
+
+**A proposal (Claude), not adopted; the owner decides:**
+
+- **Minor** when a downloaded file changed (as now: it must stay at least a minor, R84b), **or** a migration was added since the previous release (`internal/store/migrations/`: a database a release has migrated may not run on the release before it, so going back is no longer a patch's "pull an older one"), **or** a pull request merged since the previous release has the label `feature` (or whatever the owner prefers), which GitHub's notes could also list under "New features" (`.github/release.yml`).
+- **Patch** otherwise: fixes, CI and test changes, dependency and image updates (`maintenance`), security updates.
+- **Major** only by hand, as now (a "Release now" input, say, rather than a tag made by hand).
+- Under it, v1.7.9 would have been 1.8.0 (the albums migration) and v1.7.10 1.9.0.
+
+**What it costs:** `compose.yaml` names our image by `MAJOR.MINOR` (R84, decision 1), so `docker compose pull` gets patches only. Today a deployment that only pulls gets every feature, because features come as patches. If features make minors, a deployment that only pulls stays on the minor it has (and its patches) until someone downloads the new `compose.yaml`: most weekly releases would then need that step, and a pull-only deployment falls behind silently. The alternative keeps the number as the upgrade signal it is and shows features in the notes only (a `feature` label and a "New features" section, version unchanged).
+
+**Question for the owner:** should a minor version mean "new features or a migration" (the proposal, with the extra download step for every minor), or stay "download new files" (now), with features shown in the release notes instead? Either way the dry run already shows the number and why before a release.
