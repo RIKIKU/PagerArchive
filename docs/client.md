@@ -76,6 +76,8 @@ sudo apt install rtl-sdr multimon-ng
 curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/pagerarchive-client-<version>-linux-arm64
 curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
+# optional, with the GitHub CLI: it was built by this repository's release run
+gh attestation verify pagerarchive-client-<version>-linux-arm64 --repo RIKIKU/PagerArchive
 sudo install -m 755 pagerarchive-client-<version>-linux-arm64 /usr/local/bin/pagerarchive-client
 ```
 

@@ -959,8 +959,11 @@ jobs:
     if: needs.stamp.outputs.mode == 'release' || needs.stamp.outputs.mode == 'dry-run'
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # id-token and attestations: the binaries' attestation (SPEC.md 12.1).
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       DRY_RUN: ${{ needs.stamp.outputs.mode == 'dry-run' }}
     outputs:
@@ -999,6 +1002,14 @@ jobs:
               -o "dist/pagerarchive-client-$TAG-linux-$arch" ./cmd/pagerarchive-client
           done
           (cd dist && sha256sum pagerarchive-client-* > SHA256SUMS && cat SHA256SUMS)
+      # GitHub's artifact attestation (SLSA build provenance, signed through
+      # Sigstore), for `gh attestation verify <file> --repo RIKIKU/PagerArchive`
+      # (docs/client.md). Not in a dry run: an attestation is published.
+      - name: Attest the client's binaries
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
       - name: The release's notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -1014,6 +1025,7 @@ jobs:
             echo "- To install or upgrade: \`compose.yaml\`, \`env.example\` and \`pagerarchive-config.tar.gz\` (docs/deploy.md). The example monitoring stack: \`monitoring-compose.yaml\` and \`monitoring-env.example\` (docs/monitoring.md)."
             echo "- The client's binaries for linux/amd64 and linux/arm64, with \`SHA256SUMS\` (docs/client.md)."
             echo "- $MODULE_NOTES"
+            echo "- Every file and image is attested by this release's run: \`gh attestation verify <file> --repo RIKIKU/PagerArchive\`, or \`oci://<image>\` in place of the file (docs/deploy.md)."
           } > notes.md
           cat notes.md
           if [ "$DRY_RUN" = true ]; then
@@ -1067,9 +1079,12 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.changes.outputs.images == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    # id-token and attestations: a release's image is attested (SPEC.md 12.1).
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     env:
       PUBLISH: ${{ needs.stamp.outputs.publish }}
       RELEASE: ${{ needs.stamp.outputs.mode == 'release' || needs.stamp.outputs.mode == 'dry-run' }}
@@ -1098,7 +1113,8 @@ jobs:
             type=raw,value=main,enable=${{ env.MAIN }}
             type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE != 'true' }}
       # Retried when it publishes (ADR 0025).
-      - uses: ./.github/actions/build-push
+      - id: build
+        uses: ./.github/actions/build-push
         with:
           context: .
           platforms: linux/amd64
@@ -1106,6 +1122,19 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           push: ${{ env.PUBLISH == 'true' }}
           retry: ${{ env.PUBLISH == 'true' }}
+      # A release's image, by the digest its tags name, with the attestation
+      # pushed to GHCR beside it, for `gh attestation verify
+      # oci://ghcr.io/rikiku/pagerarchive:<version> --repo RIKIKU/PagerArchive`.
+      # Not main's or a manual run's builds, and not a dry run (nothing pushed).
+      # No storage record: those are for organisations' repositories only.
+      - name: Attest the release's image
+        if: needs.stamp.outputs.mode == 'release'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/rikiku/pagerarchive
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
       - name: Summary
         env:
           MODE: ${{ needs.stamp.outputs.mode }}
@@ -1181,9 +1210,12 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.stamp.outputs.publish == 'true' && needs.changes.outputs.images == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # id-token and attestations: a release's image is attested (SPEC.md 12.1).
     permissions:
       contents: read
       packages: write
+      id-token: write
+      attestations: write
     env:
       RELEASE: ${{ needs.stamp.outputs.mode == 'release' }}
       MAIN: ${{ needs.stamp.outputs.mode == 'main' }}
@@ -1248,6 +1280,28 @@ jobs:
           sh ../scripts/ci/retry.sh -l "docker buildx imagetools create" docker buildx imagetools create $(jq -cr '.tags | map("-t " + .) | join(" ")' <<<"$DOCKER_METADATA_OUTPUT_JSON") \
             $(printf 'ghcr.io/rikiku/pagerarchive-client@sha256:%s ' *)
           sh ../scripts/ci/retry.sh docker buildx imagetools inspect ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+      # A release's image: the multi-arch index its tags name, which is what
+      # `gh attestation verify oci://ghcr.io/rikiku/pagerarchive-client:<version>`
+      # looks up, with the attestation pushed to GHCR beside it (as the
+      # server's, publish-server).
+      - name: The release's index digest
+        id: index
+        if: env.RELEASE == 'true'
+        env:
+          IMAGE: ghcr.io/rikiku/pagerarchive-client:${{ steps.meta.outputs.version }}
+        run: |
+          digest=$(sh scripts/ci/retry.sh docker buildx imagetools inspect "$IMAGE" --format '{{.Manifest.Digest}}' | tail -n 1)
+          case $digest in sha256:*) ;; *) echo "::error::No digest for $IMAGE: '$digest'"; exit 1 ;; esac
+          echo "$IMAGE is $digest"
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - name: Attest the release's image
+        if: env.RELEASE == 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ghcr.io/rikiku/pagerarchive-client
+          subject-digest: ${{ steps.index.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
 
   # What a deployment needs (R84): only once this release's images are on GHCR,
   # for anyone to pull, so an attached compose.yaml never names an image that
@@ -1263,8 +1317,11 @@ jobs:
     if: ${{ !failure() && !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # id-token and attestations: the files' attestation (SPEC.md 12.1).
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.release.outputs.tag }}
@@ -1283,6 +1340,13 @@ jobs:
           sh scripts/ci/retry.sh sh -c 'docker manifest inspect "ghcr.io/rikiku/pagerarchive-client:$MAJOR_MINOR" >/dev/null'
       - name: The files for installing and upgrading
         run: sh scripts/ci/release-assets.sh dist
+      # Attested before they're attached, so no file is on the release without
+      # its attestation (docs/deploy.md). Not in a dry run.
+      - name: Attest the files
+        if: env.DRY_RUN != 'true'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: dist/*
       - name: Attach them, check they're there, and make it the latest release
         if: env.DRY_RUN != 'true'
         run: |
