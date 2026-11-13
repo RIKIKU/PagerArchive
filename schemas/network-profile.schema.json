@@ -57,7 +57,7 @@
       "items": { "type": "string", "minLength": 1 }
     },
     "deployment_code_pattern": {
-      "description": "Optional. Finds deployment codes: codes naming a pre-formed group of appliances sent together, which open large events (R87). Every match in the text a pager displays is a code; with a group named code, that group is. With no pattern, only big jobs open large events.",
+      "description": "Optional. Finds a code in a page that opens a large event (R87), such as one naming a pre-formed group of appliances sent together. Every match in the text a pager displays is a code; with a group named code, that group is. With no pattern, only a job with enough Emergency pages opens large events.",
       "type": "string",
       "minLength": 1
     },

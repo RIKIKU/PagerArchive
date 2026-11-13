@@ -10,13 +10,9 @@ export function span(ev: LargeEvent, tz: string): string {
 }
 
 /**
- * "2 deployment codes · 2 jobs · 5 Emergency pages", from the pages it still holds (R87e). Never an appliance count (owner,
- * 2026-11-13).
+ * "2 jobs · 5 Emergency pages", from the pages it still holds (R87e). Never an appliance count, a level or the codes in its
+ * pages (owner, 2026-11-13).
  */
 export function numbers(ev: LargeEvent): string {
-	return [
-		count(ev.deployment_codes, 'deployment code', 'deployment codes'),
-		count(ev.jobs, 'job', 'jobs'),
-		count(ev.emergency_pages, 'Emergency page', 'Emergency pages')
-	].join(' · ');
+	return [count(ev.jobs, 'job', 'jobs'), count(ev.emergency_pages, 'Emergency page', 'Emergency pages')].join(' · ');
 }

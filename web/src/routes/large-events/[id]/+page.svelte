@@ -1,7 +1,8 @@
 <script lang="ts">
-	// R87c: one large event: its first and last pages' times, the levels it met and when, its deployment codes and jobs, and
-	// then its pages like the message list (P1, P2: the full text, as stored),
-	// with the scrubber over its days (R81b) and live updates as pages join.
+	// R87c: one large event: its first and last pages' times, its numbers and
+	// its job numbers (no levels or codes; owner, 2026-11-13), and then its
+	// pages like the message list (P1, P2: the full text, as stored), with the
+	// scrubber over its days (R81b) and live updates as pages join.
 	import { page } from '$app/state';
 	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
@@ -50,20 +51,8 @@
 					<dd class="when"><time datetime={isoAttr(ev.start)}>{dateTime(ev.start, tz)}</time></dd>
 					<dt>Last page</dt>
 					<dd class="when"><time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time></dd>
-					<dt>Levels</dt>
-					<dd>
-						<ul class="levels">
-							{#each ev.levels as l (l.level)}
-								<li><span class="level">{l.label}</span> <time datetime={isoAttr(l.at)}>{dateTime(l.at, tz)}</time></li>
-							{/each}
-						</ul>
-					</dd>
-					{#if ev.deployment_code_list?.length}
-						<dt>Deployment codes</dt>
-						<dd data-testid="event-codes">{ev.deployment_code_list.join(', ')}</dd>
-					{/if}
 					{#if ev.job_list?.length}
-						<dt>Jobs</dt>
+						<dt>Job numbers</dt>
 						<dd class="jobs">
 							{#each ev.job_list as j (j)}<a href="/jobs/{encodeURIComponent(j)}">{j}</a>{/each}
 						</dd>
@@ -111,24 +100,6 @@
 	dd {
 		margin: 0;
 		overflow-wrap: anywhere;
-	}
-	.levels {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-2xs) var(--space-lg);
-	}
-	.level {
-		padding: var(--space-3xs) var(--space-sm);
-		border: var(--border-width) solid var(--control-border);
-		border-radius: var(--radius-badge);
-		font-size: var(--text-sm);
-	}
-	.levels time {
-		color: var(--muted);
-		font-size: var(--text-sm);
 	}
 	.jobs {
 		display: flex;

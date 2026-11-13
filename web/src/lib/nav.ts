@@ -47,7 +47,7 @@ export const groups: Group[] = [
 		entries: [
 			{ href: '/sheet', label: 'Print sheet', icon: 'print', desktopOnly: true, text: 'Pick messages and print their text for training.' },
 			{ href: '/capcodes', label: 'Unknown capcodes', icon: 'unknown', text: 'Capcodes with no alias, how many pages each had and when.' },
-			{ href: '/large-events', label: 'Large events', icon: 'largeevents', text: 'Times something big happened: deployment codes and big jobs, grouped by 12 hours.' }
+			{ href: '/large-events', label: 'Large events', icon: 'largeevents', text: 'Times something big happened on the network, so you know where to look, grouped by 12 hours.' }
 		]
 	},
 	{

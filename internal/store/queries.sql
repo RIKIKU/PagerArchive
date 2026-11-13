@@ -821,7 +821,7 @@ JOIN aliases a ON c.capcode LIKE a.pattern;
 -- Active integrations of active owners whose selection covers a stored page.
 SELECT i.id, i.uid, i.kind, i.filter, u.role AS owner_role
 FROM integrations i JOIN users u ON u.id = i.owner_id
-WHERE i.status = 'active' AND u.status = 'active' AND i.large_events IS NULL
+WHERE i.status = 'active' AND u.status = 'active' AND NOT i.large_events
   AND (EXISTS (SELECT 1 FROM integration_capcodes c WHERE c.integration_id = i.id AND c.capcode = sqlc.arg(capcode)::text)
        OR (sqlc.narg(alias_id)::bigint IS NOT NULL
            AND EXISTS (SELECT 1 FROM integration_aliases a WHERE a.integration_id = i.id AND a.alias_id = sqlc.narg(alias_id)::bigint)));
@@ -1149,8 +1149,8 @@ SELECT pg_advisory_xact_lock(4242008700);
 -- The pages of a job that count (R87: Emergency, to an aliased capcode, not a
 -- heartbeat), oldest first, with the event each is in, if any. One row per
 -- stored message, so a copy from another receiver (R19) counts once towards
--- a big job.
-SELECT m.id, m.sent_at, m.text, lem.event_id
+-- the job's number of Emergency pages.
+SELECT m.id, m.sent_at, lem.event_id
 FROM messages m
 LEFT JOIN large_event_messages lem ON lem.message_id = m.id
 WHERE m.job_number = sqlc.arg(job_number)::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
@@ -1167,13 +1167,15 @@ WHERE last_at >= sqlc.arg(t)::timestamptz - interval '12 hours'
 ORDER BY id;
 
 -- name: CreateLargeEvent :one
+-- R87d: the only place an event begins, so the only time its integrations
+-- are told.
 INSERT INTO large_events (first_at, last_at) VALUES (sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz)
 RETURNING *;
 
 -- name: MergeLargeEvents :exec
 -- R87a: a page within 12 hours of two events joins them into one, the
--- oldest. Their pages and deliveries move to it; each level keeps its
--- earliest time.
+-- oldest. Their pages and deliveries move to it. Nothing is sent for the
+-- merge: each was told of when it opened (R87d).
 WITH others AS (
     SELECT * FROM large_events WHERE id = ANY(sqlc.arg(others)::bigint[]) AND id <> sqlc.arg(id)::bigint
 ), pages AS (
@@ -1183,10 +1185,7 @@ WITH others AS (
 ), kept AS (
     UPDATE large_events e SET
         first_at = LEAST(e.first_at, (SELECT min(first_at) FROM others)),
-        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others)),
-        deployment_at = LEAST(e.deployment_at, (SELECT min(deployment_at) FROM others)),
-        several_deployments_at = LEAST(e.several_deployments_at, (SELECT min(several_deployments_at) FROM others)),
-        big_job_at = LEAST(e.big_job_at, (SELECT min(big_job_at) FROM others))
+        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others))
     WHERE e.id = sqlc.arg(id)::bigint
 )
 SELECT 1;
@@ -1196,34 +1195,19 @@ SELECT 1;
 DELETE FROM large_events WHERE id = ANY(sqlc.arg(ids)::bigint[]);
 
 -- name: AddLargeEventPage :exec
-INSERT INTO large_event_messages (message_id, event_id, deployment_codes)
-VALUES (sqlc.arg(message_id)::bigint, sqlc.arg(event_id)::bigint, sqlc.arg(deployment_codes)::text[])
+INSERT INTO large_event_messages (message_id, event_id)
+VALUES (sqlc.arg(message_id)::bigint, sqlc.arg(event_id)::bigint)
 ON CONFLICT (message_id) DO NOTHING;
 
 -- name: LargeEventByID :one
 SELECT * FROM large_events WHERE id = $1;
 
--- name: SetLargeEvent :exec
--- An event's span and levels after a page joined it. A level, once met,
--- keeps its earliest time (R87b).
+-- name: SetLargeEventSpan :exec
+-- An event's first and last pages' times after pages joined it.
 UPDATE large_events SET
     first_at = LEAST(first_at, sqlc.arg(first_at)::timestamptz),
-    last_at = GREATEST(last_at, sqlc.arg(last_at)::timestamptz),
-    deployment_at = LEAST(deployment_at, sqlc.narg(deployment_at)::timestamptz),
-    several_deployments_at = LEAST(several_deployments_at, sqlc.narg(several_deployments_at)::timestamptz),
-    big_job_at = LEAST(big_job_at, sqlc.narg(big_job_at)::timestamptz)
+    last_at = GREATEST(last_at, sqlc.arg(last_at)::timestamptz)
 WHERE id = sqlc.arg(id)::bigint;
-
--- name: LargeEventCodeTimes :many
--- Each deployment code an event's pages carry, with its first page's sent
--- time, earliest first.
-SELECT c.code::text AS code, min(m.sent_at)::timestamptz AS first_at
-FROM large_event_messages lem
-JOIN messages m ON m.id = lem.message_id
-CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c(code)
-WHERE lem.event_id = $1
-GROUP BY c.code
-ORDER BY 2, 1;
 
 -- name: LargeEventJobs :many
 -- R87c, R87d: an event's jobs, from the pages it holds, by their first page.
@@ -1240,8 +1224,6 @@ ORDER BY 2, 1;
 -- page cursor.
 SELECT e.*,
        (SELECT count(*) FROM large_event_messages lem WHERE lem.event_id = e.id)::bigint AS pages,
-       (SELECT count(DISTINCT c) FROM large_event_messages lem CROSS JOIN LATERAL unnest(lem.deployment_codes) AS c
-        WHERE lem.event_id = e.id)::bigint AS codes,
        (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
         WHERE lem.event_id = e.id)::bigint AS jobs
 FROM large_events e
@@ -1251,13 +1233,13 @@ ORDER BY e.first_at DESC, e.id DESC
 LIMIT sqlc.arg(max_rows)::int;
 
 -- name: LargeEventIntegrations :many
--- R87d: active integrations of active owners that select large events at a level.
+-- R87d: active integrations of active owners that select large events.
 SELECT i.id, i.kind, u.role AS owner_role
 FROM integrations i JOIN users u ON u.id = i.owner_id
-WHERE i.status = 'active' AND u.status = 'active' AND i.large_events = sqlc.arg(level)::text;
+WHERE i.status = 'active' AND u.status = 'active' AND i.large_events;
 
 -- name: InsertEventDelivery :exec
--- R87d: an event's delivery, carried by the page that took it to the level.
+-- R87d: an event's delivery, carried by the page that opened it.
 INSERT INTO deliveries (integration_id, message_id, status, next_attempt_at, event_id)
 VALUES (sqlc.arg(integration_id), sqlc.arg(message_id), sqlc.arg(status), sqlc.narg(next_attempt_at), sqlc.arg(event_id)::bigint)
 ON CONFLICT DO NOTHING;

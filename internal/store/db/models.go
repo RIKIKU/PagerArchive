@@ -127,7 +127,7 @@ type Integration struct {
 	LastDeliveredAt *time.Time
 	CreatedAt       time.Time
 	UpdatedAt       time.Time
-	LargeEvents     *string
+	LargeEvents     bool
 }
 
 type IntegrationAlias struct {
@@ -160,19 +160,15 @@ type Invitation struct {
 }
 
 type LargeEvent struct {
-	ID                   int64
-	FirstAt              time.Time
-	LastAt               time.Time
-	DeploymentAt         *time.Time
-	SeveralDeploymentsAt *time.Time
-	BigJobAt             *time.Time
-	CreatedAt            time.Time
+	ID        int64
+	FirstAt   time.Time
+	LastAt    time.Time
+	CreatedAt time.Time
 }
 
 type LargeEventMessage struct {
-	MessageID       int64
-	EventID         int64
-	DeploymentCodes []string
+	MessageID int64
+	EventID   int64
 }
 
 type Locality struct {
