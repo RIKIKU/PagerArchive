@@ -13,7 +13,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `heartbeat_capcodes` | Capcodes or ranges of network heartbeats |
 | `redaction_rules` | Ordered `{name, pattern, must_not_match}`. Each match becomes one `REDACTED`. If the pattern has a group named `redact`, only that group is replaced, so text around it (a preceding space, a trailing `[group]`) is kept; RE2 has no lookaround. A rule that changes one of its own `must_not_match` examples stops the server |
 | `job_number_patterns` | Tried in order on every page whose format extracts no `job_number`. The first match is used |
-| `deployment_code_pattern` | Optional. Finds **deployment codes**: codes naming a pre-formed group of appliances sent together, which open **large events** (R87, ADR 0027). Every match in the text a pager displays (the marker removed) is a code, each kept once; with a group named `code`, that group is the code. No roster of groups or members is kept. Without a pattern, only big jobs open large events. The example network's is `"\\bDG[0-9]{4}\\b"` in JSON (`DG0801`) |
+| `deployment_code_pattern` | Optional. Finds a code in a page that opens a **large event** (R87, ADR 0027), such as one naming a pre-formed group of appliances sent together. Every match in the text a pager displays (the marker removed) is a code, each kept once; with a group named `code`, that group is the code. No roster of groups or members is kept, and the app never counts, lists or names these codes: people see an event's jobs (owner, 2026-11-13). Without a pattern, only a job with enough Emergency pages opens large events. The key keeps its name, so existing profiles keep working. The example network's is `"\bDG[0-9]{4}\b"` in JSON (`DG0801`) |
 | `event_categories` | `{category, codes}` for reports. `HSF*` matches by prefix. Unmapped codes count as Other |
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file. The attribution is shown in the app (R24). See [Address dataset](#address-dataset) |
 | `street_types` | Spelling to abbreviation, e.g. `"STREET": "ST"`, used to match streets |
@@ -70,7 +70,7 @@ A page whose capcode has an agency profile but matches no format is stored in fu
 
 Files named `golden-*.json` hold raw decoder lines and what they must produce. `profile` names the profile the table tests.
 
-- **Network tables** check `priority`, `stored_text` (null: dropped) and `heartbeat`. `deployment_codes` (a list, or null for none) is checked only when a row lists it.
+- **Network tables** check `priority`, `stored_text` (null: dropped) and `heartbeat`. `deployment_codes` (a list of the codes `deployment_code_pattern` finds, or null for none) is checked only when a row lists it.
 - **Agency tables** check `capcode`, `priority`, every standard field, `extra` (an object of extra fields), and the flags `parse_failed` and `address_unsplit`. `format` is checked only when listed.
 - A key a row doesn't list must be null, or false for flags.
 - Rows with `"status": "proposed"` are reported but don't fail the run.

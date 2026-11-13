@@ -1,7 +1,7 @@
 <script lang="ts">
 	// R47-R51c: the signed-in user's own integrations. Nobody else sees them;
 	// admins only see that they exist.
-	import { api, type Delivery, type Integration, type Meta, type TestResult, largeEventLevels } from '#lib/api.ts';
+	import { api, type Delivery, type Integration, type Meta, type TestResult } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import IntegrationForm from '#lib/IntegrationForm.svelte';
 	import Icon from '#lib/Icon.svelte';
@@ -76,7 +76,7 @@
 	}
 
 	function selection(i: Integration): string {
-		if (i.large_events) return `Large events at level ${largeEventLevels.find((l) => l.level === i.large_events)?.label ?? i.large_events}`;
+		if (i.large_events) return 'Large events, each when it opens';
 		const parts = [...i.aliases.map((a) => a.name), ...i.capcodes.map((c) => (i.covered_by[c] ? `${c} (in ${i.covered_by[c]})` : c))];
 		return parts.length > 4 ? `${parts.slice(0, 4).join(', ')} and ${parts.length - 4} more` : parts.join(', ');
 	}

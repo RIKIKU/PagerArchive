@@ -134,9 +134,9 @@ type Request struct {
 	Content  string   `json:"content"` // "" is the kind's default
 	Capcodes []string `json:"capcodes"`
 	AliasIDs []int64  `json:"alias_ids"`
-	// LargeEvents selects large events at this level instead of capcodes and
-	// aliases (R87d): deployment, several_deployments or big_job.
-	LargeEvents string  `json:"large_events,omitempty"`
+	// LargeEvents selects large events instead of capcodes and aliases
+	// (R87d): it is told of each event once, when it opens.
+	LargeEvents bool    `json:"large_events,omitempty"`
 	Filter      Filter  `json:"filter"`
 	Config      Config  `json:"config"`
 	Secrets     Secrets `json:"secrets"` // on a change, empty fields keep the saved values
@@ -160,7 +160,7 @@ type View struct {
 	// CoveredBy names the range alias of each capcode that one covers (R48).
 	CoveredBy       map[string]string `json:"covered_by"`
 	Aliases         []AliasRef        `json:"aliases"`
-	LargeEvents     *string           `json:"large_events"` // the level, for a large-event integration (R87d)
+	LargeEvents     bool              `json:"large_events"` // a large-event integration (R87d)
 	Filter          Filter            `json:"filter"`
 	Config          Config            `json:"config"`
 	SecretsSet      map[string]bool   `json:"secrets_set"`

@@ -78,24 +78,22 @@ func (e *env) eventPages(m *member, id int64) []server.Message {
 	return out.Messages
 }
 
-func levelNames(ev server.LargeEvent) []string {
-	var out []string
-	for _, l := range ev.Levels {
-		out = append(out, l.Level)
+// noLevelsOrCodes checks an event's JSON for what it no longer has (owner,
+// 2026-11-13): no levels, no count or list of codes, no appliances.
+func (e *env) noLevelsOrCodes(m *member, id int64) {
+	e.t.Helper()
+	var raw map[string]any
+	if code, _ := m.call(http.MethodGet, fmt.Sprintf("/api/v1/large-events/%d", id), nil, &raw); code != http.StatusOK {
+		e.t.Fatalf("large event %d: %d", id, code)
 	}
-	return out
-}
-
-func levelAt(ev server.LargeEvent, level string) time.Time {
-	for _, l := range ev.Levels {
-		if l.Level == level {
-			return l.At
+	for k := range raw {
+		if strings.Contains(k, "level") || strings.Contains(k, "code") || k == "units" || k == "appliances" {
+			e.t.Errorf("the event's JSON has %q: %v", k, raw)
 		}
 	}
-	return time.Time{}
 }
 
-// A84. Large events open and group.
+// A84. Large events open and group (owner, 2026-11-13: no levels).
 func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	e := setup(t)
 	e.clocked()
@@ -111,29 +109,27 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	}
 
 	// 10:00: an Emergency page with DG0801 on job EX0000101, to an aliased
-	// capcode: one event at level deployment.
+	// capcode: one event, from that page.
 	first := e.mustPost("a", "0100001", page1, t10).MessageID
 	evs := e.largeEvents(e.user)
-	if len(evs) != 1 || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) {
-		t.Fatalf("after DG0801: %+v, want one event at level deployment", evs)
-	}
-	if !levelAt(evs[0], "deployment").Equal(t10) || !evs[0].Start.Equal(t10) {
-		t.Errorf("deployment met at %v, start %v, want %v", levelAt(evs[0], "deployment"), evs[0].Start, t10)
+	if len(evs) != 1 || !evs[0].Start.Equal(t10) || evs[0].Jobs != 1 || evs[0].EmergencyPages != 1 {
+		t.Fatalf("after DG0801: %+v, want one event from %v, 1 job, 1 Emergency page", evs, t10)
 	}
 	id := evs[0].ID
 
-	// 15:00: DG0802 on job EX0000102 joins it, which reaches several
-	// deployments.
+	// 15:00: DG0802 on job EX0000102 joins it.
 	e.advance(5 * time.Hour)
 	t15 := e.clock().Truncate(time.Second)
 	second := e.mustPost("a", "0100002", dgPage("EX0000102", "DG0802", "STN2"), t15).MessageID
 	evs = e.largeEvents(e.user)
-	if len(evs) != 1 || evs[0].ID != id || !slices.Equal(levelNames(evs[0]), []string{"deployment", "several_deployments"}) {
-		t.Fatalf("after DG0802: %+v, want the same event at deployment and several deployments", evs)
+	if len(evs) != 1 || evs[0].ID != id || evs[0].Jobs != 2 || evs[0].EmergencyPages != 2 || !evs[0].End.Equal(t15) {
+		t.Fatalf("after DG0802: %+v, want the same event with 2 jobs and 2 Emergency pages, to %v", evs, t15)
 	}
-	if !levelAt(evs[0], "several_deployments").Equal(t15) || evs[0].Codes != 2 || evs[0].Jobs != 2 || evs[0].EmergencyPages != 2 {
-		t.Errorf("event %+v: want several deployments at %v, 2 codes, 2 jobs, 2 pages", evs[0], t15)
+	ev := e.largeEvent(e.user, id)
+	if !slices.Equal(ev.JobList, []string{"EX0000101", "EX0000102"}) {
+		t.Errorf("the event's jobs: %v", ev.JobList)
 	}
+	e.noLevelsOrCodes(e.user, id)
 	var ids []int64
 	for _, m := range e.eventPages(e.user, id) {
 		ids = append(ids, m.ID)
@@ -147,19 +143,19 @@ func TestA84LargeEventsOpenAndGroup(t *testing.T) {
 	if evs = e.largeEvents(e.user); !evs[0].End.Equal(t15) {
 		t.Errorf("end %v, want its last page's %v", evs[0].End, t15)
 	}
-	// 04:00: a deployment-code page opens a new one.
+	// 04:00: a page with a code opens a new one.
 	e.advance(59 * time.Minute)
 	e.mustPost("a", "0100003", dgPage("EX0000103", "DG0803", "STN3"), e.clock())
 	evs = e.largeEvents(e.user)
-	if len(evs) != 2 || evs[1].ID != id || !slices.Equal(levelNames(evs[0]), []string{"deployment"}) {
-		t.Fatalf("at 04:00: %+v, want a new event at deployment, newest first, beside the old one", evs)
+	if len(evs) != 2 || evs[1].ID != id || evs[0].EmergencyPages != 1 {
+		t.Fatalf("at 04:00: %+v, want a new event, newest first, beside the old one", evs)
 	}
-	t.Logf("A84: event %d %v from %v to %v; then event %d at %v", id, levelNames(evs[1]), evs[1].Start, evs[1].End, evs[0].ID, evs[0].Start)
+	t.Logf("A84: event %d from %v to %v, jobs %v; then event %d at %v", id, evs[1].Start, evs[1].End, ev.JobList, evs[0].ID, evs[0].Start)
 }
 
-// A85. A big job opens an event: 20 Emergency pages of one job to aliased
-// capcodes, each stored message once (owner, 2026-11-13).
-func TestA85BigJobOpensAnEvent(t *testing.T) {
+// A85. A job opens an event at 20 Emergency pages to aliased capcodes, each
+// stored message once (owner, 2026-11-13).
+func TestA85JobOpensAnEvent(t *testing.T) {
 	e := setup(t)
 	e.clocked()
 	t0 := e.clock().Add(-30 * time.Minute).Truncate(time.Second)
@@ -184,16 +180,15 @@ func TestA85BigJobOpensAnEvent(t *testing.T) {
 	if evs := e.largeEvents(e.user); len(evs) != 0 {
 		t.Fatalf("19 Emergency pages opened %d events", len(evs))
 	}
-	// The 20th: an event at level big job, met at its time, holding the
-	// job's pages.
+	// The 20th: an event holding the job's pages.
 	at20 := t0.Add(20 * time.Minute)
 	posted = append(posted, e.mustPost("a", aliased(19), jobPage("EX0000201", 20, "STN2"), at20).MessageID)
 	evs := e.largeEvents(e.user)
-	if len(evs) != 1 || !slices.Equal(levelNames(evs[0]), []string{"big_job"}) || !levelAt(evs[0], "big_job").Equal(at20) {
-		t.Fatalf("after the 20th page: %+v, want one event at level big job, met at %v", evs, at20)
+	if len(evs) != 1 {
+		t.Fatalf("after the 20th page: %+v, want one event", evs)
 	}
-	if evs[0].EmergencyPages != 20 || evs[0].Jobs != 1 || evs[0].Codes != 0 || !evs[0].Start.Equal(t0) {
-		t.Errorf("event %+v: want 20 Emergency pages, 1 job, no deployment codes, starting with the job's first page", evs[0])
+	if evs[0].EmergencyPages != 20 || evs[0].Jobs != 1 || !evs[0].Start.Equal(t0) || !evs[0].End.Equal(at20) {
+		t.Errorf("event %+v: want 20 Emergency pages, 1 job, from the job's first page to its 20th", evs[0])
 	}
 	var held []int64
 	for _, m := range e.eventPages(e.user, evs[0].ID) {
@@ -203,31 +198,23 @@ func TestA85BigJobOpensAnEvent(t *testing.T) {
 	if !slices.Equal(held, posted) {
 		t.Errorf("the event holds %v, want the job's Emergency pages to aliases %v", held, posted)
 	}
-	// No appliance count in the API (owner, 2026-11-13).
-	var raw map[string]any
-	if code, _ := e.user.call(http.MethodGet, fmt.Sprintf("/api/v1/large-events/%d", evs[0].ID), nil, &raw); code != http.StatusOK || raw["emergency_pages"] != float64(20) {
-		t.Errorf("the event's JSON: %d %v", code, raw)
-	}
-	for _, k := range []string{"units", "appliances"} {
-		if _, ok := raw[k]; ok {
-			t.Errorf("the event's JSON has %q: %v", k, raw)
-		}
-	}
+	// No levels, codes or appliance count in the API (owner, 2026-11-13).
+	e.noLevelsOrCodes(e.user, evs[0].ID)
 
 	// Only an admin sets the threshold, from 2 to 1,000 pages.
-	if code, _ := e.user.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: 25}, nil); code != http.StatusForbidden {
+	if code, _ := e.user.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{JobPages: 25}, nil); code != http.StatusForbidden {
 		t.Errorf("a user setting the threshold: %d, want 403", code)
 	}
 	for _, n := range []int{0, 1, 1001} {
-		if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: n}, nil); code != http.StatusUnprocessableEntity {
+		if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{JobPages: n}, nil); code != http.StatusUnprocessableEntity {
 			t.Errorf("threshold %d: %d, want 422", n, code)
 		}
 	}
 	var st server.LargeEventSettings
-	if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{BigJobPages: 25}, &st); code != http.StatusOK || st.BigJobPages != 25 {
+	if code, _ := e.admin.call(http.MethodPut, "/api/v1/admin/large-events", server.LargeEventSettings{JobPages: 25}, &st); code != http.StatusOK || st.JobPages != 25 {
 		t.Fatalf("setting 25: %d %+v", code, st)
 	}
-	if code, _ := e.admin.call(http.MethodGet, "/api/v1/admin/large-events", nil, &st); code != http.StatusOK || st.BigJobPages != 25 {
+	if code, _ := e.admin.call(http.MethodGet, "/api/v1/admin/large-events", nil, &st); code != http.StatusOK || st.JobPages != 25 {
 		t.Fatalf("threshold read back: %d %+v", code, st)
 	}
 	// A new job reaching 20 Emergency pages opens none, nearby and a day
@@ -249,13 +236,13 @@ func TestA85BigJobOpensAnEvent(t *testing.T) {
 	t.Logf("A85: 19 Emergency pages (one naming 25 appliances, one copy from a second receiver), no event; the 20th opened event %d (%d Emergency pages); at 25, 20 pages opened none", evs[0].ID, evs[0].EmergencyPages)
 }
 
-// R87, R87a, R19: a big job's pages arriving out of order, each from two
-// receivers, give the event pages in order give: big job at the 20th page by
-// sent time, holding all 21.
-func TestBigJobOutOfOrder(t *testing.T) {
+// R87, R87a, R19: a job's pages arriving out of order, each from two
+// receivers, give the event pages in order give: one event holding all 21,
+// from the first page by sent time.
+func TestJobOutOfOrder(t *testing.T) {
 	base := time.Now().Add(-6 * time.Hour).UTC().Truncate(time.Second)
 	sentAt := func(i int) time.Time { return base.Add(time.Duration(i) * time.Minute) }
-	run := func(order []int, twice bool) (start, bigJob time.Time, pages int64, n int) {
+	run := func(order []int, twice bool) (start, end time.Time, pages int64, n int) {
 		e := setup(t)
 		for _, i := range order {
 			e.mustPost("a", aliased(i), jobPage("EX0000701", i+1, "STN1"), sentAt(i))
@@ -267,7 +254,7 @@ func TestBigJobOutOfOrder(t *testing.T) {
 		if len(evs) == 0 {
 			return time.Time{}, time.Time{}, 0, 0
 		}
-		return evs[0].Start, levelAt(evs[0], "big_job"), evs[0].EmergencyPages, len(evs)
+		return evs[0].Start, evs[0].End, evs[0].EmergencyPages, len(evs)
 	}
 	var inOrder, reversed, shuffled []int
 	for i := range 21 {
@@ -280,15 +267,49 @@ func TestBigJobOutOfOrder(t *testing.T) {
 		order []int
 		twice bool
 	}{{"in order", inOrder, false}, {"newest first, from two receivers", reversed, true}, {"shuffled, from two receivers", shuffled, true}} {
-		start, big, pages, n := run(c.order, c.twice)
-		if n != 1 || !start.Equal(sentAt(0)) || !big.Equal(sentAt(19)) || pages != 21 {
-			t.Errorf("%s: %d events, start %v, big job %v, %d Emergency pages; want 1 from %v, big job at the 20th page's %v, 21 pages",
-				c.name, n, start, big, pages, sentAt(0), sentAt(19))
+		start, end, pages, n := run(c.order, c.twice)
+		if n != 1 || !start.Equal(sentAt(0)) || !end.Equal(sentAt(20)) || pages != 21 {
+			t.Errorf("%s: %d events, from %v to %v, %d Emergency pages; want 1 from %v to %v, 21 pages",
+				c.name, n, start, end, pages, sentAt(0), sentAt(20))
 		}
 	}
 }
 
-// A86. Large-event integrations fire once.
+// eventDelivery checks one large-event delivery's body (R87d): the event's
+// id, start, the page that opened it, its jobs and Emergency pages so far
+// and its link; never page text, appliances, codes or levels.
+func (e *env) eventDelivery(who string, r standin.Request, eventID, opener int64, openedAt time.Time) {
+	e.t.Helper()
+	link := "http://pager.example.test/large-events/" + fmt.Sprint(eventID)
+	got := r.JSON
+	ev, _ := got["large_event"].(map[string]any)
+	if got["event_type"] != "large_event" || got["content"] != "summary" || got["id"] != float64(opener) || got["url"] != link || ev == nil {
+		e.t.Errorf("%s's delivery: %s", who, r.Body)
+		return
+	}
+	ob, _ := ev["opened_by"].(map[string]any)
+	if ev["id"] != float64(eventID) || ev["url"] != link || ev["started_at"] == nil || ob == nil || ob["id"] != float64(opener) ||
+		ob["sent_at"] != openedAt.UTC().Format(time.RFC3339) || ev["jobs"] == nil || ev["emergency_pages"] == nil {
+		e.t.Errorf("%s's summary: %v", who, ev)
+	}
+	if len(ev) != 6 {
+		e.t.Errorf("%s's summary has %d keys, want 6: %v", who, len(ev), ev)
+	}
+	for _, k := range []string{"text", "fields", "extra", "location", "address"} {
+		if _, ok := got[k]; ok {
+			e.t.Errorf("%s's delivery has %q", who, k)
+		}
+	}
+	e.noPageText(who+"'s delivery", string(r.Body))
+	for _, s := range []string{"SAMPLE RD", "DG08", "deploy", "level", "units", "appliance"} {
+		if strings.Contains(string(r.Body), s) {
+			e.t.Errorf("%s's delivery holds %q: %s", who, s, r.Body)
+		}
+	}
+}
+
+// A86. Large-event integrations fire once: when the event opens (owner,
+// 2026-11-13).
 func TestA86LargeEventIntegrationsFireOnce(t *testing.T) {
 	e := setup(t)
 	e.clocked()
@@ -298,84 +319,97 @@ func TestA86LargeEventIntegrationsFireOnce(t *testing.T) {
 	hookB, hookC := standin.Webhook(), standin.Webhook()
 	defer hookB.Close()
 	defer hookC.Close()
-	e.createIntegration(e.user, integrations.Request{Name: "Several deployments", Kind: integrations.Webhook, LargeEvents: "several_deployments",
+	vb := e.createIntegration(e.user, integrations.Request{Name: "Large events", Kind: integrations.Webhook, LargeEvents: true,
 		Secrets: integrations.Secrets{URL: hookB.URL + "/hook"}})
-	vc := e.createIntegration(userC, integrations.Request{Name: "Any deployment", Kind: integrations.Webhook, LargeEvents: "deployment",
+	vc := e.createIntegration(userC, integrations.Request{Name: "Big days", Kind: integrations.Webhook, LargeEvents: true,
 		Content: integrations.Full, Secrets: integrations.Secrets{URL: hookC.URL + "/hook"}})
-	if vc.Content != integrations.Summary || vc.LargeEvents == nil || *vc.LargeEvents != "deployment" {
-		t.Errorf("C's integration: content %q, large events %v; want summary at deployment", vc.Content, vc.LargeEvents)
+	if vc.Content != integrations.Summary || !vc.LargeEvents || !vb.LargeEvents {
+		t.Errorf("C's integration: content %q, large events %v; want summary, large events", vc.Content, vc.LargeEvents)
 	}
 
-	// 10:00: DG0801. C's webhook gets one delivery within 5 s; B's none.
+	// 10:00: DG0801 opens the event. Each webhook gets one delivery within 5 s.
+	t10 := e.clock().Truncate(time.Second)
 	start := time.Now()
-	p1 := e.mustPost("a", "0100001", dgPage("EX0000101", "DG0801", "STN1"), e.clock()).MessageID
-	if !eventually(5*time.Second-time.Since(start), func() bool { return len(hookC.Requests()) == 1 }) {
-		t.Fatalf("C's webhook got %d requests within 5 s, want 1", len(hookC.Requests()))
+	p1 := e.mustPost("a", "0100001", dgPage("EX0000101", "DG0801", "STN1"), t10).MessageID
+	if !eventually(5*time.Second-time.Since(start), func() bool { return len(hookB.Requests()) == 1 && len(hookC.Requests()) == 1 }) {
+		t.Fatalf("within 5 s: B's webhook got %d requests, C's %d; want 1 each", len(hookB.Requests()), len(hookC.Requests()))
 	}
-	t.Logf("C's delivery %v after the page", time.Since(start).Round(time.Millisecond))
-	// 15:00: DG0802. B's gets one; C's nothing more.
+	t.Logf("both deliveries %v after the page", time.Since(start).Round(time.Millisecond))
+	// 15:00: a second code and job join; then a third code, an ordinary page
+	// of a job in the event, and a page from a second client (R51b): none
+	// sends anything.
 	e.advance(5 * time.Hour)
-	start = time.Now()
-	p2 := e.mustPost("a", "0100002", dgPage("EX0000102", "DG0802", "STN2"), e.clock()).MessageID
-	if !eventually(5*time.Second-time.Since(start), func() bool { return len(hookB.Requests()) == 1 }) {
-		t.Fatalf("B's webhook got %d requests within 5 s, want 1", len(hookB.Requests()))
-	}
-	t.Logf("B's delivery %v after the page", time.Since(start).Round(time.Millisecond))
-	// A third deployment code joins: neither gets another.
+	e.mustPost("a", "0100002", dgPage("EX0000102", "DG0802", "STN2"), e.clock())
 	e.mustPost("a", "0100003", dgPage("EX0000103", "DG0803", "STN3"), e.clock())
-	// And the same page from a second client (R51b).
+	e.mustPost("a", "0100004", "@@EX0000103 GRS3 MORE CREWS @ SAMPLE RD, MADEUPTON #STN4", e.clock().Add(time.Minute))
 	e.mustPost("b", "0100003", dgPage("EX0000103", "DG0803", "STN3"), e.clock().Add(2*time.Second))
 	time.Sleep(1500 * time.Millisecond)
 	if b, c := len(hookB.Requests()), len(hookC.Requests()); b != 1 || c != 1 {
-		t.Fatalf("after DG0803: B got %d, C %d; want 1 each", b, c)
+		t.Fatalf("after more codes and jobs joined: B got %d, C %d; want 1 each", b, c)
 	}
 
 	evs := e.largeEvents(e.user)
-	if len(evs) != 1 {
-		t.Fatalf("%d events, want 1", len(evs))
+	if len(evs) != 1 || evs[0].Jobs != 3 || evs[0].EmergencyPages != 4 {
+		t.Fatalf("events %+v, want 1 with 3 jobs and 4 Emergency pages", evs)
 	}
-	link := "http://pager.example.test/large-events/" + fmt.Sprint(evs[0].ID)
-	for _, d := range []struct {
-		who, level string
-		page       int64
-		codes      []any
-		r          standin.Request
-	}{
-		{"C", "deployment", p1, []any{"DG0801"}, hookC.Requests()[0]},
-		{"B", "several_deployments", p2, []any{"DG0801", "DG0802"}, hookB.Requests()[0]},
-	} {
-		got := d.r.JSON
-		ev, _ := got["large_event"].(map[string]any)
-		if got["event_type"] != "large_event" || got["content"] != "summary" || got["id"] != float64(d.page) || got["url"] != link || ev == nil {
-			t.Errorf("%s's delivery: %s", d.who, d.r.Body)
-			continue
-		}
-		if ev["level"] != d.level || ev["url"] != link || fmt.Sprint(ev["deployment_codes"]) != fmt.Sprint(d.codes) || ev["started_at"] == nil || ev["reached_at"] == nil {
-			t.Errorf("%s's summary: %v", d.who, ev)
-		}
-		// Never page text (R87d): no text, address or fields, and none of it.
-		for _, k := range []string{"text", "fields", "extra", "location", "address"} {
-			if _, ok := got[k]; ok {
-				t.Errorf("%s's delivery has %q", d.who, k)
-			}
-		}
-		e.noPageText(d.who+"'s delivery", string(d.r.Body))
-		if strings.Contains(string(d.r.Body), "SAMPLE RD") {
-			t.Errorf("%s's delivery holds the address", d.who)
+	e.eventDelivery("B", hookB.Requests()[0], evs[0].ID, p1, t10)
+	e.eventDelivery("C", hookC.Requests()[0], evs[0].ID, p1, t10)
+	// Each owner sees their one delivery, carried by the page, about the event.
+	for _, c := range []struct {
+		m  *member
+		id int64
+	}{{e.user, vb.ID}, {userC, vc.ID}} {
+		ds := e.deliveries(c.m, c.id)
+		if len(ds) != 1 || ds[0].EventID == nil || *ds[0].EventID != evs[0].ID || ds[0].MessageID != p1 || ds[0].Status != "delivered" {
+			t.Errorf("deliveries of integration %d: %+v", c.id, ds)
 		}
 	}
-	// The Large events page lists the event with both deployment codes (and
-	// the third).
-	ev := e.largeEvent(e.user, evs[0].ID)
-	if !slices.Contains(ev.CodeList, "DG0801") || !slices.Contains(ev.CodeList, "DG0802") || evs[0].Codes != 3 {
-		t.Errorf("event %+v: want DG0801 and DG0802 among its 3 codes", ev)
+	t.Logf("A86: one delivery each when the event opened, nothing as codes and jobs joined: %s", hookB.Requests()[0].Body)
+}
+
+// R87a, R87d: two events, each told of when it opened, merged by a page
+// between them: the merge sends nothing, and the event keeps both deliveries.
+func TestLargeEventMergeFiresNothing(t *testing.T) {
+	e := setup(t)
+	e.allowLoopback()
+	e.runWorker()
+	hook := standin.Webhook()
+	defer hook.Close()
+	v := e.createIntegration(e.user, integrations.Request{Name: "Large events", Kind: integrations.Webhook, LargeEvents: true,
+		Secrets: integrations.Secrets{URL: hook.URL + "/hook"}})
+	at := e.now.Add(-2 * time.Minute)
+	// Two events 20 hours apart by sent time. The older page is too old to
+	// send (R51a), but its delivery is recorded all the same.
+	e.mustPost("a", "0100001", dgPage("EX0000901", "DG0901", "STN1"), at)
+	e.mustPost("a", "0100002", dgPage("EX0000902", "DG0902", "STN2"), at.Add(-20*time.Hour))
+	if !eventually(5*time.Second, func() bool { return len(hook.Requests()) == 1 }) {
+		t.Fatalf("got %d deliveries, want 1", len(hook.Requests()))
 	}
-	// Each owner sees their delivery, carried by the page, about the event.
-	ds := e.deliveries(userC, vc.ID)
-	if len(ds) != 1 || ds[0].EventID == nil || *ds[0].EventID != evs[0].ID || ds[0].Status != "delivered" {
-		t.Errorf("C's deliveries: %+v", ds)
+	if evs := e.largeEvents(e.user); len(evs) != 2 {
+		t.Fatalf("%d events, want 2", len(evs))
 	}
-	t.Logf("A86: C got 1 delivery at the first code, B 1 at the second, nothing at the third: %s", hookB.Requests()[0].Body)
+	if ds := e.deliveries(e.user, v.ID); len(ds) != 2 {
+		t.Fatalf("before the merge: deliveries %+v, want one per event", ds)
+	}
+	// A page 10 hours before the newer: within 12 hours of both.
+	e.mustPost("a", "0100003", dgPage("EX0000903", "DG0903", "STN3"), at.Add(-10*time.Hour))
+	time.Sleep(1500 * time.Millisecond)
+	if n := len(hook.Requests()); n != 1 {
+		t.Errorf("after the merge: %d requests, want still 1", n)
+	}
+	evs := e.largeEvents(e.user)
+	if len(evs) != 1 || evs[0].EmergencyPages != 3 {
+		t.Fatalf("after the merge: %+v, want one event of 3 pages", evs)
+	}
+	ds := e.deliveries(e.user, v.ID)
+	if len(ds) != 2 {
+		t.Fatalf("after the merge: deliveries %+v, want still the two openings'", ds)
+	}
+	for _, d := range ds {
+		if d.EventID == nil || *d.EventID != evs[0].ID {
+			t.Errorf("delivery %+v isn't about the merged event %d", d, evs[0].ID)
+		}
+	}
 }
 
 // R87d: a large-event integration's selection, content and Send test.
@@ -385,16 +419,17 @@ func TestLargeEventIntegrationRules(t *testing.T) {
 	hook := standin.Webhook()
 	defer hook.Close()
 	url := integrations.Secrets{URL: hook.URL + "/hook"}
-	for _, req := range []integrations.Request{
-		{Name: "Both", Kind: integrations.Webhook, LargeEvents: "deployment", Capcodes: []string{"0100001"}, Secrets: url},
-		{Name: "Unknown level", Kind: integrations.Webhook, LargeEvents: "huge", Secrets: url},
-	} {
-		if code, _ := e.user.call(http.MethodPost, "/api/v1/integrations", req, nil); code != http.StatusUnprocessableEntity {
-			t.Errorf("%s: %d, want 422", req.Name, code)
-		}
+	if code, _ := e.user.call(http.MethodPost, "/api/v1/integrations",
+		integrations.Request{Name: "Both", Kind: integrations.Webhook, LargeEvents: true, Capcodes: []string{"0100001"}, Secrets: url}, nil); code != http.StatusUnprocessableEntity {
+		t.Errorf("large events and a capcode: %d, want 422", code)
 	}
-	v := e.createIntegration(e.user, integrations.Request{Name: "Big jobs", Kind: integrations.Webhook, LargeEvents: "big_job", Secrets: url})
-	if len(v.Capcodes)+len(v.Aliases) != 0 || v.Content != integrations.Summary {
+	// A level, as main had before migration 00019, is refused: there are none.
+	if code, _ := e.user.call(http.MethodPost, "/api/v1/integrations",
+		map[string]any{"name": "Level", "kind": "webhook", "large_events": "big_job", "secrets": map[string]string{"url": url.URL}}, nil); code < 400 || code > 499 {
+		t.Errorf("a level: %d, want a 4xx", code)
+	}
+	v := e.createIntegration(e.user, integrations.Request{Name: "Large events", Kind: integrations.Webhook, LargeEvents: true, Secrets: url})
+	if len(v.Capcodes)+len(v.Aliases) != 0 || v.Content != integrations.Summary || !v.LargeEvents {
 		t.Errorf("view %+v", v)
 	}
 	var res integrations.TestResult
@@ -403,7 +438,7 @@ func TestLargeEventIntegrationRules(t *testing.T) {
 	}
 	got := hook.Requests()[0].JSON
 	ev, _ := got["large_event"].(map[string]any)
-	if got["test"] != true || got["event_type"] != "test" || ev == nil || ev["level"] != "big_job" {
+	if got["test"] != true || got["event_type"] != "test" || ev == nil || ev["opened_by"] == nil || ev["level"] != nil {
 		t.Errorf("test delivery: %s", hook.Requests()[0].Body)
 	}
 	// It never fires for a page: a page delivery's selection is capcodes and aliases.
@@ -413,9 +448,8 @@ func TestLargeEventIntegrationRules(t *testing.T) {
 		t.Errorf("a page queued %d deliveries for a large-event integration (%v)", rows, err)
 	}
 	// Changed to capcodes, it's a page integration again.
-	v2 := v
 	var out integrations.View
-	if code, p := e.user.call(http.MethodPut, fmt.Sprintf("/api/v1/integrations/%d", v2.ID), integrations.Request{Name: "Now pages", Capcodes: []string{"0100001"}}, &out); code != http.StatusOK || out.LargeEvents != nil || len(out.Aliases) != 1 { // 0100001 is Station 1 (R48)
+	if code, p := e.user.call(http.MethodPut, fmt.Sprintf("/api/v1/integrations/%d", v.ID), integrations.Request{Name: "Now pages", Capcodes: []string{"0100001"}}, &out); code != http.StatusOK || out.LargeEvents || len(out.Aliases) != 1 { // 0100001 is Station 1 (R48)
 		t.Errorf("changed to a capcode: %d %s %+v", code, p.Error, out)
 	}
 }
@@ -436,8 +470,8 @@ func TestLargeEventsOutOfOrder(t *testing.T) {
 		{"0100002", dgPage("EX0000306", "DG0816", "STN2"), 40 * time.Hour}, // an event of its own
 	}
 	type got struct {
-		start, end, several time.Time
-		pages, codes        int64
+		start, end  time.Time
+		pages, jobs int64
 	}
 	run := func(order []int, twice bool) []got {
 		e := setup(t)
@@ -451,14 +485,14 @@ func TestLargeEventsOutOfOrder(t *testing.T) {
 		}
 		var out []got
 		for _, ev := range e.largeEvents(e.user) {
-			out = append(out, got{ev.Start, ev.End, levelAt(ev, "several_deployments"), ev.EmergencyPages, ev.Codes})
+			out = append(out, got{ev.Start, ev.End, ev.EmergencyPages, ev.Jobs})
 		}
 		return out
 	}
 	inOrder := run([]int{4, 0, 1, 2, 3, 5}, false)
 	want := []got{
-		{base.Add(40 * time.Hour), base.Add(40 * time.Hour), time.Time{}, 1, 1},
-		{base.Add(-3 * time.Hour), base.Add(20 * time.Hour), base, 5, 5},
+		{base.Add(40 * time.Hour), base.Add(40 * time.Hour), 1, 1},
+		{base.Add(-3 * time.Hour), base.Add(20 * time.Hour), 5, 5},
 	}
 	if fmt.Sprint(inOrder) != fmt.Sprint(want) {
 		t.Fatalf("in order: %v, want %v", inOrder, want)
@@ -493,7 +527,7 @@ func TestLargeEventJobPagesJoin(t *testing.T) {
 	if want := []int64{later, dg, early}; !slices.Equal(held, want) {
 		t.Errorf("the event holds %v, want job EX0000401's Emergency pages to aliases %v", held, want)
 	}
-	if !evs[0].Start.Equal(t0) || !evs[0].End.Equal(t0.Add(time.Hour)) || !levelAt(evs[0], "deployment").Equal(t0.Add(10*time.Minute)) {
+	if !evs[0].Start.Equal(t0) || !evs[0].End.Equal(t0.Add(time.Hour)) || evs[0].Jobs != 1 {
 		t.Errorf("event %+v", evs[0])
 	}
 }
@@ -514,7 +548,7 @@ func TestLargeEventRetention(t *testing.T) {
 	e.mustPost("a", "0100003", dgPage("EX0000503", "DG0833", "STN3"), cut.Add(-2*time.Hour))
 	e.mustPost("a", "0100004", dgPage("EX0000504", "DG0834", "STN4"), cut.Add(2*time.Hour))
 	evs := e.largeEvents(e.user)
-	if len(evs) != 2 || evs[0].Codes != 2 || evs[0].Jobs != 2 {
+	if len(evs) != 2 || evs[0].EmergencyPages != 2 || evs[0].Jobs != 2 {
 		t.Fatalf("before the run: %+v", evs)
 	}
 	if _, err := e.job.RunOnce(e.ctx, run); err != nil {
@@ -524,9 +558,8 @@ func TestLargeEventRetention(t *testing.T) {
 	if len(evs) != 1 {
 		t.Fatalf("after the run: %d events, want 1 (the old one gone with its pages)", len(evs))
 	}
-	if ev := evs[0]; ev.EmergencyPages != 1 || ev.Codes != 1 || ev.Jobs != 1 || !ev.Start.Equal(cut.Add(2*time.Hour)) ||
-		!slices.Equal(levelNames(ev), []string{"deployment", "several_deployments"}) {
-		t.Errorf("the thinned event: %+v; want 1 page, 1 code, 1 job, starting at its remaining page, its levels kept", ev)
+	if ev := evs[0]; ev.EmergencyPages != 1 || ev.Jobs != 1 || !ev.Start.Equal(cut.Add(2*time.Hour)) {
+		t.Errorf("the thinned event: %+v; want 1 page, 1 job, starting at its remaining page", ev)
 	}
 	var n int
 	if err := e.st.Pool.QueryRow(e.ctx, "SELECT count(*) FROM large_event_messages").Scan(&n); err != nil || n != 1 {

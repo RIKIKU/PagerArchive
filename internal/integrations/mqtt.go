@@ -164,7 +164,7 @@ func (s *Service) discoveryConfig(ctx context.Context, l loaded) ([]byte, error)
 		device["configuration_url"] = s.AppURL.JoinPath("integrations").String()
 	}
 	types := []string{"page", "test"}
-	if l.row.LargeEvents != nil {
+	if l.row.LargeEvents {
 		types = []string{"large_event", "test"} // R87d
 	}
 	return json.Marshal(map[string]any{

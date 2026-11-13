@@ -379,7 +379,7 @@ for (const scheme of ['light', 'dark'] as const) {
 			const album = await (await request.post(`${URL}/api/v1/albums`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { name: albumName, description: 'For the axe check' } })).json();
 			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
 			await request.put(`${URL}/api/v1/albums/${album.id}/messages/${(await res.json()).messages[0].id}/note`, { headers: { Cookie: `pa_session=${SESSIONS.user}` }, data: { note: 'Why it was kept' } });
-			// M22: a large event (R87c), from a made-up deployment code.
+			// M22: a large event (R87c), from a made-up code.
 			await post(request, '0100002', `@@${uniqueJob()} GRS3 DG98${scheme === 'light' ? 1 : 2}${width === 375 ? 1 : 2} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
 			const eventID = (await (await request.get(`${URL}/api/v1/large-events`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).events[0].id;
 			// M6: a waiting alias request, so the review screen and My requests
@@ -3337,10 +3337,11 @@ test('A72 albums', async ({ browser, request }, info) => {
 	await phone.context().close();
 });
 
-// A84-A86 in the browser (M22, R87c, R87d): a large-event integration set up
-// in the form fires once at its level, and the Large events page under Tools
-// lists the event; its view shows its pages with the scrubber, at 1,280 and
-// 375 px, with axe. Made-up deployment codes, one set per browser project.
+// A84-A86 in the browser (M22, R87c, R87d; owner, 2026-11-13): a large-event
+// integration set up in the form fires once, when the event opens, and the
+// Large events page under Tools lists the event with its jobs, never levels
+// or codes; its view shows its job numbers and pages with the scrubber, at
+// 1,280 and 375 px, with axe. Made-up codes, one set per browser project.
 test('A86 large events in the browser', async ({ browser, request }, info) => {
 	test.setTimeout(120_000);
 	const http = await import('node:http');
@@ -3363,47 +3364,53 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		const allow = await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: { Cookie: `pa_session=${SESSIONS.admin}` }, data: { entries: ['127.0.0.0/8'] } });
 		expect(allow.status()).toBe(200);
 		// Earlier tests' pages may have opened an event within 12 hours: start
-		// from none, so this one opens and reaches its levels here.
+		// from none, so this one opens here.
 		sql('DELETE FROM large_events;');
 
 		const desk = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
 		await desk.goto('/integrations');
 		await desk.getByRole('button', { name: 'New integration' }).click();
-		const name = `Several deployments ${Date.now()}`;
+		const name = `Large events ${Date.now()}`;
 		await desk.getByLabel('Name', { exact: true }).fill(name);
 		await desk.getByRole('radio', { name: /^Large events: a summary/ }).check();
-		// A summary only: no capcodes, filter or content to choose.
+		// A summary only, with no level: no capcodes, filter, content or level to choose.
 		await expect(desk.getByRole('combobox', { name: 'Capcodes and aliases' })).toHaveCount(0);
 		await expect(desk.getByText('Full: the text and every field')).toHaveCount(0);
-		await desk.getByRole('radio', { name: /^Several deployments:/ }).check();
+		const form = desk.locator('form.integration-form');
+		await expect(form.getByRole('radio')).toHaveCount(2);
+		await expect(desk.getByTestId('large-event-help')).toContainText('once for each large event, when the event opens');
+		await expect(form).not.toContainText(/deploy|level|big job/i);
 		await desk.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
+		await form.screenshot({ path: info.outputPath('large-event-integration-form-1280.png') });
 		await desk.getByRole('button', { name: 'Save integration' }).click();
 		await expect(desk.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
 		const card = desk.getByTestId('integration').filter({ hasText: name });
-		await expect(card).toContainText('Large events at level Several deployments');
+		await expect(card).toContainText('Large events, each when it opens');
 		const list = await (await request.get(`${URL}/api/v1/integrations`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json();
 		integrationID = list.integrations.find((i: { name: string }) => i.name === name).id;
 
-		// The first code opens an event at level deployment: nothing for this
-		// integration. The second reaches several deployments: one delivery.
-		await post(request, '0100001', `@@${jobs[0]} GRS3 ${codes[0]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`);
-		await desk.waitForTimeout(1500);
-		expect(received.filter((r) => r.event_type === 'large_event')).toHaveLength(0);
+		// The first code opens the event: one delivery within 5 s. The second
+		// joins it: nothing more.
 		const start = Date.now();
-		await post(request, '0100002', `@@${jobs[1]} GRS3 ${codes[1]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+		const opener = await postId(request, '0100001', `@@${jobs[0]} GRS3 ${codes[0]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`);
 		await expect.poll(() => received.filter((r) => r.event_type === 'large_event').length, { timeout: 5000 }).toBe(1);
-		console.log(`A86 (browser): the delivery came ${Date.now() - start} ms after the second code`);
+		console.log(`A86 (browser): the delivery came ${Date.now() - start} ms after the page that opened the event`);
+		await post(request, '0100002', `@@${jobs[1]} GRS3 ${codes[1]} GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2`);
+		await desk.waitForTimeout(1500);
+		expect(received.filter((r) => r.event_type === 'large_event')).toHaveLength(1);
 		const got = received.find((r) => r.event_type === 'large_event')!;
-		const ev = got.large_event as { level: string; deployment_codes: string[]; emergency_pages: number; url: string; id: number };
-		expect(ev.level).toBe('several_deployments');
-		expect(ev.deployment_codes).toEqual(codes);
-		expect(ev.emergency_pages).toBe(2);
-		expect(ev).not.toHaveProperty('units');
-		expect(JSON.stringify(got)).not.toContain('GRASS FIRE');
+		const ev = got.large_event as { id: number; started_at: string; opened_by: { id: number; sent_at: string }; jobs: string[]; emergency_pages: number; url: string };
+		expect(Object.keys(ev).sort()).toEqual(['emergency_pages', 'id', 'jobs', 'opened_by', 'started_at', 'url']);
+		expect(ev.opened_by.id).toBe(got.id);
+		expect(ev.opened_by.id).toBe(opener);
+		expect(ev.jobs).toEqual([jobs[0]]);
+		expect(ev.emergency_pages).toBe(1);
+		expect(JSON.stringify(got)).not.toMatch(/GRASS FIRE|DG9|deploy|level|units|appliance/i);
 		expect(got.text).toBeUndefined();
 
-		// The Large events page, from Tools: newest first, its first and last pages, its levels (never
-		// "ongoing": the app can't know an incident is over; owner, 2026-11-13).
+		// The Large events page, from Tools: newest first, its first and last
+		// pages (never "ongoing"), its jobs and Emergency pages, and no levels
+		// or codes (owner, 2026-11-13).
 		await desk.goto('/tools');
 		await desk.getByRole('main').getByRole('link', { name: 'Large events' }).click();
 		await expect(desk.getByRole('heading', { level: 1, name: 'Large events' })).toBeVisible();
@@ -3411,6 +3418,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 			{ label: 'Tools', href: '/tools' },
 			{ label: 'Large events', href: null }
 		]);
+		await expect(desk.getByRole('main')).not.toContainText(/deploy/i);
 		const first = desk.getByTestId('large-event').first();
 		await expect(first).toHaveAttribute('data-event-id', String(ev.id));
 		await expect(first).not.toContainText(/ongoing/i);
@@ -3418,21 +3426,20 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await expect(first.locator('time')).toHaveCount(2);
 		await expect(first).toContainText('First page');
 		await expect(first).toContainText('Last page');
-		await expect(first).toContainText('Deployment');
-		await expect(first).toContainText('Several deployments');
-		// The number of Emergency pages, never an appliance count (owner, 2026-11-13).
-		await expect(first).toContainText('2 deployment codes · 2 jobs · 2 Emergency pages');
-		await expect(first).not.toContainText(/unit|appliance/i);
+		// Jobs and Emergency pages: never an appliance count, a level or codes (owner, 2026-11-13).
+		await expect(first).toContainText('2 jobs · 2 Emergency pages');
+		await expect(first).not.toContainText(/unit|appliance|deploy|level|big job|code/i);
 		await desk.screenshot({ path: info.outputPath('large-events-list-1280.png') });
 		expect(await axeOf(desk), 'axe: Large events').toEqual([]);
 
-		// Its view: the codes, the jobs and their pages, with the scrubber.
+		// Its view: its job numbers, each a link to its job, and its pages, with the scrubber.
 		await first.getByRole('link').click();
 		await expect(desk).toHaveURL(new RegExp(`/large-events/${ev.id}$`));
-		await expect(desk.getByTestId('event-codes')).toHaveText(codes.join(', '));
-		await expect(desk.getByTestId('event-about')).toContainText('2 deployment codes · 2 jobs · 2 Emergency pages');
-		await expect(desk.getByTestId('event-about')).not.toContainText(/unit|appliance/i);
-		await expect(desk.getByTestId('event-about').getByRole('term')).toContainText(['First page', 'Last page', 'Levels']);
+		const about = desk.getByTestId('event-about');
+		await expect(about).toContainText('2 jobs · 2 Emergency pages');
+		await expect(about).not.toContainText(/unit|appliance|deploy|level|code/i);
+		await expect(about.getByRole('term')).toHaveText(['First page', 'Last page', 'Job numbers']);
+		for (const j of jobs) await expect(about.getByRole('link', { name: j, exact: true })).toHaveAttribute('href', `/jobs/${j}`);
 		const rows = desk.getByTestId('message-list').locator('article');
 		await expect(rows).toHaveCount(2);
 		await expect(rows.first()).toContainText(jobs[1]);
@@ -3455,7 +3462,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		const phone = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 740 } })).newPage();
 		const overflow = () => phone.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
 		await phone.goto('/large-events');
-		await expect(phone.getByTestId('large-event').first()).toContainText('Several deployments');
+		await expect(phone.getByTestId('large-event').first()).toContainText('2 jobs · 3 Emergency pages');
 		expect(await overflow()).toBeLessThanOrEqual(0);
 		await phone.screenshot({ path: info.outputPath('large-events-list-375.png') });
 		expect(await axeOf(phone), 'axe: Large events on a phone').toEqual([]);
@@ -3465,7 +3472,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		expect(await overflow()).toBeLessThanOrEqual(0);
 		await phone.screenshot({ path: info.outputPath('large-event-view-375.png'), fullPage: true });
 		expect(await axeOf(phone), 'axe: a large event on a phone').toEqual([]);
-		// Another code joining doesn't fire it again.
+		// Another code and job joining doesn't fire it again.
 		await post(request, '0100004', `@@${uniqueJob()} GRS3 DG9${n}03 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`);
 		await phone.waitForTimeout(1500);
 		expect(received.filter((r) => r.event_type === 'large_event')).toHaveLength(1);
@@ -3475,20 +3482,20 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 	}
 });
 
-// R87: the admins' threshold for a big job, in Administration.
+// R87: the admins' threshold of Emergency pages on one job, in Administration.
 test('A85 large event settings in Administration', async ({ browser }) => {
 	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
 	await admin.goto('/admin');
 	await admin.getByTestId('admin-screens').getByRole('link', { name: 'Large event settings' }).click();
-	const field = admin.getByLabel('Emergency pages for a big job');
+	const field = admin.getByLabel('Emergency pages on one job that open a large event');
 	await expect(field).toHaveValue('20');
 	await field.fill('25');
 	await admin.getByRole('button', { name: 'Save' }).click();
 	await expect(admin.getByRole('status').filter({ hasText: 'has 25 Emergency pages' })).toBeVisible();
 	await admin.reload();
-	await expect(admin.getByLabel('Emergency pages for a big job')).toHaveValue('25');
+	await expect(admin.getByLabel('Emergency pages on one job that open a large event')).toHaveValue('25');
 	expect(await axeOf(admin), 'axe: large event settings').toEqual([]);
-	await admin.getByLabel('Emergency pages for a big job').fill('20');
+	await admin.getByLabel('Emergency pages on one job that open a large event').fill('20');
 	await admin.getByRole('button', { name: 'Save' }).click();
 	await expect(admin.getByRole('status').filter({ hasText: 'has 20 Emergency pages' })).toBeVisible();
 	// A user is refused.
