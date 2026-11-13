@@ -3134,6 +3134,7 @@ FROM generate_series(0, 2) AS p (i);`);
 	expect(dayMark(12).dots).toBeGreaterThan(dayMark(11).dots);
 	expect(dayMark(12).dots).toBeGreaterThan(dayMark(13).dots);
 	await page.screenshot({ path: info.outputPath('a71-scrubber.png') });
+	expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth), 'with a mouse the scroll bar stays').not.toBe('none');
 	expect(await axeOf(page), 'axe with the scrubber').toEqual([]);
 
 	// Dragging to 20 days ago: while dragging the mark is named; the list
@@ -3264,6 +3265,11 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		const box = (await tab.boundingBox())!;
 		expect(box.width, 'a target wide').toBeGreaterThanOrEqual(44);
 		expect(box.height, 'a target tall').toBeGreaterThanOrEqual(44);
+		// Wide enough to find with a thumb, off the very edge, and the page's own
+		// scroll bar hidden while the tab stands in for it (owner, 2026-11-13).
+		expect((await tab.locator('.grip').boundingBox())!.width, 'the tab as drawn').toBeGreaterThanOrEqual(50);
+		expect(box.x + box.width, 'off the edge').toBeLessThanOrEqual(width - 12);
+		expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth)).toBe('none');
 		await page.screenshot({ path: info.outputPath(`touch-${width}-shown.png`) });
 		const before = await firstInView(page);
 		// Tap and drag the tab down a quarter of the rail, a step at a time.

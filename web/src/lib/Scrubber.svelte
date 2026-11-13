@@ -514,9 +514,13 @@
 			scrollTimer = setTimeout(() => (scrolling = false), 1500);
 		};
 		window.addEventListener('scroll', scrolled, { passive: true });
+		// The tab stands in for the browser's own scroll bar, which got in its
+		// way at the edge (owner, 2026-11-13): hidden while the tab is here.
+		document.documentElement.classList.add('scrubber-touch');
 		return () => {
 			clearTimeout(scrollTimer);
 			window.removeEventListener('scroll', scrolled);
+			document.documentElement.classList.remove('scrubber-touch');
 		};
 	});
 	// The day for a range of days (the last 30 days, say), the month and year
@@ -587,7 +591,7 @@
 	>
 		{#if tabAt !== undefined}
 			<div class="tab-place" style:top="{tabAt * 100}%" style:transform="translateY(-{tabAt * 100}%)">
-				{#if dragging && hover !== undefined && marks[hover]}<span class="tab-bubble" aria-hidden="true">{coarse(marks[hover])}</span>{/if}
+				{#if dragging && hover !== undefined && marks[hover]}<span class="tab-bubble" class:low={(tabAt ?? 0) < 0.15} aria-hidden="true">{coarse(marks[hover])}</span>{/if}
 				<div
 					class="tab"
 					class:held={dragging}
@@ -892,7 +896,8 @@
 		position: fixed;
 		bottom: 0;
 		z-index: var(--layer-content);
-		width: var(--target);
+		width: max(var(--target), var(--scrubber-tab-width-held));
+		margin-right: var(--scrubber-tab-inset);
 		pointer-events: none;
 		opacity: 0;
 		transition: opacity 400ms ease-in;
@@ -914,7 +919,7 @@
 		display: flex;
 		align-items: center;
 		justify-content: flex-end;
-		width: var(--target);
+		width: max(var(--target), var(--scrubber-tab-width-held));
 		height: var(--scrubber-tab-height);
 		touch-action: none;
 		cursor: grab;
@@ -926,7 +931,7 @@
 		justify-content: center;
 		width: var(--scrubber-tab-width);
 		height: 100%;
-		border-radius: var(--radius) 0 0 var(--radius);
+		border-radius: var(--radius);
 		background: var(--accent);
 		box-shadow: var(--scrubber-tab-shadow);
 	}
@@ -948,9 +953,12 @@
 		outline: var(--focus-width) solid var(--focus);
 		outline-offset: var(--focus-offset);
 	}
+	/* Up and to the left of the tab, clear of the finger on it; below it near
+	   the top, so it stays in view. */
 	.tab-bubble {
 		position: absolute;
 		right: calc(100% + var(--space-sm));
+		bottom: calc(100% - var(--space-xs));
 		padding: var(--space-xs) var(--space-md);
 		border-radius: var(--radius-small);
 		background: var(--fg);
@@ -959,6 +967,10 @@
 		font-weight: var(--weight-strong);
 		white-space: nowrap;
 		pointer-events: none;
+	}
+	.tab-bubble.low {
+		top: calc(100% - var(--space-xs));
+		bottom: auto;
 	}
 	@media (max-width: 47.99rem) {
 		.rail {
