@@ -3134,7 +3134,6 @@ FROM generate_series(0, 2) AS p (i);`);
 	expect(dayMark(12).dots).toBeGreaterThan(dayMark(11).dots);
 	expect(dayMark(12).dots).toBeGreaterThan(dayMark(13).dots);
 	await page.screenshot({ path: info.outputPath('a71-scrubber.png') });
-	expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth), 'with a mouse the scroll bar stays').not.toBe('none');
 	expect(await axeOf(page), 'axe with the scrubber').toEqual([]);
 
 	// Dragging to 20 days ago: while dragging the mark is named; the list
@@ -3305,6 +3304,62 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		await expect(scrubber).toHaveAttribute('data-shown', 'false', { timeout: 5000 });
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 		await ctx.close();
+	}
+});
+
+// The scrubber owns the right edge (owner, 2026-11-13): on a page with one,
+// the page's own scroll bar is hidden and the edge zone reaches the window's
+// edge; the wheel and the keys still scroll; a page without one keeps its
+// scroll bar; nothing moves sideways between them; no sideways scroll.
+test('Scrubber owns the right edge', async ({ browser }, info) => {
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07300${n}1`;
+	const alias = `Edge ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDEDGE ${n} PAGE ' || g.i, 'Admin', now() - g.i * interval '3 hours',
+       sha256(convert_to('edge ${n} ' || g.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(1, 120) AS g (i);`);
+	const scrollbar = (p: Page) => p.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth);
+	const frame = (p: Page) =>
+		p.evaluate(() => ({
+			top: Math.round(document.querySelector('header.top')!.getBoundingClientRect().right),
+			sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth
+		}));
+	for (const width of [1280, 1440]) {
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 900 } })).newPage();
+		await page.goto('/account/profile');
+		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(await scrollbar(page), 'a page without a scrubber keeps its scroll bar').not.toBe('none');
+		const plain = await frame(page);
+		await page.screenshot({ path: info.outputPath(`edge-${width}-profile.png`) });
+		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+		await waitLive(page);
+		await expect(page.getByTestId('scrubber').locator('.mark').first()).toBeAttached();
+		expect(await scrollbar(page), 'no scroll bar beside the scrubber').toBe('none');
+		const listed = await frame(page);
+		expect(listed.top, 'nothing moved sideways').toBe(plain.top);
+		expect(listed.sideways || plain.sideways, 'no sideways scroll').toBe(false);
+		// The wheel and Page Down still scroll.
+		await page.mouse.move(width / 2, 500);
+		await page.mouse.wheel(0, 600);
+		await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(300);
+		const y = await page.evaluate(() => scrollY);
+		await page.locator('body').press('PageDown');
+		await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(y + 200);
+		// The zone starts at the window's very edge.
+		await page.mouse.move(width - 1, 450, { steps: 2 });
+		await expect(page.getByTestId('scrubber')).toHaveAttribute('data-shown', 'true');
+		await page.screenshot({ path: info.outputPath(`edge-${width}-list.png`) });
+		// Back to a page without one: the scroll bar again, in the same place.
+		await page.goto('/account/profile');
+		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(await scrollbar(page)).not.toBe('none');
+		expect((await frame(page)).top).toBe(plain.top);
+		await page.context().close();
 	}
 });
 

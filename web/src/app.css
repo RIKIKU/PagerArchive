@@ -250,6 +250,7 @@
 	--scrubber-tab-width-held: 3.5rem;
 	--scrubber-tab-inset: 0.75rem; /* off the edge, clear of the browser's own scroll indicator */
 	--scrubber-grip-gap: 0.375rem;
+	--scrollbar-gap: 0px; /* the room the hidden scroll bar had: measured (Scrubber.svelte) */
 	--scrubber-tab-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 30%, transparent);
 }
 
@@ -259,13 +260,18 @@
 	}
 }
 
-/* R81b on a touch screen: the scrubber's grab tab stands in for the page's own
-   scroll bar, so that's hidden while it's there (Scrubber.svelte; owner,
-   2026-11-13). */
-:root.scrubber-touch {
-	scrollbar-width: none;
+/* R81b: on a page with a scrubber, the scrubber is the right edge's control
+   and the page's own scroll bar is hidden (owner, 2026-11-13; Scrubber.svelte).
+   Every page keeps the scroll bar's room, used or not, and a page with a
+   scrubber keeps it as padding, so nothing moves sideways between pages. */
+:root {
+	scrollbar-gutter: stable;
 }
-:root.scrubber-touch::-webkit-scrollbar {
+:root.scrubber-page {
+	scrollbar-width: none;
+	padding-right: var(--scrollbar-gap);
+}
+:root.scrubber-page::-webkit-scrollbar {
 	display: none;
 }
 

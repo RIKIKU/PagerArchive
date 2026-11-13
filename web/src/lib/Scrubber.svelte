@@ -416,12 +416,13 @@
 		const bar = document.querySelector('header.top')?.getBoundingClientRect().bottom ?? 0;
 		// Not while dragging: the marks stay under the pointer as the list moves.
 		if (!dragging) top = Math.round(Math.max(bar, r.top));
-		right = Math.round(Math.max(0, width - r.right));
-		edge = r.right;
-		// Only a page's padding beside it: the zone runs to the window's edge and
-		// on over the scroll bar (owner, 2026-11-13). A message open beside it
-		// (R80): the zone stops at the list's edge.
-		outer = width - r.right < 64 ? Infinity : r.right + 4;
+		// Only a page's padding beside it (and the room the hidden scroll bar
+		// had): the strip and its zone own the window's edge (owner,
+		// 2026-11-13). A message open beside it (R80): they're at the list's.
+		const beside = width - r.right < 64;
+		right = beside ? 0 : Math.round(width - r.right);
+		edge = beside ? width : r.right;
+		outer = beside ? Infinity : r.right + 4;
 	}
 
 	// Hidden until wanted, where there's a mouse to want it with. Shown at
@@ -474,7 +475,19 @@
 		};
 		window.addEventListener('keydown', shortcut);
 		scrubberHere.focus = focusStrip;
+		// The scrubber is the right edge's control, with a mouse or a finger:
+		// the page's own scroll bar is hidden while it's here (owner,
+		// 2026-11-13), and the room it took is kept, so nothing moves sideways
+		// between pages with a scrubber and pages without (app.css). Wheels,
+		// trackpads, fingers and keys still scroll.
+		const html = document.documentElement;
+		const before = html.clientWidth;
+		html.style.setProperty('--scrollbar-gap', '0px');
+		html.classList.add('scrubber-page');
+		const room = `${Math.max(0, html.clientWidth - before)}px`;
+		html.style.setProperty('--scrollbar-gap', room);
 		return () => {
+			html.classList.remove('scrubber-page');
 			window.removeEventListener('keydown', shortcut);
 			if (scrubberHere.focus === focusStrip) scrubberHere.focus = undefined;
 			fine.removeEventListener('change', change);
@@ -514,13 +527,9 @@
 			scrollTimer = setTimeout(() => (scrolling = false), 1500);
 		};
 		window.addEventListener('scroll', scrolled, { passive: true });
-		// The tab stands in for the browser's own scroll bar, which got in its
-		// way at the edge (owner, 2026-11-13): hidden while the tab is here.
-		document.documentElement.classList.add('scrubber-touch');
 		return () => {
 			clearTimeout(scrollTimer);
 			window.removeEventListener('scroll', scrolled);
-			document.documentElement.classList.remove('scrubber-touch');
 		};
 	});
 	// The day for a range of days (the last 30 days, say), the month and year
