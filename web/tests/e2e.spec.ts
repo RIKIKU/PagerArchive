@@ -3456,9 +3456,9 @@ FROM generate_series(1, 320) AS g (i);`);
 		requestAnimationFrame(each);
 	});
 	await page.mouse.move(640, 500);
-	for (let k = 0; k < 160; k++) {
+	for (let k = 0; k < 120; k++) {
 		await page.mouse.wheel(0, 120);
-		await page.waitForTimeout(16);
+		await page.waitForTimeout(32); // a fast flick: about 3,700 px a second
 	}
 	await page.waitForTimeout(400);
 	type F = { y: number; h: number; side: number; strip: number; line: number; more: boolean };

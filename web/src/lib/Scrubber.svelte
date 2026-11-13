@@ -676,7 +676,7 @@
 		data-shown={railShown}
 		onfocusin={focusIn}
 		onfocusout={focusOut}
-		onkeydown={() => (focused = true)}
+		onkeydown={(e) => e.key !== 'Escape' && (focused = true)}
 	>
 		{#if steps.length > 0}
 			{@const showing = chosenStep ?? restStep}
@@ -724,7 +724,7 @@
 	onpointerleave={() => (over = false)}
 	onfocusin={focusIn}
 	onfocusout={focusOut}
-	onkeydown={() => (focused = true)}
+	onkeydown={(e) => e.key !== 'Escape' && (focused = true)}
 >
 	<!-- svelte-ignore a11y_no_static_element_interactions (Escape hides the tooltips: WCAG 1.4.13) -->
 	<div class="tools" onkeydown={(e) => e.key === 'Escape' && (tipOff = true)} onpointerleave={() => (tipOff = false)} onfocusout={() => (tipOff = false)}>
