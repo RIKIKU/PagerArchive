@@ -79,7 +79,7 @@
 	// Where the top of the view is in time (ms), for the scrubber's place.
 	let position: number | undefined = $state();
 	let bodyEl: HTMLElement | undefined = $state();
-	// R81b: on a touch screen, a grab tab at any width; with a mouse, the
+	// R81b, R81e: on a touch screen, a grab tab at any width; with a mouse, the
 	// strip, but none in a phone-width window (owner, 2026-11-13).
 	const scrubbed = $derived(scrubber && (screen.touch || !screen.phone));
 

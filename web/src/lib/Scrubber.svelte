@@ -1,5 +1,5 @@
 <script lang="ts">
-	// R81b-R81d: the scrubber, a strip down the right of a message list for
+	// R81b-R81e: the scrubber, a strip down the right of a message list for
 	// large jumps. Its marks cover the last 30 days, or the search's date range,
 	// newest at the top: days, weeks or months, with today and yesterday by the
 	// hour. Each mark's dots say how busy it is (R81c), counted by the API for
@@ -12,8 +12,9 @@
 	//
 	// It sits over the list's right edge, not in a column of its own. With a
 	// mouse it stays hidden until the pointer nears that edge or the keyboard
-	// focuses it, and a line across it follows the list as it scrolls. Phones
-	// and albums have none (MessageList).
+	// focuses it, and a line across it follows the list as it scrolls. A touch
+	// screen gets a grab tab instead (R81e, below). Albums and phone-width
+	// windows with a mouse have none (MessageList).
 	import { onMount, untrack } from 'svelte';
 	import { api, type Counts, type Mark } from './api.ts';
 	import Icon from './Icon.svelte';
@@ -46,35 +47,9 @@
 		touch?: boolean;
 	} = $props();
 
-	// POC (2026-11-13): the choices to compare, from the address once
-	// (?zone=50, ?hint=0|1|2, ?bg=clear|veil|solid) and kept for the tab, so
-	// they last as the address changes. The owner's picks are the defaults.
-	// zone: how near the edge, in px, the pointer must come to show it;
-	// hint: 0 nothing while hidden, 1 a faint line down the edge, 2 the line
-	// and a tick on it where the list is; bg: clear (nothing behind it, text
-	// with a halo), veil (see-through, blurred) or solid.
-	const poc = (() => {
-		const out = { zone: 50, hint: 0, bg: 'clear' };
-		if (typeof window === 'undefined') return out;
-		try {
-			Object.assign(out, JSON.parse(sessionStorage.getItem('scrubber-poc-2') ?? '{}'));
-		} catch {
-			// no storage: the defaults and the address
-		}
-		const q = new URLSearchParams(location.search);
-		const zone = Number(q.get('zone'));
-		if (q.has('zone') && zone >= 1 && zone <= 120) out.zone = zone;
-		const hint = Number(q.get('hint'));
-		if (q.has('hint') && [0, 1, 2].includes(hint)) out.hint = hint;
-		const bg = q.get('bg');
-		if (bg === 'veil' || bg === 'clear' || bg === 'solid') out.bg = bg;
-		try {
-			sessionStorage.setItem('scrubber-poc-2', JSON.stringify(out));
-		} catch {
-			// ignore
-		}
-		return out;
-	})();
+	// How near the window's edge, in px, the pointer must come to show the
+	// strip (owner, 2026-11-13: nearer hits the browser's scroll bar).
+	const ZONE = 50;
 
 	let counts: Counts | undefined = $state();
 	let zoom: { hour: string; counts: Counts } | undefined = $state();
@@ -472,7 +447,7 @@
 		window.addEventListener('resize', later, { passive: true });
 		const move = (e: PointerEvent) => {
 			if (e.pointerType === 'touch') return;
-			near = e.clientX >= edge - poc.zone && e.clientX <= outer && e.clientY >= top;
+			near = e.clientX >= edge - ZONE && e.clientX <= outer && e.clientY >= top;
 		};
 		const leave = () => (near = false);
 		window.addEventListener('pointermove', move, { passive: true });
@@ -629,7 +604,11 @@
 	const restAt = $derived(placeOf(steps, at));
 	const tabTop = $derived(dragging && drag ? fingerAt * drag.travel : restAt * travel);
 	const chosenStep = $derived(dragging && drag && chosen !== undefined ? drag.steps[chosen] : undefined);
-	const restStep = $derived(steps.find((s) => at !== undefined && s.start <= at && at < s.end) ?? steps[0]);
+	// The list scrolled on past the rail (older than a phone's 7 days, say):
+	// the tab waits at the bottom and says where the list is.
+	const beyond = $derived(at !== undefined && steps.length > 0 && at < steps[steps.length - 1].start);
+	const earlier = $derived(beyond && at !== undefined ? `Earlier: ${whichDay(new Date(at).toISOString())}` : undefined);
+	const restStep = $derived(beyond ? steps[steps.length - 1] : (steps.find((s) => at !== undefined && s.start <= at && at < s.end) ?? steps[0]));
 	function tabDown(e: PointerEvent) {
 		if (steps.length === 0 || !root || (e.pointerType === 'mouse' && e.button !== 0)) return;
 		try {
@@ -702,7 +681,8 @@
 		{#if steps.length > 0}
 			{@const showing = chosenStep ?? restStep}
 			<div class="tab-place" style:top="{tabTop}px" data-steps={steps.length}>
-				{#if chosenStep}<span class="tab-bubble" class:low={tabTop < 48} aria-hidden="true">{chosenStep.label}</span>{/if}
+				{#if chosenStep}<span class="tab-bubble" class:low={tabTop < 48} aria-hidden="true">{chosenStep.label}</span>
+				{:else if earlier && railShown}<span class="tab-bubble quiet" aria-hidden="true">{earlier}</span>{/if}
 				<div
 					class="tab"
 					class:held={dragging}
@@ -715,7 +695,7 @@
 					aria-valuemin={0}
 					aria-valuemax={steps.length - 1}
 					aria-valuenow={showing ? steps.length - 1 - Math.max(0, (drag?.steps ?? steps).indexOf(showing)) : 0}
-					aria-valuetext={showing?.label ?? 'No dates'}
+					aria-valuetext={!chosenStep && earlier ? earlier : (showing?.label ?? 'No dates')}
 					onkeydown={tabKey}
 					onpointerdown={tabDown}
 					onpointermove={tabMove}
@@ -728,15 +708,11 @@
 		{/if}
 	</div>
 {:else}
-{#if hideable && poc.hint > 0}
-	<!-- POC: a faint line down the edge while it's hidden, so it can be found; with hint=2 a tick where the list is. -->
-	<div class="hint" class:off={visible} style:top="{top}px" style:right="{right}px" aria-hidden="true">
-		{#if poc.hint === 2 && thumb !== undefined}<span class="tick" style:top="{thumb * 100}%"></span>{/if}
 	</div>
 {/if}
 <!-- svelte-ignore a11y_no_static_element_interactions (shows it while the pointer is over it, or a key is pressed in it) -->
 <div
-	class="scrubber bg-{poc.bg}"
+	class="scrubber"
 	class:zoomed={!!zoom}
 	class:hideable
 	class:shown={visible || !hideable}
@@ -839,32 +815,9 @@
 		pointer-events: none;
 		transition: opacity 120ms ease-out;
 	}
-	/* Something behind the strip of dots and each label only, not a whole
-	   column: the rows' text and links beside it stay in sight. */
-	.bg-veil .tools,
-	.bg-veil .track,
-	.bg-veil .label {
-		background: var(--scrubber-veil);
-		backdrop-filter: blur(var(--scrubber-blur));
-	}
-	.bg-solid .tools,
-	.bg-solid .track,
-	.bg-solid .label {
-		background: var(--surface);
-	}
-	.bg-veil .label,
-	.bg-solid .label {
-		padding: 0 var(--space-2xs);
-		border-radius: var(--radius-small);
-		color: var(--fg);
-	}
-	.bg-veil .tools,
-	.bg-veil .track,
-	.bg-solid .tools,
-	.bg-solid .track {
-		border-left: var(--border-width) solid var(--border);
-	}
-	.bg-clear .label {
+	/* Nothing behind it: the labels, over the rows, have a halo to be read
+	   by (owner, 2026-11-13). */
+	.label {
 		color: var(--fg);
 		text-shadow: var(--scrubber-halo);
 	}
@@ -879,24 +832,6 @@
 	.tools,
 	.track {
 		pointer-events: auto;
-	}
-	.hint {
-		position: fixed;
-		bottom: 0;
-		width: var(--scrubber-hint-width);
-		background: var(--scrubber-hint);
-		pointer-events: none;
-		transition: opacity 200ms;
-	}
-	.hint.off {
-		opacity: 0;
-	}
-	.tick {
-		position: absolute;
-		right: 0;
-		width: var(--scrubber-tick);
-		height: var(--scrubber-hint-width);
-		background: var(--accent);
 	}
 	.tools {
 		display: flex;
@@ -1078,6 +1013,17 @@
 		white-space: nowrap;
 		pointer-events: none;
 	}
+	/* Past the rail: where the list is, quietly, while the tab shows. */
+	.tab-bubble.quiet {
+		bottom: auto;
+		top: 50%;
+		transform: translateY(-50%);
+		border: var(--border-width) solid var(--border);
+		background: var(--surface);
+		color: var(--fg);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-normal);
+	}
 	.tab-bubble.low {
 		top: calc(100% - var(--space-xs));
 		bottom: auto;
@@ -1090,7 +1036,6 @@
 	@media (prefers-reduced-motion: reduce) {
 		.scrubber,
 		.hideable:not(.shown),
-		.hint,
 		.rail,
 		.rail.shown {
 			transition: none;
@@ -1098,7 +1043,6 @@
 	}
 	@media print {
 		.scrubber,
-		.hint,
 		.rail {
 			display: none;
 		}

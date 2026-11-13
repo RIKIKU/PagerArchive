@@ -3272,6 +3272,7 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		await expect(scrubber.locator('.tab-place')).toHaveAttribute('data-steps', width < 768 ? '7' : '30');
 		expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth)).toBe('none');
 		await page.screenshot({ path: info.outputPath(`touch-${width}-shown.png`) });
+		expect(await axeOf(page), `axe with the tab at ${width} px`).toEqual([]);
 		const before = await firstInView(page);
 		// Tap and drag the tab down in small moves (4 px, as a thumb creeps), while
 		// the list jumps and loads under it: the tab stays under the finger, and
@@ -3333,6 +3334,8 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 			for (let k = 0; k < 6; k++) await page.evaluate(() => window.scrollBy(0, 2500));
 			await expect.poll(() => firstInView(page)).toMatch(/DAY (9|[1-9]\d) /);
 			await expect.poll(async () => Math.round(rail.y + rail.height - ((await tab.boundingBox())!.y + (await tab.boundingBox())!.height))).toBeLessThanOrEqual(1);
+			// It says where the list is.
+			await expect(tab).toHaveAttribute('aria-valuetext', /^Earlier: \w{3},? \d{1,2} \w{3}$/);
 			await page.screenshot({ path: info.outputPath(`touch-${width}-past-the-rail.png`) });
 		}
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
@@ -3384,10 +3387,25 @@ FROM generate_series(1, 120) AS g (i);`);
 		const y = await page.evaluate(() => scrollY);
 		await page.locator('body').press('PageDown');
 		await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(y + 200);
-		// The zone starts at the window's very edge.
+		// Hidden until the pointer comes within 50 px of the window's edge, which
+		// starts at its very edge; or until the keyboard goes there (Alt+J).
+		const strip = page.getByTestId('scrubber');
+		await expect(strip).toHaveAttribute('data-shown', 'false');
+		await page.mouse.move(width - 70, 450, { steps: 2 });
+		await page.waitForTimeout(200);
+		await expect(strip, '70 px from the edge: still hidden').toHaveAttribute('data-shown', 'false');
+		await page.mouse.move(width - 30, 450, { steps: 2 });
+		await expect(strip).toHaveAttribute('data-shown', 'true');
 		await page.mouse.move(width - 1, 450, { steps: 2 });
-		await expect(page.getByTestId('scrubber')).toHaveAttribute('data-shown', 'true');
+		await expect(strip).toHaveAttribute('data-shown', 'true');
 		await page.screenshot({ path: info.outputPath(`edge-${width}-list.png`) });
+		await page.mouse.move(width / 2, 450, { steps: 2 });
+		await expect(strip, 'hidden again once the pointer leaves').toHaveAttribute('data-shown', 'false');
+		await page.keyboard.press('Alt+KeyJ');
+		await expect(strip.getByRole('slider', { name: 'Jump to a date' })).toBeFocused();
+		await expect(strip).toHaveAttribute('data-shown', 'true');
+		await page.keyboard.press('Escape');
+		await expect(strip).toHaveAttribute('data-shown', 'false');
 		// Back to a page without one: the scroll bar again, in the same place.
 		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Profile' }).click(); // in the app, not a new load
 		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -3395,6 +3413,68 @@ FROM generate_series(1, 120) AS g (i);`);
 		expect((await frame(page)).top).toBe(plain.top);
 		await page.context().close();
 	}
+});
+
+// Loading more as the list scrolls, each page 300 ms late: the rows come
+// before the scroll reaches their end, and neither the side menu nor the
+// scrubber moves (owner, 2026-11-13: it "hits the bottom and jolts"). The
+// scrubber's line follows the list on every frame of the scroll.
+test('Loading more: no jolt; the scrubber follows the scroll', async ({ browser }) => {
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07400${n}1`;
+	const alias = `Jolt ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDJOLT ${n} PAGE ' || g.i, 'Admin', now() - g.i * interval '2 hours',
+       sha256(convert_to('jolt ${n} ' || g.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(1, 320) AS g (i);`);
+	const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	await page.route(
+		(u) => u.pathname === '/api/v1/messages',
+		(r) => setTimeout(() => r.continue().catch(() => {}), 300)
+	);
+	await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+	await waitLive(page);
+	await expect(page.getByTestId('scrubber').locator('.mark').first()).toBeAttached();
+	await page.evaluate(() => {
+		const w = window as unknown as { frames_: object[] };
+		w.frames_ = [];
+		const each = () => {
+			w.frames_.push({
+				y: scrollY,
+				h: document.documentElement.scrollHeight,
+				side: document.querySelector('nav.side')!.getBoundingClientRect().top,
+				strip: document.querySelector('[data-testid="scrubber"]')!.getBoundingClientRect().top,
+				line: document.querySelector('[data-testid="scrubber"] .thumb')?.getBoundingClientRect().top ?? -1,
+				more: !!document.querySelector('.more')
+			});
+			requestAnimationFrame(each);
+		};
+		requestAnimationFrame(each);
+	});
+	await page.mouse.move(640, 500);
+	for (let k = 0; k < 160; k++) {
+		await page.mouse.wheel(0, 120);
+		await page.waitForTimeout(16);
+	}
+	await page.waitForTimeout(400);
+	type F = { y: number; h: number; side: number; strip: number; line: number; more: boolean };
+	const frames = (await page.evaluate(() => (window as unknown as { frames_: object[] }).frames_)) as F[];
+	const scrolled = frames.filter((f) => f.y > 200);
+	expect(new Set(scrolled.map((f) => Math.round(f.side))).size, 'the side menu never moved').toBe(1);
+	expect(new Set(scrolled.map((f) => Math.round(f.strip))).size, 'the scrubber never moved').toBe(1);
+	expect(frames.at(-1)!.h, 'older rows loaded on the way').toBeGreaterThan(frames[0].h * 3);
+	// Frames at the end of the loaded rows, with more still to come: none.
+	const stuck = frames.filter((f) => f.more && f.h - f.y - 900 < 2).length;
+	expect(stuck, 'frames stopped at the end of the rows before more came').toBeLessThanOrEqual(2);
+	// The line: downwards with the list, a little on most frames, never back.
+	const lines = scrolled.map((f) => f.line);
+	for (let k = 1; k < lines.length; k++) expect(lines[k], 'the line never goes back up').toBeGreaterThanOrEqual(lines[k - 1] - 0.5);
+	expect(new Set(lines.map((l) => l.toFixed(1))).size, 'the line moved on many frames').toBeGreaterThan(40);
+	await page.context().close();
 });
 
 // A72. Albums in the browser: made, added to from the detail view, in the
@@ -3459,6 +3539,7 @@ test('A72 albums', async ({ browser, request }, info) => {
 	for (const id of ids.slice(0, 2)) expect((await request.put(`${URL}/api/v1/albums/${notesId}/messages/${id}`, { headers: asRole('user') })).status()).toBe(204);
 	await page.reload();
 	await expect(page.getByTestId('album-description')).toHaveText('Pages from the made-up storm');
+	await expect(page.getByTestId('scrubber'), 'no scrubber in an album (owner, 2026-11-13)').toHaveCount(0);
 	const row = list.locator('article', { hasText: texts[0].slice(2) });
 	await row.getByRole('button', { name: 'Add note' }).click();
 	await row.getByLabel(/^Note on this message/).fill('First page of the storm');
