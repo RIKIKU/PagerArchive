@@ -2834,7 +2834,9 @@ test('A69 using the width', async ({ browser, request }, info) => {
 				const side = document.querySelector('nav.side')!.getBoundingClientRect();
 				const l = document.querySelector('[data-testid="message-list"]')!.getBoundingClientRect();
 				const pane = document.querySelector('section.pane')!.getBoundingClientRect();
-				return { menu: side.width, left: l.left - side.right, right: document.documentElement.clientWidth - pane.right };
+				// Less the scroll bar's room the page keeps beside a scrubber (R81b).
+				const kept = parseFloat(getComputedStyle(document.documentElement).paddingRight) || 0;
+				return { menu: side.width, left: l.left - side.right, right: document.documentElement.clientWidth - kept - pane.right };
 			});
 			console.log(`A69 (${width} px): menu ${edges.menu} px; empty margin left of the list ${edges.left} px, right of the pane ${edges.right} px`);
 			expect(edges.left).toBeLessThanOrEqual(edges.menu);

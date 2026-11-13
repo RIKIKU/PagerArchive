@@ -255,16 +255,19 @@
 /* R81b: on a page with a scrubber, the scrubber is the right edge's control
    and the page's own scroll bar is hidden (owner, 2026-11-13; Scrubber.svelte).
    Every page keeps the scroll bar's room, used or not, and a page with a
-   scrubber keeps it as padding, so nothing moves sideways between pages. */
-:root {
-	scrollbar-gutter: stable;
-}
-:root.scrubber-page {
-	scrollbar-width: none;
-	padding-right: var(--scrollbar-gap);
-}
-:root.scrubber-page::-webkit-scrollbar {
-	display: none;
+   scrubber keeps it as padding, so nothing moves sideways between pages.
+   On the screen only: a printout has no scroll bar (R68). */
+@media screen {
+	:root {
+		scrollbar-gutter: stable;
+	}
+	:root.scrubber-page {
+		scrollbar-width: none;
+		padding-right: var(--scrollbar-gap);
+	}
+	:root.scrubber-page::-webkit-scrollbar {
+		display: none;
+	}
 }
 
 :root[data-theme='light'] {

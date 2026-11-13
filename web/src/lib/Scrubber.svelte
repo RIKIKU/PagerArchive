@@ -813,12 +813,6 @@
 		pointer-events: none;
 		transition: opacity 120ms ease-out;
 	}
-	/* Nothing behind it: the labels, over the rows, have a halo to be read
-	   by (owner, 2026-11-13). */
-	.label {
-		color: var(--fg);
-		text-shadow: var(--scrubber-halo);
-	}
 	.hideable:not(.shown) {
 		opacity: 0;
 		transition: opacity 200ms ease-in;
@@ -879,13 +873,15 @@
 	.track:hover .mark.current:hover {
 		background: var(--accent-soft);
 	}
-	/* To the left of the strip, over the list: let clicks through. */
+	/* To the left of the strip, over the list, with nothing behind it but a
+	   halo to be read by (owner, 2026-11-13): let clicks through. */
 	.label {
 		position: absolute;
 		right: calc(100% + var(--space-xs));
 		top: 50%;
 		transform: translateY(-50%);
-		color: var(--muted);
+		color: var(--fg);
+		text-shadow: var(--scrubber-halo);
 		font-size: var(--text-xxs);
 		line-height: var(--leading-tight);
 		white-space: nowrap;
