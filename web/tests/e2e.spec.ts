@@ -3288,7 +3288,10 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 		await tab.dispatchEvent('pointerdown', { ...touch, clientY: y0 });
 		const days: string[] = [];
 		const off: number[] = [];
-		for (let k = 1; k <= 60; k++) {
+		// As far as the rail goes: past its end the tab stops and the finger goes on.
+		const rail = (await scrubber.boundingBox())!;
+		const room = Math.floor((rail.y + rail.height - (box.y + box.height)) / 4) - 1;
+		for (let k = 1; k <= Math.min(60, room); k++) {
 			const y = y0 + 4 * k;
 			await tab.dispatchEvent('pointermove', { ...touch, clientY: y });
 			await page.waitForTimeout(25);
@@ -3298,7 +3301,7 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 				if (days.at(-1) !== d) days.push(d);
 			}
 		}
-		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most (${off.map((o) => Math.round(o)).join(",")})`);
+		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most `);
 		expect(Math.max(...off), 'the tab stays under the finger').toBeLessThanOrEqual(1.5);
 		expect(days.length, 'several days passed').toBeGreaterThanOrEqual(width < 768 ? 2 : 5);
 		expect(new Set(days).size, 'no day came back: no flicker').toBe(days.length);
@@ -3328,7 +3331,6 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 			// tab waits at the bottom of the rail.
 			for (let k = 0; k < 6; k++) await page.evaluate(() => window.scrollBy(0, 2500));
 			await expect.poll(() => firstInView(page)).toMatch(/DAY (9|[1-9]\d) /);
-			const rail = (await scrubber.boundingBox())!;
 			await expect.poll(async () => Math.round(rail.y + rail.height - ((await tab.boundingBox())!.y + (await tab.boundingBox())!.height))).toBeLessThanOrEqual(1);
 			await page.screenshot({ path: info.outputPath(`touch-${width}-past-the-rail.png`) });
 		}
