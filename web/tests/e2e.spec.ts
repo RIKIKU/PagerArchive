@@ -3294,7 +3294,7 @@ FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i)
 				}
 				return '';
 			})
-			.toBe(day.split(' ').slice(1).join(' '));
+			.toBe(day.replace(',', '').split(' ').slice(1).join(' '));
 		// It fades once the scrolling has stopped.
 		await expect(scrubber).toHaveAttribute('data-shown', 'false', { timeout: 5000 });
 		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
