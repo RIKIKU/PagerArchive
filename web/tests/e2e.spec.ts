@@ -3333,7 +3333,8 @@ FROM generate_series(1, 120) AS g (i);`);
 		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 900 } })).newPage();
 		await page.goto('/account/profile');
 		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-		expect(await scrollbar(page), 'a page without a scrubber keeps its scroll bar').not.toBe('none');
+		// (Firefox under test reports every scroll bar as none, so the page's own rule is what's checked.)
+		expect(await page.evaluate(() => document.documentElement.classList.contains('scrubber-page')), 'a page without a scrubber keeps its scroll bar').toBe(false);
 		const plain = await frame(page);
 		await page.screenshot({ path: info.outputPath(`edge-${width}-profile.png`) });
 		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
@@ -3355,9 +3356,9 @@ FROM generate_series(1, 120) AS g (i);`);
 		await expect(page.getByTestId('scrubber')).toHaveAttribute('data-shown', 'true');
 		await page.screenshot({ path: info.outputPath(`edge-${width}-list.png`) });
 		// Back to a page without one: the scroll bar again, in the same place.
-		await page.goto('/account/profile');
+		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Profile' }).click(); // in the app, not a new load
 		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
-		expect(await scrollbar(page)).not.toBe('none');
+		expect(await page.evaluate(() => document.documentElement.classList.contains('scrubber-page'))).toBe(false);
 		expect((await frame(page)).top).toBe(plain.top);
 		await page.context().close();
 	}

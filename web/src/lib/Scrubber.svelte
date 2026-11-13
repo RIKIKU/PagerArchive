@@ -17,7 +17,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { api, type Counts, type Mark } from './api.ts';
 	import Icon from './Icon.svelte';
-	import { scrubberHere } from './scrubberHere.svelte.ts';
+	import { ownEdge, scrubberHere } from './scrubberHere.svelte.ts';
 
 	let {
 		query,
@@ -475,19 +475,9 @@
 		};
 		window.addEventListener('keydown', shortcut);
 		scrubberHere.focus = focusStrip;
-		// The scrubber is the right edge's control, with a mouse or a finger:
-		// the page's own scroll bar is hidden while it's here (owner,
-		// 2026-11-13), and the room it took is kept, so nothing moves sideways
-		// between pages with a scrubber and pages without (app.css). Wheels,
-		// trackpads, fingers and keys still scroll.
-		const html = document.documentElement;
-		const before = html.clientWidth;
-		html.style.setProperty('--scrollbar-gap', '0px');
-		html.classList.add('scrubber-page');
-		const room = `${Math.max(0, html.clientWidth - before)}px`;
-		html.style.setProperty('--scrollbar-gap', room);
+		const release = ownEdge();
 		return () => {
-			html.classList.remove('scrubber-page');
+			release();
 			window.removeEventListener('keydown', shortcut);
 			if (scrubberHere.focus === focusStrip) scrubberHere.focus = undefined;
 			fine.removeEventListener('change', change);
