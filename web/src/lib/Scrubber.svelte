@@ -607,7 +607,7 @@
 	// The list scrolled on past the rail (older than a phone's 7 days, say):
 	// the tab waits at the bottom and says where the list is.
 	const beyond = $derived(at !== undefined && steps.length > 0 && at < steps[steps.length - 1].start);
-	const earlier = $derived(beyond && at !== undefined ? `Earlier: ${whichDay(new Date(at).toISOString())}` : undefined);
+	const pastRail = $derived(beyond && at !== undefined ? `Earlier: ${whichDay(new Date(at).toISOString())}` : undefined);
 	const restStep = $derived(beyond ? steps[steps.length - 1] : (steps.find((s) => at !== undefined && s.start <= at && at < s.end) ?? steps[0]));
 	function tabDown(e: PointerEvent) {
 		if (steps.length === 0 || !root || (e.pointerType === 'mouse' && e.button !== 0)) return;
@@ -682,7 +682,7 @@
 			{@const showing = chosenStep ?? restStep}
 			<div class="tab-place" style:top="{tabTop}px" data-steps={steps.length}>
 				{#if chosenStep}<span class="tab-bubble" class:low={tabTop < 48} aria-hidden="true">{chosenStep.label}</span>
-				{:else if earlier && railShown}<span class="tab-bubble quiet" aria-hidden="true">{earlier}</span>{/if}
+				{:else if pastRail && railShown}<span class="tab-bubble quiet" aria-hidden="true">{pastRail}</span>{/if}
 				<div
 					class="tab"
 					class:held={dragging}
@@ -695,7 +695,7 @@
 					aria-valuemin={0}
 					aria-valuemax={steps.length - 1}
 					aria-valuenow={showing ? steps.length - 1 - Math.max(0, (drag?.steps ?? steps).indexOf(showing)) : 0}
-					aria-valuetext={!chosenStep && earlier ? earlier : (showing?.label ?? 'No dates')}
+					aria-valuetext={!chosenStep && pastRail ? pastRail : (showing?.label ?? 'No dates')}
 					onkeydown={tabKey}
 					onpointerdown={tabDown}
 					onpointermove={tabMove}
@@ -708,8 +708,6 @@
 		{/if}
 	</div>
 {:else}
-	</div>
-{/if}
 <!-- svelte-ignore a11y_no_static_element_interactions (shows it while the pointer is over it, or a key is pressed in it) -->
 <div
 	class="scrubber"
