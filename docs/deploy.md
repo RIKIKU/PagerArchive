@@ -53,7 +53,7 @@ gh attestation verify pagerarchive-config.tar.gz --repo RIKIKU/PagerArchive
 gh attestation verify oci://ghcr.io/rikiku/pagerarchive:<version> --repo RIKIKU/PagerArchive
 ```
 
-Each prints `Verification succeeded!`, or fails. The client's image is `oci://ghcr.io/rikiku/pagerarchive-client:<version>`. Releases from before attestations were added (November 2026) have none.
+Each succeeds (in a terminal it says `Verification succeeded!`), or fails with exit status 1 if the file was changed or wasn't built by this repository. The client's image is `oci://ghcr.io/rikiku/pagerarchive-client:<version>`. Releases from before attestations were added (November 2026) have none.
 
 The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows `db` as healthy, and the others as running. The app's sign-in works once Authentik has finished.
 
