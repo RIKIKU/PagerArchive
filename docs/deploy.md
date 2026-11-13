@@ -404,7 +404,7 @@ Releases come out weekly, at about 18:20 UTC on Fridays, when anything but the d
 docker compose pull && docker compose up -d
 ```
 
-**A new minor or major version** (0.16 to 0.17) also needs that release's `compose.yaml` and archive first. Upgrades can skip releases:
+**A new minor or major version** (0.16 to 0.17) won't reach you through `docker compose pull`: your `compose.yaml` names the minor version you have (`pagerarchive:0.16`), so pulling keeps you on its patches. A minor release comes with new features, a database migration or changed configuration files, and you must download that release's `compose.yaml` and archive first, then pull and up. To see whether one is out, compare the [latest release](https://github.com/RIKIKU/PagerArchive/releases/latest) with the version `docker compose exec api pagerarchive version` reports. Upgrades can skip releases:
 
 ```sh
 base=https://github.com/RIKIKU/PagerArchive/releases/latest/download

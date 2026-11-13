@@ -90,6 +90,11 @@ jobs:
     name: The build's version
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    # pull-requests: which merged pull requests are labelled feature, for the
+    # next version (release-version.sh --dev, ADR 0024).
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
       version: ${{ steps.version.outputs.version }}
       major_minor: ${{ steps.version.outputs.major_minor }}
@@ -103,6 +108,7 @@ jobs:
         id: version
         env:
           RELEASE: ${{ inputs.release }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           DRY_RUN: ${{ inputs.dry_run }}
           EVENT: ${{ github.event_name }}
           REF: ${{ github.ref }}

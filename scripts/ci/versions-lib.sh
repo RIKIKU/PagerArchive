@@ -98,6 +98,41 @@ config_changed() {
 	! git diff --quiet -I"$OUR_IMAGE_LINE" "$1" "$2" -- $CONFIG_PATHS
 }
 
+# changed_config <from> <to>: those files, one per line.
+changed_config() {
+	# shellcheck disable=SC2086
+	git diff --name-only -I"$OUR_IMAGE_LINE" "$1" "$2" -- $CONFIG_PATHS
+}
+
+# MIGRATIONS: the database's migrations, which the API runs when it starts.
+MIGRATIONS=internal/store/migrations
+
+# added_migrations <from> <to>: the migrations added since, by file name.
+added_migrations() {
+	git diff --name-only --diff-filter=A "$1" "$2" -- "$MIGRATIONS" | sed 's#.*/##'
+}
+
+# FEATURE_LABEL: the label on a pull request that adds a feature (owner,
+# 2026-11-14; .github/release.yml).
+FEATURE_LABEL=feature
+
+# feature_prs <from> <to>: the pull requests labelled $FEATURE_LABEL whose
+# merge (or squash) commit is in <to>'s history and not in <from>'s, as #<n>
+# per line. Asks GitHub (gh, with GH_TOKEN, retried); returns non-zero if it
+# couldn't. A pull request whose commit isn't in this clone isn't counted.
+feature_prs() {
+	# shellcheck disable=SC2016 # jq's own syntax
+	_prs=$(sh scripts/ci/retry.sh -l "gh pr list --label $FEATURE_LABEL" \
+		gh pr list ${GITHUB_REPOSITORY:+--repo "$GITHUB_REPOSITORY"} --state merged --label "$FEATURE_LABEL" \
+		--limit 1000 --json number,mergeCommit --jq '.[] | "\(.number) \(.mergeCommit.oid // "")"') || return 1
+	printf '%s\n' "$_prs" | while read -r _n _sha; do
+		[ -n "$_sha" ] && git cat-file -e "$_sha^{commit}" 2>/dev/null || continue
+		if git merge-base --is-ancestor "$_sha" "$2" && ! git merge-base --is-ancestor "$_sha" "$1"; then
+			echo "#$_n"
+		fi
+	done | sort -t'#' -k2 -n
+}
+
 # code_changes <from> <to>: the files that differ, other than documentation:
 # what CI checks nothing for (SPEC.md, docs/**, other Markdown; changes.sh), except
 # web/static/**, which is built into the server. A change to our
