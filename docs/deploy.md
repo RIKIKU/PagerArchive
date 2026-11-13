@@ -43,6 +43,18 @@ docker compose up -d
 | `.env` | Your settings, from `env.example` |
 | `deploy/` | From the archive: configuration for the third-party services, which run their upstream images unchanged. Don't edit these files, because an upgrade replaces them |
 
+### Checking the files
+
+Each release's files and images are attested by the release's own run (GitHub artifact attestations), so you can check they were built by this repository's Release workflow and not changed since. With the [GitHub CLI](https://cli.github.com/), download the archive instead of piping it into `tar`, then:
+
+```sh
+gh attestation verify compose.yaml --repo RIKIKU/PagerArchive
+gh attestation verify pagerarchive-config.tar.gz --repo RIKIKU/PagerArchive
+gh attestation verify oci://ghcr.io/rikiku/pagerarchive:<version> --repo RIKIKU/PagerArchive
+```
+
+Each prints `Verification succeeded!`, or fails. The client's image is `oci://ghcr.io/rikiku/pagerarchive-client:<version>`. Releases from before attestations were added (November 2026) have none.
+
 The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows `db` as healthy, and the others as running. The app's sign-in works once Authentik has finished.
 
 **Set up the first admin before the app is reachable from the internet.** Add both hostnames to your reverse proxy (below) with the LAN-only lines (`allow` your LAN, `deny all`) left in, so only machines on your network can reach them. Then:
@@ -400,6 +412,8 @@ curl -fLO $base/compose.yaml
 curl -fL $base/pagerarchive-config.tar.gz | tar -xz
 docker compose pull && docker compose up -d
 ```
+
+To check the new files and image first, see [Checking the files](#checking-the-files).
 
 That's all: `.env` and `compose.override.yaml` stay as they are, and database migrations run when the API starts. A release can change a third-party service's files: `docker compose up -d` recreates that service, and leaves the others running. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)).
 

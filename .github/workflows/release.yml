@@ -21,11 +21,13 @@ name: Release
 # configuration archive's files), otherwise patch. Then ci.yml runs, as a
 # called workflow, with that version: every check on the commit, then the
 # tag, the GitHub release with its notes and files, the images, the module,
+# each file and image attested (GitHub artifact attestations),
 # and the release made the latest.
 #
 # "dry_run" (a manual run, on any branch) does everything but tag and
 # publish: the version, every check, the client's binaries, the release's
-# notes and files, and the images built but not pushed. Off main a run that
+# notes and files, and the images built but not pushed. It attests nothing
+# (an attestation is published). Off main a run that
 # isn't a dry run fails before anything starts.
 #
 # One release at a time, never cancelled: a run waits for the one before it
@@ -92,11 +94,14 @@ jobs:
     with:
       release: ${{ needs.plan.outputs.version }}
       dry_run: ${{ inputs.dry_run == true }}
-    # The release jobs tag, create the release and push the images; the
+    # The release jobs tag, create the release, push the images and attest
+    # what they publish (id-token and attestations, SPEC.md 12.1); the
     # module's job needs PSGALLERY_API_KEY. "All checks passed" reads the
     # run's jobs, to list those that passed only on a re-run (ADR 0025).
     permissions:
       contents: write
       packages: write
+      id-token: write
+      attestations: write
       actions: read
     secrets: inherit

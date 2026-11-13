@@ -323,6 +323,86 @@ func TestR84ReleaseAttachesTheFiles(t *testing.T) {
 	}
 }
 
+// SPEC.md 12.1: a release attests what it publishes (GitHub artifact
+// attestations): the client's binaries, the install and upgrade files, and
+// both images, the images' attestations pushed to GHCR. Only a real release
+// attests (never a dry run, a pull request or main), and only the jobs that
+// attest may mint an OIDC token.
+func TestReleaseAttestsWhatItPublishes(t *testing.T) {
+	type step struct {
+		Name string            `yaml:"name"`
+		If   string            `yaml:"if"`
+		Uses string            `yaml:"uses"`
+		With map[string]string `yaml:"with"`
+	}
+	type job struct {
+		Permissions map[string]string `yaml:"permissions"`
+		Steps       []step            `yaml:"steps"`
+	}
+	read := func(file string) map[string]job {
+		var w struct {
+			Jobs map[string]job `yaml:"jobs"`
+		}
+		data, err := os.ReadFile(file)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := yaml.Unmarshal(data, &w); err != nil {
+			t.Fatal(err)
+		}
+		return w.Jobs
+	}
+	pinned := regexp.MustCompile(`^actions/attest-build-provenance@[0-9a-f]{40}$`)
+	ci := read(".github/workflows/ci.yml")
+	for name, want := range map[string]struct{ subject, guard string }{
+		"release":                 {"dist/*", "env.DRY_RUN != 'true'"},
+		"attach-release-files":    {"dist/*", "env.DRY_RUN != 'true'"},
+		"publish-server":          {"ghcr.io/rikiku/pagerarchive", "needs.stamp.outputs.mode == 'release'"},
+		"publish-client-manifest": {"ghcr.io/rikiku/pagerarchive-client", "env.RELEASE == 'true'"},
+	} {
+		j := ci[name]
+		var attest *step
+		for i, s := range j.Steps {
+			if strings.HasPrefix(s.Uses, "actions/attest-build-provenance@") {
+				attest = &j.Steps[i]
+			}
+		}
+		if attest == nil {
+			t.Errorf("%s publishes something but attests nothing", name)
+			continue
+		}
+		if !pinned.MatchString(attest.Uses) {
+			t.Errorf("%s: %q isn't pinned by its commit", name, attest.Uses)
+		}
+		if attest.If != want.guard {
+			t.Errorf("%s attests when %q, not only when %q", name, attest.If, want.guard)
+		}
+		if got := attest.With["subject-path"] + attest.With["subject-name"]; got != want.subject {
+			t.Errorf("%s attests %q, not %q", name, got, want.subject)
+		}
+		if attest.With["subject-name"] != "" && (attest.With["push-to-registry"] != "true" || attest.With["subject-digest"] == "") {
+			t.Errorf("%s: an image's attestation goes to GHCR, by the image's digest", name)
+		}
+		for _, p := range []string{"id-token", "attestations"} {
+			if j.Permissions[p] != "write" {
+				t.Errorf("%s attests, so it needs %s: write", name, p)
+			}
+		}
+	}
+	for name, j := range ci {
+		if j.Permissions["id-token"] != "" && !slices.ContainsFunc(j.Steps, func(s step) bool { return strings.HasPrefix(s.Uses, "actions/attest-build-provenance@") }) {
+			t.Errorf("%s attests nothing, but asks for id-token: %s", name, j.Permissions["id-token"])
+		}
+	}
+	// A called workflow's jobs get no more than the caller's job grants.
+	checks := read(".github/workflows/release.yml")["checks"]
+	for _, p := range []string{"id-token", "attestations"} {
+		if checks.Permissions[p] != "write" {
+			t.Errorf("release.yml's checks job doesn't grant %s: write, so ci.yml's release jobs can't attest", p)
+		}
+	}
+}
+
 // R84b: filling in .env is enough: every setting a stack insists on is in its
 // example, and the docs no longer send anyone to a checkout.
 func TestR84bInstallIsTheFilesAndEnv(t *testing.T) {
