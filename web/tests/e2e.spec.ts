@@ -2834,7 +2834,9 @@ test('A69 using the width', async ({ browser, request }, info) => {
 				const side = document.querySelector('nav.side')!.getBoundingClientRect();
 				const l = document.querySelector('[data-testid="message-list"]')!.getBoundingClientRect();
 				const pane = document.querySelector('section.pane')!.getBoundingClientRect();
-				return { menu: side.width, left: l.left - side.right, right: document.documentElement.clientWidth - pane.right };
+				// Less the scroll bar's room the page keeps beside a scrubber (R81b).
+				const kept = parseFloat(getComputedStyle(document.documentElement).paddingRight) || 0;
+				return { menu: side.width, left: l.left - side.right, right: document.documentElement.clientWidth - kept - pane.right };
 			});
 			console.log(`A69 (${width} px): menu ${edges.menu} px; empty margin left of the list ${edges.left} px, right of the pane ${edges.right} px`);
 			expect(edges.left).toBeLessThanOrEqual(edges.menu);
@@ -3069,6 +3071,13 @@ async function firstInView(page: Page) {
 	});
 }
 
+/** Brings the hidden scrubber out: the pointer at the list's right edge (owner, 2026-11-13). */
+async function reveal(page: Page) {
+	const box = (await page.getByTestId('message-list').boundingBox())!;
+	await page.mouse.move(box.x + box.width - 2, 450, { steps: 2 });
+	await expect(page.getByTestId('scrubber')).toHaveAttribute('data-shown', 'true');
+}
+
 /** The scrubber's marks as drawn: kind, start, count and dots. */
 async function marksOf(page: Page) {
 	return page
@@ -3132,12 +3141,15 @@ FROM generate_series(0, 2) AS p (i);`);
 	// Dragging to 20 days ago: while dragging the mark is named; the list
 	// then shows that day's messages.
 	const target = scrubber.locator(`.mark[data-kind="day"][data-start^="${melbourneDay(20)}"]`);
+	await reveal(page);
 	const from = (await scrubber.locator('.mark').first().boundingBox())!;
 	const to = (await target.boundingBox())!;
 	await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
 	await page.mouse.down();
 	await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
 	await expect(scrubber.locator('.bubble')).toContainText(dayName(20, { weekday: 'long', day: 'numeric', month: 'long' }));
+	// Scrubbing: while the button is held, the list is already there.
+	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
 	await page.mouse.up();
 	const list = page.getByTestId('message-list');
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
@@ -3146,6 +3158,7 @@ FROM generate_series(0, 2) AS p (i);`);
 
 	// Yesterday's 14:00 hour, then zoom: twelve 5-minute blocks, and picking
 	// the 14:20 one moves the list there.
+	await reveal(page);
 	await scrubber.locator('.mark[data-kind="hour"]').filter({ has: page.locator('.dot') }).first().click();
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 2`);
 	await page.getByRole('button', { name: /^Zoom into Yesterday 14:00/ }).click();
@@ -3153,6 +3166,7 @@ FROM generate_series(0, 2) AS p (i);`);
 	marks = await marksOf(page);
 	expect(marks.map((m) => m.count)).toEqual([0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0]);
 	await scrubber.locator('.mark[data-kind="block"]').nth(7).click(); // 14:20 to 14:25
+	await reveal(page);
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} YESTERDAY PAGE 1`);
 	await expect(page.getByRole('button', { name: 'The hour before' })).toBeEnabled();
 	await page.screenshot({ path: info.outputPath('a71-zoom.png') });
@@ -3162,7 +3176,12 @@ FROM generate_series(0, 2) AS p (i);`);
 
 	// The keyboard: Home and End go to the ends, Page Up a week newer.
 	const slider = scrubber.getByRole('slider', { name: 'Jump to a date' });
-	await slider.focus();
+	// Alt+J brings it out with the keyboard on it, from anywhere on the page (owner, 2026-11-13).
+	await page.mouse.move(400, 450);
+	await page.getByRole('link', { name: 'Messages', exact: true }).first().focus();
+	await page.keyboard.press('Alt+KeyJ');
+	await expect(slider).toBeFocused();
+	await expect(scrubber).toHaveAttribute('data-shown', 'true');
 	await page.keyboard.press('Home');
 	await expect(slider).toHaveAttribute('aria-valuetext', /^Today /);
 	await page.keyboard.press('End');
@@ -3171,6 +3190,14 @@ FROM generate_series(0, 2) AS p (i);`);
 	await page.keyboard.press('PageUp');
 	await expect(slider).toHaveAttribute('aria-valuetext', new RegExp(dayName(22, { day: 'numeric', month: 'long' })));
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 22 PAGE 2`);
+	// Escape puts the keyboard back on the list, on the row at the top of the view.
+	await page.keyboard.press('Escape');
+	await expect(page.getByTestId('message-list').locator('a.open:focus')).toContainText(`SCRUBBER ${n} DAY 22 PAGE 2`);
+	// The skip link at the top of the page goes there too.
+	await page.getByRole('link', { name: 'Skip to the date scrubber (Alt+J)' }).focus();
+	await page.keyboard.press('Enter');
+	await expect(slider).toBeFocused();
+	await page.keyboard.press('Escape');
 
 	// A 6-month range is in weeks, 2 years in months.
 	for (const [months, kind] of [
@@ -3202,6 +3229,254 @@ FROM generate_series(0, 2) AS p (i);`);
 	const before = (await marksOf(page))[0].count;
 	await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM SHED @ 4 FICTION ST, MADEUPTON #STN1`);
 	await expect.poll(async () => (await marksOf(page))[0].count).toBe(before + 1);
+	await page.context().close();
+});
+
+// The scrubber on a touch screen (owner, 2026-11-13): at 375 and 1,024 px,
+// nothing until the list scrolls, then a grab tab with no marks; dragging it
+// scrubs the list while the finger moves, with a bubble naming the day; it
+// fades after the scrolling stops. (Firefox can't emulate a touch screen.)
+test('Touch scrubber', async ({ browser, browserName }, info) => {
+	test.skip(browserName === 'firefox', 'Firefox has no isMobile');
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07200${n}1`;
+	const alias = `Touch ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+WITH midnight AS (SELECT date_trunc('day', now() AT TIME ZONE '${TZ}') AS d)
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDTOUCH ${n} DAY ' || g.day || ' PAGE ' || p.i, 'Admin',
+       ((SELECT d FROM midnight) - g.day * interval '1 day' + interval '12 hours' + p.i * interval '10 minutes') AT TIME ZONE '${TZ}',
+       sha256(convert_to('touch ${n} ' || g.day || ' ' || p.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(2, 41) AS g (day) CROSS JOIN generate_series(0, 2) AS p (i);`);
+	for (const width of [375, 1024]) {
+		const ctx = await signedIn(browser, 'user', { viewport: { width, height: 800 }, hasTouch: true, isMobile: true });
+		const page = await ctx.newPage();
+		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+		await waitLive(page);
+		const scrubber = page.getByTestId('scrubber');
+		await expect(scrubber).toHaveAttribute('data-touch', 'true');
+		await expect(scrubber).toHaveAttribute('data-shown', 'false');
+		await expect(scrubber.locator('.mark'), 'no marks on a touch screen').toHaveCount(0);
+		await page.evaluate(() => window.scrollBy(0, 400));
+		await expect(scrubber).toHaveAttribute('data-shown', 'true');
+		const tab = scrubber.getByRole('slider', { name: 'Jump to a date' });
+		const box = (await tab.boundingBox())!;
+		expect(box.width, 'a target wide').toBeGreaterThanOrEqual(44);
+		expect(box.height, 'a target tall').toBeGreaterThanOrEqual(44);
+		// Wide enough to find with a thumb, hard against the edge, and the page's
+		// own scroll bar hidden while the tab stands in for it (owner, 2026-11-13).
+		expect((await tab.locator('.grip').boundingBox())!.width, 'the tab as drawn').toBeGreaterThanOrEqual(50);
+		expect(Math.abs(box.x + box.width - width), 'against the edge').toBeLessThanOrEqual(1);
+		// The rail: the last 7 days on a phone, 30 on a tablet, whole days.
+		await expect(scrubber.locator('.tab-place')).toHaveAttribute('data-steps', width < 768 ? '7' : '30');
+		expect(await page.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth)).toBe('none');
+		await page.screenshot({ path: info.outputPath(`touch-${width}-shown.png`) });
+		expect(await axeOf(page), `axe with the tab at ${width} px`).toEqual([]);
+		const before = await firstInView(page);
+		// Tap and drag the tab down in small moves (4 px, as a thumb creeps), while
+		// the list jumps and loads under it: the tab stays under the finger, and
+		// the days in the bubble go steadily older, never back (owner, 2026-11-13:
+		// it "bounces around under your thumb").
+		const x = box.x + box.width / 2;
+		const y0 = box.y + box.height / 2;
+		const touch = { pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, buttons: 1, clientX: x };
+		const bubble = scrubber.locator('.tab-bubble');
+		const tabY = async () => {
+			const b = (await tab.boundingBox())!;
+			return b.y + b.height / 2;
+		};
+		await tab.dispatchEvent('pointerdown', { ...touch, clientY: y0 });
+		const days: string[] = [];
+		const off: number[] = [];
+		// As far as the rail goes: past its end the tab stops and the finger goes on.
+		const rail = (await scrubber.boundingBox())!;
+		const room = Math.floor((rail.y + rail.height - (box.y + box.height)) / 4) - 1;
+		for (let k = 1; k <= Math.min(60, room); k++) {
+			const y = y0 + 4 * k;
+			await tab.dispatchEvent('pointermove', { ...touch, clientY: y });
+			await page.waitForTimeout(25);
+			off.push(Math.abs((await tabY()) - y));
+			if (await bubble.isVisible()) {
+				const d = (await bubble.textContent())!.trim();
+				if (days.at(-1) !== d) days.push(d);
+			}
+		}
+		console.log(`touch ${width}: the bubble went ${days.join(' → ')}; the tab ${Math.max(...off).toFixed(1)} px from the finger at most `);
+		expect(Math.max(...off), 'the tab stays under the finger').toBeLessThanOrEqual(1.5);
+		expect(days.length, 'several days passed').toBeGreaterThanOrEqual(width < 768 ? 2 : 5);
+		expect(new Set(days).size, 'no day came back: no flicker').toBe(days.length);
+		const ms = (d: string) => Date.parse(`${d.replace(/^\w+,? /, '')} ${new Date().getFullYear()}`);
+		for (let k = 1; k < days.length; k++) expect(ms(days[k]), `${days[k]} is older than ${days[k - 1]}`).toBeLessThan(ms(days[k - 1]));
+		const day = days.at(-1)!;
+		expect(day, 'the day, as "Fri, 23 Oct"').toMatch(/^\w{3},? \d{1,2} \w{3}$/);
+		// While the finger is down the list has already moved there.
+		await expect.poll(() => firstInView(page)).not.toBe(before);
+		await page.screenshot({ path: info.outputPath(`touch-${width}-dragging.png`) });
+		await tab.dispatchEvent('pointerup', { ...touch, buttons: 0, clientY: y0 + 240 });
+		const first = page.getByTestId('message-list').locator('article').filter({ hasText: `TOUCH ${n} DAY` });
+		await expect
+			.poll(async () => {
+				const below = await page.evaluate(() => document.querySelector('header.top')!.getBoundingClientRect().bottom);
+				// (A row showing 4 px or less under the top bar is out of view: WebKit leaves a sliver.)
+				for (const r of await first.all()) {
+					const b = (await r.boundingBox())!;
+					if (b.y + b.height > below + 4) return (await r.locator('time .date').textContent())!.trim().split(' ').slice(0, 2).join(' ');
+				}
+				return '';
+			})
+			.toBe(day.replace(',', '').split(' ').slice(1).join(' '));
+		// It fades once the scrolling has stopped.
+		await expect(scrubber).toHaveAttribute('data-shown', 'false', { timeout: 5000 });
+		if (width < 768) {
+			// The rail stops at 7 days; the list doesn't: scrolled on past them, the
+			// tab waits at the bottom of the rail.
+			for (let k = 0; k < 6; k++) await page.evaluate(() => window.scrollBy(0, 2500));
+			await expect.poll(() => firstInView(page)).toMatch(/DAY (9|[1-9]\d) /);
+			await expect.poll(async () => Math.round(rail.y + rail.height - ((await tab.boundingBox())!.y + (await tab.boundingBox())!.height))).toBeLessThanOrEqual(1);
+			// It says where the list is.
+			await expect(tab).toHaveAttribute('aria-valuetext', /^Earlier: \w{3},? \d{1,2} \w{3}$/);
+			await page.screenshot({ path: info.outputPath(`touch-${width}-past-the-rail.png`) });
+		}
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
+		await ctx.close();
+	}
+});
+
+// The scrubber owns the right edge (owner, 2026-11-13): on a page with one,
+// the page's own scroll bar is hidden and the edge zone reaches the window's
+// edge; the wheel and the keys still scroll; a page without one keeps its
+// scroll bar; nothing moves sideways between them; no sideways scroll.
+test('Scrubber owns the right edge', async ({ browser }, info) => {
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07300${n}1`;
+	const alias = `Edge ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDEDGE ${n} PAGE ' || g.i, 'Admin', now() - g.i * interval '3 hours',
+       sha256(convert_to('edge ${n} ' || g.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(1, 120) AS g (i);`);
+	const scrollbar = (p: Page) => p.evaluate(() => getComputedStyle(document.documentElement).scrollbarWidth);
+	const frame = (p: Page) =>
+		p.evaluate(() => ({
+			top: Math.round(document.querySelector('header.top')!.getBoundingClientRect().right),
+			sideways: document.documentElement.scrollWidth > document.documentElement.clientWidth
+		}));
+	for (const width of [1280, 1440]) {
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 900 } })).newPage();
+		await page.goto('/account/profile');
+		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		// (Firefox under test reports every scroll bar as none, so the page's own rule is what's checked.)
+		expect(await page.evaluate(() => document.documentElement.classList.contains('scrubber-page')), 'a page without a scrubber keeps its scroll bar').toBe(false);
+		const plain = await frame(page);
+		await page.screenshot({ path: info.outputPath(`edge-${width}-profile.png`) });
+		await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+		await waitLive(page);
+		await expect(page.getByTestId('scrubber').locator('.mark').first()).toBeAttached();
+		expect(await scrollbar(page), 'no scroll bar beside the scrubber').toBe('none');
+		const listed = await frame(page);
+		expect(listed.top, 'nothing moved sideways').toBe(plain.top);
+		expect(listed.sideways || plain.sideways, 'no sideways scroll').toBe(false);
+		// The wheel and Page Down still scroll.
+		await page.mouse.move(width / 2, 500);
+		await page.mouse.wheel(0, 600);
+		await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(300);
+		const y = await page.evaluate(() => scrollY);
+		await page.locator('body').press('PageDown');
+		await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(y + 200);
+		// Hidden until the pointer comes within 50 px of the window's edge, which
+		// starts at its very edge; or until the keyboard goes there (Alt+J).
+		const strip = page.getByTestId('scrubber');
+		await expect(strip).toHaveAttribute('data-shown', 'false');
+		await page.mouse.move(width - 70, 450, { steps: 2 });
+		await page.waitForTimeout(200);
+		await expect(strip, '70 px from the edge: still hidden').toHaveAttribute('data-shown', 'false');
+		await page.mouse.move(width - 30, 450, { steps: 2 });
+		await expect(strip).toHaveAttribute('data-shown', 'true');
+		await page.mouse.move(width - 1, 450, { steps: 2 });
+		await expect(strip).toHaveAttribute('data-shown', 'true');
+		await page.screenshot({ path: info.outputPath(`edge-${width}-list.png`) });
+		await page.mouse.move(width / 2, 450, { steps: 2 });
+		await expect(strip, 'hidden again once the pointer leaves').toHaveAttribute('data-shown', 'false');
+		await page.keyboard.press('Alt+KeyJ');
+		await expect(strip.getByRole('slider', { name: 'Jump to a date' })).toBeFocused();
+		await expect(strip).toHaveAttribute('data-shown', 'true');
+		await page.keyboard.press('Escape');
+		await expect(strip).toHaveAttribute('data-shown', 'false');
+		// Back to a page without one: the scroll bar again, in the same place.
+		await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Profile' }).click(); // in the app, not a new load
+		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		expect(await page.evaluate(() => document.documentElement.classList.contains('scrubber-page'))).toBe(false);
+		expect((await frame(page)).top).toBe(plain.top);
+		await page.context().close();
+	}
+});
+
+// Loading more as the list scrolls, each page 300 ms late: the rows come
+// before the scroll reaches their end, and neither the side menu nor the
+// scrubber moves (owner, 2026-11-13: it "hits the bottom and jolts"). The
+// scrubber's line follows the list on every frame of the scroll.
+test('Loading more: no jolt; the scrubber follows the scroll', async ({ browser }) => {
+	test.setTimeout(120_000);
+	const n = projectN(test.info());
+	const capcode = `07400${n}1`;
+	const alias = `Jolt ${n}`;
+	sql(`
+INSERT INTO aliases (pattern, name, template_id) SELECT '${capcode}', '${alias}', id FROM templates WHERE name = 'Example Fire' ON CONFLICT DO NOTHING;
+DELETE FROM messages WHERE capcode = '${capcode}';
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, alias_id)
+SELECT '${capcode}', 'QDJOLT ${n} PAGE ' || g.i, 'Admin', now() - g.i * interval '2 hours',
+       sha256(convert_to('jolt ${n} ' || g.i, 'UTF8')), (SELECT id FROM aliases WHERE pattern = '${capcode}')
+FROM generate_series(1, 320) AS g (i);`);
+	const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	await page.route(
+		(u) => u.pathname === '/api/v1/messages',
+		(r) => setTimeout(() => r.continue().catch(() => {}), 300)
+	);
+	await page.goto(`/?alias=${encodeURIComponent(`"${alias}"`)}`);
+	await waitLive(page);
+	await expect(page.getByTestId('scrubber').locator('.mark').first()).toBeAttached();
+	await expect(page.getByTestId('message-list').locator('article').first()).toBeVisible();
+	await page.evaluate(() => {
+		const w = window as unknown as { frames_: object[] };
+		w.frames_ = [];
+		const each = () => {
+			w.frames_.push({
+				y: scrollY,
+				h: document.documentElement.scrollHeight,
+				side: document.querySelector('nav.side')!.getBoundingClientRect().top,
+				strip: document.querySelector('[data-testid="scrubber"]')!.getBoundingClientRect().top,
+				line: document.querySelector('[data-testid="scrubber"] .thumb')?.getBoundingClientRect().top ?? -1,
+				more: !!document.querySelector('.more')
+			});
+			requestAnimationFrame(each);
+		};
+		requestAnimationFrame(each);
+	});
+	await page.mouse.move(640, 500);
+	for (let k = 0; k < 120; k++) {
+		await page.mouse.wheel(0, 120);
+		await page.waitForTimeout(32); // a fast flick: about 3,700 px a second
+	}
+	await page.waitForTimeout(400);
+	type F = { y: number; h: number; side: number; strip: number; line: number; more: boolean };
+	const frames = (await page.evaluate(() => (window as unknown as { frames_: object[] }).frames_)) as F[];
+	const scrolled = frames.filter((f) => f.y > 200);
+	expect(new Set(scrolled.map((f) => Math.round(f.side))).size, 'the side menu never moved').toBe(1);
+	expect(new Set(scrolled.map((f) => Math.round(f.strip))).size, 'the scrubber never moved').toBe(1);
+	expect(frames.at(-1)!.h, 'older rows loaded on the way').toBeGreaterThan(frames[0].h * 3);
+	// Frames at the end of the loaded rows, with more still to come: none.
+	const stuck = frames.filter((f) => f.more && f.h - f.y - 900 < 2).length;
+	expect(stuck, 'frames stopped at the end of the rows before more came').toBeLessThanOrEqual(2);
+	// The line: downwards with the list, a little on most frames, never back.
+	const lines = scrolled.map((f) => f.line);
+	for (let k = 1; k < lines.length; k++) expect(lines[k], 'the line never goes back up').toBeGreaterThanOrEqual(lines[k - 1] - 0.5);
+	expect(new Set(lines.map((l) => l.toFixed(1))).size, 'the line moved on many frames').toBeGreaterThan(40);
 	await page.context().close();
 });
 
@@ -3267,6 +3542,7 @@ test('A72 albums', async ({ browser, request }, info) => {
 	for (const id of ids.slice(0, 2)) expect((await request.put(`${URL}/api/v1/albums/${notesId}/messages/${id}`, { headers: asRole('user') })).status()).toBe(204);
 	await page.reload();
 	await expect(page.getByTestId('album-description')).toHaveText('Pages from the made-up storm');
+	await expect(page.getByTestId('scrubber'), 'no scrubber in an album (owner, 2026-11-13)').toHaveCount(0);
 	const row = list.locator('article', { hasText: texts[0].slice(2) });
 	await row.getByRole('button', { name: 'Add note' }).click();
 	await row.getByLabel(/^Note on this message/).fill('First page of the storm');
@@ -3317,13 +3593,19 @@ test('A72 albums', async ({ browser, request }, info) => {
 	expect(await axeOf(phone), 'axe: albums on a phone').toEqual([]);
 	await phone.getByRole('link', { name: notes }).tap();
 	await expect(phone.getByTestId('album-description')).toBeVisible();
+	await expect(phone.getByTestId('scrubber'), 'no scrubber in an album (owner, 2026-11-13)').toHaveCount(0);
 	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 	await phone.screenshot({ path: info.outputPath('a72-phone-album.png'), fullPage: true });
 	expect(await axeOf(phone), 'axe: album on a phone').toEqual([]);
 	await phone.goto('/');
 	await waitLive(phone);
-	await expect(phone.getByTestId('scrubber')).toBeVisible();
-	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll with the scrubber').toBe(true);
+	// The list on a phone (owner, 2026-11-13): with a mouse no scrubber; with a
+	// finger only the grab tab, hidden until the list scrolls ("Touch scrubber").
+	await expect(phone.getByTestId('message-list').locator('article').first()).toBeVisible();
+	if (await phone.evaluate(() => matchMedia('(hover: none), (pointer: coarse)').matches))
+		await expect(phone.getByTestId('scrubber')).toHaveAttribute('data-shown', 'false');
+	else await expect(phone.getByTestId('scrubber')).toHaveCount(0);
+	expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no horizontal scroll').toBe(true);
 	await phone.screenshot({ path: info.outputPath('a72-phone-list.png') });
 
 	// Deleting it.

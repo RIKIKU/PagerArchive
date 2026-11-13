@@ -18,6 +18,7 @@
 	import { crumbs } from '#lib/nav.ts';
 	import SearchBox from '#lib/SearchBox.svelte';
 	import { criteria } from '#lib/search.ts';
+	import { scrubberHere } from '#lib/scrubberHere.svelte.ts';
 	import { loadSheet, sheet } from '#lib/sheet.svelte.ts';
 	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
 
@@ -110,6 +111,18 @@
 	<main id="main" class="bare">{@render children()}</main>
 {:else}
 	<a class="skip" href="#main">Skip to content</a>
+	{#if scrubberHere.focus}
+		<!-- R81b: the scrubber, without tabbing through the menu and every row (also Alt+J). -->
+		<a
+			class="skip"
+			href="#main"
+			aria-keyshortcuts="Alt+J"
+			onclick={(e) => {
+				e.preventDefault();
+				scrubberHere.focus?.();
+			}}>Skip to the date scrubber (Alt+J)</a
+		>
+	{/if}
 	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
 		<nav class="side" aria-label="Main">
 			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} />

@@ -148,6 +148,10 @@
 					</li>
 				{/each}
 			</ul>
+			<p>
+				Keyboard: <kbd>Alt</kbd>+<kbd>J</kbd> (<kbd>Option</kbd>+<kbd>J</kbd> on a Mac) goes to the date scrubber beside a list of messages, and
+				<kbd>Escape</kbd> comes back to the list.
+			</p>
 		</div>
 	</div>
 	<DateRange {from} {to} {timeZone} {firstPage} {lastPage} onchange={(f, t) => run({ from: f, to: t })} />
