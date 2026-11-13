@@ -1,7 +1,7 @@
 <script lang="ts">
-	// R87c: large events, newest first: its first and last pages, the
-	// levels met, and how many deployment codes, jobs and Emergency pages they
-	// hold. Every signed-in user sees them, as they see the pages.
+	// R87c: large events, newest first: their first and last pages, and how
+	// many jobs and Emergency pages they hold (no levels or codes; owner,
+	// 2026-11-13). Every signed-in user sees them, as they see the pages.
 	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import Icon from '#lib/Icon.svelte';
@@ -36,8 +36,9 @@
 
 <h1>Large events</h1>
 <p class="status">
-	Times something big happened on the network: an Emergency page carrying a deployment code, or one job with many Emergency pages. Pages
-	within 12 hours of each other are grouped, so a busy day's incidents may share one event.
+	Times something big happened on the network: an Emergency page carrying one of the network's large-event codes, or one job with many
+	Emergency pages. Pages within 12 hours of each other are grouped, so a busy day's incidents may share one event. For more, listen to
+	the radio or check other systems.
 </p>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if loaded && list.length === 0 && !error}<p class="status" data-testid="no-events">No large events yet.</p>{/if}
@@ -54,11 +55,6 @@
 							<span class="label">Last page</span>
 							<time datetime={isoAttr(ev.end)}>{span(ev, tz)}</time>
 						</span>
-					</span>
-					<span class="levels">
-						{#each ev.levels as l (l.level)}
-							<span class="level" title="Met {dateTime(l.at, tz)}">{l.label}</span>
-						{/each}
 					</span>
 					<span class="numbers">{numbers(ev)}</span>
 				</a>
@@ -133,17 +129,6 @@
 		border-radius: var(--radius-button);
 		background: var(--accent-soft);
 		color: var(--accent-soft-fg);
-	}
-	.levels {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-xs);
-	}
-	.level {
-		padding: var(--space-3xs) var(--space-sm);
-		border: var(--border-width) solid var(--control-border);
-		border-radius: var(--radius-badge);
-		font-size: var(--text-sm);
 	}
 	.numbers {
 		color: var(--muted);

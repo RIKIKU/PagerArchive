@@ -10,9 +10,7 @@
 		type IntegrationKind,
 		type IntegrationRequest,
 		type IntegrationSecrets,
-		type LargeEventLevel,
-		type Meta,
-		largeEventLevels
+		type Meta
 	} from './api.ts';
 	import { kindLabels, presets } from './integrations.ts';
 	import SelectionField from './SelectionField.svelte';
@@ -37,9 +35,8 @@
 	let content: Content = $state(init?.content ?? 'full');
 	let capcodes: string[] = $state([...(init?.capcodes ?? [])]);
 	let chosenAliases = $state([...(init?.aliases ?? [])]);
-	// R87d: large events at one level, instead of capcodes and aliases.
+	// R87d: large events, instead of capcodes and aliases.
 	let selects: 'pages' | 'events' = $state(init?.large_events ? 'events' : 'pages');
-	let level: LargeEventLevel = $state(init?.large_events ?? 'deployment');
 	let coveredBy: Record<string, string> = $state({ ...(init?.covered_by ?? {}) });
 	let categories: string[] = $state([...(init?.filter.categories ?? [])]);
 	let codes = $state((init?.filter.codes ?? []).join(', '));
@@ -102,7 +99,7 @@
 		};
 		if (selects === 'events') {
 			// A summary of the event, never page text: no filter, no content to choose.
-			Object.assign(req, { capcodes: [], alias_ids: [], large_events: level, content: 'summary', filter: {} });
+			Object.assign(req, { capcodes: [], alias_ids: [], large_events: true, content: 'summary', filter: {} });
 		}
 		try {
 			const out = existing ? await api.updateIntegration(existing.id, req) : await api.createIntegration(req);
@@ -136,23 +133,15 @@
 		<legend>What it sends</legend>
 		<div class="stacked">
 			<label class="check"><input type="radio" bind:group={selects} value="pages" /> Pages from capcodes and aliases</label>
-			<label class="check"><input type="radio" bind:group={selects} value="events" /> Large events: a summary when one reaches a level</label>
+			<label class="check"><input type="radio" bind:group={selects} value="events" /> Large events: a summary when one opens</label>
 		</div>
 	</fieldset>
 
 	{#if selects === 'events'}
-		<fieldset>
-			<legend>Large events at this level</legend>
-			<div class="stacked">
-				{#each largeEventLevels as l (l.level)}
-					<label class="check"><input type="radio" bind:group={level} value={l.level} /> {l.label}: {l.text}</label>
-				{/each}
-			</div>
-			<p class="help">
-				It sends once per event, the first time the event reaches this level: the level, when, the event's start, its deployment codes,
-				jobs and number of Emergency pages, and a link to the event. Never page text.
-			</p>
-		</fieldset>
+		<p class="help" data-testid="large-event-help">
+			It sends once for each large event, when the event opens: when it started, the page that opened it, its job numbers so far, how
+			many Emergency pages it holds, and a link to the event. Never page text. Nothing more is sent as the event grows.
+		</p>
 	{:else}
 		<fieldset>
 			<legend>Which pages (at least one capcode or alias)</legend>

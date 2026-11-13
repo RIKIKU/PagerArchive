@@ -20,7 +20,6 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
-	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -131,7 +130,7 @@ type prepared struct {
 	filter        Filter
 	capcodes      []string
 	aliasIDs      []int64
-	largeEvents   *string // the level, for a large-event integration (R87d)
+	largeEvents   bool // a large-event integration (R87d)
 }
 
 var (
@@ -177,16 +176,13 @@ func (s *Service) validate(ctx context.Context, req Request, prev *loaded, prevS
 		return p, invalid("Content must be full or summary.")
 	}
 
-	// R87d: large events at one level, instead of capcodes and aliases. What
-	// it sends is a summary, never page text, whatever was asked for.
-	if lv := strings.TrimSpace(req.LargeEvents); lv != "" {
-		if !events.Level(lv).Valid() {
-			return p, invalid("Choose the level of large event: deployment, several deployments or big job.")
-		}
+	// R87d: large events, instead of capcodes and aliases. What it sends is a
+	// summary, never page text, whatever was asked for.
+	if req.LargeEvents {
 		if len(req.Capcodes)+len(req.AliasIDs) > 0 {
 			return p, invalid("An integration selects either large events or capcodes and aliases, not both.")
 		}
-		p.largeEvents, p.content = &lv, Summary
+		p.largeEvents, p.content = true, Summary
 		sec := req.Secrets
 		if prev != nil {
 			sec = sec.merge(prevSec)
@@ -874,8 +870,8 @@ func (s *Service) Test(ctx context.Context, owner db.User, id int64) (TestResult
 		link = &u
 	}
 	p := testPage(s.now(), capcode, alias, link)
-	if l.row.LargeEvents != nil {
-		p = s.testEventPage(s.now(), events.Level(*l.row.LargeEvents))
+	if l.row.LargeEvents {
+		p = s.testEventPage(s.now())
 	}
 	actx, cancel := context.WithTimeout(ctx, AttemptTimeout)
 	defer cancel()

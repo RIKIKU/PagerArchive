@@ -47,10 +47,11 @@ type Network struct {
 	Heartbeat   []CapcodeRange
 	Redactions  []Redaction
 	JobPatterns []*regexp.Regexp
-	// DeploymentCodes finds deployment codes (R5, R87): codes naming a
-	// pre-formed group of appliances sent together. nil: the network has none,
-	// and only big jobs open large events. With a group named "code", the
-	// group is the code; otherwise the whole match is.
+	// DeploymentCodes finds the codes that open large events (R5, R87), such
+	// as one naming a pre-formed group of appliances sent together. nil: the
+	// network has none, and only jobs with enough Emergency pages open large
+	// events. With a group named "code", the group is the code; otherwise the
+	// whole match is.
 	DeploymentCodes     *regexp.Regexp
 	DeploymentCodeGroup int
 	Categories          []Category

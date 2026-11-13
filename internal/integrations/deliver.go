@@ -11,7 +11,6 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/search"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
@@ -304,11 +303,11 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 	p := s.pageOf(*m, l.ownerRole == adminRole)
 	if d.EventID != nil {
 		// A large event's delivery (R87d): its summary, never the page.
-		if l.row.LargeEvents == nil {
+		if !l.row.LargeEvents {
 			finish(statusCancelled, result{}) // no longer selects large events
 			return false
 		}
-		ev, ok, err := s.eventSummary(ctx, s.Store.Queries, *d.EventID, events.Level(*l.row.LargeEvents))
+		ev, ok, err := s.eventSummary(ctx, s.Store.Queries, *d.EventID, m.ID, m.SentAt)
 		if err != nil {
 			s.Log.Error("delivery: large event", "integration", l.row.ID, "event", *d.EventID, "error", dbErr("load", err).Error())
 			return true
