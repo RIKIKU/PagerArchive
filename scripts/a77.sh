@@ -91,6 +91,9 @@ previous_from_release() {
 		sh "$WORK/previous-tag/scripts/ci/release-assets.sh" "$WORK/previous"
 	fi
 	install_folder "$DIR" "$WORK/previous"
+	# Its images, from GHCR and upstream, each pull retried (ADR 0025), so
+	# `up` finds them here.
+	sh scripts/ci/pull-images.sh "$DIR/compose.yaml" "ghcr.io/rikiku/pagerarchive:$(compose_image_tag "$DIR/compose.yaml")"
 }
 
 # previous_from_here: a release made from this checkout, as the header says.

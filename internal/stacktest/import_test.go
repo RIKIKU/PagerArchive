@@ -681,20 +681,70 @@ func (s *a76Stack) killPartWay(lines []string) int64 {
 		s.t.Fatal("the command didn't end when its container was killed")
 	}
 	s.noText("the killed run's output", output.String())
+	// Started again only once it has stopped: `start` on a container still
+	// running does nothing, and then nothing would bring it back.
+	s.t.Logf("once the command ended, the API's container was %q", s.apiState())
+	if err := waitFor(time.Minute, func() bool { return s.apiState() == "exited" }); err != nil {
+		s.diagnose()
+		s.t.Fatalf("the API's container didn't stop after the kill: %q", s.apiState())
+	}
 	if out, err := compose("start", "api").CombinedOutput(); err != nil {
 		s.t.Fatalf("start: %v %s", err, out)
 	}
+	started := time.Now()
+	defer func() { s.t.Logf("the API answered %s after its start", time.Since(started).Round(time.Second)) }()
+	// Each try has its own time limit, so one that hangs can't outlast the wait.
+	client := &http.Client{Timeout: 5 * time.Second}
 	if err := waitFor(2*time.Minute, func() bool {
-		resp, err := http.Get(s.api + "/healthz")
+		resp, err := client.Get(s.api + "/healthz")
 		if err != nil {
 			return false
 		}
 		resp.Body.Close()
 		return resp.StatusCode == http.StatusOK
 	}); err != nil {
+		s.diagnose()
 		s.t.Fatal("the API didn't come back")
 	}
 	return s.int(`SELECT count(*) FROM import_receptions`)
+}
+
+// apiState is the API container's state, as Docker gives it: running,
+// exited, restarting and so on, or "" if Docker doesn't say.
+func (s *a76Stack) apiState() string {
+	out, err := compose("ps", "-a", "--format", "{{.State}}", "api").Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// diagnose logs why the API may not have come back: its container's state,
+// the end of its log (which never has page text, R69), and what the
+// database's sessions are doing (no query text).
+func (s *a76Stack) diagnose() {
+	s.t.Helper()
+	if out, err := compose("ps", "-a", "api").CombinedOutput(); err == nil {
+		s.t.Logf("the API's container:\n%s", out)
+	}
+	if out, err := compose("logs", "--no-color", "--tail", "40", "api").CombinedOutput(); err == nil {
+		s.t.Logf("the end of the API's log:\n%s", out)
+	}
+	rows, err := s.db.Query(s.ctx, `SELECT pid, coalesce(application_name, ''), coalesce(state, ''),
+		coalesce(wait_event_type || ':' || wait_event, ''), coalesce(now() - xact_start, '0')::text
+		FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid()`)
+	if err != nil {
+		s.t.Logf("pg_stat_activity: %v", err)
+		return
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var pid int
+		var app, state, wait, xact string
+		if err := rows.Scan(&pid, &app, &state, &wait, &xact); err == nil {
+			s.t.Logf("session %d %q: %s, waiting on %q, in a transaction for %s", pid, app, state, wait, xact)
+		}
+	}
 }
 
 func waitFor(d time.Duration, cond func() bool) error {
