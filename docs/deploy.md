@@ -417,8 +417,59 @@ docker compose pull && docker compose up -d
 
 To check the new files and image first, see [Checking the files](#checking-the-files).
 
+Or have the server do this every hour, with a backup first and a rollback if the upgrade fails: see [Automatic upgrades](#automatic-upgrades).
+
 That's all: `.env` and `compose.override.yaml` stay as they are, and database migrations run when the API starts. A release can change a third-party service's files: `docker compose up -d` recreates that service, and leaves the others running. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)).
 
 A newer `postgis/postgis` image brings a newer PostGIS, but a database keeps the PostGIS version it was set up with until it's updated. The API does that on every start, after the migrations: each installed PostGIS extension that's behind the image is updated, and the log says so at INFO, with the old and new versions. If the log has a WARN saying it couldn't update one, usually because the API's database login doesn't own that extension, the API starts anyway on the older version: run `ALTER EXTENSION <name> UPDATE;` (the extension the WARN names) in the database as the extension's owner, for example `docker compose exec db psql -U postgres -c 'ALTER EXTENSION postgis UPDATE;'`. PostGIS 3.7 no longer ships `postgis_tiger_geocoder`, which older images installed in every new database: if a WARN says the image no longer provides it, it's left as it was. PagerArchive doesn't use it, so you can remove it the same way with `DROP EXTENSION postgis_tiger_geocoder;`.
 
 Before version 1.0.0, a release can break the upgrade. If so, its release notes start with "Upgrade steps". Read the notes before you upgrade.
+
+## Automatic upgrades
+
+Instead of upgrading by hand, you can have the server do it. It's off unless you switch it on, and it's for a deployment installed as above, from the release's files (R84). It runs on the host, as the user who runs `docker compose` for PagerArchive, from that user's crontab, so it needs no root: the user only needs to be able to run Docker. PagerArchive itself never runs Docker or upgrades anything.
+
+**What it does, every hour:** it asks GitHub's releases API (no account or token needed) for the newest full release, ignoring drafts and pre-releases. If that's newer than the version running, it upgrades, unless:
+
+- it's a new major version, or its release notes start with "Upgrade steps": those you do by hand, as above;
+- it failed here before: a failed release is never tried again by itself;
+- a backup is running or asked for: it tries again the next hour.
+
+The upgrade is five steps, each logged:
+
+1. **Verify.** The release's `compose.yaml` and archive, and PagerArchive's images (the server's, and the client's if your `compose.override.yaml` names it by a major.minor tag), must carry this repository's attestations, as in [Checking the files](#checking-the-files). They're checked with a pinned release of the GitHub CLI, downloaded into `auto-upgrade/bin/` once and checked against that release's published checksum on every run, so the host needs nothing installed. The CLI needs no sign-in: the attestations come from GitHub's API and are checked against Sigstore's public keys. If anything can't be verified, or the CLI can't be fetched or doesn't match its checksum, nothing is installed, and it tries again the next hour.
+2. **Back up.** The same backup and check as the nightly one (`pagerarchive-backup now`), kept aside in your backup folder under `pre-upgrade/` (hard links, so it costs no space while that night's files are still there), and copies of `compose.yaml`, `.env`, `compose.override.yaml` and `deploy/` in `auto-upgrade/files/`. The last 3 of each are kept.
+3. **Upgrade.** The verified files are installed, a client tag like `pagerarchive-client:1.9` in `compose.override.yaml` moves to the new minor version, then `docker compose pull` (the images pulled must be the ones verified) and `docker compose up -d`. If you set `AUTO_UPGRADE_MONITORING_DIR`, the example monitoring stack is upgraded the same way, as in [Upgrading the stack](monitoring.md#upgrading-the-stack).
+4. **Check.** Every container is running; the API answers and runs the new version, from the verified image (it answers only once its database migrations have run); your own addresses in `AUTO_UPGRADE_CHECK_URLS` answer; and a page is stored after the restart, within 30 minutes (`AUTO_UPGRADE_PAGE_WINDOW`). That last check counts only when pages were arriving: when the 2 hours before the upgrade (4 windows) held at least 20 pages, 5 a window on average, so a whole window with none would be very unusual. On a quieter network it's skipped, and the status says so: a quiet network is never a reason to roll back. Pages your receivers held while the API restarted count, as they arrive.
+5. **If any of that fails, it rolls back.** The previous release's files go back, and so do the images that were running, without pulling anything. If the new version changed either database (PagerArchive's migrations, Authentik's, or a PostGIS extension's version), the database is first restored from step 2's backup, the documented way ([Restoring](#restoring)): the stack is stopped, the database's volume replaced by a new one, the backup restored into it, then the old version started. Pages stored between the upgrade and the rollback are lost in that case. The release is marked failed and isn't tried again.
+
+**Switching it on.** From the folder with `compose.yaml`:
+
+```sh
+deploy/auto-upgrade/auto-upgrade.sh enable
+docker compose up -d
+deploy/auto-upgrade/auto-upgrade.sh run
+```
+
+`enable` adds `AUTO_UPGRADE_STATUS_DIR=./auto-upgrade/status` to `.env` (the folder whose status the API shows) and an hourly line to your crontab, at a random minute. `docker compose up -d` lets the API see the status. `run` does the first check at once, so you can see it work. With `enable --systemd` it's a systemd user timer instead of cron; that runs while you're logged out only with lingering (`loginctl enable-linger`, which may need an administrator). With `--no-schedule` it's neither, for your own scheduler to run `deploy/auto-upgrade/auto-upgrade.sh run` hourly.
+
+The script comes in the release's archive, so a release from before automatic upgrades doesn't have it: upgrade by hand to one that does first.
+
+| Setting in `.env` | Default | What it is |
+|---|---|---|
+| `AUTO_UPGRADE_STATUS_DIR` | none: off | Set by `enable`. Where the status and log are, which the API reads (and the example monitoring stack, if you set the same folder in its `.env`) |
+| `AUTO_UPGRADE_PAGE_WINDOW` | `30` | Minutes after the restart in which a page must be stored, when pages were arriving before |
+| `AUTO_UPGRADE_START_TIMEOUT` | `600` | Seconds the API may take to answer after the restart |
+| `AUTO_UPGRADE_CHECK_URLS` | none | Your own addresses that must answer after an upgrade, space-separated, such as `https://pager.example.org/healthz https://auth.example.org/-/health/live/` |
+| `AUTO_UPGRADE_MONITORING_DIR` | none | The example monitoring stack's folder, to upgrade it too. If it fails, both are rolled back |
+| `AUTO_UPGRADE_KEEP` | `3` | How many pre-upgrade backups and copies of the files are kept |
+
+**Seeing what it does.** **Administration → Upgrades** shows whether it's on, the last check and what it found, the last upgrade, the history, and the releases that failed. Administration's start page has a notice when the last upgrade failed (saying whether it was rolled back and the database restored), when one stopped part way, or when there's been no check for 3 hours. `/metrics` has `pagerarchive_auto_upgrade_failing`, `pagerarchive_auto_upgrade_last_check_timestamp_seconds`, `pagerarchive_auto_upgrade_last_success_timestamp_seconds` (with the versions), `pagerarchive_auto_upgrade_failures_total` and `pagerarchive_auto_upgrade_rollbacks_total`. The example monitoring stack shows them on its backups and upgrades dashboard, has each step's log line in Loki, and alerts on a failed upgrade with **Upgrade failed** ([Monitoring](monitoring.md#the-dashboards)). There's no other alerting. On the server, `deploy/auto-upgrade/auto-upgrade.sh status` prints the status, `auto-upgrade/status/auto-upgrade.log` has one JSON line per step, and `auto-upgrade/last-run.txt` has what the last run printed. None of them ever holds page text.
+
+**When it needs you.** If a rollback fails too, the notice says where, and the stack is left as it is (stopped, if the restore failed, so the old version doesn't start on an empty database). The pre-upgrade backup is in the backup folder's `pre-upgrade/`, and the files are in `auto-upgrade/files/`, newest last: put the files back, restore the night as in [Restoring](#restoring), and start the stack. If the host stopped part way through an upgrade, the next run refuses to do anything until you've checked the install and run `deploy/auto-upgrade/auto-upgrade.sh clear`. Once you've looked, `clear` also removes the notice and the alert for a failed upgrade. To try a failed release again: `deploy/auto-upgrade/auto-upgrade.sh retry 1.10.0`.
+
+**Checking a release by hand.** `deploy/auto-upgrade/auto-upgrade.sh verify` (or `verify v1.10.0`) checks the latest release's files and images as step 1 does, and changes nothing.
+
+**Switching it off.** `deploy/auto-upgrade/auto-upgrade.sh disable` removes the crontab line (or the timer). Administration then says it's off. You can also remove `AUTO_UPGRADE_STATUS_DIR` from `.env`, then run `docker compose up -d`.
+
+**Upgrading by hand still works**, whether it's on or off, exactly as in [Upgrading](#upgrading): the script only looks at the version that's running, so it carries on from whatever you installed. Switch it off first, or upgrade between its hourly runs: it never runs twice at once, and holds `auto-upgrade/lock` while it runs.

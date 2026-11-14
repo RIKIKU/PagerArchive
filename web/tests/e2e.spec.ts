@@ -373,7 +373,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
 for (const look of ['harbour', 'console'] as const) {
 	for (const scheme of ['light', 'dark'] as const) {
 		for (const width of [375, 1280]) {
@@ -939,7 +939,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -954,7 +954,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Integration addresses', 'Large event settings']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -963,6 +963,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Receiving clients', 'Receiving clients'],
 			['Retention', 'Retention'],
 			['Backups', 'Backups'],
+			['Upgrades', 'Upgrades'],
 			['Integration addresses', 'Integration addresses'],
 			['Large event settings', 'Large event settings']
 		]) {
@@ -4281,6 +4282,99 @@ test('Back up now on the Backups page', async ({ browser }) => {
 		rmSync(request, { force: true });
 		writeStatus();
 	}
+});
+
+// R84h: Administration → Upgrades, and the notice on Administration's start
+// page, from the automatic upgrades' status file, which scripts/e2e.sh gives
+// the API in PA_E2E_BACKUP_DIR and this test writes in the host script's place
+// (the real script is A90's, scripts/a90.sh): off, then on after an upgrade,
+// then a failed upgrade rolled back with the database restored, then checks
+// that stopped. At 1,280 and 375 px (Administration opens on a phone from a
+// link, R81), with axe.
+test('R84h automatic upgrades in Administration', async ({ browser }, info) => {
+	const dir = process.env.PA_E2E_BACKUP_DIR;
+	test.skip(!dir, 'PA_E2E_BACKUP_DIR is not set (run scripts/e2e.sh)');
+	const file = join(dir!, 'auto-upgrade', 'status.json');
+	mkdirSync(join(dir!, 'auto-upgrade'), { recursive: true });
+	rmSync(file, { force: true });
+	const s = (ago: number) => Math.floor((Date.now() - ago) / 1000);
+	const upgraded = { at: s(26 * 3600_000), from: '1.9.0', to: '1.10.0' };
+	const ok = {
+		enabled: true, enabled_at: s(48 * 3600_000), state: 'idle', running_since: 0, last_check_at: s(600_000), last_check_result: 'up-to-date',
+		last_check_note: '1.10.0 is the latest release', running_version: '1.10.0', latest_version: '1.10.0', failures: 0, rollbacks: 0,
+		failed_versions: [], last_upgrade: upgraded, history: [{ ...upgraded, result: 'upgraded' }]
+	};
+	const failure = { at: s(300_000), from: '1.10.0', to: '1.11.0', step: 'health', reason: 'no page stored within 30 minutes of the restart, with 48 in the 120 minutes before', rolled_back: true, restored: true };
+	const rolledBack = {
+		...ok, last_check_at: s(300_000), last_check_result: 'rolled-back', last_check_note: failure.reason, latest_version: '1.11.0', failures: 1, rollbacks: 1,
+		failed_versions: ['1.11.0'], last_failure: failure, history: [...ok.history, { at: failure.at, from: '1.10.0', to: '1.11.0', result: 'rolled-back' }]
+	};
+	try {
+		for (const viewport of [
+			{ width: 1280, height: 900 },
+			{ width: 375, height: 800 }
+		]) {
+			const where = `${viewport.width}px`;
+			const page = await (await signedIn(browser, 'admin', { viewport })).newPage();
+			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no sideways scroll, ${where}`).toBe(true);
+			rmSync(file, { force: true });
+
+			// Off: said plainly, and how to switch it on.
+			await page.goto('/admin');
+			await expect(page.getByTestId('upgrade-tag'), where).toHaveText('off');
+			await expect(page.getByTestId('upgrade-alert')).toHaveCount(0);
+			await page.getByTestId('admin-screens').getByRole('link', { name: 'Upgrades' }).click();
+			await expect(page).toHaveURL(/\/admin\/upgrades$/);
+			await expect(page.getByTestId('upgrade-status')).toContainText('Automatic upgrades are off.');
+			await expect(page.getByText('deploy/auto-upgrade/auto-upgrade.sh enable')).toBeVisible();
+			expect(await axeOf(page), `axe: upgrades, off, ${where}`).toEqual([]);
+
+			// On, after an upgrade: the last check and upgrade, and the history; no notice.
+			writeFileSync(file, JSON.stringify(ok));
+			await page.reload();
+			const status = page.getByTestId('upgrade-status');
+			await expect(status, where).toContainText('On: checking for a new release every hour.');
+			await expect(status).toContainText('1.10.0 is the latest release');
+			await expect(status).toContainText('1.9.0 to 1.10.0');
+			await expect(page.getByTestId('upgrade-history').locator('tbody tr')).toHaveText([/1\.9\.0\s*1\.10\.0\s*Upgraded/]);
+			await expect(page.getByTestId('upgrade-alert')).toHaveCount(0);
+			expect(await axeOf(page), `axe: upgrades, on, ${where}`).toEqual([]);
+
+			// Failed and rolled back: the notice here and on the start page.
+			writeFileSync(file, JSON.stringify(rolledBack));
+			await page.reload();
+			const alert = page.getByTestId('upgrade-alert');
+			await expect(alert, where).toContainText('The automatic upgrade to 1.11.0 failed');
+			await expect(alert).toContainText('no page stored within 30 minutes of the restart');
+			await expect(alert).toContainText('rolled back to 1.10.0, and the database restored from the backup made just before');
+			await expect(alert).toContainText("1.11.0 won't be tried again");
+			await expect(status).toContainText('On, but the last upgrade failed.');
+			await expect(status).toContainText('1 upgrade, 1 rolled back');
+			await expect(page.getByTestId('upgrade-history').locator('tbody tr').first()).toContainText('Failed, rolled back');
+			await noSideways();
+			await page.screenshot({ path: info.outputPath(`upgrades-rolled-back-${viewport.width}.png`), fullPage: true });
+			expect(await axeOf(page), `axe: upgrades, rolled back, ${where}`).toEqual([]);
+			await page.goto('/admin');
+			await expect(page.getByTestId('upgrade-alert')).toContainText('The automatic upgrade to 1.11.0 failed');
+			await expect(page.getByTestId('upgrade-tag')).toHaveText('failed');
+			expect(await axeOf(page), `axe: Administration with the notice, ${where}`).toEqual([]);
+
+			// The checks stopped: 4 hours since the last.
+			writeFileSync(file, JSON.stringify({ ...ok, last_check_at: s(4 * 3600_000) }));
+			await page.reload();
+			await expect(page.getByTestId('upgrade-alert')).toContainText("haven't checked for a release for more than 3 hours");
+			await expect(page.getByTestId('upgrade-tag')).toHaveText('not checking');
+			await page.context().close();
+		}
+		// Admins only.
+		const user = await (await signedIn(browser, 'user')).newPage();
+		await user.goto('/admin/upgrades');
+		await expect(user.getByRole('alert')).toHaveText('This page is for admins only.');
+		await user.context().close();
+	} finally {
+		rmSync(file, { force: true });
+	}
+	console.log('R84h: Upgrades off, on, rolled back and stale, with the notice on Administration, at 1,280 and 375 px; axe clean');
 });
 
 // R64 (owner, 2026-11-14): template names are unique ignoring case. Adding one

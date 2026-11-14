@@ -234,6 +234,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		m.family("pagerarchive_backup_failing", "gauge", "1 if the last backup failed, or the last good one is more than 36 hours old (R86a).")
 		m.sample("pagerarchive_backup_failing", nil, b2f(b.Failing()))
 	}
+	s.autoUpgradeMetrics(m)
 
 	s.loadMetrics(m)
 

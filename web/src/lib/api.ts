@@ -98,6 +98,33 @@ export interface BackupStatus {
 	running_since: string | null;
 }
 
+export interface Upgrade {
+	at: string;
+	from: string;
+	to: string;
+}
+
+/** R84h: automatic upgrades, which run on the host; the API only reads their status. */
+export interface AutoUpgradeStatus {
+	state: 'off' | 'ok' | 'failed' | 'stale' | 'stopped';
+	/** What a run is doing now. */
+	run: 'idle' | 'checking' | 'verifying' | 'backing-up' | 'upgrading' | 'health-check' | 'rolling-back';
+	running_since: string | null;
+	enabled_at: string | null;
+	disabled_at: string | null;
+	last_check_at: string | null;
+	last_check_result?: string;
+	last_check_note?: string;
+	running_version?: string;
+	latest_version?: string;
+	last_upgrade: Upgrade | null;
+	last_failure: (Upgrade & { step: string; reason: string; rolled_back: boolean; restored: boolean; rollback_error?: string; cleared: boolean }) | null;
+	failures: number;
+	rollbacks: number;
+	failed_versions: string[];
+	history: (Upgrade & { result: 'upgraded' | 'rolled-back' | 'rollback-failed' | '' })[];
+}
+
 export interface Retention {
 	days: number;
 	default_days: number;
@@ -720,6 +747,8 @@ export const api = {
 	backup: () => get<BackupStatus>('/api/v1/admin/backup'),
 	/** Back up now (R86a): the backup service starts it within a minute. */
 	backUpNow: () => request<BackupStatus>('POST', '/api/v1/admin/backup'),
+	/** R84h: what the host's automatic upgrades last did. */
+	autoUpgrade: () => get<AutoUpgradeStatus>('/api/v1/admin/auto-upgrade'),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
 	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
 	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {

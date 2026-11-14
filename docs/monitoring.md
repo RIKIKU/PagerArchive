@@ -196,6 +196,8 @@ One page's trace, opened from that table. The client's `buffer` span is long bec
 
 **Backups.** How long since the last good backup (orange after 26 hours, a night missed; red after 36, when **Backup failing** fires), whether the last one failed, and each good night's three numbers: the size of both dumps, how long the dumps took and how long the check took (R86d). The check restores everything, so it grows with the archive, and a check that takes more than 12 hours fails the night: this is where you see that coming. See [Backups](deploy.md#backups).
 
+The same dashboard (**PagerArchive: backups and upgrades**) shows **automatic upgrades**, when they're on (R84h; [Automatic upgrades](deploy.md#automatic-upgrades)): how long since the last check (orange after 2 hours, red after 3, when Administration says they've stopped), whether the last upgrade failed (red while it did: rolled back, or needing you, when **Upgrade failed** fires), the last successful upgrade with its versions, how many failed and were rolled back, and the version history: the version the API reported over time. The upgrade script runs on the host, so its log comes in as a file: in **Explore → Loki**, `{service_name="pagerarchive-auto-upgrade"}` has one line per step (check, verify, backup, upgrade, health, rollback, restore), labelled with `step`, `result` and `level`, with the versions and, on a failure, the reason. Only those fields are kept: Alloy rebuilds each line from them, and drops any line that isn't one of the script's. For that, the stack mounts the script's status folder read-only: set `AUTO_UPGRADE_STATUS_DIR` in this stack's `.env` to the same folder as in PagerArchive's, as an absolute path. That needs the stack on the same host as PagerArchive; on another host the metrics, the dashboard and the alert still work, through the API, and only the log lines are missing.
+
 ## Radio health
 
 A client that runs `rtl_fm` and `multimon-ng` itself (`RADIO_FREQUENCY` set) passes the audio from one to the other and measures it on the way (R74a). None of the audio is kept or sent anywhere; only these numbers are:
@@ -221,15 +223,15 @@ A client reading `multimon-ng` output on stdin has no radio of its own, so it re
 
 ## Alerts, and where they go
 
-Four alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
+Five alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
 
 | Rule | Fires when | Clears when |
 |---|---|---|
 | **Client not receiving** | a client has sent no page of any kind (heartbeats included) for more than 30 minutes (R39). One alert per client | the client is heard again |
 | **Radio stalled** | a client running the radio has had no audio from `rtl_fm` for more than 2 minutes, while it still reports: a stuck dongle, or the pipeline not running (R74a). One alert per client. A client that's switched off is "Client not receiving"'s job, not this one's | audio flows again |
 | **API unreachable** | Alloy's scrape of `/metrics` has failed for 30 s: the API is down, unreachable, or `METRICS_TOKEN` changed | the scrape works again |
-
 | **Backup failing** | the last nightly backup failed, or the last good one is more than 36 hours old (R86a; [Backups](deploy.md#backups)). It clears after the next good backup. The API works this out, so Administration shows the same thing, and the 36 hours aren't in `rules.yaml` |
+| **Upgrade failed** | an automatic upgrade failed and was rolled back, its rollback failed too, or a run stopped part way (R84h; [Automatic upgrades](deploy.md#automatic-upgrades)). The API works this out, so Administration shows the same thing | a later release upgrades, or you run `deploy/auto-upgrade/auto-upgrade.sh clear` after looking |
 
 ![A firing alert](monitoring/alert-firing.png)
 

@@ -33,7 +33,7 @@ services:
     restart: unless-stopped
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:
-      pagerarchive.config: "12f8cf5704637605"
+      pagerarchive.config: "6dca6c548c41943b"
     environment:
       # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
       PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
@@ -41,6 +41,8 @@ services:
       PA_API_ADDRESS: ${PA_API_ADDRESS:-pagerarchive:8080}
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # PagerArchive's automatic upgrades' log (docs/monitoring.md), or nothing.
+      - ${AUTO_UPGRADE_STATUS_DIR:-/dev/null}:/var/log/pagerarchive-auto-upgrade:ro
       - alloy:/var/lib/alloy
     networks: [internal, monitoring]
     depends_on: [tempo, loki, prometheus]
@@ -89,7 +91,7 @@ services:
     image: grafana/grafana:13.3
     restart: unless-stopped
     labels:
-      pagerarchive.config: "7cd30ec6221e79fe"
+      pagerarchive.config: "dbd3def1596735fc"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}

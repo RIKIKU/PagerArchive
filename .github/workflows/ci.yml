@@ -592,11 +592,11 @@ jobs:
   # every pull request and every build of main, so a change that breaks the
   # upgrade is caught before a release is cut (ADR 0024). Needs the v* tags.
   upgrade:
-    name: Upgrade from the latest release (A77)
+    name: Upgrade from the latest release (A77, A90)
     needs: [stamp, changes]
     if: needs.changes.outputs.upgrade == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -616,12 +616,23 @@ jobs:
         run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A77
         run: sh scripts/a77.sh -o a77-results
+      # A90: the same previous release switched to automatic upgrades, with a
+      # stand-in GitHub serving releases built here. Its last step verifies the
+      # real latest release with the real pinned GitHub CLI: the token only
+      # lifts the API's rate limit for the runner's shared address.
+      - name: A90
+        if: success() || failure()
+        env:
+          AUTO_UPGRADE_GITHUB_TOKEN: ${{ github.token }}
+        run: sh scripts/a90.sh -o a90-results
       - name: Upload the upgrade's output and logs
         if: always()
         uses: ./.github/actions/upload
         with:
           name: a77-${{ github.run_id }}-${{ github.run_attempt }}
-          path: a77-results/
+          path: |
+            a77-results/
+            a90-results/
           if-no-files-found: ignore
           retention-days: 14
 

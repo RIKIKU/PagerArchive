@@ -136,10 +136,11 @@ done | psql_db -q -v ON_ERROR_STOP=1 >/dev/null
 export PA_E2E_DB="$DB"
 
 # Back up now (R86a): a status file and a request folder, as the backup service
-# keeps them, which the browser test writes in the service's place. They go
-# with the build's folder.
+# keeps them, which the browser test writes in the service's place, and the
+# automatic upgrades' status file (R84h), which it writes in the host script's.
+# They go with the build's folder.
 PA_E2E_BACKUP_DIR=${BIN%/*}/backup
-mkdir -p "$PA_E2E_BACKUP_DIR/status" "$PA_E2E_BACKUP_DIR/requests"
+mkdir -p "$PA_E2E_BACKUP_DIR/status" "$PA_E2E_BACKUP_DIR/requests" "$PA_E2E_BACKUP_DIR/auto-upgrade"
 export PA_E2E_BACKUP_DIR
 
 # Authentik isn't running: sign-in reports it unavailable, which one test checks.
@@ -147,6 +148,7 @@ PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080
 	APP_URL=http://127.0.0.1:18080 AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
 	INTEGRATION_SECRETS_KEY=$(head -c 32 /dev/urandom | base64) \
 	BACKUP_STATUS_FILE="$PA_E2E_BACKUP_DIR/status/status.json" BACKUP_REQUEST_FILE="$PA_E2E_BACKUP_DIR/requests/request.json" \
+	AUTO_UPGRADE_STATUS_FILE="$PA_E2E_BACKUP_DIR/auto-upgrade/status.json" \
 	ALLOWED_EMAIL_DOMAINS=example.test "$BIN" serve 2>>"$BIN.log" &
 PIDS="$PIDS $!"
 until curl -sf "http://127.0.0.1:18080/healthz" >/dev/null; do sleep 0.2; done

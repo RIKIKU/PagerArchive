@@ -90,6 +90,46 @@ groups:
             Administration's Backups page says which and why, and when the last
             good backup was. docs/deploy.md, "Backups".
 
+      # R84h: an automatic upgrade failed, and was rolled back (or the rollback
+      # failed too), or a run stopped part way. The API works that out from
+      # the upgrades' status file, as Administration shows the same thing. It
+      # clears when a later release upgrades, or after `auto-upgrade.sh clear`.
+      # The same contact point as every other alert: no new channel.
+      - uid: pa-upgrade-failed
+        title: Upgrade failed
+        condition: failing
+        data:
+          - refId: state
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: state
+              instant: true
+              range: false
+              expr: max(pagerarchive_auto_upgrade_failing{job="pagerarchive"})
+          - refId: failing
+            datasourceUid: __expr__
+            model:
+              refId: failing
+              type: threshold
+              expression: state
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "An automatic upgrade failed and was rolled back, or needs you"
+          description: >-
+            Administration's Upgrades page says which release, at which step
+            and why, and whether the database was restored. Loki has each
+            step: {service_name="pagerarchive-auto-upgrade"}. docs/deploy.md,
+            "Automatic upgrades".
+
       # R74a: a client running the radio has had no audio from rtl_fm for 2
       # minutes. rtl_fm runs without squelch, so a working dongle always
       # gives audio: none means the dongle is stuck, or the pipeline isn't

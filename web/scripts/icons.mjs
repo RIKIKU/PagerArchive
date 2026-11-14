@@ -33,6 +33,7 @@ const icons = {
 	retention: 'history',
 	waiting: 'list-check',
 	backups: 'cloud-check',
+	upgrades: 'circle-arrow-up',
 	hosts: 'server',
 	search: 'search',
 	help: 'info-circle',

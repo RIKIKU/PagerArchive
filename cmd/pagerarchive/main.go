@@ -111,6 +111,7 @@ serve reads its settings from the environment:
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
   BACKUP_STATUS_FILE      the backup service's status file (default: no backups to report)
   BACKUP_REQUEST_FILE     where Back up now asks the backup service for a backup (default: it can't)
+  AUTO_UPGRADE_STATUS_FILE  what automatic upgrades last did (default: they are off)
   MAP_TILES               path to a PMTiles map extract (default: no background map;
                           /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
@@ -398,18 +399,19 @@ func serve(stderr io.Writer) error {
 			ClientID: getenv("POWERSHELL_CLIENT_ID", "pagerarchive-powershell"),
 			HTTP:     auth.http,
 		},
-		AppURL:            auth.appURL,
-		AccountURL:        auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
-		Nightly:           job,
-		BackupStatusFile:  os.Getenv("BACKUP_STATUS_FILE"),
-		BackupRequestFile: os.Getenv("BACKUP_REQUEST_FILE"),
-		Started:           time.Now(),
-		MapTiles:          mapTiles,
-		MapAttribution:    os.Getenv("MAP_ATTRIBUTION"),
-		Integrations:      integ,
-		MetricsToken:      os.Getenv("METRICS_TOKEN"),
-		Locks:             locks,
-		Version:           version,
+		AppURL:                auth.appURL,
+		AccountURL:            auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
+		Nightly:               job,
+		BackupStatusFile:      os.Getenv("BACKUP_STATUS_FILE"),
+		BackupRequestFile:     os.Getenv("BACKUP_REQUEST_FILE"),
+		AutoUpgradeStatusFile: os.Getenv("AUTO_UPGRADE_STATUS_FILE"),
+		Started:               time.Now(),
+		MapTiles:              mapTiles,
+		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
+		Integrations:          integ,
+		MetricsToken:          os.Getenv("METRICS_TOKEN"),
+		Locks:                 locks,
+		Version:               version,
 	}
 	// R64: template names from before they had to differ by more than letter
 	// case (migration 00022), on every start until an admin sorts them out.
