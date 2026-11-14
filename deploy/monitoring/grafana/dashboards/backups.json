@@ -1,7 +1,7 @@
 {
   "uid": "pa-backups",
-  "title": "PagerArchive: backups",
-  "description": "The nightly backups (R86-R86d): how long since the last good one, whether the last one failed, and each night's dump size, dump time and check time, so the check's growth with the archive can be seen.",
+  "title": "PagerArchive: backups and upgrades",
+  "description": "The nightly backups (R86-R86d): how long since the last good one, whether the last one failed, and each night's dump size, dump time and check time, so the check's growth with the archive can be seen. Automatic upgrades (R84h): the last one, the version history, failures and rollbacks, and how long since the last check.",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -66,6 +66,68 @@
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_check_seconds{job=\"pagerarchive\"})", "legendFormat": "restore and compare"}],
       "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "single"}}
+    },
+    {
+      "id": 7, "type": "text", "title": "Automatic upgrades",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 19},
+      "options": {"mode": "markdown", "content": "Only when automatic upgrades are switched on (docs/deploy.md, \"Automatic upgrades\"). **Since the last upgrade check** turns orange after 2 hours and red after 3, when Administration says the checks have stopped. **Last upgrade** is red while the last one failed: it was rolled back, or needs you, and the \"Upgrade failed\" alert fires. Administration's Upgrades page says why, and each step's log line is in Loki: `{service_name=\"pagerarchive-auto-upgrade\"}`. **Version history** is the version the API reported over time."}
+    },
+    {
+      "id": 8, "type": "stat", "title": "Since the last upgrade check",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "time() - max by (instance) (pagerarchive_auto_upgrade_last_check_timestamp_seconds{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s", "decimals": 0,
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 7200}, {"color": "red", "value": 10800}]},
+          "noValue": "Automatic upgrades are off"
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 9, "type": "stat", "title": "Last upgrade",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_failing{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "FAILED", "color": "red"}}}],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]},
+          "noValue": "Automatic upgrades are off"
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 10, "type": "stat", "title": "Last successful upgrade",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance, from, to) (pagerarchive_auto_upgrade_last_success_timestamp_seconds{job=\"pagerarchive\"}) * 1000", "legendFormat": "{{from}} to {{to}}"}],
+      "fieldConfig": {"defaults": {"unit": "dateTimeFromNow", "noValue": "None yet"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 11, "type": "stat", "title": "Upgrades failed and rolled back",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_failures_total{job=\"pagerarchive\"})", "legendFormat": "failed"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_rollbacks_total{job=\"pagerarchive\"})", "legendFormat": "rolled back"}
+      ],
+      "fieldConfig": {"defaults": {"decimals": 0, "noValue": "Automatic upgrades are off"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 12, "type": "state-timeline", "title": "Version history",
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 29},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (version) (pagerarchive_build_info{job=\"pagerarchive\"})", "legendFormat": "{{version}}"}],
+      "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"1": {"text": "running"}}}], "custom": {"fillOpacity": 70}}, "overrides": []},
+      "options": {"showValue": "never", "mergeValues": true, "rowHeight": 0.8, "legend": {"showLegend": false}}
     }
   ]
 }

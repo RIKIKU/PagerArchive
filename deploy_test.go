@@ -149,7 +149,8 @@ func TestR84aComposeNamesThisRelease(t *testing.T) {
 // own data.
 func mountSource(t *testing.T, c composeFile, service, volume string) string {
 	t.Helper()
-	if strings.HasPrefix(volume, "${PROFILES_DIR:-") || strings.HasPrefix(volume, "${MAP_TILES_FILE:-") || strings.HasPrefix(volume, "${BACKUP_DIR:-") {
+	if strings.HasPrefix(volume, "${PROFILES_DIR:-") || strings.HasPrefix(volume, "${MAP_TILES_FILE:-") || strings.HasPrefix(volume, "${BACKUP_DIR:-") ||
+		strings.HasPrefix(volume, "${AUTO_UPGRADE_STATUS_DIR:-") {
 		return ""
 	}
 	source, _, _ := strings.Cut(volume, ":")

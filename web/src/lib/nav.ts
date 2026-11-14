@@ -86,6 +86,7 @@ export const groups: Group[] = [
 			{ href: '/admin/clients', label: 'Receiving clients', icon: 'clients', desktopOnly: true, text: 'Which receivers are sending pages, and which have gone quiet.' },
 			{ href: '/admin/retention', label: 'Retention', icon: 'retention', desktopOnly: true, text: 'How long messages are kept, and the nightly clean-up.' },
 			{ href: '/admin/backups', label: 'Backups', icon: 'backups', desktopOnly: true, text: 'Whether the nightly backups are working, and the last good one.' },
+			{ href: '/admin/upgrades', label: 'Upgrades', icon: 'upgrades', desktopOnly: true, text: 'Whether automatic upgrades are on, the last check and upgrade, and any that failed.' },
 			{ href: '/admin/integration-hosts', label: 'Integration addresses', icon: 'hosts', desktopOnly: true, text: 'Private hosts and ranges that integrations may reach.' },
 			{ href: '/admin/large-events', label: 'Large event settings', icon: 'largeevents', desktopOnly: true, text: 'How many Emergency pages on one job open a large event.' }
 		]

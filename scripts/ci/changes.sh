@@ -49,6 +49,7 @@ area_of() {
 	powershell/*) echo powershell ;;
 	compose.yaml | .env.example | deploy/authentik/* | deploy/postgres/*) echo deployment ;;
 	deploy/backup/*) echo backup ;;
+	deploy/auto-upgrade/*) echo auto-upgrade ;;
 	deploy/monitoring/*) echo monitoring ;;
 	Dockerfile) echo server-image ;;
 	Dockerfile.client) echo client-image ;;
@@ -58,7 +59,7 @@ area_of() {
 	scripts/stack-checks.sh) echo job:stack ;;
 	scripts/stack-e2e.sh) echo job:stack-e2e ;;
 	scripts/a76.sh | scripts/a76-checks.sh) echo job:import ;;
-	scripts/a77.sh) echo job:upgrade ;;
+	scripts/a77.sh | scripts/a90.sh) echo job:upgrade ;;
 	scripts/a78.sh) echo job:install ;;
 	scripts/a80.sh | scripts/a80-size.sh | scripts/backup-checks.sh) echo job:backups ;;
 	scripts/a15.sh) echo job:budget ;;
@@ -87,6 +88,9 @@ area_jobs() {
 	deployment) echo "test stack stack-e2e import upgrade install backups budget monitoring" ;;
 	# The backup service: A80, and the installs and upgrade that run it.
 	backup) echo "test upgrade install backups monitoring" ;;
+	# Automatic upgrades' script: A90 (in the upgrade job), the archive's checks,
+	# and A78, which installs from the archive.
+	auto-upgrade) echo "test upgrade install" ;;
 	# The example monitoring stack, and the root package's and telemetry's checks of it.
 	monitoring) echo "test monitoring" ;;
 	# The server image, and every job that builds it.

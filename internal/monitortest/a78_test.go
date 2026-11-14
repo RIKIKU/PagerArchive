@@ -56,7 +56,7 @@ func TestA78MonitoringInstalled(t *testing.T) {
 	items = nil
 	get("/api/v1/provisioning/alert-rules", &items)
 	got := titles(items)
-	for _, rule := range []string{"Client not receiving", "Radio stalled", "API unreachable", "Backup failing"} {
+	for _, rule := range []string{"Client not receiving", "Radio stalled", "API unreachable", "Backup failing", "Upgrade failed"} {
 		if !slices.Contains(got, rule) {
 			t.Errorf("alert rules: %q, no %q", got, rule)
 		}

@@ -53,6 +53,9 @@ expect "images $STACKS" Dockerfile
 expect "images stack-e2e install monitoring" Dockerfile.client
 expect "web" scripts/e2e.sh
 expect "upgrade" scripts/a77.sh
+expect "upgrade" scripts/a90.sh
+expect "test upgrade install" deploy/auto-upgrade/auto-upgrade.sh
+expect all scripts/test-releases/gh
 expect "backups" scripts/backup-checks.sh
 expect "none" SPEC.md docs/adr/0025-ci-speed.md README.md deploy/made-up.md
 expect "none" scripts/mutation-checks.sh .github/renovate.json5 .github/release.yml

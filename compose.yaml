@@ -153,6 +153,9 @@ services:
       # service answers it. A volume of its own, so the API can ask but never
       # write the status.
       BACKUP_REQUEST_FILE: /backup-request/request.json
+      # What the host's automatic upgrades last did (R84h), when they're on
+      # (docs/deploy.md, "Automatic upgrades"). Read only: the API never runs Docker.
+      AUTO_UPGRADE_STATUS_FILE: /auto-upgrade/status.json
     volumes:
       # Your network's profile and your map extract. With neither set, /dev/null
       # is mounted instead, and the API uses the made-up example built into
@@ -161,6 +164,8 @@ services:
       - ${MAP_TILES_FILE:-/dev/null}:/map/tiles.pmtiles:ro
       - backup-status:/backup-status:ro
       - backup-request:/backup-request
+      # The automatic upgrades' status folder, or /dev/null while they're off.
+      - ${AUTO_UPGRADE_STATUS_DIR:-/dev/null}:/auto-upgrade:ro
     ports:
       - "${API_BIND:-127.0.0.1:8080}:8080"
     depends_on:

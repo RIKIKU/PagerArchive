@@ -65,6 +65,9 @@ type Server struct {
 	// BackupRequestFile is where the API asks for a backup now ("" where it
 	// can't: Back up now, R86a).
 	BackupRequestFile string
+	// AutoUpgradeStatusFile is where the host's automatic upgrades say what
+	// they last did (R84h; "" where they can't be on).
+	AutoUpgradeStatusFile string
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
@@ -132,6 +135,7 @@ func (s *Server) Handler() http.Handler {
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
 		"GET /api/v1/admin/backup":                 s.adminOnly(s.getBackup),
 		"POST /api/v1/admin/backup":                s.adminOnly(s.postBackup),
+		"GET /api/v1/admin/auto-upgrade":           s.adminOnly(s.getAutoUpgrade),
 		"GET /api/v1/stream":                       s.stream,
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,

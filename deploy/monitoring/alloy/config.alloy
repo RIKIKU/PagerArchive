@@ -144,3 +144,58 @@ otelcol.exporter.otlphttp "loki" {
 otelcol.exporter.prometheus "default" {
   forward_to = [prometheus.remote_write.prometheus.receiver]
 }
+
+// ── Automatic upgrades' log (R84g, R84h) ──────────────────────────────────
+// deploy/auto-upgrade/auto-upgrade.sh runs on PagerArchive's host, not in a
+// container, so it can't send OTLP: it writes one JSON line per step to a log
+// file in its status folder, which this stack mounts read-only (its .env's
+// AUTO_UPGRADE_STATUS_DIR; nothing is mounted, and nothing read, while that's
+// unset). The second line of defence again: only the known fields are kept,
+// rebuilt into a new line, so nothing else in the file reaches Loki.
+local.file_match "auto_upgrade" {
+  path_targets = [{"__path__" = "/var/log/pagerarchive-auto-upgrade/auto-upgrade.log"}]
+  sync_period  = "30s"
+}
+
+loki.source.file "auto_upgrade" {
+  targets       = local.file_match.auto_upgrade.targets
+  forward_to    = [loki.process.auto_upgrade.receiver]
+  tail_from_end = false
+}
+
+loki.process "auto_upgrade" {
+  stage.json {
+    expressions = {time = "", level = "", step = "", result = "", from = "", to = "", reason = "", seconds = ""}
+  }
+  stage.match {
+    selector = `{filename=~".+"} !~ "^[{].time.:.[0-9]{4}-[0-9]{2}-[0-9]{2}T"`
+    action   = "drop"
+  }
+  stage.timestamp {
+    source = "time"
+    format = "RFC3339"
+  }
+  stage.template {
+    source   = "line"
+    template = `{"level":{{ .level | toJson }},"step":{{ .step | toJson }},"result":{{ .result | toJson }},"from":{{ .from | toJson }},"to":{{ .to | toJson }},"reason":{{ .reason | toJson }},"seconds":{{ .seconds | int }}}`
+  }
+  stage.output {
+    source = "line"
+  }
+  stage.labels {
+    values = {level = "", step = "", result = ""}
+  }
+  stage.label_drop {
+    values = ["filename"]
+  }
+  stage.static_labels {
+    values = {service_name = "pagerarchive-auto-upgrade"}
+  }
+  forward_to = [loki.write.auto_upgrade.receiver]
+}
+
+loki.write "auto_upgrade" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

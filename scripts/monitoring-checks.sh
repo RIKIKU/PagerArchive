@@ -1,7 +1,8 @@
 #!/bin/sh
-# A65, A67 and A80's alert against the example monitoring stack itself
-# (deploy/monitoring): the API, its database and the backup services from the
-# compose file at the top (no Authentik: none of these needs it), joined to the
+# A65, A67, A80's alert and A90's Grafana part against the example
+# monitoring stack itself (deploy/monitoring): the API, its database and the
+# backup services from the compose file at the top (no Authentik: none of these
+# needs it), joined to the
 # stack's `monitoring` network by the override docs/monitoring.md gives (R76), as
 # a deployment runs it, and a webhook contact point that the test receives on
 # the host. A67's clients run in the client image on the API's network, with
@@ -53,6 +54,12 @@ fi
 P=pa-mon-$$
 BACKUPS=$(mktemp -d)
 export BACKUP_DIR="$BACKUPS" BACKUP_UID="$(id -u)" BACKUP_GID="$(id -g)"
+# The automatic upgrades' status folder (R84h), which the API and Alloy both
+# mount read-only, as docs/deploy.md has a deployment set it. A90's Grafana
+# check writes in it as the host's script does.
+AUTOUP=$(mktemp -d)
+chmod 755 "$AUTOUP"
+export AUTO_UPGRADE_STATUS_DIR="$AUTOUP"
 export PAGERARCHIVE_VERSION=montest API_BIND=127.0.0.1:18091 AUTHENTIK_BIND=127.0.0.1:19091 MAILPIT_BIND=127.0.0.1:18026 PA_MON_DB_BIND=127.0.0.1:55437
 GRAFANA_ADMIN_PASSWORD=test-grafana-admin-password
 . ./scripts/install-lib.sh
@@ -75,7 +82,7 @@ cleanup() {
 		# PagerArchive first: the stack can't remove its network while it's joined.
 		app down -v --remove-orphans >/dev/null 2>&1 || true
 		mon down -v --remove-orphans >/dev/null 2>&1 || true
-		rm -rf "$MONROOT" "$BACKUPS"
+		rm -rf "$MONROOT" "$BACKUPS" "$AUTOUP"
 	fi
 }
 trap cleanup EXIT
@@ -116,6 +123,7 @@ GRAFANA_ADMIN_PASSWORD=$GRAFANA_ADMIN_PASSWORD
 PA_METRICS_TOKEN=$METRICS_TOKEN
 GRAFANA_BIND=127.0.0.1:13001
 GRAFANA_ROOT_URL=http://127.0.0.1:13001
+AUTO_UPGRADE_STATUS_DIR=$AUTOUP
 VARS
 fill_env "$MONDIR/.env" "$MONROOT/vars"
 chmod -R a+rX "$MONROOT"
@@ -207,7 +215,8 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_STOP_DB="docker compose -p $P --project-directory $PWD $APP_FILES stop db" \
 	PA_MON_START_DB="docker compose -p $P --project-directory $PWD $APP_FILES start db" \
 	PA_MON_BACKUP_NOW="docker compose -p $P --project-directory $PWD $APP_FILES exec -T backup pagerarchive-backup now" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80}" ./internal/monitortest/ || status=1
+	PA_MON_AUTO_UPGRADE_DIR="$AUTOUP" \
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then
