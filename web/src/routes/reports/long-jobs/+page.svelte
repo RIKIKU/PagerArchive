@@ -31,7 +31,8 @@
 		<div data-chart>
 			<BarChart label="Bar chart of each job's time from first to last page, as in the table" bars={d.rows.map((j) => ({ label: j.job_number, value: j.seconds, text: span(j.seconds) }))} />
 		</div>
-		<div class="scroll">
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+		<div class="scroll" tabindex="0" role="region" aria-label="Report table">
 			<table data-testid="report-table">
 				<caption>The {d.rows.length} longest of {d.jobs} {d.jobs === 1 ? 'job' : 'jobs'}, {longDay(d.from)} to {longDay(d.to)}{d.agency ? `, ${d.agency}` : ''}</caption>
 				<thead>

@@ -146,7 +146,7 @@ SELECT 'w', d.day, d.template_id, d.event_type, d.priority, d.who, count(*) FROM
 func (s *Service) Rebuild(ctx context.Context) error {
 	start := time.Now()
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead}, func(tx pgx.Tx) error {
-		for _, stmt := range []string{"SET LOCAL jit = off", "SET LOCAL work_mem = '64MB'"} {
+		for _, stmt := range []string{"SET LOCAL jit = off", "SET LOCAL work_mem = '32MB'"} {
 			if _, err := tx.Exec(ctx, stmt); err != nil {
 				return err
 			}

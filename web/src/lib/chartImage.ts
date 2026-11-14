@@ -41,26 +41,26 @@ async function svgImage(svg: SVGSVGElement): Promise<Blob> {
 		to[i].setAttribute('style', style);
 		to[i].removeAttribute('class');
 	});
-	copy.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
 	copy.setAttribute('width', String(width));
 	copy.setAttribute('height', String(height));
-	const url = URL.createObjectURL(new Blob([new XMLSerializer().serializeToString(copy)], { type: 'image/svg+xml' }));
-	try {
-		const img = new Image();
+	// A data: URL, which the app's Content Security Policy allows for images
+	// (img-src 'self' data:), where a blob: URL is refused.
+	const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(new XMLSerializer().serializeToString(copy))}`;
+	const img = new Image();
+	await new Promise((resolve, reject) => {
+		img.onload = resolve;
+		img.onerror = () => reject(new Error("the chart couldn't be drawn"));
 		img.src = url;
-		await img.decode();
-		const k = scale();
-		const canvas = document.createElement('canvas');
-		canvas.width = Math.ceil(width * k);
-		canvas.height = Math.ceil(height * k);
-		const g = canvas.getContext('2d')!;
-		g.fillStyle = background(svg);
-		g.fillRect(0, 0, canvas.width, canvas.height);
-		g.drawImage(img, 0, 0, canvas.width, canvas.height);
-		return toBlob(canvas);
-	} finally {
-		URL.revokeObjectURL(url);
-	}
+	});
+	const k = scale();
+	const canvas = document.createElement('canvas');
+	canvas.width = Math.ceil(width * k);
+	canvas.height = Math.ceil(height * k);
+	const g = canvas.getContext('2d')!;
+	g.fillStyle = background(svg);
+	g.fillRect(0, 0, canvas.width, canvas.height);
+	g.drawImage(img, 0, 0, canvas.width, canvas.height);
+	return toBlob(canvas);
 }
 
 /** A table as a PNG: each cell's background, border and text as shown. */

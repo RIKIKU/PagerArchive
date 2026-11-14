@@ -81,27 +81,30 @@
 		</div>
 	{/snippet}
 	{#snippet body(d: BusyTimesReport)}
-		<p class="summary" data-testid="report-busiest">Busiest: {busiest(d)}.</p>
-		<div class="scroll" data-chart>
-			<table class="grid" data-testid="report-table">
-				<caption>Jobs{whose(d)} by hour and day, {longDay(d.from)} to {longDay(d.to)}: {d.jobs} in all</caption>
-				<thead>
-					<tr>
-						<th scope="col">Hour</th>
-						{#each short as s, i (s)}<th scope="col" class="num"><abbr title={days[i]}>{s}</abbr></th>{/each}
-					</tr>
-				</thead>
-				<tbody>
-					{#each Array.from({ length: 24 }, (_, h) => h) as h (h)}
+		<div class="whole">
+			<p class="summary" data-testid="report-busiest">Busiest: {busiest(d)}.</p>
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+			<div class="scroll" data-chart tabindex="0" role="region" aria-label="Jobs by hour and day, as a table">
+				<table class="grid" data-testid="report-table">
+					<caption>Jobs{whose(d)} by hour and day, {longDay(d.from)} to {longDay(d.to)}: {d.jobs} in all</caption>
+					<thead>
 						<tr>
-							<th scope="row">{hour(h)}</th>
-							{#each d.cells as row, day (day)}
-								<td class="num l{level(row[h], most(d))}">{row[h]}</td>
-							{/each}
+							<th scope="col">Hour</th>
+							{#each short as s, i (s)}<th scope="col" class="num"><abbr title={days[i]}>{s}</abbr></th>{/each}
 						</tr>
-					{/each}
-				</tbody>
-			</table>
+					</thead>
+					<tbody>
+						{#each Array.from({ length: 24 }, (_, h) => h) as h (h)}
+							<tr>
+								<th scope="row">{hour(h)}</th>
+								{#each d.cells as row, day (day)}
+									<td class="num l{level(row[h], most(d))}">{row[h]}</td>
+								{/each}
+							</tr>
+						{/each}
+					</tbody>
+				</table>
+			</div>
 		</div>
 	{/snippet}
 </ReportPage>
@@ -111,6 +114,13 @@
 		min-width: var(--field-narrow);
 		flex: 1 1 var(--field-narrow);
 		max-width: var(--field-wide);
+	}
+	.whole {
+		grid-column: 1 / -1;
+		display: flex;
+		flex-direction: column;
+		gap: var(--space-sm);
+		min-width: 0;
 	}
 	.summary {
 		margin: 0;

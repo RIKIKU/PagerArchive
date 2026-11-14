@@ -162,7 +162,8 @@
 			paint: {
 				'heatmap-weight': ['/', ['get', 'jobs'], most],
 				'heatmap-radius': look.radius,
-				'heatmap-color': ramp as maplibregl.ExpressionSpecification
+				'heatmap-color': ramp as maplibregl.ExpressionSpecification,
+				'heatmap-opacity': 0.85
 			}
 		});
 		map.addLayer({

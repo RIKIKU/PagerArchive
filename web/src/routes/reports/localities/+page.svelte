@@ -27,7 +27,8 @@
 				<BarChart label="Bar chart of the 15 localities with the most jobs, as in the table" bars={d.rows.slice(0, 15).map((r) => ({ label: name(r.locality), value: r.jobs, text: `${r.jobs} (${percent(r.share)})` }))} />
 			</div>
 		</div>
-		<div class="scroll">
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+		<div class="scroll" tabindex="0" role="region" aria-label="Report table">
 			<table data-testid="report-table">
 				<caption>{longDay(d.from)} to {longDay(d.to)}: {d.jobs} {d.jobs === 1 ? 'job' : 'jobs'}{d.agency ? ` of ${d.agency}` : ''}</caption>
 				<thead><tr><th scope="col">Locality</th><th scope="col" class="num">Jobs</th><th scope="col" class="num">Share</th></tr></thead>

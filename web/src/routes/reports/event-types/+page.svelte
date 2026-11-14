@@ -19,6 +19,7 @@
 	intro="Each event type's share of the jobs (the first event type a job's pages give), over the range and month by month."
 	name="event-types"
 	slug="event-type-mix"
+	stacked
 	defaultDays={365}
 	filters={{ agency: true, priority: true }}
 	empty={(d: EventTypesReport) => d.jobs === 0}
@@ -41,7 +42,8 @@
 					{/each}
 				</tbody>
 			</table>
-			<div class="scroll">
+			<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+			<div class="scroll" tabindex="0" role="region" aria-label="Report table">
 				<table data-testid="report-months">
 					<caption>Month by month: each event type's share of the month's jobs</caption>
 					<thead>

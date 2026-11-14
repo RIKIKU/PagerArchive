@@ -277,7 +277,7 @@
 	--heat-4: color-mix(in srgb, var(--accent) 45%, var(--surface));
 	--map-heat-radius: 3rem;
 	--map-heat-none: transparent;
-	--map-heat-low: color-mix(in srgb, var(--accent) 30%, transparent);
+	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
 }
 
@@ -512,7 +512,7 @@
 	--heat-4: color-mix(in srgb, var(--accent) 45%, var(--surface));
 	--map-heat-radius: 3rem;
 	--map-heat-none: transparent;
-	--map-heat-low: color-mix(in srgb, var(--accent) 30%, transparent);
+	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
 }
 

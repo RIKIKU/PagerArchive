@@ -35,7 +35,7 @@
 		const x0 = labelW + size.gap;
 		const barW = Math.max(width - x0 - valueW - size.gap, 1);
 		const max = Math.max(1, ...bars.map((b) => Math.max(b.value, b.previous?.value ?? 0, b.range?.max ?? 0)));
-		const legendH = legend ? size.row : 0;
+		const legendH = legend ? size.row * 2 : 0;
 		const chars = Math.max(4, Math.floor(labelW / (size.font * 0.6)));
 		return {
 			labelW,
@@ -55,8 +55,8 @@
 			{#if legend}
 				<rect class="bar" x={layout.x0} y={size.row / 2 - size.bar / 2} width={size.bar} height={size.bar} />
 				<text class="label" x={layout.x0 + size.bar + size.gap} y={size.row / 2} dominant-baseline="central">{legend.now}</text>
-				<rect class="previous" x={layout.x0 + layout.barW / 2} y={size.row / 2 - size.previous / 2} width={size.bar} height={size.previous} />
-				<text class="label" x={layout.x0 + layout.barW / 2 + size.bar + size.gap} y={size.row / 2} dominant-baseline="central">{legend.previous}</text>
+				<rect class="previous" x={layout.x0} y={size.row * 1.5 - size.previous / 2} width={size.bar} height={size.previous} />
+				<text class="label" x={layout.x0 + size.bar + size.gap} y={size.row * 1.5} dominant-baseline="central">{legend.previous}</text>
 			{/if}
 			{#each bars as b, i (i)}
 				{@const y = layout.legendH + i * size.row}

@@ -28,7 +28,8 @@
 		csv,
 		empty,
 		emptyText = 'No jobs in this range.',
-		prepare
+		prepare,
+		stacked = false
 	}: {
 		title: string;
 		intro: string;
@@ -46,6 +47,8 @@
 		/** Turns what the report's own controls hold into the address's
 		 * parameters, or says why it can't ('' when it can). */
 		prepare?: (form: FormData, params: URLSearchParams) => string;
+		/** The chart above the table at every width, for a wide table. */
+		stacked?: boolean;
 	} = $props();
 
 	let meta: Meta | undefined = $state();
@@ -206,7 +209,7 @@
 				<button type="button" onclick={downloadChart}><Icon name="image" /> Download chart</button>
 				{#if copyable}<button type="button" onclick={copyChart}><Icon name="copy" /> Copy chart</button>{/if}
 			</div>
-			<div class="results" bind:this={results} data-testid="report">
+			<div class="results" class:stacked bind:this={results} data-testid="report">
 				{@render body(data, meta)}
 			</div>
 		{/if}
@@ -295,6 +298,9 @@
 	@media (min-width: 1280px) {
 		.results {
 			grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+		}
+		.results.stacked {
+			grid-template-columns: minmax(0, 1fr);
 		}
 	}
 	.results :global(table) {

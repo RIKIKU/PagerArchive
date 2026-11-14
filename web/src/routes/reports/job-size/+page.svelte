@@ -14,6 +14,7 @@
 	intro="How big jobs are: their pages, the capcodes they paged and the appliances they named. Typical is the median, half the jobs are in the middle range, and the largest is shown too."
 	name="job-size"
 	slug="job-size"
+	stacked
 	empty={(d: JobSizeReport) => d.jobs === 0}
 	csv={(d: JobSizeReport) => ({
 		headers: ['Event type', 'Jobs', 'Pages typical', 'Pages middle half', 'Pages largest', 'Capcodes typical', 'Capcodes middle half', 'Capcodes largest', 'Appliances typical', 'Appliances middle half', 'Appliances largest'],
@@ -27,7 +28,8 @@
 				bars={d.rows.map((r) => ({ label: name(r), value: r.pages.median, text: `${r.pages.median} (${spread(r.pages)}, up to ${r.pages.max})`, range: r.pages }))}
 			/>
 		</div>
-		<div class="scroll">
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+		<div class="scroll" tabindex="0" role="region" aria-label="Report table">
 			<table data-testid="report-table">
 				<caption>Per job, {longDay(d.from)} to {longDay(d.to)}: {d.jobs} {d.jobs === 1 ? 'job' : 'jobs'}{d.agency ? ` of ${d.agency}` : ''}</caption>
 				<thead>

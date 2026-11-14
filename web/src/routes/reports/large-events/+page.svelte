@@ -38,7 +38,8 @@
 		<div data-chart>
 			<ColumnChart label="Column chart of large events per {d.by}, as in the table" columns={d.buckets.map((b) => ({ label: tick(d, b.start), value: b.events, text: String(b.events) }))} />
 		</div>
-		<div class="scroll">
+		<!-- svelte-ignore a11y_no_noninteractive_tabindex (a table wider than the screen scrolls in its box, which the keyboard reaches too: WCAG 2.1.1) -->
+		<div class="scroll" tabindex="0" role="region" aria-label="Report table">
 			<table data-testid="report-table">
 				<caption>{longDay(d.from)} to {longDay(d.to)}: {d.events} large {d.events === 1 ? 'event' : 'events'}, typically {time(d.median_seconds)} and {d.median_jobs ?? '–'} {d.median_jobs === 1 ? 'job' : 'jobs'}</caption>
 				<thead><tr><th scope="col">{d.by === 'month' ? 'Month' : 'Week'}</th><th scope="col" class="num">Events</th><th scope="col" class="num">Typical time</th><th scope="col" class="num">Typical jobs</th></tr></thead>
