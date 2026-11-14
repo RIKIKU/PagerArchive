@@ -82,6 +82,13 @@ SELECT '04001' || n || k, 'Edit test ' || n || k, (SELECT id FROM templates WHER
 FROM generate_series(1, 3) AS n, generate_series(1, 3) AS k
 UNION ALL
 SELECT '05000' || n || '1', 'Rescue test ' || n, (SELECT id FROM templates WHERE name = 'Example Fire') FROM generate_series(1, 3) AS n;
+-- M24 (R38a-R38i): each browser project n reports on its own agency, "Report
+-- agency n", with four stations, 08000n1-08000n4, in its own past week.
+INSERT INTO templates (name, agency, agency_profile)
+SELECT 'Report agency ' || n, 'Report agency ' || n, 'example-fire' FROM generate_series(1, 3) AS n;
+INSERT INTO aliases (pattern, name, template_id)
+SELECT '08000' || n || k, 'Report station ' || n || k, (SELECT id FROM templates WHERE name = 'Report agency ' || n)
+FROM generate_series(1, 3) AS n, generate_series(1, 4) AS k;
 SQL
 } | psql_db -q -v ON_ERROR_STOP=1 >/dev/null
 # R39: a receiver last heard 31 minutes ago (set below).

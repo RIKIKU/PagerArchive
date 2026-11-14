@@ -4409,3 +4409,218 @@ test('A89 template names unique ignoring case', async ({ browser }, info) => {
 	await admin.goto('/admin');
 	await expect(admin.getByTestId('case-tag')).toHaveCount(0);
 });
+
+// M24 (R38a-R38i): the reports in the browser, on each browser project's own
+// made-up week (agency "Report agency n", Report stations n1-n4, from
+// scripts/e2e.sh); the counts themselves are checked in Go (A91-A99). Each
+// report at 1,280 and 375 px: its table, its chart, no sideways scroll, the
+// axe check, and its CSV and chart image downloads.
+const reportWeeks: Record<number, { monday: string; offset: string; month: string }> = {
+	1: { monday: '2026-10-05', offset: '+11:00', month: '2025-03' },
+	2: { monday: '2026-09-07', offset: '+10:00', month: '2025-04' },
+	3: { monday: '2026-08-10', offset: '+10:00', month: '2025-05' }
+};
+
+function reportDay(n: number, days: number, time: string): string {
+	const w = reportWeeks[n] ?? reportWeeks[1];
+	const d = new Date(`${w.monday}T00:00:00Z`);
+	d.setUTCDate(d.getUTCDate() + days);
+	return `${d.toISOString().slice(0, 10)}T${time}:00${w.offset}`;
+}
+
+async function postAt(request: APIRequestContext, capcode: string, text: string, at: string) {
+	const res = await request.post(`${URL}/api/v1/pages`, {
+		headers: { Authorization: `Bearer ${KEY}` },
+		data: { capcode, text, received_at: new Date(at).toISOString(), baud: 512 }
+	});
+	expect(res.status()).toBe(200);
+}
+
+/** The project's week (4 jobs of "Report agency n") and its large events,
+ * posted once per project: the first test to run posts them. */
+async function reportWeek(request: APIRequestContext, n: number) {
+	const posted = await request.get(`${URL}/api/v1/reports/busy-times?${reportRange(n)}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	if (posted.ok() && (await posted.json()).jobs > 0) return;
+	const s = (k: number) => `08000${n}${k}`;
+	const [a, b, c] = [uniqueJob(), uniqueJob(), uniqueJob()];
+	for (const k of [1, 2, 3]) await postAt(request, s(k), `@@${a} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN${k}`, reportDay(n, 0, '14:10'));
+	await postAt(request, s(1), `HbRE ${a} CREWS RETURNING #STN1`, reportDay(n, 0, '16:40'));
+	await postAt(request, s(2), `@@${b} GRS3 GRASS FIRE @ SAMPLE RD, TESTVILLE UNITS T1 #STN2`, reportDay(n, 1, '09:05'));
+	await postAt(request, s(3), 'QDTraining Wednesday 7pm at the station', reportDay(n, 2, '19:00'));
+	await postAt(request, s(1), `@@${c} HSF1 SMOKE IN KITCHEN @ 3 OTHER RD, SAMPLEBURY UNITS P1 #STN1`, reportDay(n, 5, '14:30'));
+	await postAt(request, s(2), `@@${c} HSF1 SMOKE IN KITCHEN @ 3 OTHER RD, SAMPLEBURY UNITS P1 #STN2`, reportDay(n, 5, '14:31'));
+	// Large events in the project's own month of 2025: one of two jobs, 5 h
+	// long, and one of a page.
+	const m = reportWeeks[n].month;
+	const tz = m === '2025-03' ? '+11:00' : '+10:00';
+	await postAt(request, s(4), `@@${uniqueJob()} GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`, `${m}-03T10:00:00${tz}`);
+	await postAt(request, s(4), `@@${uniqueJob()} GRS3 DG0802 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`, `${m}-03T15:00:00${tz}`);
+	await postAt(request, s(4), `@@${uniqueJob()} GRS3 DG0803 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`, `${m}-20T10:00:00${tz}`);
+}
+
+function reportRange(n: number): string {
+	const w = reportWeeks[n] ?? reportWeeks[1];
+	const sunday = new Date(`${w.monday}T00:00:00Z`);
+	sunday.setUTCDate(sunday.getUTCDate() + 6);
+	return `from=${w.monday}&to=${sunday.toISOString().slice(0, 10)}&agency=${encodeURIComponent(`Report agency ${n}`)}`;
+}
+
+/** The rows of the report's table, each as its cells' text joined by " | ". */
+async function tableRows(page: Page): Promise<string[]> {
+	return page
+		.getByTestId('report-table')
+		.locator('tbody tr')
+		.evaluateAll((rows) => rows.map((r) => [...r.children].map((c) => (c as HTMLElement).innerText.replace(/\s+/g, ' ').trim()).join(' | ')));
+}
+
+const monthOf = (m: string) => new Intl.DateTimeFormat('en-AU', { month: 'short', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${m}-01T00:00:00Z`));
+
+const reportChecks: { path: string; name: string; slug: string; rows: (n: number) => string[]; csv: (n: number) => string[]; query?: (n: number) => string }[] = [
+	{
+		path: 'busiest',
+		name: 'Busiest capcodes',
+		slug: 'busiest-capcodes',
+		rows: (n) => [
+			`1 | Report station ${n}2 (08000${n}2) Report agency ${n} | 3 | 75% | 0 new`,
+			`2 | Report station ${n}1 (08000${n}1) Report agency ${n} | 2 | 50% | 0 new`,
+			`2 | Report station ${n}3 (08000${n}3) Report agency ${n} | 2 | 50% | 0 new`
+		],
+		csv: (n) => [`1,Report station ${n}2,08000${n}2,Report agency ${n},3,75%,0`, `2,Report station ${n}1,08000${n}1,Report agency ${n},2,50%,0`]
+	},
+	{
+		path: 'localities',
+		name: 'Busiest localities',
+		slug: 'busiest-localities',
+		rows: () => ['MADEUPTON | 1 | 25%', 'SAMPLEBURY Not on the map | 1 | 25%', 'TESTVILLE | 1 | 25%', 'No locality | 1 | 25%'],
+		csv: () => ['Locality,Jobs,Share of jobs,On the map', 'MADEUPTON,1,25%,yes', 'SAMPLEBURY,1,25%,no', 'No locality,1,25%,no']
+	},
+	{
+		path: 'busy-times',
+		name: "When it's busy",
+		slug: 'when-its-busy',
+		rows: () => {
+			const rows: string[] = [];
+			for (let h = 0; h < 24; h++) {
+				const cells = [0, 0, 0, 0, 0, 0, 0];
+				if (h === 14) cells[0] = cells[5] = 1;
+				if (h === 9) cells[1] = 1;
+				if (h === 19) cells[2] = 1;
+				rows.push([`${String(h).padStart(2, '0')}:00`, ...cells].join(' | '));
+			}
+			return rows;
+		},
+		csv: () => ['Hour,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday', '09:00,0,1,0,0,0,0,0', '14:00,1,0,0,0,0,1,0', '19:00,0,0,1,0,0,0,0']
+	},
+	{
+		path: 'event-types',
+		name: 'Event type mix',
+		slug: 'event-type-mix',
+		rows: () => ['HSF1 House fire | Structure fire | 2 | 50%', 'GRS3 Grass fire | Grass fire | 1 | 25%', 'No event type |  | 1 | 25%'],
+		csv: () => ['All,4,2,1,1']
+	},
+	{
+		path: 'job-size',
+		name: 'Job size',
+		slug: 'job-size',
+		rows: () => ['Every event type | 4 | 1 1–2, up to 4 | 1 1–2, up to 3 | 1 0–1, up to 2', 'HSF1 House fire | 2 | 2 2–4, up to 4 | 2 2–3, up to 3 | 1 1–2, up to 2'],
+		csv: () => ['Every event type,4,1,1–2,4,1,1–2,3,1,0–1,2']
+	},
+	{
+		path: 'long-jobs',
+		name: 'Long-running jobs',
+		slug: 'long-running-jobs',
+		rows: () => [],
+		csv: () => ['Job number,First page,Last page,Seconds,Time,Pages,Event type,Locality']
+	},
+	{
+		path: 'appliances',
+		name: 'Appliance activity',
+		slug: 'appliance-activity',
+		rows: () => ['P1 | 2 | 50%', 'T1 | 2 | 50%'],
+		csv: () => ['Appliance,Jobs,Share of jobs', 'P1,2,50%', 'T1,2,50%']
+	},
+	{
+		path: 'large-events',
+		name: 'Large events over time',
+		slug: 'large-events-over-time',
+		query: (n) => `from=${reportWeeks[n].month}-01&to=${reportWeeks[n].month}-28`,
+		rows: (n) => [`${monthOf(reportWeeks[n].month)} | 2 | 0 s | 1`],
+		csv: (n) => ['Month,Large events,Typical seconds,Typical time,Typical jobs', `${reportWeeks[n].month}-01,2,0,0 s,1`]
+	}
+];
+
+for (const r of reportChecks) {
+	test(`M24 ${r.name}: table, chart, phone, axe, CSV and image`, async ({ browser, request }, info) => {
+		const n = projectN(info);
+		await reportWeek(request, n);
+		const query = r.query?.(n) ?? reportRange(n);
+		const fs = await import('node:fs/promises');
+		for (const width of [1280, 375]) {
+			const ctx = await signedIn(browser, 'user', { viewport: { width, height: 900 }, acceptDownloads: true });
+			const page = await ctx.newPage();
+			await page.goto(`/reports/${r.path}?${query}`);
+			await expect(page.getByRole('heading', { level: 1, name: r.name })).toBeVisible();
+			await expect(page.getByTestId('report')).toBeVisible();
+			const rows = await tableRows(page);
+			if (r.path === 'long-jobs') {
+				expect(rows).toHaveLength(2);
+				expect(rows[0]).toMatch(/^EX\d{7} HSF1 House fire, MADEUPTON \| .* \| 2 h 30 min \| 4$/);
+				expect(rows[1]).toMatch(/^EX\d{7} HSF1 House fire, SAMPLEBURY \| .* \| 1 min \| 2$/);
+			} else {
+				expect(rows.slice(0, r.rows(n).length)).toEqual(r.rows(n));
+			}
+			// The chart beside the table, and the breadcrumbs (R79).
+			await expect(page.locator('[data-chart] svg, [data-chart] table').first()).toBeVisible();
+			await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Reports');
+			if (r.path === 'localities') await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /true|unavailable/);
+			// R81: the page never scrolls sideways.
+			expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+			expect(await axeOf(page), `axe at ${width} px`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`report-${r.path}-${width}.png`), fullPage: true });
+			if (width === 1280) {
+				const [csv] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download CSV' }).click()]);
+				expect(csv.suggestedFilename()).toMatch(new RegExp(`^pagerarchive-${r.slug}-\\d{4}-\\d{2}-\\d{2}-to-\\d{4}-\\d{2}-\\d{2}\\.csv$`));
+				const text = await fs.readFile(await csv.path(), 'utf8');
+				for (const line of r.csv(n)) expect(text.split('\r\n'), `${r.path} CSV`).toContain(line);
+				expect(text).not.toMatch(/SMOKE|GRASS FIRE|FICTION ST|CREWS RETURNING|Training/);
+				await expect(page.getByRole('status')).toHaveText('The table was saved as a CSV file.');
+				const [png] = await Promise.all([page.waitForEvent('download'), page.getByRole('button', { name: 'Download chart' }).click()]);
+				expect(png.suggestedFilename()).toMatch(new RegExp(`^pagerarchive-${r.slug}-.*\\.png$`));
+				const image = await fs.readFile(await png.path());
+				expect([...image.subarray(0, 8)]).toEqual([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+				expect(image.length).toBeGreaterThan(1000);
+			}
+			await ctx.close();
+		}
+	});
+}
+
+// R38a: the filters are in the address, and picking one shows the report
+// for it; When it's busy for one alias picked from the suggestions; an empty
+// range says so, with no chart.
+test('M24 report filters, the alias picker and an empty range', async ({ page, request }, info) => {
+	const n = projectN(info);
+	await reportWeek(request, n);
+	await page.goto(`/reports/busiest?${reportRange(n)}`);
+	await expect(page.getByTestId('report-table')).toBeVisible();
+	await page.getByLabel('Event type').selectOption('GRS3');
+	await page.getByRole('button', { name: 'Show', exact: true }).click();
+	await expect(page).toHaveURL(/event_type=GRS3/);
+	await expect.poll(() => tableRows(page)).toEqual([`1 | Report station ${n}2 (08000${n}2) Report agency ${n} | 1 | 100% | 0 new`]);
+	await page.reload();
+	await expect(page.getByLabel('Event type')).toHaveValue('GRS3');
+	await expect.poll(() => tableRows(page)).toHaveLength(1);
+
+	await page.goto(`/reports/busy-times?${reportRange(n)}`);
+	const box = page.getByRole('combobox', { name: 'Alias or capcode (optional)' });
+	await box.fill(`report station ${n}2`);
+	await page.getByRole('listbox', { name: 'Aliases and capcodes' }).getByRole('option', { name: `alias:"Report station ${n}2"` }).click();
+	await page.getByRole('button', { name: 'Show', exact: true }).click();
+	await expect(page).toHaveURL(new RegExp(`alias=Report\\+station\\+${n}2`));
+	await expect(page.getByTestId('report-table').locator('caption')).toContainText(`Jobs to Report station ${n}2`);
+	await expect(page.getByTestId('report-busiest')).toContainText('1 job');
+
+	await page.goto('/reports/appliances?from=2001-01-01&to=2001-01-31');
+	await expect(page.getByTestId('report-empty')).toHaveText('No jobs in this range named an appliance.');
+	await expect(page.getByTestId('chart')).toHaveCount(0);
+});

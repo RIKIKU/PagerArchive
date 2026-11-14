@@ -240,7 +240,8 @@ Admins set how long messages are kept, in days, on the Retention page (default 3
 
 1. deletes messages sent before the cut-off date (the run's date minus the retention period), with everything linked to them;
 2. applies changed redaction rules to stored messages and re-parses the ones that changed (P1);
-3. vacuums the message tables.
+3. counts again the reports' jobs that those changed (R38a), so the reports follow;
+4. vacuums the message and report tables.
 
 It also deletes integrations' delivery records older than 30 days.
 
@@ -473,3 +474,7 @@ The script comes in the release's archive, so a release from before automatic up
 **Switching it off.** `deploy/auto-upgrade/auto-upgrade.sh disable` removes the crontab line (or the timer). Administration then says it's off. You can also remove `AUTO_UPGRADE_STATUS_DIR` from `.env`, then run `docker compose up -d`.
 
 **Upgrading by hand still works**, whether it's on or off, exactly as in [Upgrading](#upgrading): the script only looks at the version that's running, so it carries on from whatever you installed. Switch it off first, or upgrade between its hourly runs: it never runs twice at once, and holds `auto-upgrade/lock` while it runs.
+
+## Reports' counts
+
+The reports under Reports (R38a-R38i) count jobs from tables of counts the API keeps beside the pages (ADR 0031). The first start of a release with them counts every stored job once, in the background: a few minutes for a large archive, during which the API serves as usual and the reports say their numbers are incomplete. Changing `TZ` counts them again, as a report's days and hours are the deployment's. After that, every new, re-parsed or deleted page is counted within seconds.

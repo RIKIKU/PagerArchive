@@ -6,6 +6,8 @@ package db
 
 import (
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type AddressPoint struct {
@@ -222,6 +224,52 @@ type ReparseRequest struct {
 	CapcodePattern string
 	Reason         string
 	RequestedAt    time.Time
+}
+
+type ReportDay struct {
+	Kind       string
+	Day        pgtype.Date
+	TemplateID int64
+	EventType  string
+	Priority   string
+	Key        string
+	Jobs       int32
+}
+
+type ReportDirty struct {
+	ID     int64
+	JobKey string
+}
+
+type ReportEventJob struct {
+	EventID int64
+	Jobs    int32
+}
+
+type ReportJob struct {
+	JobKey     string
+	JobNumber  *string
+	FirstAt    time.Time
+	LastAt     time.Time
+	Day        pgtype.Date
+	Hour       int16
+	TemplateID int64
+	EventType  string
+	Locality   string
+	Priority   string
+	Pages      int32
+	Capcodes   int32
+	Appliances []string
+}
+
+type ReportJobWho struct {
+	JobKey     string
+	Who        string
+	TemplateID int64
+	Day        pgtype.Date
+	Hour       int16
+	EventType  string
+	Priority   string
 }
 
 type Session struct {
