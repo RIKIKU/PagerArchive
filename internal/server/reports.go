@@ -27,7 +27,6 @@ type ReportBase struct {
 	To        string `json:"to"`
 	Agency    string `json:"agency,omitempty"`
 	EventType string `json:"event_type,omitempty"`
-	Priority  string `json:"priority,omitempty"`
 	Jobs      int64  `json:"jobs"` // the jobs the filters hold
 	// Pending is how many changed jobs aren't counted yet; Building, that
 	// the counts are being made for the first time (or for a new time zone).
@@ -44,10 +43,9 @@ type EventType struct {
 	Category string  `json:"category,omitempty"`
 }
 
-var reportPriorities = []string{"Emergency", "Non-emergency", "Admin"}
-
-// reportFilter reads a report's filters: from and to (required), agency,
-// event_type and priority.
+// reportFilter reads a report's filters: from and to (required), agency and
+// event_type. Every page a report counts is Emergency (R38a), so there's no
+// priority filter.
 func (s *Server) reportFilter(w http.ResponseWriter, r *http.Request) (reports.Filter, ReportBase, bool) {
 	q := r.URL.Query()
 	var f reports.Filter
@@ -67,13 +65,6 @@ func (s *Server) reportFilter(w http.ResponseWriter, r *http.Request) (reports.F
 	if f.To.Before(f.From) {
 		problem(w, http.StatusBadRequest, "from must not be after to")
 		return f, base, false
-	}
-	if p := q.Get("priority"); p != "" {
-		if !slices.Contains(reportPriorities, p) {
-			problem(w, http.StatusBadRequest, "priority must be Emergency, Non-emergency or Admin")
-			return f, base, false
-		}
-		f.Priority, base.Priority = p, p
 	}
 	f.EventType = strings.TrimSpace(q.Get("event_type"))
 	base.EventType = f.EventType
@@ -144,7 +135,6 @@ func share(n, of int64) float64 {
 type ReportOptions struct {
 	Agencies   []string    `json:"agencies"`
 	EventTypes []EventType `json:"event_types"`
-	Priorities []string    `json:"priorities"`
 }
 
 func (s *Server) reportOptions(w http.ResponseWriter, r *http.Request) {
@@ -158,7 +148,7 @@ func (s *Server) reportOptions(w http.ResponseWriter, r *http.Request) {
 		s.reportFailed(w, err)
 		return
 	}
-	out := ReportOptions{Agencies: o.Agencies, EventTypes: []EventType{}, Priorities: reportPriorities}
+	out := ReportOptions{Agencies: o.Agencies, EventTypes: []EventType{}}
 	if out.Agencies == nil {
 		out.Agencies = []string{}
 	}

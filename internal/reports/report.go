@@ -14,13 +14,11 @@ import (
 
 // Filter is what a report counts (R38a): jobs that started on From to To
 // (whole days in the deployment's time zone, inclusive), of the agencies'
-// templates (nil: every agency), with the event type and priority given
-// ("": any).
+// templates (nil: every agency), with the event type given ("": any).
 type Filter struct {
 	From, To  time.Time // days, as dates at midnight UTC
 	Templates []int64
 	EventType string
-	Priority  string
 }
 
 // Days is how many days the filter's range holds.
@@ -50,9 +48,6 @@ func (f Filter) where(args *[]any, skipEvent bool) string {
 	}
 	if f.EventType != "" && !skipEvent {
 		w = append(w, "d.event_type = "+add(f.EventType))
-	}
-	if f.Priority != "" {
-		w = append(w, "d.priority = "+add(f.Priority))
 	}
 	return strings.Join(w, " AND ")
 }

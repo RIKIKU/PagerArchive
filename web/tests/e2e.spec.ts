@@ -643,6 +643,7 @@ test('capcode report counts Emergency messages by category', async ({ page, requ
 
 	// An address from before the box (a capcode) still works.
 	await page.goto(`/reports?capcode=${capcode}`);
+	await expect(page.getByTestId('report-caveat')).toBeVisible();
 	await expect(box).toHaveValue(`capcode:${capcode}`);
 	await page.getByRole('button', { name: 'Run report' }).click();
 	await expect(table.getByRole('row', { name: 'Structure fire 2' })).toBeVisible();
@@ -4438,7 +4439,7 @@ async function postAt(request: APIRequestContext, capcode: string, text: string,
 	expect(res.status()).toBe(200);
 }
 
-/** The project's week (4 jobs of "Report agency n") and its large events,
+/** The project's week (3 jobs of "Report agency n") and its large events,
  * posted once per project: the first test to run posts them. */
 async function reportWeek(request: APIRequestContext, n: number) {
 	const posted = await request.get(`${URL}/api/v1/reports/busy-times?${reportRange(n)}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
@@ -4446,6 +4447,9 @@ async function reportWeek(request: APIRequestContext, n: number) {
 	const s = (k: number) => `08000${n}${k}`;
 	const [a, b, c] = [uniqueJob(), uniqueJob(), uniqueJob()];
 	for (const k of [1, 2, 3]) await postAt(request, s(k), `@@${a} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN${k}`, reportDay(n, 0, '14:10'));
+	await postAt(request, s(1), `@@${a} HSF1 SMOKE FROM ROOF, CALL BACK @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN1`, reportDay(n, 0, '14:40'));
+	// Not counted (R38a; owner, 2026-11-15): a Non-emergency follow-up and a
+	// page with no job number.
 	await postAt(request, s(1), `HbRE ${a} CREWS RETURNING #STN1`, reportDay(n, 0, '16:40'));
 	await postAt(request, s(2), `@@${b} GRS3 GRASS FIRE @ SAMPLE RD, TESTVILLE UNITS T1 #STN2`, reportDay(n, 1, '09:05'));
 	await postAt(request, s(3), 'QDTraining Wednesday 7pm at the station', reportDay(n, 2, '19:00'));
@@ -4483,18 +4487,18 @@ const reportChecks: { path: string; name: string; slug: string; rows: (n: number
 		name: 'Busiest capcodes',
 		slug: 'busiest-capcodes',
 		rows: (n) => [
-			`1 | Report station ${n}2 (08000${n}2) Report agency ${n} | 3 | 75% | 0 new`,
-			`2 | Report station ${n}1 (08000${n}1) Report agency ${n} | 2 | 50% | 0 new`,
-			`2 | Report station ${n}3 (08000${n}3) Report agency ${n} | 2 | 50% | 0 new`
+			`1 | Report station ${n}2 (08000${n}2) Report agency ${n} | 3 | 100% | 0 new`,
+			`2 | Report station ${n}1 (08000${n}1) Report agency ${n} | 2 | 67% | 0 new`,
+			`3 | Report station ${n}3 (08000${n}3) Report agency ${n} | 1 | 33% | 0 new`
 		],
-		csv: (n) => [`1,Report station ${n}2,08000${n}2,Report agency ${n},3,75%,0`, `2,Report station ${n}1,08000${n}1,Report agency ${n},2,50%,0`]
+		csv: (n) => [`1,Report station ${n}2,08000${n}2,Report agency ${n},3,100%,0`, `2,Report station ${n}1,08000${n}1,Report agency ${n},2,67%,0`]
 	},
 	{
 		path: 'localities',
 		name: 'Busiest localities',
 		slug: 'busiest-localities',
-		rows: () => ['MADEUPTON | 1 | 25%', 'SAMPLEBURY Not on the map | 1 | 25%', 'TESTVILLE | 1 | 25%', 'No locality | 1 | 25%'],
-		csv: () => ['Locality,Jobs,Share of jobs,On the map', 'MADEUPTON,1,25%,yes', 'SAMPLEBURY,1,25%,no', 'No locality,1,25%,no']
+		rows: () => ['MADEUPTON | 1 | 33%', 'SAMPLEBURY Not on the map | 1 | 33%', 'TESTVILLE | 1 | 33%'],
+		csv: () => ['Locality,Jobs,Share of jobs,On the map', 'MADEUPTON,1,33%,yes', 'SAMPLEBURY,1,33%,no', 'TESTVILLE,1,33%,yes']
 	},
 	{
 		path: 'busy-times',
@@ -4506,26 +4510,25 @@ const reportChecks: { path: string; name: string; slug: string; rows: (n: number
 				const cells = [0, 0, 0, 0, 0, 0, 0];
 				if (h === 14) cells[0] = cells[5] = 1;
 				if (h === 9) cells[1] = 1;
-				if (h === 19) cells[2] = 1;
 				rows.push([`${String(h).padStart(2, '0')}:00`, ...cells].join(' | '));
 			}
 			return rows;
 		},
-		csv: () => ['Hour,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday', '09:00,0,1,0,0,0,0,0', '14:00,1,0,0,0,0,1,0', '19:00,0,0,1,0,0,0,0']
+		csv: () => ['Hour,Monday,Tuesday,Wednesday,Thursday,Friday,Saturday,Sunday', '09:00,0,1,0,0,0,0,0', '14:00,1,0,0,0,0,1,0', '19:00,0,0,0,0,0,0,0']
 	},
 	{
 		path: 'event-types',
 		name: 'Event type mix',
 		slug: 'event-type-mix',
-		rows: () => ['HSF1 House fire | Structure fire | 2 | 50%', 'GRS3 Grass fire | Grass fire | 1 | 25%', 'No event type |  | 1 | 25%'],
-		csv: () => ['All,4,2,1,1']
+		rows: () => ['HSF1 House fire | Structure fire | 2 | 67%', 'GRS3 Grass fire | Grass fire | 1 | 33%'],
+		csv: () => ['All,3,2,1']
 	},
 	{
 		path: 'job-size',
 		name: 'Job size',
 		slug: 'job-size',
-		rows: () => ['Every event type | 4 | 1 1–2, up to 4 | 1 1–2, up to 3 | 1 0–1, up to 2', 'HSF1 House fire | 2 | 2 2–4, up to 4 | 2 2–3, up to 3 | 1 1–2, up to 2'],
-		csv: () => ['Every event type,4,1,1–2,4,1,1–2,3,1,0–1,2']
+		rows: () => ['Every event type | 3 | 2 1–4, up to 4 | 2 1–3, up to 3 | 1 1–2, up to 2', 'HSF1 House fire | 2 | 2 2–4, up to 4 | 2 2–3, up to 3 | 1 1–2, up to 2'],
+		csv: () => ['Every event type,3,2,1–4,4,2,1–3,3,1,1–2,2']
 	},
 	{
 		path: 'long-jobs',
@@ -4538,8 +4541,8 @@ const reportChecks: { path: string; name: string; slug: string; rows: (n: number
 		path: 'appliances',
 		name: 'Appliance activity',
 		slug: 'appliance-activity',
-		rows: () => ['P1 | 2 | 50%', 'T1 | 2 | 50%'],
-		csv: () => ['Appliance,Jobs,Share of jobs', 'P1,2,50%', 'T1,2,50%']
+		rows: () => ['P1 | 2 | 67%', 'T1 | 2 | 67%'],
+		csv: () => ['Appliance,Jobs,Share of jobs', 'P1,2,67%', 'T1,2,67%']
 	},
 	{
 		path: 'large-events',
@@ -4563,10 +4566,12 @@ for (const r of reportChecks) {
 			await page.goto(`/reports/${r.path}?${query}`);
 			await expect(page.getByRole('heading', { level: 1, name: r.name })).toBeVisible();
 			await expect(page.getByTestId('report')).toBeVisible();
+			// R38a (owner, 2026-11-15): every report says its numbers can be wrong.
+			await expect(page.getByTestId('report-caveat')).toHaveText("These numbers can be wrong: they count only the pages PagerArchive received and stored. Pages missed by the radio, or lost while it was down, aren't counted.");
 			const rows = await tableRows(page);
 			if (r.path === 'long-jobs') {
 				expect(rows).toHaveLength(2);
-				expect(rows[0]).toMatch(/^EX\d{7} HSF1 House fire, MADEUPTON \| .* \| 2 h 30 min \| 4$/);
+				expect(rows[0]).toMatch(/^EX\d{7} HSF1 House fire, MADEUPTON \| .* \| 30 min \| 4$/);
 				expect(rows[1]).toMatch(/^EX\d{7} HSF1 House fire, SAMPLEBURY \| .* \| 1 min \| 2$/);
 			} else {
 				expect(rows.slice(0, r.rows(n).length)).toEqual(r.rows(n));

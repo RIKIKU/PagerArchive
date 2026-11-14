@@ -76,14 +76,15 @@ func (s *Service) Pending(ctx context.Context) (int64, error) {
 	return n, err
 }
 
-// basePages is every page a report counts, with its job's key: not a
+// basePages is every page a report counts, with its job's key: an
+// Emergency page with a job number (R38a; owner, 2026-11-15), not a
 // heartbeat (R35b), not to an ignored alias (R27). %s narrows it.
 const basePages = `
-SELECT COALESCE('j' || m.job_number, 'm' || m.id) AS job_key, m.id, m.job_number, m.capcode, m.sent_at, m.alias_id,
+SELECT 'j' || m.job_number AS job_key, m.id, m.job_number, m.capcode, m.sent_at, m.alias_id,
        COALESCE(a.template_id, 0) AS template_id, m.event_type, m.locality, m.units,
        CASE m.priority WHEN 'Emergency' THEN 3 WHEN 'Non-emergency' THEN 2 WHEN 'Admin' THEN 1 ELSE 0 END AS rank
 FROM messages m LEFT JOIN aliases a ON a.id = m.alias_id
-WHERE NOT m.heartbeat AND a.ignored IS NOT TRUE AND (%s)`
+WHERE m.priority = 'Emergency' AND m.job_number IS NOT NULL AND NOT m.heartbeat AND a.ignored IS NOT TRUE AND (%s)`
 
 // countJobs writes report_jobs and report_job_whos for the jobs whose pages
 // the condition picks (all of each job's pages), in one statement. $1 is the
@@ -202,15 +203,10 @@ func (s *Service) catchUpBatch(ctx context.Context, n int) (int, error) {
 		done = len(queued)
 		slices.Sort(queued)
 		keys := slices.Compact(queued)
-		numbers, ids := []string{}, []int64{}
+		numbers := []string{}
 		for _, k := range keys {
 			if strings.HasPrefix(k, "j") {
 				numbers = append(numbers, k[1:])
-			} else {
-				var id int64
-				if _, err := fmt.Sscan(k[1:], &id); err == nil {
-					ids = append(ids, id)
-				}
 			}
 		}
 		rows, err = tx.Query(ctx, `DELETE FROM report_jobs WHERE job_key = ANY($1) RETURNING day`, keys)
@@ -221,7 +217,7 @@ func (s *Service) catchUpBatch(ctx context.Context, n int) (int, error) {
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, fmt.Sprintf(countJobs, "m.job_number = ANY($2::text[]) OR (m.job_number IS NULL AND m.id = ANY($3::bigint[]))"), s.tz(), numbers, ids); err != nil {
+		if _, err := tx.Exec(ctx, fmt.Sprintf(countJobs, "m.job_number = ANY($2::text[])"), s.tz(), numbers); err != nil {
 			return err
 		}
 		rows, err = tx.Query(ctx, `SELECT DISTINCT day FROM report_jobs WHERE job_key = ANY($1)`, keys)

@@ -14,7 +14,6 @@ export interface ReportBase {
 	to: string;
 	agency?: string;
 	event_type?: string;
-	priority?: string;
 	jobs: number;
 	pending: number;
 	building: boolean;
@@ -23,7 +22,6 @@ export interface ReportBase {
 export interface ReportOptions {
 	agencies: string[];
 	event_types: EventType[];
-	priorities: string[];
 }
 
 export interface BusiestRow {
@@ -131,7 +129,7 @@ export const reportsApi = {
 };
 
 /** The filters a report's address may hold (R38a), in the order they're written. */
-export const filterKeys = ['from', 'to', 'agency', 'event_type', 'priority', 'alias', 'capcode', 'limit', 'by'] as const;
+export const filterKeys = ['from', 'to', 'agency', 'event_type', 'alias', 'capcode', 'limit', 'by'] as const;
 
 /** The report's query from its page's address: what's set there, with the
  * default range (the last `days` days, in the deployment's time zone) when

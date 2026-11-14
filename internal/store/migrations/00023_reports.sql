@@ -8,15 +8,16 @@
 -- goes (retention) or its fields change (re-parse, retroactive redaction),
 -- its job is counted again from what's left.
 
--- One row per job (R23): a job number's pages, or a page with no job number
--- on its own. Heartbeats (R35b) and pages to ignored aliases (R27) aren't in
--- any job here. Each value is the job's as R38a defines it: its first page's
--- day and hour in the deployment's time zone, the agency (template) of its
--- first page to an alias (0: none), the first event type and locality any
--- of its pages has ('': none), its highest priority ('': none), and its
--- appliances (R8's units), each once.
+-- One row per job (R23): a job number's Emergency pages (R38a; owner,
+-- 2026-11-15: pages with no job number and other priorities aren't counted).
+-- Heartbeats (R35b) and pages to ignored aliases (R27) aren't in any job
+-- here. Each value is the job's as R38a defines it: its first page's day and
+-- hour in the deployment's time zone, the agency (template) of its first page
+-- to an alias (0: none), the first event type and locality any of its pages
+-- has ('': none), its priority (always Emergency), and its appliances (R8's
+-- units), each once.
 CREATE TABLE report_jobs (
-    job_key     text PRIMARY KEY, -- 'j' || job_number, or 'm' || message id
+    job_key     text PRIMARY KEY, -- 'j' || job_number
     job_number  text,
     first_at    timestamptz NOT NULL,
     last_at     timestamptz NOT NULL,
@@ -82,7 +83,7 @@ CREATE TABLE report_dirty (
 CREATE FUNCTION report_dirty_new() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO report_dirty (job_key)
-    SELECT DISTINCT COALESCE('j' || n.job_number, 'm' || n.id) FROM new_rows n;
+    SELECT DISTINCT 'j' || n.job_number FROM new_rows n WHERE n.job_number IS NOT NULL;
     RETURN NULL;
 END $$;
 -- +goose StatementEnd
@@ -91,7 +92,7 @@ END $$;
 CREATE FUNCTION report_dirty_old() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO report_dirty (job_key)
-    SELECT DISTINCT COALESCE('j' || o.job_number, 'm' || o.id) FROM old_rows o;
+    SELECT DISTINCT 'j' || o.job_number FROM old_rows o WHERE o.job_number IS NOT NULL;
     RETURN NULL;
 END $$;
 -- +goose StatementEnd
@@ -104,8 +105,8 @@ CREATE FUNCTION report_dirty_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     INSERT INTO report_dirty (job_key)
     SELECT DISTINCT k FROM old_rows o JOIN new_rows n ON n.id = o.id,
-         LATERAL (VALUES (COALESCE('j' || o.job_number, 'm' || o.id)), (COALESCE('j' || n.job_number, 'm' || n.id))) AS v (k)
-    WHERE (o.job_number, o.sent_at, o.priority, o.heartbeat, o.alias_id, o.capcode, o.event_type, o.locality, o.units)
+         LATERAL (VALUES ('j' || o.job_number), ('j' || n.job_number)) AS v (k)
+    WHERE k IS NOT NULL AND (o.job_number, o.sent_at, o.priority, o.heartbeat, o.alias_id, o.capcode, o.event_type, o.locality, o.units)
           IS DISTINCT FROM
           (n.job_number, n.sent_at, n.priority, n.heartbeat, n.alias_id, n.capcode, n.event_type, n.locality, n.units);
     -- A page in a large event with another job number changes its event's
@@ -123,7 +124,7 @@ CREATE FUNCTION report_dirty_alias() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF (OLD.ignored, OLD.template_id) IS DISTINCT FROM (NEW.ignored, NEW.template_id) THEN
         INSERT INTO report_dirty (job_key)
-        SELECT DISTINCT COALESCE('j' || m.job_number, 'm' || m.id) FROM messages m WHERE m.alias_id = NEW.id;
+        SELECT DISTINCT 'j' || m.job_number FROM messages m WHERE m.alias_id = NEW.id AND m.job_number IS NOT NULL;
     END IF;
     RETURN NULL;
 END $$;

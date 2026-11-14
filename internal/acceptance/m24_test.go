@@ -47,8 +47,9 @@ func reportFixture(t *testing.T, e *env) {
 	}{
 		// The week before (28 September to 4 October): one job, Station 1's.
 		{"0100001", "@@EX0000890 HSF1 SMOKE FROM SHED @ 1 FICTION ST, MADEUPTON UNITS P1 #STN1", time.Date(2026, time.September, 28, 10, 0, 0, 0, time.UTC)},
-		// EX0000901: Monday 14:10 to Stations 1-3, Station 1 again at 14:12,
-		// and a follow-up at 16:40: 5 pages, 3 capcodes, appliances P1 and T1.
+		// EX0000901: Monday 14:10 to Stations 1-3 and Station 1 again at 14:12: 4
+		// Emergency pages, 3 capcodes, appliances P1 and T1. Its Non-emergency
+		// follow-up at 16:40 isn't counted (R38a; owner, 2026-11-15).
 		{"0100001", "@@EX0000901 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN1", reportDay(5, 14, 10)},
 		{"0100002", "@@EX0000901 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN2", reportDay(5, 14, 10)},
 		{"0100003", "@@EX0000901 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN3", reportDay(5, 14, 10)},
@@ -56,7 +57,7 @@ func reportFixture(t *testing.T, e *env) {
 		{"0100001", "HbRE EX0000901 CREWS RETURNING #STN1", reportDay(5, 16, 40)},
 		// EX0000902: Tuesday 09:05, Station 2, Testville.
 		{"0100002", "@@EX0000902 GRS3 GRASS FIRE @ SAMPLE RD, TESTVILLE UNITS T1 #STN2", reportDay(6, 9, 5)},
-		// A training page with no job number: a job of its own, Admin.
+		// Not counted (R38a; owner, 2026-11-15): a page with no job number.
 		{"0100003", "QDTraining Wednesday 7pm at the station", reportDay(7, 19, 0)},
 		// Not counted: a heartbeat, and a page to an ignored alias.
 		{"0000050", "QDHEARTBEAT", reportDay(7, 12, 0)},
@@ -136,19 +137,19 @@ func TestA91BusiestCapcodes(t *testing.T) {
 	reportFixture(t, e)
 	var r server.BusiestReport
 	e.report("busiest", reportWeek, &r)
-	if want := "1 Station 2 3 50% was 0; 2 Station 1 2 33% was 1; 2 Station 3 2 33% was 0; 4 Rescue 1 1 17% was 0; 4 0999999 1 17% was 0"; busiestRows(r) != want {
+	if want := "1 Station 2 3 60% was 0; 2 Station 1 2 40% was 1; 3 Rescue 1 1 20% was 0; 3 Station 3 1 20% was 0; 3 0999999 1 20% was 0"; busiestRows(r) != want {
 		t.Errorf("busiest: %s\nwant %s", busiestRows(r), want)
 	}
-	if r.Jobs != 6 || r.PreviousJobs != 1 || r.PreviousFrom != "2026-09-28" || r.PreviousTo != "2026-10-04" || r.Limit != 10 {
-		t.Errorf("jobs %d, previous %d (%s to %s), limit %d; want 6, 1 (2026-09-28 to 2026-10-04), 10", r.Jobs, r.PreviousJobs, r.PreviousFrom, r.PreviousTo, r.Limit)
+	if r.Jobs != 5 || r.PreviousJobs != 1 || r.PreviousFrom != "2026-09-28" || r.PreviousTo != "2026-10-04" || r.Limit != 10 {
+		t.Errorf("jobs %d, previous %d (%s to %s), limit %d; want 5, 1 (2026-09-28 to 2026-10-04), 10", r.Jobs, r.PreviousJobs, r.PreviousFrom, r.PreviousTo, r.Limit)
 	}
 	e.report("busiest", reportWeek+"&agency="+url.QueryEscape("Example Fire Service"), &r)
-	if want := "1 Station 2 3 75% was 0; 2 Station 1 2 50% was 1; 2 Station 3 2 50% was 0"; busiestRows(r) != want || r.Jobs != 4 {
-		t.Errorf("one agency: %s (%d jobs)\nwant %s (4 jobs)", busiestRows(r), r.Jobs, want)
+	if want := "1 Station 2 3 100% was 0; 2 Station 1 2 67% was 1; 3 Station 3 1 33% was 0"; busiestRows(r) != want || r.Jobs != 3 {
+		t.Errorf("one agency: %s (%d jobs)\nwant %s (3 jobs)", busiestRows(r), r.Jobs, want)
 	}
-	e.report("busiest", reportWeek+"&priority=Emergency&event_type=HSF1", &r)
+	e.report("busiest", reportWeek+"&event_type=HSF1", &r)
 	if want := "1 Station 1 2 100% was 1; 1 Station 2 2 100% was 0; 3 Station 3 1 50% was 0"; busiestRows(r) != want || r.Jobs != 2 {
-		t.Errorf("Emergency HSF1: %s (%d jobs)\nwant %s (2 jobs)", busiestRows(r), r.Jobs, want)
+		t.Errorf("HSF1: %s (%d jobs)\nwant %s (2 jobs)", busiestRows(r), r.Jobs, want)
 	}
 	// The filters' values: every agency, and the event types jobs have.
 	var o server.ReportOptions
@@ -165,7 +166,7 @@ func TestA91BusiestCapcodes(t *testing.T) {
 	if len(r.Rows) != 0 || r.Jobs != 0 {
 		t.Errorf("January: %s, %d jobs; want none", busiestRows(r), r.Jobs)
 	}
-	for _, q := range []string{"", "from=2026-10-05", "from=2026-10-11&to=2026-10-05", "from=5 Oct&to=2026-10-11", reportWeek + "&priority=Urgent", reportWeek + "&limit=7"} {
+	for _, q := range []string{"", "from=2026-10-05", "from=2026-10-11&to=2026-10-05", "from=5 Oct&to=2026-10-11", reportWeek + "&limit=7"} {
 		if code := e.getJSON("/api/v1/reports/busiest?"+q, nil); code != http.StatusBadRequest {
 			t.Errorf("busiest?%s: %d, want 400", q, code)
 		}
@@ -194,8 +195,8 @@ func TestA92BusiestLocalities(t *testing.T) {
 		}
 		got = append(got, fmt.Sprintf("%s %d %.0f%% %s", name, row.Jobs, row.Share*100, place))
 	}
-	if want := "MADEUPTON 2 33% on the map; SAMPLEBURY 1 17% not on the map; TESTVILLE 1 17% on the map; none 2 33% not on the map"; strings.Join(got, "; ") != want || r.Jobs != 6 {
-		t.Errorf("localities: %s (%d jobs)\nwant %s (6 jobs)", strings.Join(got, "; "), r.Jobs, want)
+	if want := "MADEUPTON 2 40% on the map; SAMPLEBURY 1 20% not on the map; TESTVILLE 1 20% on the map; none 1 20% not on the map"; strings.Join(got, "; ") != want || r.Jobs != 5 {
+		t.Errorf("localities: %s (%d jobs)\nwant %s (5 jobs)", strings.Join(got, "; "), r.Jobs, want)
 	}
 	e.report("localities", reportWeek+"&agency="+url.QueryEscape("Example Rescue Service"), &r)
 	if len(r.Rows) != 1 || r.Rows[0].Locality == nil || *r.Rows[0].Locality != "SAMPLEBURY" || r.Jobs != 1 {
@@ -222,8 +223,8 @@ func TestA93WhenBusy(t *testing.T) {
 	reportFixture(t, e)
 	var r server.BusyTimesReport
 	e.report("busy-times", reportWeek, &r)
-	if want := "Mon 14:00 1, Tue 09:00 1, Wed 19:00 1, Sat 14:00 2, Sun 03:00 1"; cells(r) != want || r.Jobs != 6 {
-		t.Errorf("busy times: %s (%d)\nwant %s (6)", cells(r), r.Jobs, want)
+	if want := "Mon 14:00 1, Tue 09:00 1, Sat 14:00 2, Sun 03:00 1"; cells(r) != want || r.Jobs != 5 {
+		t.Errorf("busy times: %s (%d)\nwant %s (5)", cells(r), r.Jobs, want)
 	}
 	e.report("busy-times", reportWeek+"&alias="+url.QueryEscape("station 1"), &r)
 	if want := "Mon 14:00 1, Sat 14:00 1"; cells(r) != want || r.Alias != "Station 1" {
@@ -256,19 +257,19 @@ func TestA94EventTypeMix(t *testing.T) {
 		}
 		got = append(got, fmt.Sprintf("%s %d %.0f%%", code, ty.Jobs, ty.Share*100))
 	}
-	if want := "HSF1 House fire (Structure fire) 3 43%; GRS3 Grass fire (Grass fire) 1 14%; MED1 Medical assistance (Medical) 1 14%; none 2 29%"; strings.Join(got, "; ") != want || r.Jobs != 7 || r.EventType != "" {
-		t.Errorf("event types: %s (%d jobs, %q)\nwant %s (7 jobs, every event type)", strings.Join(got, "; "), r.Jobs, r.EventType, want)
+	if want := "HSF1 House fire (Structure fire) 3 50%; GRS3 Grass fire (Grass fire) 1 17%; MED1 Medical assistance (Medical) 1 17%; none 1 17%"; strings.Join(got, "; ") != want || r.Jobs != 6 || r.EventType != "" {
+		t.Errorf("event types: %s (%d jobs, %q)\nwant %s (6 jobs, every event type)", strings.Join(got, "; "), r.Jobs, r.EventType, want)
 	}
 	var months []string
 	for _, m := range r.Months {
 		months = append(months, fmt.Sprintf("%s %d %v", m.Month, m.Jobs, m.Types))
 	}
-	if want := "2026-09 1 [1 0 0 0]; 2026-10 6 [2 1 1 2]"; strings.Join(months, "; ") != want {
+	if want := "2026-09 1 [1 0 0 0]; 2026-10 5 [2 1 1 1]"; strings.Join(months, "; ") != want {
 		t.Errorf("months: %s\nwant %s", strings.Join(months, "; "), want)
 	}
-	e.report("event-types", reportWeek+"&priority=Admin", &r)
-	if len(r.Types) != 1 || r.Types[0].Code != nil || r.Types[0].Jobs != 1 || r.Types[0].Share != 1 {
-		t.Errorf("Admin: %+v, want the training page alone, no event type", r.Types)
+	e.report("event-types", reportWeek+"&agency="+url.QueryEscape("Example Rescue Service"), &r)
+	if len(r.Types) != 1 || deref(r.Types[0].Code) != "MED1" || r.Types[0].Jobs != 1 || r.Types[0].Share != 1 {
+		t.Errorf("Example Rescue Service: %+v, want MED1 alone", r.Types)
 	}
 }
 
@@ -289,8 +290,8 @@ func TestA95JobSize(t *testing.T) {
 		}
 		got = append(got, fmt.Sprintf("%s %d %v %v %v", code, row.Jobs, row.Pages, row.Capcodes, row.Appliances))
 	}
-	want := "all 6 {1 1 2 5} {1 1 2 3} {1 0 1 2}; HSF1 2 {2 2 5 5} {2 2 3 3} {1 1 2 2}; GRS3 1 {1 1 1 1} {1 1 1 1} {1 1 1 1}; " +
-		"MED1 1 {1 1 1 1} {1 1 1 1} {1 1 1 1}; none 2 {1 1 1 1} {1 1 1 1} {0 0 0 0}"
+	want := "all 5 {1 1 2 4} {1 1 2 3} {1 1 1 2}; HSF1 2 {2 2 4 4} {2 2 3 3} {1 1 2 2}; GRS3 1 {1 1 1 1} {1 1 1 1} {1 1 1 1}; " +
+		"MED1 1 {1 1 1 1} {1 1 1 1} {1 1 1 1}; none 1 {1 1 1 1} {1 1 1 1} {0 0 0 0}"
 	if strings.Join(got, "; ") != want {
 		t.Errorf("job size: %s\nwant %s", strings.Join(got, "; "), want)
 	}
@@ -306,7 +307,7 @@ func TestA96LongJobs(t *testing.T) {
 	for _, j := range r.Rows {
 		got = append(got, fmt.Sprintf("%s %s-%s %ds %d pages %s", j.JobNumber, j.First, j.Last, j.Seconds, j.Pages, deref(j.EventType.Code)))
 	}
-	if want := "EX0000901 2026-10-05T14:10:00Z-2026-10-05T16:40:00Z 9000s 5 pages HSF1; EX0000903 2026-10-10T14:30:00Z-2026-10-10T14:31:00Z 60s 2 pages HSF1"; strings.Join(got, "; ") != want || r.Limit != 20 {
+	if want := "EX0000901 2026-10-05T14:10:00Z-2026-10-05T14:12:00Z 120s 4 pages HSF1; EX0000903 2026-10-10T14:30:00Z-2026-10-10T14:31:00Z 60s 2 pages HSF1"; strings.Join(got, "; ") != want || r.Limit != 20 {
 		t.Errorf("long jobs: %s\nwant %s", strings.Join(got, "; "), want)
 	}
 	e.report("long-jobs", reportWeek+"&agency="+url.QueryEscape("Example Rescue Service"), &r)
@@ -325,7 +326,7 @@ func TestA97Appliances(t *testing.T) {
 	for _, a := range r.Rows {
 		got = append(got, fmt.Sprintf("%s %d %.0f%%", a.Appliance, a.Jobs, a.Share*100))
 	}
-	if want := "P1 2 33%; T1 2 33%; R1 1 17%"; strings.Join(got, "; ") != want {
+	if want := "P1 2 40%; T1 2 40%; R1 1 20%"; strings.Join(got, "; ") != want {
 		t.Errorf("appliances: %s, want %s", strings.Join(got, "; "), want)
 	}
 }
@@ -408,7 +409,7 @@ func TestA99ReportsFollowPages(t *testing.T) {
 	e.mustPost("a", "0100003", "@@EX0000902 GRS3 GRASS FIRE @ SAMPLE RD, TESTVILLE UNITS T1 #STN3", reportDay(6, 9, 20))
 	var r server.BusiestReport
 	e.report("busiest", reportWeek, &r)
-	if got := busiestRows(r); !strings.HasPrefix(got, "1 Station 2 3 50% was 0; 1 Station 3 3 50% was 0; 3 Station 1 2") || r.Jobs != 6 {
+	if got := busiestRows(r); !strings.HasPrefix(got, "1 Station 2 3 60% was 0; 2 Station 1 2 40% was 1; 2 Station 3 2 40% was 0") || r.Jobs != 5 {
 		t.Errorf("after a late page: %s (%d jobs)", got, r.Jobs)
 	}
 	// Station 2 marked ignored: after the re-parse its pages count nowhere,
@@ -418,7 +419,7 @@ func TestA99ReportsFollowPages(t *testing.T) {
 	}
 	e.reparseAll()
 	e.report("busiest", reportWeek, &r)
-	if want := "1 Station 3 3 50% was 0; 2 Station 1 2 33% was 1; 3 Rescue 1 1 17% was 0; 3 0999999 1 17% was 0"; busiestRows(r) != want {
+	if want := "1 Station 1 2 40% was 1; 1 Station 3 2 40% was 0; 3 Rescue 1 1 20% was 0; 3 0999999 1 20% was 0"; busiestRows(r) != want {
 		t.Errorf("Station 2 ignored: %s\nwant %s", busiestRows(r), want)
 	}
 	// Retention: the pages before 10 October go, and their jobs with them.
@@ -475,7 +476,7 @@ func a99ReportsSpeed(t *testing.T, e *env, container string) {
 		{"30 days", "from=" + day(29) + "&to=" + day(0), false},
 		{"a year", "from=" + day(364) + "&to=" + day(0), false},
 		{"10 years", "from=" + day(3652) + "&to=" + day(0), true},
-		{"10 years, filtered", "from=" + day(3652) + "&to=" + day(0) + "&agency=" + url.QueryEscape("Example Fire Service") + "&event_type=HSF1&priority=Emergency", false},
+		{"10 years, filtered", "from=" + day(3652) + "&to=" + day(0) + "&agency=" + url.QueryEscape("Example Fire Service") + "&event_type=HSF1", false},
 	}
 	reports := []struct{ name, extra string }{
 		{"busiest", ""}, {"localities", ""}, {"busy-times", ""}, {"busy-times", "&alias=" + url.QueryEscape("Station 5")},

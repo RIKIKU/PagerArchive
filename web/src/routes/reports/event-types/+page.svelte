@@ -21,7 +21,7 @@
 	slug="event-type-mix"
 	stacked
 	defaultDays={365}
-	filters={{ agency: true, priority: true }}
+	filters={{ agency: true }}
 	empty={(d: EventTypesReport) => d.jobs === 0}
 	csv={(d: EventTypesReport) => ({
 		headers: ['Month', 'Jobs', ...d.types.map((t) => eventTypeName(t))],

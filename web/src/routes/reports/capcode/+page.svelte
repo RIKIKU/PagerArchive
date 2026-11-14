@@ -8,6 +8,7 @@
 	import { searchValues } from '#lib/searchValues.ts';
 	import DateRange from '#lib/DateRange.svelte';
 	import Suggest from '#lib/Suggest.svelte';
+	import ReportCaveat from '#lib/ReportCaveat.svelte';
 
 	// R38: Emergency messages to one capcode, or to one alias (every capcode
 	// it covers), per event category, for a date range (inclusive, deployment
@@ -94,6 +95,7 @@
 <div class="page">
 	<h1>Capcode report</h1>
 	<p class="note">Emergency messages to one alias or capcode, by event category. Heartbeats aren't counted.</p>
+	<ReportCaveat />
 
 	{#if meta}
 		<form method="GET" action="/reports/capcode" class="form" onsubmit={submit}>

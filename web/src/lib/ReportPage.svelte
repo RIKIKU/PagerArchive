@@ -15,6 +15,7 @@
 	import { csvText, fileName, reportQuery, reportsApi, save, type Csv, type ReportName, type ReportOptions } from './reports.ts';
 	import DateRange from './DateRange.svelte';
 	import Icon from './Icon.svelte';
+	import ReportCaveat from './ReportCaveat.svelte';
 
 	let {
 		title,
@@ -22,7 +23,7 @@
 		name,
 		slug,
 		defaultDays = 30,
-		filters = { agency: true, eventType: true, priority: true },
+		filters = { agency: true, eventType: true },
 		controls,
 		body,
 		csv,
@@ -36,7 +37,7 @@
 		name: ReportName;
 		slug: string;
 		defaultDays?: number;
-		filters?: { agency?: boolean; eventType?: boolean; priority?: boolean };
+		filters?: { agency?: boolean; eventType?: boolean };
 		/** The report's own controls, in the form (a limit, an alias). */
 		controls?: Snippet<[URLSearchParams]>;
 		/** The chart (in an element marked data-chart) and the table. */
@@ -65,7 +66,7 @@
 	reportsApi
 		.options()
 		.then((o) => (options = o))
-		.catch(() => (options = { agencies: [], event_types: [], priorities: ['Emergency', 'Non-emergency', 'Admin'] }));
+		.catch(() => (options = { agencies: [], event_types: [] }));
 
 	const defaults = $derived(
 		meta
@@ -148,6 +149,8 @@
 <div class="page">
 	<h1>{title}</h1>
 	<p class="note">{intro}</p>
+	{#if name !== 'large-events'}<p class="note" data-testid="report-counts">It counts jobs: a job number's Emergency pages are one job, however many there are. Pages with no job number, other priorities, heartbeats and ignored aliases aren't counted.</p>{/if}
+	<ReportCaveat />
 
 	{#if meta && query}
 		<form method="GET" class="form" onsubmit={submit} data-testid="report-form">
@@ -168,15 +171,6 @@
 						<option value="">Every event type</option>
 						{#each options?.event_types ?? [] as e (e.code)}<option value={e.code} selected={e.code === value('event_type')}>{e.label ? `${e.code} ${e.label}` : e.code}</option>{/each}
 						{#if value('event_type') && !(options?.event_types ?? []).some((e) => e.code === value('event_type'))}<option value={value('event_type')} selected>{value('event_type')}</option>{/if}
-					</select>
-				</label>
-			{/if}
-			{#if filters.priority}
-				<label class="field">
-					<span>Priority</span>
-					<select name="priority">
-						<option value="">Every priority</option>
-						{#each options?.priorities ?? ['Emergency', 'Non-emergency', 'Admin'] as p (p)}<option value={p} selected={p === value('priority')}>{p}</option>{/each}
 					</select>
 				</label>
 			{/if}
