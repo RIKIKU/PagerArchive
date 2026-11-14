@@ -116,6 +116,68 @@ func TestProfileErrors(t *testing.T) {
 			want: []string{"net.json", "at /deployment_code_pattern", "matches empty text"},
 		},
 		{
+			name: "large event field no format extracts",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"field": "alarm_level"`, `"field": "alarm_levle"`, 1),
+			want: []string{"fire.json", "at /large_event_fields/0/field", `no format extracts a field named "alarm_levle"`},
+		},
+		{
+			name: "large event field on an intermediate group",
+			file: "fire.json",
+			doc: strings.Replace(strings.Replace(fire, `(?P<alarm_level>`, `(?P<_alarm_level>`, 1),
+				`"field": "alarm_level"`, `"field": "_alarm_level"`, 1),
+			want: []string{"at /large_event_fields/0/field", `no format extracts a field named "_alarm_level"`},
+		},
+		{
+			name: "large event field is a list",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"field": "alarm_level"`, `"field": "units"`, 1),
+			want: []string{"at /large_event_fields/0/field", `"units" is a list field`},
+		},
+		{
+			name: "large event field with an empty value",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"values": ["3", "4"`, `"values": ["", "4"`, 1),
+			want: []string{"fire.json", "/large_event_fields/0/values/0"},
+		},
+		{
+			name: "large event field with no values",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"values": ["3", "4", "5", "6", "7", "8", "9"]`, `"values": []`, 1),
+			want: []string{"fire.json", "/large_event_fields/0/values"},
+		},
+		{
+			name: "large event field value listed twice",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"values": ["3", "4"`, `"values": ["3", "3"`, 1),
+			want: []string{"fire.json", "/large_event_fields/0/values"},
+		},
+		{
+			name: "large event field value with a space at its end",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"values": ["3", "4"`, `"values": ["3 ", "4"`, 1),
+			want: []string{"at /large_event_fields/0/values/0", "starts or ends with a space"},
+		},
+		{
+			name: "large event rule without values",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"values":`, `"valuez":`, 1),
+			want: []string{"fire.json", "/large_event_fields/0"},
+		},
+		{
+			name: "large event rule that isn't an object",
+			file: "fire.json",
+			doc:  strings.Replace(fire, `"large_event_fields": [`, `"large_event_fields": ["alarm_level",`, 1),
+			want: []string{"fire.json", "/large_event_fields/0"},
+		},
+		{
+			name: "large event field with two rules",
+			file: "fire.json",
+			doc: strings.Replace(fire, `"large_event_fields": [`,
+				`"large_event_fields": [ { "field": "alarm_level", "values": ["2"] },`, 1),
+			want: []string{"at /large_event_fields/1/field", `field "alarm_level" has a rule already`},
+		},
+		{
 			name: "invalid JSON",
 			file: "net.json",
 			doc:  `{"kind": "network",`,
@@ -134,6 +196,65 @@ func TestProfileErrors(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// R87 (owner, 2026-11-14): a field's listed value opens a large event,
+// compared exactly as extracted.
+func TestOpensLargeEvent(t *testing.T) {
+	set, err := LoadDir("../../profiles/example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := set.Agencies["example-fire"]
+	if len(a.LargeEventFields) != 1 || a.LargeEventFields[0].Field != "alarm_level" || len(a.LargeEventFields[0].Values) != 7 {
+		t.Fatalf("the example's rules: %+v", a.LargeEventFields)
+	}
+	for _, c := range []struct {
+		name   string
+		fields map[string]any
+		want   bool
+	}{
+		{"listed", map[string]any{"alarm_level": "3"}, true},
+		{"highest listed", map[string]any{"alarm_level": "9"}, true},
+		{"lower", map[string]any{"alarm_level": "2"}, false},
+		{"not listed, though higher by number", map[string]any{"alarm_level": "10"}, false},
+		{"no level", map[string]any{"job_number": "EX0000001"}, false},
+		{"a listed value in another field", map[string]any{"description": "3"}, false},
+		{"a list", map[string]any{"alarm_level": []string{"3"}}, false},
+	} {
+		if got := a.OpensLargeEvent(c.fields); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+	var none *Agency
+	if none.OpensLargeEvent(map[string]any{"alarm_level": "3"}) {
+		t.Error("no agency opened an event")
+	}
+}
+
+// large_event_fields takes any text field a format extracts: a named group
+// or an address_split output, in any format; not one that only a format
+// splits into a list.
+func TestLargeEventFieldSources(t *testing.T) {
+	agency := func(rule string) string {
+		return `{"kind": "agency", "name": "made-up", "formats": [
+			{"name": "a", "match": "^(?P<level>[0-9]A) (?P<_rest>.*)$", "fields": {"_rest": {"address_split": {"description": "what", "address": "address"}}}},
+			{"name": "b", "match": "^(?P<crews>.*)$", "fields": {"crews": {"split": " "}}}
+		], "large_event_fields": [` + rule + `]}`
+	}
+	for _, field := range []string{"level", "what", "address"} {
+		if err := loadOne(t, "a.json", agency(`{"field": "`+field+`", "values": ["3A"]}`)); err != nil {
+			t.Errorf("%s: %v", field, err)
+		}
+	}
+	err := loadOne(t, "a.json", agency(`{"field": "crews", "values": ["3A"]}`))
+	if err == nil || !strings.Contains(err.Error(), `"crews" is a list field`) {
+		t.Errorf("a split field: %v", err)
+	}
+	err = loadOne(t, "a.json", agency(`{"field": "_rest", "values": ["3A"]}`))
+	if err == nil || !strings.Contains(err.Error(), `no format extracts a field named "_rest"`) {
+		t.Errorf("an address_split's own group: %v", err)
 	}
 }
 

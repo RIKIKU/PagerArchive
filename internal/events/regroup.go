@@ -110,7 +110,7 @@ type Candidate struct {
 	ID    int64
 	At    time.Time
 	Job   string // "" for none
-	Coded bool   // carries a code matching the network profile's pattern (R5)
+	Coded bool   // carries a code matching the network profile's pattern (R5), or a field value its agency profile lists (R7)
 }
 
 // Grouped is an event a rebuild makes: its pages, oldest first, and the
@@ -355,7 +355,7 @@ func (r *Regrouper) rebuild(ctx context.Context, q *db.Queries, s Span, out *Reb
 	}
 	cands := make([]Candidate, 0, len(rows))
 	for _, m := range rows {
-		c := Candidate{ID: m.ID, At: m.SentAt, Coded: HasCode(r.Network, m.Text)}
+		c := Candidate{ID: m.ID, At: m.SentAt, Coded: m.LargeEventField || HasCode(r.Network, m.Text)}
 		if m.JobNumber != nil {
 			c.Job = *m.JobNumber
 		}

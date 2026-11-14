@@ -204,7 +204,7 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 		if s.Events != nil {
 			ectx, espan := tr.Start(ctx, "ingest.events")
 			err := s.Events.Stored(ectx, q, events.Page{ID: id, SentAt: d.Params.SentAt, Text: d.Params.Text, Priority: d.Params.Priority,
-				AliasID: d.Params.AliasID, Ignored: d.Ignored, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber})
+				AliasID: d.Params.AliasID, Ignored: d.Ignored, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber, LargeEventField: d.Fields.LargeEventField})
 			espan.End()
 			if err != nil {
 				return "", 0, err
@@ -253,6 +253,10 @@ type Fields struct {
 	Units                                                                        []string
 	Extra                                                                        []byte
 	ParseFailed, AddressUnsplit                                                  bool
+	// LargeEventField: a field holds a value its agency profile lists in
+	// large_event_fields (R87). Stored, so it is what the page was parsed
+	// with until it is re-parsed (R23a).
+	LargeEventField bool
 }
 
 // FieldsOf converts a parse result to column values.
@@ -274,18 +278,19 @@ func FieldsOf(parsed pipeline.Parsed) (Fields, error) {
 	}
 	units, _ := parsed.Fields["units"].([]string)
 	return Fields{
-		Format:         nilIfEmpty(parsed.Format),
-		JobNumber:      str("job_number"),
-		EventType:      str("event_type"),
-		Description:    str("description"),
-		Address:        str("address"),
-		Locality:       str("locality"),
-		GridRef:        str("grid_ref"),
-		Group:          str("group"),
-		Units:          units,
-		Extra:          extraJSON,
-		ParseFailed:    parsed.ParseFailed,
-		AddressUnsplit: parsed.AddressUnsplit,
+		Format:          nilIfEmpty(parsed.Format),
+		JobNumber:       str("job_number"),
+		EventType:       str("event_type"),
+		Description:     str("description"),
+		Address:         str("address"),
+		Locality:        str("locality"),
+		GridRef:         str("grid_ref"),
+		Group:           str("group"),
+		Units:           units,
+		Extra:           extraJSON,
+		ParseFailed:     parsed.ParseFailed,
+		AddressUnsplit:  parsed.AddressUnsplit,
+		LargeEventField: parsed.LargeEventField,
 	}, nil
 }
 
@@ -325,26 +330,27 @@ func BestAlias(rows []Candidate) *Candidate {
 func messageParams(prep pipeline.Prepared, f Fields, pg Page) db.InsertMessageParams {
 	fn, baud := int16(pg.Function), int32(pg.Baud)
 	return db.InsertMessageParams{
-		Capcode:        prep.Capcode,
-		Text:           prep.Text,
-		Priority:       nilIfEmpty(string(prep.Priority)),
-		Heartbeat:      prep.Heartbeat,
-		SentAt:         pg.ReceivedAt,
-		DedupKey:       pipeline.DedupKey(prep),
-		Format:         f.Format,
-		JobNumber:      f.JobNumber,
-		EventType:      f.EventType,
-		Description:    f.Description,
-		Address:        f.Address,
-		Locality:       f.Locality,
-		GridRef:        f.GridRef,
-		PagingGroup:    f.Group,
-		Units:          f.Units,
-		Extra:          f.Extra,
-		ParseFailed:    f.ParseFailed,
-		AddressUnsplit: f.AddressUnsplit,
-		Function:       &fn,
-		Baud:           &baud,
+		Capcode:         prep.Capcode,
+		Text:            prep.Text,
+		Priority:        nilIfEmpty(string(prep.Priority)),
+		Heartbeat:       prep.Heartbeat,
+		SentAt:          pg.ReceivedAt,
+		DedupKey:        pipeline.DedupKey(prep),
+		Format:          f.Format,
+		JobNumber:       f.JobNumber,
+		EventType:       f.EventType,
+		Description:     f.Description,
+		Address:         f.Address,
+		Locality:        f.Locality,
+		GridRef:         f.GridRef,
+		PagingGroup:     f.Group,
+		Units:           f.Units,
+		Extra:           f.Extra,
+		ParseFailed:     f.ParseFailed,
+		AddressUnsplit:  f.AddressUnsplit,
+		LargeEventField: f.LargeEventField,
+		Function:        &fn,
+		Baud:            &baud,
 	}
 }
 

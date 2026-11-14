@@ -88,6 +88,10 @@ type Parsed struct {
 	Fields         map[string]any // string or []string; absent means null
 	ParseFailed    bool
 	AddressUnsplit bool
+	// LargeEventField: a field holds a value the agency's large_event_fields
+	// lists, so the page opens a large event if it counts (R87: Emergency,
+	// to an aliased capcode).
+	LargeEventField bool
 }
 
 // String returns a text field, or "" if it's null.
@@ -128,6 +132,7 @@ func Parse(n *profile.Network, agency *profile.Agency, ix *streets.Index, p Prep
 			}
 		}
 	}
+	res.LargeEventField = agency.OpensLargeEvent(res.Fields)
 	return res
 }
 

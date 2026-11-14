@@ -1,6 +1,7 @@
 // Package events notices large events (R87-R87e, ADR 0027): an Emergency
 // page to an aliased capcode that carries a code matching the network
-// profile's pattern (R5), or a job that has enough of them, opens an event;
+// profile's pattern (R5) or a field value its agency profile lists in
+// large_event_fields (R7), or a job that has enough of them, opens an event;
 // pages within 12 hours of one join it, with the other pages of their jobs.
 // An event is simply a large event: it has no levels (owner, 2026-11-13).
 //
@@ -80,6 +81,10 @@ type Page struct {
 	Ignored   bool // its alias is marked ignored (R27)
 	Heartbeat bool
 	Job       *string
+	// LargeEventField: one of its fields holds a value its agency profile
+	// lists in large_event_fields (R7, R87), such as a high alarm level. It
+	// opens an event as a code does.
+	LargeEventField bool
 }
 
 // Counts reports whether a page counts towards events (R87): Emergency, to a
@@ -110,7 +115,8 @@ func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) error {
 	if d == nil || !p.Counts() {
 		return nil
 	}
-	coded := HasCode(d.Network, p.Text)
+	// A listed field value opens an event as a code does (R87).
+	coded := p.LargeEventField || HasCode(d.Network, p.Text)
 	if !coded && p.Job == nil {
 		return nil
 	}

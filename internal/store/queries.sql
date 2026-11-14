@@ -57,10 +57,10 @@ LIMIT 1;
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id,
+    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
     location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
     CASE WHEN sqlc.narg(lon)::float8 IS NULL THEN NULL
          ELSE ST_SetSRID(ST_MakePoint(sqlc.narg(lon)::float8, sqlc.narg(lat)::float8), 4326)::geography END,
     sqlc.narg(location_source)::text,
@@ -147,7 +147,7 @@ LIMIT sqlc.arg(batch)::int;
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, paging_group = $10, units = $11,
-    extra = $12, parse_failed = $13, address_unsplit = $14
+    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
 WHERE id = $1;
 
 -- name: SetLocation :exec
@@ -1310,8 +1310,9 @@ WHERE m.job_number IN (SELECT job_number FROM jobs)
 
 -- name: RegroupPages :many
 -- The pages sent between lo and hi that count: the pages a rebuild groups.
--- text is read for codes (R5), never logged.
-SELECT m.id, m.sent_at, m.job_number, m.text
+-- text is read for codes (R5), never logged; large_event_field is a field
+-- value its agency profile lists (R7), which opens an event as a code does.
+SELECT m.id, m.sent_at, m.job_number, m.text, m.large_event_field
 FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
 WHERE m.sent_at BETWEEN sqlc.arg(lo)::timestamptz AND sqlc.arg(hi)::timestamptz
   AND m.priority = 'Emergency' AND NOT m.heartbeat

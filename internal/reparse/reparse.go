@@ -241,11 +241,12 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		PagingGroup: f.Group, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
+		LargeEventField: f.LargeEventField,
 	}); err != nil {
 		return err
 	}
 	p := events.Page{ID: m.ID, SentAt: m.SentAt, Text: m.Text, Priority: m.Priority, AliasID: aliasID, Ignored: ignored, Heartbeat: m.Heartbeat, Job: f.JobNumber}
-	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || events.HasCode(w.Network, m.Text))) {
+	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || f.LargeEventField || events.HasCode(w.Network, m.Text))) {
 		aff.Add(m.SentAt)
 	}
 	return ingest.Locate(ctx, w.Geo, w.Store.Queries, m.ID, f)

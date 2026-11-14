@@ -59,10 +59,44 @@ func TestValidateProfileExample(t *testing.T) {
 	if code := run([]string{"validate-profile", "-v", "../../profiles/example"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
 	}
-	for _, want := range []string{"example-network (network,", ": 10 passed, 0 failed", "example-fire (agency,", ": 4 passed, 0 failed"} {
+	for _, want := range []string{"example-network (network,", ": 10 passed, 0 failed", "example-fire (agency,", ": 8 passed, 0 failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output doesn't contain %q:\n%s", want, out.String())
 		}
+	}
+}
+
+// R87 (owner, 2026-11-14): validate-profile refuses a large_event_fields
+// rule on a field no format extracts, naming the file and the path.
+func TestValidateProfileLargeEventFieldErrors(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../profiles/example")); err != nil {
+		t.Fatal(err)
+	}
+	fire := filepath.Join(dir, "example-fire.json")
+	data, err := os.ReadFile(fire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, from, to, want string }{
+		{"unknown field", `"field": "alarm_level"`, `"field": "alarm"`, `at /large_event_fields/0/field: no format extracts a field named "alarm"`},
+		{"empty value", `"values": ["3",`, `"values": ["",`, "/large_event_fields/0/values/0"},
+		{"malformed rule", `"field": "alarm_level",`, `"fields": "alarm_level",`, "/large_event_fields/0"},
+	} {
+		broken := strings.Replace(string(data), c.from, c.to, 1)
+		if broken == string(data) {
+			t.Fatalf("%s: nothing replaced", c.name)
+		}
+		if err := os.WriteFile(fire, []byte(broken), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut bytes.Buffer
+		code := run([]string{"validate-profile", dir}, &out, &errOut)
+		msg := out.String() + errOut.String()
+		if code == 0 || !strings.Contains(msg, fire) || !strings.Contains(msg, c.want) {
+			t.Errorf("%s: exit %d, output:\n%s\nwant %q", c.name, code, msg, c.want)
+		}
+		t.Logf("%s: exit %d: %s", c.name, code, strings.TrimSpace(errOut.String()))
 	}
 }
 

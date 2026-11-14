@@ -2364,14 +2364,14 @@ const insertMessage = `-- name: InsertMessage :one
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id,
+    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
     location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21,
-    CASE WHEN $22::float8 IS NULL THEN NULL
-         ELSE ST_SetSRID(ST_MakePoint($22::float8, $23::float8), 4326)::geography END,
-    $24::text,
-    $25::bool
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+    CASE WHEN $23::float8 IS NULL THEN NULL
+         ELSE ST_SetSRID(ST_MakePoint($23::float8, $24::float8), 4326)::geography END,
+    $25::text,
+    $26::bool
 )
 RETURNING id
 `
@@ -2398,6 +2398,7 @@ type InsertMessageParams struct {
 	Function         *int16
 	Baud             *int32
 	AliasID          *int64
+	LargeEventField  bool
 	Lon              *float64
 	Lat              *float64
 	LocationSource   *string
@@ -2427,6 +2428,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 		arg.Function,
 		arg.Baud,
 		arg.AliasID,
+		arg.LargeEventField,
 		arg.Lon,
 		arg.Lat,
 		arg.LocationSource,
@@ -4416,7 +4418,7 @@ func (q *Queries) RegroupMembers(ctx context.Context, eventIds []int64) ([]Large
 }
 
 const regroupPages = `-- name: RegroupPages :many
-SELECT m.id, m.sent_at, m.job_number, m.text
+SELECT m.id, m.sent_at, m.job_number, m.text, m.large_event_field
 FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
 WHERE m.sent_at BETWEEN $1::timestamptz AND $2::timestamptz
   AND m.priority = 'Emergency' AND NOT m.heartbeat
@@ -4430,14 +4432,16 @@ type RegroupPagesParams struct {
 }
 
 type RegroupPagesRow struct {
-	ID        int64
-	SentAt    time.Time
-	JobNumber *string
-	Text      string
+	ID              int64
+	SentAt          time.Time
+	JobNumber       *string
+	Text            string
+	LargeEventField bool
 }
 
 // The pages sent between lo and hi that count: the pages a rebuild groups.
-// text is read for codes (R5), never logged.
+// text is read for codes (R5), never logged; large_event_field is a field
+// value its agency profile lists (R7), which opens an event as a code does.
 func (q *Queries) RegroupPages(ctx context.Context, arg RegroupPagesParams) ([]RegroupPagesRow, error) {
 	rows, err := q.db.Query(ctx, regroupPages, arg.Lo, arg.Hi)
 	if err != nil {
@@ -4452,6 +4456,7 @@ func (q *Queries) RegroupPages(ctx context.Context, arg RegroupPagesParams) ([]R
 			&i.SentAt,
 			&i.JobNumber,
 			&i.Text,
+			&i.LargeEventField,
 		); err != nil {
 			return nil, err
 		}
@@ -5706,25 +5711,26 @@ const updateParsed = `-- name: UpdateParsed :exec
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, paging_group = $10, units = $11,
-    extra = $12, parse_failed = $13, address_unsplit = $14
+    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
 WHERE id = $1
 `
 
 type UpdateParsedParams struct {
-	ID             int64
-	AliasID        *int64
-	Format         *string
-	JobNumber      *string
-	EventType      *string
-	Description    *string
-	Address        *string
-	Locality       *string
-	GridRef        *string
-	PagingGroup    *string
-	Units          []string
-	Extra          []byte
-	ParseFailed    bool
-	AddressUnsplit bool
+	ID              int64
+	AliasID         *int64
+	Format          *string
+	JobNumber       *string
+	EventType       *string
+	Description     *string
+	Address         *string
+	Locality        *string
+	GridRef         *string
+	PagingGroup     *string
+	Units           []string
+	Extra           []byte
+	ParseFailed     bool
+	AddressUnsplit  bool
+	LargeEventField bool
 }
 
 func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) error {
@@ -5743,6 +5749,7 @@ func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) erro
 		arg.Extra,
 		arg.ParseFailed,
 		arg.AddressUnsplit,
+		arg.LargeEventField,
 	)
 	return err
 }
