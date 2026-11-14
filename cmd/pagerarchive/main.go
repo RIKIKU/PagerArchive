@@ -43,6 +43,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
+	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
@@ -309,7 +310,11 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer}
+	// M24's reports (R38a-R38i, ADR 0031): built in the background on the
+	// first start, then kept in step as pages change, and by the nightly run.
+	rep := &reports.Service{Pool: st.Pool, Location: loc, Log: log}
+	go rep.Run(ctx)
+	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer, Reports: rep}
 	go job.Run(ctx)
 
 	// Integrations (R47-R51c, ADR 0006). Without a key they're off, and the
@@ -387,6 +392,7 @@ func serve(stderr io.Writer) error {
 		Location: loc,
 		Accounts: acc,
 		Catalog:  &catalog.Catalog{Store: st},
+		Reports:  rep,
 		OIDC: &server.OIDC{
 			Issuer:       auth.authentikURL.JoinPath("/application/o/pagerarchive/").String(),
 			ClientID:     auth.clientID,

@@ -252,6 +252,33 @@
 	--scrubber-tab-width-held: 3.5rem;
 	--scrubber-grip-gap: 0.375rem;
 	--scrubber-tab-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 30%, transparent);
+	/* M24: the reports' charts (R38a, ADR 0031): a bar's thickness, the
+	   previous period's thinner bar, a row, the label and value columns, a
+	   column chart's height, the marks' colours, and the heat grid's cell and
+	   its shades, which never darken past where the text in them stays
+	   readable (the count is always written in the cell). The map's heat
+	   layer: its radius, its colours from none to the most, and its labels. */
+	--chart-bar: 1rem;
+	--chart-bar-previous: 0.375rem;
+	--chart-row: 2rem;
+	--chart-label: 11rem;
+	--chart-value: 7rem;
+	--chart-height: 14rem;
+	--chart-fill: var(--accent);
+	--chart-previous: var(--control-border);
+	--chart-grid: var(--border);
+	--chart-text: var(--fg);
+	--chart-muted: var(--muted);
+	--heat-cell: 2.75rem;
+	--heat-0: var(--surface);
+	--heat-1: color-mix(in srgb, var(--accent) 10%, var(--surface));
+	--heat-2: color-mix(in srgb, var(--accent) 20%, var(--surface));
+	--heat-3: color-mix(in srgb, var(--accent) 32%, var(--surface));
+	--heat-4: color-mix(in srgb, var(--accent) 45%, var(--surface));
+	--map-heat-radius: 3rem;
+	--map-heat-none: transparent;
+	--map-heat-low: var(--accent-soft);
+	--map-heat-high: var(--accent);
 }
 
 /* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
@@ -460,6 +487,33 @@
 	--scrubber-tab-width-held: 3.5rem;
 	--scrubber-grip-gap: 0.375rem;
 	--scrubber-tab-shadow: 0 0.0625rem 0.25rem color-mix(in srgb, var(--fg) 35%, transparent);
+	/* M24: the reports' charts (R38a, ADR 0031): a bar's thickness, the
+	   previous period's thinner bar, a row, the label and value columns, a
+	   column chart's height, the marks' colours, and the heat grid's cell and
+	   its shades, which never darken past where the text in them stays
+	   readable (the count is always written in the cell). The map's heat
+	   layer: its radius, its colours from none to the most, and its labels. */
+	--chart-bar: 1rem;
+	--chart-bar-previous: 0.375rem;
+	--chart-row: 2rem;
+	--chart-label: 11rem;
+	--chart-value: 7rem;
+	--chart-height: 14rem;
+	--chart-fill: var(--accent);
+	--chart-previous: var(--control-border);
+	--chart-grid: var(--border);
+	--chart-text: var(--fg);
+	--chart-muted: var(--muted);
+	--heat-cell: 2.75rem;
+	--heat-0: var(--surface);
+	--heat-1: color-mix(in srgb, var(--accent) 10%, var(--surface));
+	--heat-2: color-mix(in srgb, var(--accent) 20%, var(--surface));
+	--heat-3: color-mix(in srgb, var(--accent) 32%, var(--surface));
+	--heat-4: color-mix(in srgb, var(--accent) 45%, var(--surface));
+	--map-heat-radius: 3rem;
+	--map-heat-none: transparent;
+	--map-heat-low: var(--accent-soft);
+	--map-heat-high: var(--accent);
 }
 
 @media (pointer: coarse) {

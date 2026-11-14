@@ -302,7 +302,7 @@ func TestA75SearchSpeed(t *testing.T) {
 	if err := e.st.Pool.QueryRow(e.ctx, `SELECT count(*) FROM messages`).Scan(&n); err != nil {
 		t.Fatal(err)
 	}
-	t.Logf("seeded %d pages in %s, built the search index in %s, all with VACUUM ANALYZE in %s", n,
+	t.Logf("seeded %d pages in %s, built the search indexes and the reports' counts in %s, all in %s", n,
 		seeded.Round(time.Second), built.Round(time.Second), time.Since(start).Round(time.Second))
 	var table, index, bigrams, alias, database string
 	if err := e.st.Pool.QueryRow(e.ctx, `SELECT pg_size_pretty(pg_total_relation_size('messages')),
@@ -439,6 +439,8 @@ func TestA75SearchSpeed(t *testing.T) {
 	}
 	// A71 on the same pages (M14, ADR 0026): the scrubber's counts.
 	a71CountsSpeed(t, e, container)
+	// A99 on the same pages (M24, ADR 0031): the reports.
+	a99ReportsSpeed(t, e, container)
 }
 
 // R33b (ADR 0017): a search's second try, which also finds the alias:

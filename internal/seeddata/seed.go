@@ -5,9 +5,14 @@ package seeddata
 
 import (
 	"context"
+	"log/slog"
+	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/RIKIKU/PagerArchive/internal/reports"
 )
 
 // A75Pages is 10 years at 1,250 pages a day.
@@ -38,8 +43,15 @@ const A75Pages = 4_562_500
 // (`m 23 b4`), or production's shape (owner, 2026-11-08): `m 345 c7`, a letter
 // in every page, a number in 2.4% and a square in 0.7%, together in about 1
 // page in 1,000 (ADR 0017).
+//
+// The reports' fields (M24, ADR 0031): every 4 pages in turn are one job's
+// (EX0000001, EX0000002, ...: a job to 4 capcodes, about 312 jobs a day), and
+// the live pages are all job EX0000076's, a job heard for 10 years. Emergency
+// pages have an event type by their phrasing, one of 41 localities and two
+// appliances of 42.
 const a75Seed = `
-INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, paging_group, alias_id, extra)
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, paging_group, alias_id, extra,
+                      job_number, event_type, locality, units)
 SELECT a.pattern_key,
        CASE WHEN g % 4228 = 2000
             THEN '@@EX0000076 HSF1 LIVE ' || g || ' SMOKE @ 12 FICTION ST, MADEUPTON #STN' || s.n
@@ -57,7 +69,11 @@ SELECT a.pattern_key,
        CASE WHEN g % 4228 = 2000 THEN now() - (g / 4228) * interval '5 seconds' ELSE now() - g * interval '69.12 seconds' END,
        sha256(g::text::bytea), 'STN' || s.n, a.id,
        jsonb_build_object('unit', 'PUMPER ' || (g % 20),
-                          'crew', CASE WHEN g % 10000 = 7 THEN 'TANKER9' ELSE 'CREW ' || (g % 7) END)
+                          'crew', CASE WHEN g % 10000 = 7 THEN 'TANKER9' ELSE 'CREW ' || (g % 7) END),
+       CASE WHEN g % 4228 = 2000 THEN 'EX0000076' ELSE 'EX' || lpad(((g + 3) / 4)::text, 7, '0') END,
+       CASE WHEN g % 4228 = 2000 THEN 'HSF1' WHEN g % 3 = 0 THEN (ARRAY['HSF1','HSF2','GRS3','HSF1','MED1','RES1'])[1 + s.phrasing] END,
+       CASE WHEN g % 4228 = 2000 THEN 'MADEUPTON' WHEN g % 3 = 0 THEN CASE WHEN (g / 4) % 5 = 0 THEN 'MADEUPTON' ELSE 'TOWN ' || lpad(((g / 4) % 40)::text, 2, '0') END END,
+       CASE WHEN g % 3 = 0 THEN ARRAY['P' || (g % 30), 'T' || (g % 12)] END
 FROM generate_series(1, $1::int) g
 CROSS JOIN LATERAL (SELECT CASE WHEN g % 57 = 0 AND g <= 57 * 80000 THEN 5 ELSE 1 + g % 4 END AS n,
                            CASE WHEN g % 57 = 0 AND g <= 57 * 80000 THEN (g / 57) % 6 ELSE (g * 7) % 6 END AS phrasing) s
@@ -83,11 +99,30 @@ ON CONFLICT DO NOTHING`
 // made).
 var searchIndexes = []string{"messages_search_trgm_idx", "messages_search_bigrams_idx"}
 
+// a75Events are large events, one a week for as long as the pages go back,
+// each the pages of 25 jobs (100 pages over about 2 hours), for R38i's speed.
+const a75Events = `
+WITH w AS (
+    SELECT w, 'EX' || lpad((w * 2188 + 1)::text, 7, '0') AS first_job, 'EX' || lpad((w * 2188 + 25)::text, 7, '0') AS last_job
+    FROM generate_series(0, ($1::int / 4 - 25) / 2188) w
+), e AS (
+    INSERT INTO large_events (first_at, last_at)
+    SELECT min(m.sent_at), max(m.sent_at) FROM w JOIN messages m ON m.job_number BETWEEN w.first_job AND w.last_job
+    GROUP BY w.w
+    RETURNING id, first_at, last_at
+)
+INSERT INTO large_event_messages (message_id, event_id)
+SELECT m.id, e.id FROM e JOIN messages m ON m.sent_at BETWEEN e.first_at AND e.last_at AND m.job_number <> 'EX0000076'`
+
 // Seed stores pages made-up pages, for aliases 0100001 to 0100005 and the
 // units (adding those after 0100004 if they aren't there), with one INSERT
-// rather than through the API. The search indexes, as the migrations made
-// them, are built once afterwards: much faster than adding the pages to them
-// one by one.
+// rather than through the API, and a large event a week. The search indexes,
+// as the migrations made them, are built once afterwards: much faster than
+// adding the pages to them one by one. So are the reports' counts (M24): the
+// pages are stored without queuing their jobs, and every job is counted at
+// once, in the time zone the API built them for (UTC if it hasn't), as an
+// API's first start with the reports does. built is how long the indexes
+// and the counts took.
 func Seed(ctx context.Context, pool *pgxpool.Pool, pages int) (seeded, built time.Duration, err error) {
 	var defs []string
 	for _, index := range searchIndexes {
@@ -106,7 +141,19 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, pages int) (seeded, built tim
 	if _, err := pool.Exec(ctx, a75Alias); err != nil {
 		return 0, 0, err
 	}
-	if _, err := pool.Exec(ctx, a75Seed, pages); err != nil {
+	// Without the triggers that queue each page's job for the reports
+	// (migration 00023): they're all counted below.
+	err = pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx, a75Seed, pages); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, a75Events, pages)
+		return err
+	})
+	if err != nil {
 		return 0, 0, err
 	}
 	seeded = time.Since(start)
@@ -115,9 +162,26 @@ func Seed(ctx context.Context, pool *pgxpool.Pool, pages int) (seeded, built tim
 			return 0, 0, err
 		}
 	}
-	built = time.Since(start) - seeded
 	if _, err := pool.Exec(ctx, `VACUUM ANALYZE messages`); err != nil {
 		return 0, 0, err
 	}
+	loc := time.UTC
+	var v string
+	if err := pool.QueryRow(ctx, `SELECT value FROM settings WHERE key = 'reports_built'`).Scan(&v); err == nil {
+		if _, tz, ok := strings.Cut(v, " "); ok {
+			if l, err := time.LoadLocation(tz); err == nil {
+				loc = l
+			}
+		}
+	}
+	if err := (&reports.Service{Pool: pool, Location: loc, Log: slog.Default()}).Rebuild(ctx); err != nil {
+		return 0, 0, err
+	}
+	for _, table := range []string{"report_jobs", "report_job_whos", "report_days"} {
+		if _, err := pool.Exec(ctx, `VACUUM ANALYZE `+table); err != nil {
+			return 0, 0, err
+		}
+	}
+	built = time.Since(start) - seeded
 	return seeded, built, nil
 }

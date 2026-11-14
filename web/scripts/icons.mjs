@@ -73,7 +73,20 @@ const icons = {
 	earlier: 'caret-down',
 	newest: 'chevrons-up',
 	// M22: large events (R87c), in Tools and Administration.
-	largeevents: 'flame'
+	largeevents: 'flame',
+	// M24: the reports (R38b-R38i), and saving one as a CSV or its chart as
+	// an image.
+	busiest: 'trending-up',
+	localities: 'map-pins',
+	busytimes: 'clock-hour-4',
+	eventtypes: 'chart-pie',
+	jobsize: 'ruler-measure',
+	longjobs: 'hourglass',
+	appliances: 'truck',
+	eventsovertime: 'chart-line',
+	download: 'download',
+	copy: 'copy',
+	image: 'photo'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;
