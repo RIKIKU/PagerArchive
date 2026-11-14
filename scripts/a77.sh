@@ -215,6 +215,18 @@ if [ "$n" -lt 1 ]; then
 	status=1
 fi
 echo "--- example profile warnings in the API's log since this container started: $n"
+# R64: the seed's two templates whose names differ only in case, from the
+# previous release, which allowed them: logged on start, by name.
+if grep -q '"case_pair": true' "$OUT/a77-state.json"; then
+	line=$(stack_compose logs --no-color api | grep 'differ only in letter case' | tail -n 1)
+	case $line in
+	*'\"A77 Water\" (id '*'\"a77 water\" (id '*) echo "--- logged: ${line#*\"templates\":}" ;;
+	*)
+		echo "FAIL: the API didn't log the templates whose names differ only in case: $line" >&2
+		status=1
+		;;
+	esac
+fi
 stack_check_logs || status=1
 
 echo "=== A77: a patch release under the same tag: pull and up, nothing else"

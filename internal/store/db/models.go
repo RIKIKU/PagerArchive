@@ -251,6 +251,7 @@ type Template struct {
 	AgencyProfile *string
 	IconPng       []byte
 	IconSha256    *string
+	CaseDuplicate bool
 }
 
 type TreeDeactivation struct {

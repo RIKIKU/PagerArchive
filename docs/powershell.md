@@ -74,7 +74,7 @@ Rename-PagerArchiveTemplate -Name 'Example Rescue' -NewName 'Example Rescue Nort
 Remove-PagerArchiveTemplate -Name 'Example Rescue'
 ```
 
-A template that aliases still use can't be deleted; the error says how many use it. A new agency profile re-parses the template's pages. A renamed template keeps its aliases; a name another template has is refused (`template_exists`).
+A template that aliases still use can't be deleted; the error says how many use it. A new agency profile re-parses the template's pages. A renamed template keeps its aliases. A name another template has is refused (`template_exists`), and so is one that differs from another template's only in letter case (`emv` while `EMV` exists): the error names that template. A template may change its own name's case. An import whose agency differs from a template's name only in case is refused the same way, and imports nothing.
 
 **Icons** (R65). `-Path` (wildcards, matching one file) or `-LiteralPath` (alias `-PSPath`) sets a template's icon from a file, and `-Uri` from a web address. The module downloads the address on your computer, at most 100 KB and within 30 seconds, sending no credentials, and uploads the file: PagerArchive's server never fetches anything from another site. `-RemoveIcon` removes it. `HasIcon` says whether a template has one.
 

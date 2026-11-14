@@ -216,6 +216,12 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 			} else if !errors.Is(err, pgx.ErrNoRows) {
 				return dbErr("template", err)
 			}
+			// R64: a new template's name can't differ from another's only in case.
+			if same, err := q.TemplatesNamedIgnoringCase(ctx, agency); err != nil {
+				return dbErr("template", err)
+			} else if len(same) > 0 {
+				return refuse(http.StatusConflict, "template_exists", "The agency %q differs from the template %q only in letter case, and template names are unique ignoring case. Use %q in the CSV, or rename the template.", agency, same[0].Name, same[0].Name)
+			}
 			// The most common colour; ties go to the first in sort order.
 			best, bestN := "", -1
 			for col, n := range colours[agency] {

@@ -245,6 +245,8 @@ export interface AdminTemplate {
 	agency_profile: string | null;
 	icon: string | null;
 	aliases: number;
+	/** R64: other templates whose names differ from this one's only in letter case (from before the rule). */
+	same_name_as?: string[];
 }
 
 export interface TemplateInput {

@@ -4211,3 +4211,36 @@ test('Back up now on the Backups page', async ({ browser }) => {
 		writeStatus();
 	}
 });
+
+// R64 (owner, 2026-11-14): template names are unique ignoring case. Adding one
+// that differs from "Example Fire" only in case is refused, naming it; a pair
+// from before the rule (put straight into the database, as an upgrade leaves
+// it) is listed on Templates and tagged on Administration's start page.
+test('A89 template names unique ignoring case', async ({ browser }, info) => {
+	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	await admin.goto('/admin/templates');
+	await admin.getByRole('button', { name: 'Add template' }).click();
+	await admin.getByLabel('Name', { exact: true }).fill('EXAMPLE FIRE');
+	await admin.getByLabel('Agency', { exact: true }).fill('Example Fire Service');
+	await admin.getByRole('button', { name: 'Add template' }).click();
+	await expect(admin.getByRole('alert')).toContainText('There\'s already a template called "Example Fire", which differs from "EXAMPLE FIRE" only in letter case.');
+
+	const old = `case pair ${info.project.name}`;
+	const pair = [old, old.toUpperCase()];
+	sql(pair.map((n, i) => `INSERT INTO templates (name, agency, case_duplicate) VALUES ('${n}', 'Made-up agency', ${i > 0});`).join('\n'));
+	try {
+		await admin.goto('/admin/templates');
+		const notice = admin.getByTestId('case-duplicates');
+		for (const n of pair) await expect(notice).toContainText(`'${n}'`);
+		await expect(notice).toContainText('Rename all but one of each');
+		await expect(admin.locator(`tr[data-template="${pair[0]}"]`)).toContainText(`same name as '${pair[1]}', ignoring case`);
+		expect(await axeOf(admin), 'axe: templates with a pair').toEqual([]);
+		await admin.goto('/admin');
+		await expect(admin.getByTestId('case-tag')).toHaveText('2 named alike, ignoring case');
+		expect(await axeOf(admin), 'axe: Administration with the tag').toEqual([]);
+	} finally {
+		sql(`DELETE FROM templates WHERE lower(name) = '${old}';`);
+	}
+	await admin.goto('/admin');
+	await expect(admin.getByTestId('case-tag')).toHaveCount(0);
+});
