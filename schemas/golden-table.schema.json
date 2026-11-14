@@ -39,7 +39,8 @@
               },
               "parse_failed": { "type": "boolean" },
               "address_unsplit": { "type": "boolean" },
-              "deployment_codes": { "$ref": "#/$defs/list" }
+              "deployment_codes": { "$ref": "#/$defs/list" },
+              "opens_large_event": { "type": "boolean" }
             },
             "additionalProperties": false
           }

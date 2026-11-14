@@ -107,6 +107,34 @@ type Agency struct {
 	Hash    string
 	Formats []Format
 	Labels  map[string]map[string]string
+	// LargeEventFields are field values that open a large event (R87): a
+	// page whose field holds a listed value opens one, as a page with a code
+	// does. Empty: the agency's fields open none.
+	LargeEventFields []LargeEventField
+}
+
+// LargeEventField is one large_event_fields rule: the values of one text
+// field that open a large event. Values are compared exactly, as extracted
+// (P3): no order, case folding or ranges.
+type LargeEventField struct {
+	Field  string
+	Values map[string]bool
+}
+
+// OpensLargeEvent reports whether parsed fields hold a value one of the
+// agency's large_event_fields rules lists (R87). It says nothing of the
+// page's priority or alias: the events package applies those (only
+// Emergency pages to aliased capcodes count). A nil agency opens none.
+func (a *Agency) OpensLargeEvent(fields map[string]any) bool {
+	if a == nil {
+		return false
+	}
+	for _, r := range a.LargeEventFields {
+		if v, ok := fields[r.Field].(string); ok && r.Values[v] {
+			return true
+		}
+	}
+	return false
 }
 
 // Format is one compiled agency format.
@@ -358,9 +386,15 @@ func parseRange(s string) (CapcodeRange, error) {
 }
 
 type agencyJSON struct {
-	Name    string                       `json:"name"`
-	Formats []formatJSON                 `json:"formats"`
-	Labels  map[string]map[string]string `json:"labels"`
+	Name             string                       `json:"name"`
+	Formats          []formatJSON                 `json:"formats"`
+	Labels           map[string]map[string]string `json:"labels"`
+	LargeEventFields []largeEventFieldJSON        `json:"large_event_fields"`
+}
+
+type largeEventFieldJSON struct {
+	Field  string   `json:"field"`
+	Values []string `json:"values"`
 }
 
 type formatJSON struct {
@@ -393,6 +427,9 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 
 	a := &Agency{Name: j.Name, File: path, Hash: hashOf(data), Labels: j.Labels}
 	names := map[string]bool{}
+	// What the formats extract, for large_event_fields: text fields, and
+	// fields a format splits into a list.
+	text, lists := map[string]bool{}, map[string]bool{}
 	for i, fj := range j.Formats {
 		p := fmt.Sprintf("/formats/%d", i)
 		if names[fj.Name] {
@@ -473,10 +510,57 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 				fail(p+"/fields/"+g, fmt.Sprintf("%s is a list field: add fields.%s.split", g, g))
 			}
 		}
+		for g := range groups {
+			_, addr := f.AddrSplit[g]
+			switch {
+			case strings.HasPrefix(g, "_") || addr:
+			case f.Split[g] != nil || ListFields[g]:
+				lists[g] = true
+			default:
+				text[g] = true
+			}
+		}
+		for _, as := range f.AddrSplit {
+			text[as.Description], text[as.Address] = true, true
+		}
 		a.Formats = append(a.Formats, f)
 	}
+	a.LargeEventFields = largeEventFields(j.LargeEventFields, text, lists, fail)
 	if len(errs) > 0 {
 		return nil, errs
 	}
 	return a, nil
+}
+
+// largeEventFields compiles an agency's large_event_fields (R87). The schema
+// has checked their shape; here each field must be a text field one of the
+// agency's formats extracts, with one rule, and no value may start or end
+// with a space (extracted values are trimmed, so it could never match).
+func largeEventFields(rules []largeEventFieldJSON, text, lists map[string]bool, fail func(p, msg string)) []LargeEventField {
+	var out []LargeEventField
+	seen := map[string]bool{}
+	for i, r := range rules {
+		p := fmt.Sprintf("/large_event_fields/%d", i)
+		switch {
+		case seen[r.Field]:
+			fail(p+"/field", fmt.Sprintf("field %q has a rule already: list all its values in one", r.Field))
+			continue
+		case lists[r.Field]:
+			fail(p+"/field", fmt.Sprintf("%q is a list field (a format splits it): large_event_fields takes a text field", r.Field))
+			continue
+		case !text[r.Field]:
+			fail(p+"/field", fmt.Sprintf("no format extracts a field named %q", r.Field))
+			continue
+		}
+		seen[r.Field] = true
+		rule := LargeEventField{Field: r.Field, Values: map[string]bool{}}
+		for k, v := range r.Values {
+			if strings.TrimSpace(v) != v {
+				fail(fmt.Sprintf("%s/values/%d", p, k), fmt.Sprintf("value %q starts or ends with a space: extracted values are trimmed, so it would never match", v))
+			}
+			rule.Values[v] = true
+		}
+		out = append(out, rule)
+	}
+	return out
 }

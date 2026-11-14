@@ -63,6 +63,19 @@ The API loads the dataset into the database before it starts listening, but only
 - `fields.<group>.split`: a pattern that turns the value into a list. `""` splits into single characters.
 - `fields.<group>.address_split: {"description": "...", "address": "..."}`: for formats where a description runs into an address with no delimiter. The address is the longest suffix that reads `[house number] <street> <locality>`, with the street listed in that locality in the address dataset. Everything before it is the description. If no street matches, the whole text is the description, the address is null, and the message gets the admin-only `address_unsplit` flag. See ADR 0001 section 2.
 - `labels`: display labels per field, e.g. `{"event_type": {"HSF1": "House fire"}}`.
+- `large_event_fields` (optional): field values that open a **large event** (R87). Some agencies dispatch with a level on each page, such as an alarm level, and a high enough level means something big. Each rule names one text field the formats extract and lists every value of it that opens an event:
+
+  ```json
+  "large_event_fields": [
+    { "field": "alarm_level", "values": ["3", "4", "5", "6", "7", "8", "9"] }
+  ]
+  ```
+
+  An Emergency page to an aliased capcode whose field holds a listed value opens or joins a large event exactly as a page with a `deployment_code_pattern` code does: grouped by time, told once to large-event integrations when the event opens. Any other value, no value, or another priority opens nothing. Values are compared exactly as extracted (P3): `"3"` isn't `"03"` or `"3 "`, and there's no ordering, so list each level that counts. The app never shows the level or says what opened an event. The example agency's emergency format has an optional `ALARM <digit>` segment (`alarm_level`), and its rule lists 3 to 9.
+
+  Problems that stop the server and fail `validate-profile`: a field no format extracts (a named group not starting with `_`, or an `address_split` output), a list field (`units`, or any field a format splits), the same field in two rules, no values, an empty value or one listed twice, a value with a space at either end (extracted values are trimmed, so it could never match), and a rule without `field` or `values` or with any other key.
+
+  The flag is worked out when a page is parsed and stored with it, so a change to the rule applies to older pages when they're re-parsed (R23a), which a changed profile does at start-up.
 
 A page whose capcode has an agency profile but matches no format is stored in full and flagged `parse_failed` (admins only).
 
@@ -71,7 +84,7 @@ A page whose capcode has an agency profile but matches no format is stored in fu
 Files named `golden-*.json` hold raw decoder lines and what they must produce. `profile` names the profile the table tests.
 
 - **Network tables** check `priority`, `stored_text` (null: dropped) and `heartbeat`. `deployment_codes` (a list of the codes `deployment_code_pattern` finds, or null for none) is checked only when a row lists it.
-- **Agency tables** check `capcode`, `priority`, every standard field, `extra` (an object of extra fields), and the flags `parse_failed` and `address_unsplit`. `format` is checked only when listed.
+- **Agency tables** check `capcode`, `priority`, every standard field, `extra` (an object of extra fields), and the flags `parse_failed` and `address_unsplit`. `format` is checked only when listed. `opens_large_event` (`true` or `false`) is checked only when listed: whether the page, as an Emergency page to an alias using this profile, opens a large event on its own, by a value `large_event_fields` lists or a code the network's `deployment_code_pattern` finds (a job's number of pages isn't a single page's). Network tables can't check it.
 - A key a row doesn't list must be null, or false for flags.
 - Rows with `"status": "proposed"` are reported but don't fail the run.
 

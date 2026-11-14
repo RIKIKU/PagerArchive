@@ -112,6 +112,11 @@ func TestStoredSkipsWithoutQueries(t *testing.T) {
 		{ID: 1, Text: "@@EX0000101 GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", Priority: &ne, AliasID: &alias, Job: ptr("EX0000101")},
 		{ID: 2, Text: "@@EX0000101 GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", Priority: &em, Job: ptr("EX0000101")},
 		{ID: 3, Text: "@@GRASS FIRE NEAR THE HALL", Priority: &em, AliasID: &alias}, // no code, no job
+		// A listed field value (R87; owner, 2026-11-14) on a page that
+		// doesn't count: Non-emergency, unaliased, a heartbeat.
+		{ID: 4, Text: "HbRE EX0000101 ALARM 3 STOP #STN1", Priority: &ne, AliasID: &alias, Job: ptr("EX0000101"), LargeEventField: true},
+		{ID: 5, Text: "@@EX0000101 HSF1 FIRE @ SAMPLE RD, MADEUPTON ALARM 3 #STN1", Priority: &em, Job: ptr("EX0000101"), LargeEventField: true},
+		{ID: 6, Text: "@@ALARM 3", Priority: &em, AliasID: &alias, Heartbeat: true, LargeEventField: true},
 	} {
 		if err := d.Stored(context.Background(), nil, p); err != nil {
 			t.Errorf("page %d: %v", p.ID, err)

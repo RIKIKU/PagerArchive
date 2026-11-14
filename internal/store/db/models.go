@@ -208,6 +208,7 @@ type Message struct {
 	LocationSource   *string
 	Lon              *float64
 	Lat              *float64
+	LargeEventField  bool
 }
 
 type Reception struct {

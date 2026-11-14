@@ -154,7 +154,11 @@ func networkRow(n *profile.Network, c Case) []string {
 		}
 		got["deployment_codes"] = codes
 	}
-	return compare(c.Expect, got, map[string]any{"heartbeat": false})
+	diffs := compare(c.Expect, got, map[string]any{"heartbeat": false})
+	if _, listed := c.Expect["opens_large_event"]; listed {
+		diffs = append(diffs, "opens_large_event: checked in agency tables only (it needs the agency's fields)")
+	}
+	return diffs
 }
 
 func agencyRow(n *profile.Network, a *profile.Agency, ix *streets.Index, c Case) []string {
@@ -187,6 +191,13 @@ func agencyRow(n *profile.Network, a *profile.Agency, ix *streets.Index, c Case)
 	got["extra"] = extra
 	if _, listed := c.Expect["format"]; listed {
 		got["format"] = nilIfEmpty(parsed.Format)
+	}
+	// Whether the page opens a large event on its own (R87), as an Emergency
+	// page to an alias whose template uses this profile: a field value the
+	// profile lists in large_event_fields, or a code the network's pattern
+	// finds. A job's number of pages isn't a page's. Checked only when listed.
+	if _, listed := c.Expect["opens_large_event"]; listed {
+		got["opens_large_event"] = p.Priority == profile.Emergency && (parsed.LargeEventField || len(pipeline.DeploymentCodes(n, p)) > 0)
 	}
 	return compare(c.Expect, got, map[string]any{"parse_failed": false, "address_unsplit": false, "extra": map[string]any{}})
 }

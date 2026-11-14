@@ -207,6 +207,7 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		PagingGroup: f.Group, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
+		LargeEventField: f.LargeEventField,
 	}); err != nil {
 		return err
 	}
