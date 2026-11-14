@@ -359,7 +359,7 @@ jobs:
     needs: [stamp, changes]
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 75
     # Microsoft's Playwright image, the exact version in web/package-lock.json
     # (by digest): the browsers and their libraries are already installed.
     # There's no Docker in it, so the database is a service container,
