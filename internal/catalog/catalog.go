@@ -254,13 +254,18 @@ func changeAlias(ctx context.Context, q *db.Queries, id int64, c change, by By, 
 	if err := record(ctx, q, id, next.pattern, next.name, "changed", ch, by); err != nil {
 		return err
 	}
-	// Names and the ignored flag are read through the join; the template
-	// and capcode decide parsing.
+	// Names are read through the join; the template and capcode decide
+	// parsing. The ignored flag is read through the join too, but it decides
+	// whether pages count towards large events (R27, R87; owner,
+	// 2026-11-14), so it re-parses as well, and the re-parse rebuilds the
+	// events around them.
 	if _, ok := ch["pattern"]; ok {
 		rp.add(cur.pattern, "alias capcode changed")
 		rp.add(next.pattern, "alias capcode changed")
 	} else if _, ok := ch["template"]; ok {
 		rp.add(next.pattern, "alias template changed")
+	} else if _, ok := ch["ignored"]; ok {
+		rp.add(next.pattern, "alias ignored changed")
 	}
 	return nil
 }
