@@ -136,7 +136,7 @@
 	{/if}
 	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
 		<nav class="side" aria-label="Main">
-			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} />
+			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} version={meta?.version ?? ''} />
 		</nav>
 		<header class="top" bind:clientHeight={topHeight}>
 			<Crumbs {trail} listHref={listHref()} />
@@ -151,7 +151,7 @@
 		{#if meta?.attribution}
 			<footer class="note">Address data: {meta.attribution}</footer>
 		{/if}
-		<BottomBar {path} {admin} listHref={listHref()} {mapHref} />
+		<BottomBar {path} {admin} listHref={listHref()} {mapHref} version={meta?.version ?? ''} />
 	</div>
 {/if}
 

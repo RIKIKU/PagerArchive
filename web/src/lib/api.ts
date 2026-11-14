@@ -130,6 +130,8 @@ export interface Meta {
 	last_page?: string;
 	/** Admins only: alias requests waiting for review (R55). */
 	waiting_requests?: number;
+	/** The build's version, such as "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81). */
+	version: string;
 }
 
 export interface MessagePage {

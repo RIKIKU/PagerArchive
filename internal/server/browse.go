@@ -166,11 +166,14 @@ type Meta struct {
 	// Admins only: alias requests waiting for review (R55), for the count
 	// on the Admin link.
 	WaitingRequests *int64 `json:"waiting_requests,omitempty"`
+	// The build's version as `pagerarchive version` reports it, such as
+	// "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81).
+	Version string `json:"version"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
-		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution}
+		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}
