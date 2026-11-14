@@ -5,7 +5,7 @@
 import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
@@ -4126,4 +4126,88 @@ test('A85 large event settings in Administration', async ({ browser }) => {
 	const user = await (await signedIn(browser, 'user')).newPage();
 	await user.goto('/admin/large-events');
 	await expect(user.getByRole('alert')).toHaveText('This page is for admins only.');
+});
+
+// R86a, Back up now: the button on Administration → Backups, as the backup
+// service answers it. scripts/e2e.sh gives the API a status file and a request
+// folder in PA_E2E_BACKUP_DIR, and this test plays the backup service: it
+// starts the backup (running_since), then deletes the request and writes the
+// result. The real service is scripts/backup-checks.sh's and A80's. Desktop and,
+// as Administration still opens on a phone from a link (R81), phone width.
+test('Back up now on the Backups page', async ({ browser }) => {
+	const dir = process.env.PA_E2E_BACKUP_DIR;
+	test.skip(!dir, 'PA_E2E_BACKUP_DIR is not set (run scripts/e2e.sh)');
+	const statusFile = join(dir!, 'status', 'status.json');
+	const request = join(dir!, 'requests', 'request.json');
+	const s = (t: Date) => Math.floor(t.getTime() / 1000);
+	const lastGood = new Date(Date.now() - 5 * 3600_000);
+	const writeStatus = (fields: { running_since?: number; last_run_at?: number; last_run_ok?: boolean; error?: string } = {}) => {
+		const f = { running_since: 0, last_run_at: s(lastGood), last_run_ok: true, error: '', ...fields };
+		const good = f.last_run_ok ? f.last_run_at : s(lastGood);
+		writeFileSync(
+			statusFile,
+			JSON.stringify({ since: s(lastGood) - 86400, last_night: '', ...f, last_good_at: good, last_good_night: '2026-11-14', last_good_bytes: 1048576, nights: 3 })
+		);
+	};
+	mkdirSync(join(dir!, 'status'), { recursive: true });
+	mkdirSync(join(dir!, 'requests'), { recursive: true });
+	rmSync(request, { force: true });
+	writeStatus();
+	try {
+		for (const viewport of [
+			{ width: 1280, height: 900 },
+			{ width: 375, height: 800 }
+		]) {
+			const page = await (await signedIn(browser, 'admin', { viewport })).newPage();
+			const where = `${viewport.width}px`;
+			await page.goto('/admin');
+			await page.goto('/admin/backups');
+			const button = page.getByRole('button', { name: 'Back up now' });
+			const state = page.getByTestId('backup-now');
+			await expect(button, where).toBeEnabled();
+			await expect(page.getByTestId('backup-status')).toContainText('Working.');
+			expect(await axeOf(page), `axe: backups, ${where}`).toEqual([]);
+
+			await button.click();
+			await expect(state, where).toContainText('Asked for at');
+			await expect(state).toContainText('starts it within a minute');
+			await expect(button).toBeDisabled();
+			expect(existsSync(request), 'the request file').toBe(true);
+			// One at a time.
+			const again = await page.request.post('/api/v1/admin/backup');
+			expect(again.status()).toBe(409);
+			expect((await again.json()).code).toBe('backup_queued');
+			expect(await axeOf(page), `axe: backups, queued, ${where}`).toEqual([]);
+
+			// The service starts it, the page follows.
+			const started = new Date();
+			writeStatus({ running_since: s(started) });
+			await expect(state, where).toContainText('Running since', { timeout: 10_000 });
+			await expect(state).toContainText('then the check');
+			await expect(button).toBeDisabled();
+			expect((await (await page.request.post('/api/v1/admin/backup')).json()).code).toBe('backup_running');
+			expect(await axeOf(page), `axe: backups, running, ${where}`).toEqual([]);
+
+			// The result: good on the desktop, failed on the phone.
+			rmSync(request, { force: true });
+			if (viewport.width > 768) {
+				writeStatus({ last_run_at: s(started) });
+				await expect(state, where).toContainText('Done: the backup at', { timeout: 10_000 });
+				await expect(state).toContainText('was good.');
+			} else {
+				writeStatus({ last_run_at: s(started), last_run_ok: false, error: 'the dump of pagerarchive failed' });
+				await expect(state, where).toContainText('Done, but it failed: the dump of pagerarchive failed.', { timeout: 10_000 });
+				await expect(page.getByTestId('backup-alert')).toContainText('The last backup failed');
+				// The phone's width is used, not overflowed.
+				expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll').toBe(true);
+			}
+			await expect(button).toBeEnabled();
+			expect(await axeOf(page), `axe: backups, done, ${where}`).toEqual([]);
+			await page.context().close();
+			writeStatus();
+		}
+	} finally {
+		rmSync(request, { force: true });
+		writeStatus();
+	}
 });

@@ -100,4 +100,25 @@
       </MemberSet>
     </Members>
   </Type>
+  <Type>
+    <Name>PagerArchive.Backup</Name>
+    <Members>
+      <MemberSet>
+        <Name>PSStandardMembers</Name>
+        <Members>
+          <PropertySet>
+            <Name>DefaultDisplayPropertySet</Name>
+            <ReferencedProperties>
+              <Name>State</Name>
+              <Name>Run</Name>
+              <Name>LastGoodAt</Name>
+              <Name>LastRunAt</Name>
+              <Name>Nights</Name>
+              <Name>Error</Name>
+            </ReferencedProperties>
+          </PropertySet>
+        </Members>
+      </MemberSet>
+    </Members>
+  </Type>
 </Types>

@@ -2,7 +2,8 @@
 # Nightly backups (SPEC.md R86-R86c, ADR 0020), run by upstream's PostGIS image,
 # so pg_dump always matches the database. Part of the release's archive.
 #
-#   serve         the `backup` service: dumps both databases each night at BACKUP_AT
+#   serve         the `backup` service: dumps both databases each night at BACKUP_AT,
+#                 and when an admin asks (Back up now: the API's request file)
 #   check-serve   the `backup-check` service, which has no network: restores each
 #                 new night's dumps into a throwaway database and compares them
 #   now           one backup, at once: docker compose exec backup pagerarchive-backup now
@@ -16,13 +17,25 @@
 # Each is written as <name>.partial and renamed when complete, and the check's
 # trigger, counts.tsv, is renamed last. So a file with a final name is complete.
 #
+# Back up now (R86a): the API can't reach the dumps or Docker. It writes
+# /requests/request.json, on a volume of its own (backup-request), and the
+# serve loop sees it within a minute, runs the same backup and check, and then
+# deletes it. Its contents are never read. While it's there, or a backup is
+# running (running_since in the status), the API refuses another.
+#
 # P1: what pg_dump, pg_restore and PostgreSQL say on failure can quote a row, so
 # it's thrown away, and every error here is fixed text. Nothing reads a dump's
 # contents into a message or a log line.
 set -u
 
-DIR=/backups
-STATUS=/status/status.json
+# PA_TEST_ROOT: the script's own checks (scripts/backup-checks.sh) run it in a
+# folder rather than a container.
+ROOT=${PA_TEST_ROOT:-}
+DIR=$ROOT/backups
+STATUS=$ROOT/status/status.json
+REQUESTS=$ROOT/requests
+REQUEST=$REQUESTS/request.json
+LOCK=$ROOT/tmp/pagerarchive-backup.lock
 KEEP=${BACKUP_KEEP_DAYS:-14}
 AT=${BACKUP_AT:-04:00}
 CHECK_TIMEOUT=${BACKUP_CHECK_TIMEOUT:-43200}
@@ -59,6 +72,7 @@ write_status() {
   "last_night": "${s_night:-}",
   "last_run_at": ${s_run_at:-0},
   "last_run_ok": ${s_ok:-false},
+  "running_since": ${s_running:-0},
   "last_good_at": ${s_good_at:-0},
   "last_good_night": "${s_good_night:-}",
   "last_good_bytes": ${s_good_bytes:-0},
@@ -73,6 +87,7 @@ JSON
 
 read_status() {
 	s_since=$(field since) s_night=$(field last_night) s_run_at=$(field last_run_at) s_ok=$(field last_run_ok)
+	s_running=$(field running_since)
 	s_good_at=$(field last_good_at) s_good_night=$(field last_good_night) s_good_bytes=$(field last_good_bytes)
 	s_good_dump=$(field last_good_dump_seconds) s_good_check=$(field last_good_check_seconds)
 	s_nights=$(field nights) s_error=$(field error)
@@ -136,10 +151,18 @@ prune() {
 	done
 }
 
+# finished: the run is over, and a request it answered is done. The request
+# goes first, so the API says "running" until the result is there.
+finished() {
+	s_running=0
+	[ -z "$_requested" ] || rm -f "$REQUEST"
+	write_status
+}
+
 # backup_failed <at> <why>: records a failed run. The last good backup stays.
 backup_failed() {
 	s_run_at=$1 s_ok=false s_error=$2
-	write_status
+	finished
 	say "failed: $2"
 }
 
@@ -147,12 +170,18 @@ remove_partials() {
 	rm -f "$DIR"/*.dump.partial "$DIR"/*.counts.tsv.partial
 }
 
-# run_backup <night> <at>: one night: dump, rename, wait for the check, prune.
+# run_backup <night> <at> [requested]: one night: dump, rename, wait for the
+# check, prune. "requested" is Back up now, answering the request file.
 run_backup() {
-	_night=$1 _at=$2 _start=$(date +%s)
+	_night=$1 _at=$2 _requested=${3:-} _start=$(date +%s)
 	read_status
 	# What the schedule goes by. A test's clock (now --night) leaves it alone.
-	[ "$_night" != "$(date +%F)" ] || s_night=$_night
+	# Back up now moves it only once it's good (below): then that night's
+	# backup isn't replaced later the same day, and after a failure the
+	# nightly one still runs.
+	[ "$_night" != "$(date +%F)" ] || [ -n "$_requested" ] || s_night=$_night
+	s_running=$_start
+	write_status
 	remove_partials
 	chown "$OWNER" "$DIR" 2>/dev/null
 	if ! pg_isready -q -t 10; then
@@ -201,7 +230,8 @@ run_backup() {
 	s_good_dump=$((_dumped - _start)) s_good_check=$(($(date +%s) - _dumped))
 	s_good_bytes=$(cat "$DIR/$_night.pagerarchive.dump" "$DIR/$_night.authentik.dump" | wc -c)
 	s_nights=$(nights | wc -l)
-	write_status
+	[ "$_night" != "$(date +%F)" ] || s_night=$_night
+	finished
 	say "$_night good: dumps took $s_good_dump s, the check $s_good_check s, $s_good_bytes bytes, $s_nights nights kept"
 }
 
@@ -213,11 +243,20 @@ locked() {
 			exit 1
 		}
 		"$@"
-	) 9>/tmp/pagerarchive-backup.lock
+	) 9>"$LOCK"
+}
+
+# requested: whether an admin has asked for a backup (Back up now). A link
+# counts too, so whatever is there is answered and deleted, never followed.
+requested() {
+	[ -e "$REQUEST" ] || [ -L "$REQUEST" ]
 }
 
 serve() {
 	_hhmm=$(echo "$AT" | tr -d :)
+	# The API may create a file here and look it up by name, but not list the
+	# folder or delete what isn't its own. Only this script deletes requests.
+	mkdir -p "$REQUESTS" && chmod 1733 "$REQUESTS"
 	read_status
 	if [ -z "$s_since" ] || [ "$s_since" = 0 ]; then
 		# A new install has nothing to catch up on. Its first backup is at the
@@ -225,12 +264,22 @@ serve() {
 		s_since=$(date +%s)
 		[ "$(date +%H%M)" -lt "$_hhmm" ] || s_night=$(date +%F)
 		write_status
+	elif [ "${s_running:-0}" != 0 ]; then
+		# A run stopped part way, with its container: it isn't running now. A
+		# request it was answering is still there, so that runs again.
+		s_running=0
+		write_status
 	fi
 	say "nightly at $AT, keeping $KEEP days"
 	while :; do
 		# A minute's pause first: a start that's catching up on a night missed
 		# while it was down leaves an upgrade's migrations to finish.
 		sleep 60
+		if requested; then
+			say "backing up now, as an admin asked"
+			locked run_backup "$(date +%F)" "$(date +%s)" requested || true
+			continue
+		fi
 		[ "$(date +%H%M)" -ge "$_hhmm" ] || continue
 		[ "$(field last_night)" != "$(date +%F)" ] || continue
 		locked run_backup "$(date +%F)" "$(date +%s)" || true

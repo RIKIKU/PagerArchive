@@ -457,8 +457,9 @@ func TestR44cExampleAddressesDiffer(t *testing.T) {
 }
 
 // R86a, R86: the check has no network and no secrets, and only it and the backup
-// service see the folder; the API sees only the status volume, read-only, so a
-// compromised API can't read Authentik's password hashes from a dump.
+// service see the folder; the API sees the status volume read-only, and writes
+// only Back up now's requests, on a volume of their own, so a compromised API
+// can't read Authentik's password hashes from a dump or write the status.
 func TestR86aBackupServices(t *testing.T) {
 	c := composeFiles(t)[0]
 	check, ok := c.Services["backup-check"]
@@ -485,6 +486,7 @@ func TestR86aBackupServices(t *testing.T) {
 			t.Errorf("backup-check has %s: it needs no way into the database", k)
 		}
 	}
+	requests := map[string]string{}
 	for name, s := range c.Services {
 		for _, v := range s.Volumes {
 			if strings.HasPrefix(v, "${BACKUP_DIR:-") && name != "backup" && name != "backup-check" {
@@ -493,7 +495,18 @@ func TestR86aBackupServices(t *testing.T) {
 			if strings.HasPrefix(v, "backup-status:") && name == "api" && !strings.HasSuffix(v, ":ro") {
 				t.Errorf("the API can write the backup status: %s", v)
 			}
+			// Back up now: the API's requests have a volume of their own, so
+			// writing one never lets it write the status.
+			if strings.HasPrefix(v, "backup-request:") {
+				requests[name] = v
+			}
 		}
+	}
+	if requests["api"] != "backup-request:/backup-request" || requests["backup"] != "backup-request:/requests" || len(requests) != 2 {
+		t.Errorf("the backup-request volume is mounted %v: want the API's at /backup-request and the backup service's at /requests, and no other", requests)
+	}
+	if got := env.Services["api"].Environment["BACKUP_REQUEST_FILE"]; got != "/backup-request/request.json" {
+		t.Errorf("the API's BACKUP_REQUEST_FILE is %q, not in the volume backup.sh reads", got)
 	}
 }
 

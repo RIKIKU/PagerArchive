@@ -4,9 +4,10 @@
 # integrations and pages (A77's, internal/stacktest). Then the night's backup,
 # first by the schedule, then by the test-only trigger with a controllable clock
 # (`pagerarchive-backup now --night --at`, as A12 calls the nightly job), and
-# what goes wrong. The last step removes the stack with its volumes and restores
-# into a new install with the documented command. The alert firing is
-# TestA80ToldWhenABackupFails, in the monitoring stack's check.
+# what goes wrong, then Back up now from Administration, through the API and the
+# backup service's request file (R86a). The last step removes the stack with
+# its volumes and restores into a new install with the documented command. The
+# alert firing is TestA80ToldWhenABackupFails, in the monitoring stack's check.
 #
 # The folder also holds a test-only compose.override.yaml (deploy/test/backup.yaml):
 # a stand-in for pg_dump that runs the real one, and can hold it open or spoil
@@ -261,6 +262,22 @@ backup_now --night $night
 want_metric pagerarchive_backup_failing 0
 (cd web && PA_URL=http://localhost:8080 PA_OWNER_EMAIL="$INITIAL_ADMIN_EMAIL" PA_A80_EXPECT=ok \
 	npx playwright test tests/a80.spec.ts "$@") || fail "Administration still shows a failure after a good backup"
+
+echo "=== A80: Back up now, from Administration: the API asks, the backup service answers (R86a)"
+before=$(metric pagerarchive_backup_last_good_timestamp_seconds)
+stack_compose exec -T backup sh -c 'stat -c "%a" /requests' | grep -qx 1733 || fail "the request folder isn't 1733"
+(cd web && PA_URL=http://localhost:8080 PA_OWNER_EMAIL="$INITIAL_ADMIN_EMAIL" PA_A80_EXPECT=now \
+	npx playwright test tests/a80.spec.ts "$@") || fail "Back up now didn't give a good backup in Administration"
+after=$(metric pagerarchive_backup_last_good_timestamp_seconds)
+[ "$after" -gt "$before" ] || fail "the last-good metric didn't move: $before, then $after"
+want_metric pagerarchive_backup_failing 0
+today=$(TZ=$TZ date +%F)
+[ "$(cat "$BACKUPS/$today.check")" = ok ] || fail "today's check after Back up now says $(cat "$BACKUPS/$today.check")"
+[ "$(stat -c %Y "$BACKUPS/$today.pagerarchive.dump")" -ge "$before" ] || fail "today's dump wasn't replaced by Back up now"
+if stack_compose exec -T backup test -e /requests/request.json; then fail "the request is still there after its backup"; fi
+stack_compose logs --no-color backup | grep -q 'backing up now, as an admin asked' || fail "the backup service's log doesn't say an admin asked"
+stack_compose logs --no-color api | grep -q '"msg":"backup asked for"' || fail "the API's log doesn't say an admin asked"
+echo "--- Back up now: pagerarchive_backup_last_good_timestamp_seconds $before to $after, $(stack_compose logs --no-color backup | grep 'good:' | tail -n 1)"
 
 echo "=== A80: P1: no page text and no address in the backup services' logs, with their failures in them"
 logs=$(stack_compose logs --no-color backup backup-check)

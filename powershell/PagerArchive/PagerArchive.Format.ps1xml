@@ -170,5 +170,33 @@
         </ListEntries>
       </ListControl>
     </View>
+    <View>
+      <Name>PagerArchive.Backup</Name>
+      <ViewSelectedBy>
+        <TypeName>PagerArchive.Backup</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>LastGoodAt</Label></TableColumnHeader>
+          <TableColumnHeader><Label>LastRunAt</Label></TableColumnHeader>
+          <TableColumnHeader />
+          <TableColumnHeader />
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>State</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Run</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>$_.LastGoodAt.LocalDateTime</ScriptBlock></TableColumnItem>
+              <TableColumnItem><ScriptBlock>$_.LastRunAt.LocalDateTime</ScriptBlock></TableColumnItem>
+              <TableColumnItem><PropertyName>Nights</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Error</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
   </ViewDefinitions>
 </Configuration>

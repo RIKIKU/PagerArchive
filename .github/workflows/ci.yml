@@ -713,6 +713,8 @@ jobs:
         run: sh ../scripts/ci/retry.sh -l "playwright install --with-deps chromium" npx playwright install --with-deps chromium
       - name: Pull the images (retried)
         run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
+      - name: Back up now in the backup script
+        run: sh scripts/backup-checks.sh
       - name: A80
         run: sh scripts/a80.sh -o a80-results --project=chromium
       - name: Upload the logs, Playwright report and screenshots

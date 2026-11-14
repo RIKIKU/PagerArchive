@@ -92,6 +92,10 @@ export interface BackupStatus {
 	last_good_bytes: number;
 	nights: number;
 	error?: string;
+	/** Back up now: what the backup service is doing. "off": it can't be asked here. */
+	run: 'idle' | 'queued' | 'running' | 'off';
+	requested_at: string | null;
+	running_since: string | null;
 }
 
 export interface Retention {
@@ -710,6 +714,8 @@ export const api = {
 		get<Report>(`/api/v1/reports/capcode?${new URLSearchParams({ ...what, from, to })}`),
 	retention: () => get<Retention>('/api/v1/admin/retention'),
 	backup: () => get<BackupStatus>('/api/v1/admin/backup'),
+	/** Back up now (R86a): the backup service starts it within a minute. */
+	backUpNow: () => request<BackupStatus>('POST', '/api/v1/admin/backup'),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
 	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
 	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {

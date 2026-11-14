@@ -149,6 +149,10 @@ services:
       AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
       # What the backup service last did (R86a). The API never sees the dumps.
       BACKUP_STATUS_FILE: /backup-status/status.json
+      # Back up now (R86a): the API asks by writing this file, and the backup
+      # service answers it. A volume of its own, so the API can ask but never
+      # write the status.
+      BACKUP_REQUEST_FILE: /backup-request/request.json
     volumes:
       # Your network's profile and your map extract. With neither set, /dev/null
       # is mounted instead, and the API uses the made-up example built into
@@ -156,6 +160,7 @@ services:
       - ${PROFILES_DIR:-/dev/null}:/profiles:ro
       - ${MAP_TILES_FILE:-/dev/null}:/map/tiles.pmtiles:ro
       - backup-status:/backup-status:ro
+      - backup-request:/backup-request
     ports:
       - "${API_BIND:-127.0.0.1:8080}:8080"
     depends_on:
@@ -170,7 +175,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [serve]
     labels:
-      pagerarchive.config: "574d7ddcf357665c"
+      pagerarchive.config: "7f128f3aeba7fb46"
     environment:
       PGHOST: db
       PGUSER: postgres
@@ -184,6 +189,7 @@ services:
       - ./deploy/backup/backup.sh:/usr/local/bin/pagerarchive-backup:ro
       - ${BACKUP_DIR:-./backups}:/backups
       - backup-status:/status
+      - backup-request:/requests
     depends_on:
       db:
         condition: service_healthy
@@ -197,7 +203,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [check-serve]
     labels:
-      pagerarchive.config: "574d7ddcf357665c"
+      pagerarchive.config: "7f128f3aeba7fb46"
     environment:
       BACKUP_UID: ${BACKUP_UID:-0}
       BACKUP_GID: ${BACKUP_GID:-0}
@@ -209,4 +215,5 @@ services:
 volumes:
   db:
   backup-status:
+  backup-request:
   backup-check:

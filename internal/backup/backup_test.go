@@ -1,7 +1,9 @@
 package backup
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
@@ -87,5 +89,76 @@ func TestLastGoodNumbers(t *testing.T) {
 	got := Read(path, now, now)
 	if got.LastGoodBytes != 52428800 || got.LastGoodDumpSeconds != 41 || got.LastGoodCheckSeconds != 187 {
 		t.Errorf("size %d, dumps %d s, check %d s; want 52428800, 41 s, 187 s", got.LastGoodBytes, got.LastGoodDumpSeconds, got.LastGoodCheckSeconds)
+	}
+}
+
+// Back up now (R86a): the request file says queued until the service starts,
+// its status says running until it's done, and one at a time.
+func TestBackUpNow(t *testing.T) {
+	now := time.Date(2026, 11, 14, 10, 0, 0, 0, time.UTC)
+	dir := t.TempDir()
+	status, request := filepath.Join(dir, "status.json"), filepath.Join(dir, "requests", "request.json")
+	write := func(running int64) {
+		t.Helper()
+		data := fmt.Sprintf(`{"since":%d,"last_run_at":%d,"last_run_ok":true,"running_since":%d,"last_good_at":%d,"nights":3,"error":""}`,
+			now.Add(-240*time.Hour).Unix(), now.Add(-6*time.Hour).Unix(), running, now.Add(-6*time.Hour).Unix())
+		if err := os.WriteFile(status, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write(0)
+
+	// Before the service has made its folder, there's no one to ask.
+	if _, err := Request(status, request, now, now); !errors.Is(err, ErrNoService) {
+		t.Fatalf("no request folder: %v", err)
+	}
+	if err := os.Mkdir(filepath.Dir(request), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := Current(status, request, now, now); got.Run != RunIdle || got.RequestedAt != nil || got.RunningSince != nil {
+		t.Fatalf("idle: %+v", got)
+	}
+	if got := Current(status, "", now, now); got.Run != RunOff {
+		t.Errorf("no request file set: %s", got.Run)
+	}
+
+	got, err := Request(status, request, now, now)
+	if err != nil || got.Run != RunQueued || got.RequestedAt == nil || got.State != StateOK {
+		t.Fatalf("asked: %v, %+v", err, got)
+	}
+	if _, err := os.Stat(request); err != nil {
+		t.Fatalf("no request file: %v", err)
+	}
+	if _, err := Request(status, request, now, now); !errors.Is(err, ErrQueued) {
+		t.Errorf("asked again while queued: %v", err)
+	}
+
+	// The service has started it: running, with the request still there.
+	write(now.Add(-time.Minute).Unix())
+	got = Current(status, request, now, now)
+	if got.Run != RunRunning || got.RunningSince == nil || !got.RunningSince.Equal(now.Add(-time.Minute)) {
+		t.Errorf("running: %+v", got)
+	}
+	if _, err := Request(status, request, now, now); !errors.Is(err, ErrRunning) {
+		t.Errorf("asked again while running: %v", err)
+	}
+	// It deletes the request first, so it's still running without one.
+	if err := os.Remove(request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Request(status, request, now, now); !errors.Is(err, ErrRunning) {
+		t.Errorf("asked while a nightly backup runs: %v", err)
+	}
+	if _, err := os.Stat(request); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("a refused request left a file: %v", err)
+	}
+
+	// Done: idle, and another can be asked for.
+	write(0)
+	if got := Current(status, request, now, now); got.Run != RunIdle {
+		t.Errorf("done: %s", got.Run)
+	}
+	if _, err := Request(status, request, now, now); err != nil {
+		t.Errorf("asked after it was done: %v", err)
 	}
 }

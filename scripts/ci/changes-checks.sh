@@ -53,6 +53,7 @@ expect "images $STACKS" Dockerfile
 expect "images stack-e2e install monitoring" Dockerfile.client
 expect "web" scripts/e2e.sh
 expect "upgrade" scripts/a77.sh
+expect "backups" scripts/backup-checks.sh
 expect "none" SPEC.md docs/adr/0025-ci-speed.md README.md deploy/made-up.md
 expect "none" scripts/mutation-checks.sh .github/renovate.json5 .github/release.yml
 expect "powershell stack" docs/powershell-guidelines.md powershell/tests/Meta.Tests.ps1

@@ -62,6 +62,9 @@ type Server struct {
 	// stack without one), and Started when this API started (R86a).
 	BackupStatusFile string
 	Started          time.Time
+	// BackupRequestFile is where the API asks for a backup now ("" where it
+	// can't: Back up now, R86a).
+	BackupRequestFile string
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
@@ -128,6 +131,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
 		"GET /api/v1/admin/backup":                 s.adminOnly(s.getBackup),
+		"POST /api/v1/admin/backup":                s.adminOnly(s.postBackup),
 		"GET /api/v1/stream":                       s.stream,
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,

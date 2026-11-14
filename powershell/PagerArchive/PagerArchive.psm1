@@ -19,6 +19,9 @@ class PagerArchiveBoolTransformation : System.Management.Automation.ArgumentTran
 # The connection for this session (Connect-PagerArchive), or $null.
 $script:Connection = $null
 
+# How often Start-PagerArchiveBackup -Wait asks how the backup is going.
+$script:BackupPollInterval = [timespan]::FromSeconds(5)
+
 foreach ($folder in @('Private', 'Public')) {
     foreach ($file in Get-ChildItem -Path (Join-Path -Path $PSScriptRoot -ChildPath $folder) -Filter '*.ps1') {
         . $file.FullName
