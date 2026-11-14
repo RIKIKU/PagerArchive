@@ -56,7 +56,6 @@
     },
     {
       "name": "emergency at a listed alarm level opens a large event",
-      "status": "proposed",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000003 HSF1 FACTORY FIRE @ 12 FICTION ST, MADEUPTON ALARM 3 GRID 123456 #STN1",
       "expect": {
         "capcode": "0100001",
@@ -75,7 +74,6 @@
     },
     {
       "name": "emergency at a lower alarm level doesn't open one",
-      "status": "proposed",
       "raw": "POCSAG512: Address:  100002  Function: 0  Alpha:   @@EX0000004 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON ALARM 2 UNITS T1 #STN2",
       "expect": {
         "capcode": "0100002",
@@ -94,7 +92,6 @@
     },
     {
       "name": "non-emergency follow-up naming a listed alarm level doesn't open one",
-      "status": "proposed",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   HbRE EX0000003 ALARM 3 STOP #STN1",
       "expect": {
         "capcode": "0100001",
@@ -107,7 +104,6 @@
     },
     {
       "name": "emergency with a code and no alarm level opens one",
-      "status": "proposed",
       "raw": "POCSAG512: Address:  100002  Function: 0  Alpha:   @@EX0000005 GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2",
       "expect": {
         "capcode": "0100002",
