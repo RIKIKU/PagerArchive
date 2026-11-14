@@ -3,7 +3,8 @@ TOPIC
 
 SHORT DESCRIPTION
     Manage a PagerArchive server from PowerShell: sign in, manage templates
-    and aliases, import aliases through the pipeline, and search messages.
+    and aliases, import aliases through the pipeline, search messages, and
+    back up the server now.
 
 LONG DESCRIPTION
     The PagerArchive module uses PagerArchive's API, the same one the
@@ -62,6 +63,8 @@ LONG DESCRIPTION
     PagerArchive.Message      SentAt, Capcode, Alias, Agency, Priority, Text,
                               and everything the detail view shows
     PagerArchive.Connection   Uri, Name, Email, Role, SavedIn, ExpiresAt
+    PagerArchive.Backup       State, Run, LastGoodAt, LastRunAt, Nights,
+                              Error, and the last good backup's size and times
 
     An alias's properties are the import's parameters, so
 
@@ -125,6 +128,19 @@ LONG DESCRIPTION
         Get-PagerArchiveAlias -Template 'Old Fire' |
             Set-PagerArchiveAlias -Template 'Example Fire' -WhatIf
 
+  BACKING UP NOW
+    The server backs up both databases each night, and checks each backup.
+    Before a change you might want to undo, such as an upgrade, back up now:
+
+        Start-PagerArchiveBackup -Wait
+
+    The server's backup service starts it within a minute, then dumps and
+    checks, as for the nightly backup. -Wait waits until it's done (30
+    minutes at most, or -Timeout) and writes an error if it failed. Without
+    -Wait, the command returns at once; Get-PagerArchiveBackup shows how
+    it's going. One at a time: while one is asked for or running, another
+    is refused (backup_queued, backup_running).
+
   ERRORS
     A refusal from PagerArchive is an error whose ErrorId is the API's
     code (e.g. duplicate_alias, template_in_use, powershell_admins_only)
@@ -138,7 +154,8 @@ SEE ALSO
     Import-PagerArchiveAlias
     Get-PagerArchiveMessage
     Watch-PagerArchiveMessage
+    Start-PagerArchiveBackup
     https://github.com/RIKIKU/PagerArchive/blob/main/docs/powershell.md
 
 KEYWORDS
-    PagerArchive POCSAG pager alias template
+    PagerArchive POCSAG pager alias template backup

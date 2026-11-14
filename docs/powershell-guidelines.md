@@ -31,7 +31,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 
 ## 3. Parameters and the pipeline
 
-- **Every parameter set has at least one parameter that takes pipeline input** (SC02). At most one parameter per set has `ValueFromPipeline`. Parameters that match an object's properties use `ValueFromPipelineByPropertyName`. **[pester]**
+- **Every parameter set has at least one parameter that takes pipeline input** (SC02). At most one parameter per set has `ValueFromPipeline`. Parameters that match an object's properties use `ValueFromPipelineByPropertyName`. **The exception** is a command about the server as a whole rather than items, which has nothing to take: `Get-PagerArchiveBackup` and `Start-PagerArchiveBackup` act on the server's backups, and take nothing from the pipeline (2026-11-14). **[pester]**
 - **Output objects and parameters line up.** A property that identifies or describes an item has the same name as the parameter that takes it, so `Get-PagerArchiveAlias -Name 'Station*' | Set-PagerArchiveAlias -Template 'Example Rescue'` works. Data from elsewhere binds through `[Alias()]`: the import CSV's column names (`address`, `alias`, `color`) are aliases of the import's parameters. **[pester]**
 - **Strong types.** Use `[uri]` for URLs, an enum or `[ValidateSet()]` for a fixed list, `[switch]` for on/off (never `[bool]`), and `[Nullable[bool]]` when "leave unchanged" is a third choice. Use the same type for the same parameter everywhere. Use plain `[string]` only for free text and names. **[review]**
 - **Arrays where users act on several items.** `-Name` takes `[string[]]`. **[review]**
@@ -44,7 +44,7 @@ Each rule says how it's checked: **[analyzer]** is PSScriptAnalyzer in CI, **[pe
 ## 4. Changes, confirmation and `-Force`
 
 - **Every command that changes data** declares `SupportsShouldProcess` and calls `$PSCmdlet.ShouldProcess()` once per item before changing it (RD04). `-WhatIf` is the dry run, and there's no separate dry-run switch. **Import is the exception:** its rows are one all-or-nothing batch (R27a), so it calls `ShouldProcess` once for the batch, with a summary such as "412 aliases: 380 new, 12 different", and under `-WhatIf` it still outputs every row's result, marked as not applied. **[analyzer]** `PSUseShouldProcessForStateChangingFunctions`, **[pester]**
-- **`ConfirmImpact`** is `High` for `Remove-*` and for import with `-Update`, and `Medium` otherwise. **[pester]**
+- **`ConfirmImpact`** is `High` for `Remove-*` and for import with `-Update`, and `Medium` otherwise. `Start-PagerArchiveBackup` changes the backup folder, so it calls `ShouldProcess` too, at `Medium`. **[pester]**
 - **`-Force`** only where a command asks for more than `ShouldProcess` (RD05, AD02). It never gets around a rule the API enforces. **[review]**
 - **What changes output:** `New-*` and `Import-*` output what they created or did. `Set-*`, `Rename-*` and `Remove-*` output nothing unless `-PassThru` is given (SD03). **[pester]**
 

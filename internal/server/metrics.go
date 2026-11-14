@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/subtle"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -47,17 +48,62 @@ func (c *pageCounts) get(outcome string) uint64 {
 
 // backupStatus is the nightly backups' state now (R86a).
 func (s *Server) backupStatus() backup.Status {
-	return backup.Read(s.BackupStatusFile, s.Now(), s.Started)
+	return backup.Current(s.BackupStatusFile, s.BackupRequestFile, s.Now(), s.Started)
 }
+
+// Back up now's refusals (R86a).
+const (
+	CodeBackupQueued    = "backup_queued"
+	CodeBackupRunning   = "backup_running"
+	CodeBackupOff       = "backup_off"
+	CodeBackupNoService = "backup_no_service"
+)
 
 // getBackup is GET /api/v1/admin/backup. With no status file set, the backups
 // aren't part of this deployment's stack, and the state says so.
 func (s *Server) getBackup(w http.ResponseWriter, r *http.Request) {
 	if s.BackupStatusFile == "" {
-		writeJSON(w, http.StatusOK, backup.Status{State: "off"})
+		writeJSON(w, http.StatusOK, backup.Status{State: "off", Run: backup.RunOff})
 		return
 	}
 	writeJSON(w, http.StatusOK, s.backupStatus())
+}
+
+// postBackup is POST /api/v1/admin/backup, Back up now (R86a): it asks the
+// backup service for the same backup and check as the nightly one, which it
+// starts within a minute. 202 with the state, which then says queued; one at a
+// time, so a request while one is queued or running is refused (409).
+func (s *Server) postBackup(w http.ResponseWriter, r *http.Request) {
+	if s.BackupStatusFile == "" || s.BackupRequestFile == "" {
+		writeJSON(w, http.StatusConflict, Problem{Code: CodeBackupOff,
+			Error: "This server's backups can't be started from here: it has no backup service, or its compose.yaml is from before Back up now."})
+		return
+	}
+	st, err := backup.Request(s.BackupStatusFile, s.BackupRequestFile, s.Now(), s.Started)
+	at := func(t *time.Time) string {
+		if t == nil {
+			return "a moment ago"
+		}
+		if s.Location != nil {
+			return t.In(s.Location).Format("15:04")
+		}
+		return t.UTC().Format("15:04 UTC")
+	}
+	switch {
+	case errors.Is(err, backup.ErrRunning):
+		writeJSON(w, http.StatusConflict, Problem{Code: CodeBackupRunning,
+			Error: fmt.Sprintf("A backup is running, since %s. Wait for its result, then ask again.", at(st.RunningSince))})
+	case errors.Is(err, backup.ErrQueued):
+		writeJSON(w, http.StatusConflict, Problem{Code: CodeBackupQueued,
+			Error: fmt.Sprintf("A backup was asked for at %s, and starts within a minute. Wait for its result, then ask again.", at(st.RequestedAt))})
+	case err != nil:
+		s.Log.Error("backup request", "error", err.Error())
+		writeJSON(w, http.StatusServiceUnavailable, Problem{Code: CodeBackupNoService,
+			Error: "The backup service hasn't started, so it can't be asked for a backup. Is the backup container running? docker compose ps backup"})
+	default:
+		s.Log.Info("backup asked for", "user", currentUser(r).ID)
+		writeJSON(w, http.StatusAccepted, st)
+	}
 }
 
 // metrics is the Prometheus endpoint for external monitoring (R52, A32).

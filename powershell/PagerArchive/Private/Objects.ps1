@@ -418,3 +418,44 @@ function Get-PaImportSummary {
     $tail = if ($templates -gt 0) { "; $templates new template$(if ($templates -ne 1) { 's' })" } else { '' }
     "${total} ${noun}: $($parts -join ', ')$tail"
 }
+function ConvertTo-PaBackup {
+    <#
+    .SYNOPSIS
+    A PagerArchive.Backup from the API's backup status (R86a).
+    #>
+    [CmdletBinding()]
+    [OutputType('PagerArchive.Backup')]
+    param(
+        # The API's status.
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [object] $Row
+    )
+    process {
+        $time = {
+            param($Name)
+            $p = $Row.PSObject.Properties[$Name]
+            if ($p -and $p.Value) { [datetimeoffset]$p.Value } else { $null }
+        }
+        $text = {
+            param($Name)
+            $p = $Row.PSObject.Properties[$Name]
+            if ($p -and $p.Value) { [string]$p.Value } else { '' }
+        }
+        $run = & $text 'run'
+        [pscustomobject]@{
+            PSTypeName           = 'PagerArchive.Backup'
+            State                = & $text 'state'
+            Run                  = if ($run) { $run } else { 'off' }
+            RequestedAt          = & $time 'requested_at'
+            RunningSince         = & $time 'running_since'
+            LastRunAt            = & $time 'last_run_at'
+            LastGoodAt           = & $time 'last_good_at'
+            LastGoodNight        = & $text 'last_good_night'
+            LastGoodBytes        = [long]$Row.last_good_bytes
+            LastGoodDumpSeconds  = [long]$Row.last_good_dump_seconds
+            LastGoodCheckSeconds = [long]$Row.last_good_check_seconds
+            Nights               = [int]$Row.nights
+            Error                = & $text 'error'
+        }
+    }
+}

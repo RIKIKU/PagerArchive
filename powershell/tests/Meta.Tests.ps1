@@ -58,7 +58,10 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
         $verb, $noun = $Name -split '-', 2
         $help = Get-Help -Name $Name -Full
         $source = $command.ScriptBlock.ToString()
-        $changes = $verb -in @('New', 'Set', 'Remove', 'Rename', 'Import')
+        $changes = $verb -in @('New', 'Set', 'Remove', 'Rename', 'Import', 'Start')
+        # Commands about the server's backups, not items, take nothing from
+        # the pipeline (guidelines section 3).
+        $noItems = $noun -eq 'PagerArchiveBackup'
     }
 
     It 'uses an approved verb' {
@@ -85,6 +88,10 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
     }
     It 'takes pipeline input in every parameter set, with at most one ValueFromPipeline' {
         foreach ($set in $command.ParameterSets) {
+            if ($noItems) {
+                @($set.Parameters | Where-Object -FilterScript { $_.ValueFromPipeline -or $_.ValueFromPipelineByPropertyName }) | Should -BeNullOrEmpty -Because 'it acts on no item'
+                continue
+            }
             $pipeline = @($set.Parameters | Where-Object -FilterScript { $_.ValueFromPipeline -or $_.ValueFromPipelineByPropertyName })
             $byValue = @($set.Parameters | Where-Object -FilterScript { $_.ValueFromPipeline })
             $pipeline.Count | Should -BeGreaterThan 0 -Because "parameter set $($set.Name)"

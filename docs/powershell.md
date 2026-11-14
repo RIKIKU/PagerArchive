@@ -177,6 +177,18 @@ Watch-PaMessage -JobNumber EX0000041 | Export-Csv job.csv -Append
 - **Proxies:** like every other command, the watch uses the system's proxy settings: `HTTPS_PROXY`, `HTTP_PROXY` and `NO_PROXY` if set, otherwise Windows' or macOS's own.
 - It's a convenience, not an alerting system: don't rely on it in place of an issued pager.
 
+## Backups
+
+```powershell
+Get-PagerArchiveBackup
+Start-PagerArchiveBackup -Wait
+Start-PagerArchiveBackup -Wait -Timeout (New-TimeSpan -Hours 2) -ErrorAction Stop
+```
+
+`Get-PagerArchiveBackup` (`Get-PaBackup`) says how the server's backups are going, as **Administration → Backups** does: `State` is `ok`, `waiting` (none yet on a new install), `failed` (`Error` says why), `overdue` (no good backup for 36 hours) or `off` (no backup service). `Run` is what the backup service is doing now: `idle`, `queued` (asked for: it starts within a minute), `running`, or `off` (backups can't be asked for on this server). It also has the last good backup's time, night, size and how long its dumps and check took.
+
+`Start-PagerArchiveBackup` (`Start-PaBackup`) backs up now, as the browser's **Back up now** does: the same backup and check as the nightly one, kept with the nightly backups and replacing any made earlier that day. Use it before a change you might want to undo, such as an upgrade. It returns once the server has the request; `-Wait` waits until the backup and its check are done, with progress, and writes an error if it failed (`backup_failed`) or isn't done within `-Timeout` (default 30 minutes; `backup_timeout`, and the backup carries on). `-PassThru` outputs the state, and `-WhatIf` asks for nothing. One at a time: while a backup is asked for or running, from here or the browser, another is refused (`backup_queued`, `backup_running`), with since when.
+
 ## Errors
 
 A refusal from PagerArchive is an error whose `ErrorId` is the API's code (e.g. `duplicate_alias`, `template_in_use`, `powershell_admins_only`) and whose message is the API's. A failure on one item doesn't stop the rest of the pipeline; not being signed in, or the server being unreachable, does.

@@ -484,3 +484,112 @@ Describe 'Wildcards to LIKE patterns' {
         $result.Exact | Should -Be $Exact
     }
 }
+
+Describe 'Backups: Get-PagerArchiveBackup and Start-PagerArchiveBackup (R86a)' {
+    BeforeAll {
+        # The API's status, as GET and POST /api/v1/admin/backup send it.
+        function New-ApiBackup([string] $Run = 'idle', [string] $State = 'ok', [string] $Why = '', [string] $LastRunAt = '2026-11-14T00:04:51Z') {
+            [pscustomobject]@{
+                state = $State; run = $Run; last_run_at = $LastRunAt; last_good_at = '2026-11-13T17:03:12Z'; last_good_night = '2026-11-14'
+                last_good_bytes = 52428800; last_good_dump_seconds = 41; last_good_check_seconds = 187; nights = 14; error = $Why
+                requested_at = if ($Run -in 'queued', 'running') { '2026-11-14T00:04:10Z' } else { $null }
+                running_since = if ($Run -eq 'running') { '2026-11-14T00:04:51Z' } else { $null }
+            }
+        }
+    }
+    BeforeEach {
+        & (Get-Module PagerArchive) { $script:BackupPollInterval = [timespan]::Zero }
+        $script:replies = [System.Collections.Generic.Queue[object]]::new()
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/backup' } -MockWith { New-ApiBackup -Run queued }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' -and $Path -eq '/api/v1/admin/backup' } -MockWith {
+            if ($script:replies.Count -gt 1) { $script:replies.Dequeue() } else { $script:replies.Peek() }
+        }
+    }
+    AfterAll {
+        & (Get-Module PagerArchive) { $script:BackupPollInterval = [timespan]::FromSeconds(5) }
+    }
+
+    It 'Get-PagerArchiveBackup outputs the state, with times as [datetimeoffset] and none as $null' {
+        $script:replies.Enqueue((New-ApiBackup))
+        $b = Get-PagerArchiveBackup
+        $b.PSObject.TypeNames[0] | Should -Be 'PagerArchive.Backup'
+        $b.State | Should -Be 'ok'
+        $b.Run | Should -Be 'idle'
+        $b.LastGoodAt | Should -BeOfType [datetimeoffset]
+        $b.LastGoodAt.UtcDateTime | Should -Be ([datetime]::new(2026, 11, 13, 17, 3, 12, [DateTimeKind]::Utc))
+        $b.RequestedAt | Should -BeNullOrEmpty
+        $b.RunningSince | Should -BeNullOrEmpty
+        $b.LastGoodBytes | Should -Be 52428800
+        $b.LastGoodCheckSeconds | Should -Be 187
+        ($b | Format-Table | Out-String) | Should -Match 'State\s+Run\s+LastGoodAt\s+LastRunAt\s+Nights\s+Error'
+    }
+    It '-WhatIf asks for nothing' {
+        $out = @(Start-PagerArchiveBackup -WhatIf -Wait -PassThru)
+        $out | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -Times 0 -Exactly
+    }
+    It 'asks once and returns at once, with nothing output unless -PassThru' {
+        @(Start-PagerArchiveBackup -Confirm:$false) | Should -BeNullOrEmpty
+        $b = Start-PagerArchiveBackup -PassThru -Confirm:$false
+        $b.Run | Should -Be 'queued'
+        $b.RequestedAt | Should -BeOfType [datetimeoffset]
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -Times 2 -Exactly
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' } -Times 0 -Exactly
+    }
+    It 'refused while one is running: an error with the API''s code, and nothing output' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'backup_running' -Status 409 -Message 'A backup is running, since 11:04. Wait for its result, then ask again.' })
+        }
+        $r = Split-Output @(Start-PagerArchiveBackup -Wait -PassThru -Confirm:$false 2>&1)
+        $r.Out | Should -BeNullOrEmpty
+        $r.Errors | Should -HaveCount 1
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'backup_running,Start-PagerArchiveBackup'
+        $r.Errors[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+        $r.Errors[0].Exception.Message | Should -BeLike 'A backup is running, since 11:04.*'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' } -Times 0 -Exactly
+    }
+    It 'stops when not signed in' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'not_connected' -Category AuthenticationError -Message 'Not signed in to PagerArchive.' })
+        }
+        { Start-PagerArchiveBackup -Confirm:$false -ErrorAction Continue } | Should -Throw -ErrorId 'not_connected,Start-PagerArchiveBackup'
+    }
+    It '-Wait follows it through queued and running to a good result' {
+        $script:replies.Enqueue((New-ApiBackup -Run queued))
+        $script:replies.Enqueue((New-ApiBackup -Run running))
+        $script:replies.Enqueue((New-ApiBackup -Run idle))
+        $r = Split-Output @(Start-PagerArchiveBackup -Wait -PassThru -Confirm:$false 2>&1)
+        $r.Errors | Should -BeNullOrEmpty
+        $r.Out | Should -HaveCount 1
+        $r.Out[0].Run | Should -Be 'idle'
+        $r.Out[0].State | Should -Be 'ok'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' } -Times 3 -Exactly
+    }
+    It '-Wait writes an error when the backup failed' {
+        $script:replies.Enqueue((New-ApiBackup -Run running))
+        $script:replies.Enqueue((New-ApiBackup -Run idle -State failed -Why 'the check found the pagerarchive restore differs from the dump at public.messages 12'))
+        $r = Split-Output @(Start-PagerArchiveBackup -Wait -Confirm:$false 2>&1)
+        $r.Out | Should -BeNullOrEmpty
+        $r.Errors | Should -HaveCount 1
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'backup_failed,Start-PagerArchiveBackup'
+        $r.Errors[0].Exception.Message | Should -Be 'The backup failed: the check found the pagerarchive restore differs from the dump at public.messages 12.'
+    }
+    It '-Wait writes an error when the service finished with no result for this backup' {
+        $script:replies.Enqueue((New-ApiBackup -Run idle -LastRunAt '2026-11-13T17:03:12Z'))
+        $r = Split-Output @(Start-PagerArchiveBackup -Wait -Confirm:$false 2>&1)
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'backup_no_result,Start-PagerArchiveBackup'
+    }
+    It '-Wait gives up after -Timeout, and the backup carries on' {
+        & (Get-Module PagerArchive) { $script:BackupPollInterval = [timespan]::FromMilliseconds(50) }
+        $script:replies.Enqueue((New-ApiBackup -Run running))
+        $r = Split-Output @(Start-PagerArchiveBackup -Wait -Timeout ([timespan]::FromMilliseconds(300)) -PassThru -Confirm:$false 2>&1)
+        $r.Errors | Should -HaveCount 1
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'backup_timeout,Start-PagerArchiveBackup'
+        $r.Errors[0].CategoryInfo.Category | Should -Be 'OperationTimeout'
+        $r.Errors[0].Exception.Message | Should -BeLike '*It carries on: Get-PagerArchiveBackup shows how it goes.'
+        $r.Out[0].Run | Should -Be 'running'
+    }
+    It 'refuses a -Timeout that isn''t positive' {
+        { Start-PagerArchiveBackup -Wait -Timeout ([timespan]::Zero) -Confirm:$false } | Should -Throw -ErrorId 'ParameterArgumentValidationError,Start-PagerArchiveBackup'
+    }
+}

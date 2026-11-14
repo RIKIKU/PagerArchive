@@ -60,7 +60,7 @@ area_of() {
 	scripts/a76.sh | scripts/a76-checks.sh) echo job:import ;;
 	scripts/a77.sh) echo job:upgrade ;;
 	scripts/a78.sh) echo job:install ;;
-	scripts/a80.sh | scripts/a80-size.sh) echo job:backups ;;
+	scripts/a80.sh | scripts/a80-size.sh | scripts/backup-checks.sh) echo job:backups ;;
 	scripts/a15.sh) echo job:budget ;;
 	scripts/monitoring-checks.sh | scripts/monitoring-screenshots.*) echo job:monitoring ;;
 	# Read by no check: run by hand, or by GitHub and Renovate themselves.
