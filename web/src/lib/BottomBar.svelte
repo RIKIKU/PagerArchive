@@ -2,10 +2,12 @@
 	// R81: phones get a bottom bar with Messages, Map, Albums and More; More
 	// opens the rest of the menu, without the pages that are desktop only (the
 	// print sheet, Administration). They still open from a link or bookmark.
+	// At the bottom of More, the build's version, as at the foot of the side
+	// menu (owner, 2026-11-14).
 	import Icon from './Icon.svelte';
 	import { entryOf, visible } from './nav.ts';
 
-	let { path, admin, listHref, mapHref }: { path: string; admin: boolean; listHref: string; mapHref: string } = $props();
+	let { path, admin, listHref, mapHref, version }: { path: string; admin: boolean; listHref: string; mapHref: string; version: string } = $props();
 
 	let dialog: HTMLDialogElement;
 	let more = $state(false);
@@ -53,6 +55,7 @@
 			{/each}
 		</ul>
 	{/each}
+	{#if version}<p class="version" data-testid="version">v{version}</p>{/if}
 </dialog>
 
 <style>
@@ -91,6 +94,13 @@
 	}
 	h3 a {
 		color: inherit;
+	}
+	.version {
+		margin: var(--space-lg) 0 0;
+		padding: 0 var(--space-md);
+		color: var(--muted);
+		font-size: var(--text-xxs);
+		overflow-wrap: anywhere;
 	}
 	.more ul {
 		margin: 0;

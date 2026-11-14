@@ -3092,6 +3092,77 @@ test('A70 phones', async ({ browser, request }, info) => {
 	}
 });
 
+// R77, R81 (owner, 2026-11-14): the build's version, just its tag ("v" and
+// what the API reports, such as v1.9.0 or v1.9.1-dev+abc1234), at the very
+// bottom of the side menu at 1,280 px, open and shrunk, and at the bottom of
+// More at 375 px; muted and small; for signed-in users only. Axe passes.
+test('R77 R81 the version at the foot of the menu', async ({ browser, request }, info) => {
+	const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
+	expect(typeof meta.version, 'meta reports the version').toBe('string');
+	expect(meta.version).not.toBe('');
+	const tag = `v${meta.version}`;
+	const looks = async (el: Locator, than: Locator) => {
+		const [mine, theirs] = await Promise.all([el, than].map((l) => l.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), color: getComputedStyle(e).color }))));
+		expect(mine.size, 'smaller than the menu').toBeLessThan(theirs.size);
+		return mine.color;
+	};
+	const muted = (page: Page) =>
+		page.evaluate(() => {
+			const probe = document.createElement('span');
+			probe.style.color = 'var(--muted)';
+			document.body.append(probe);
+			const c = getComputedStyle(probe).color;
+			probe.remove();
+			return c;
+		});
+	for (const role of ['user', 'admin'] as const) {
+		// Desktop: the last thing in the side menu, below Shrink menu.
+		const page = await (await signedIn(browser, role, { viewport: { width: 1280, height: 900 } })).newPage();
+		await page.goto('/');
+		await waitLive(page);
+		const nav = page.getByRole('navigation', { name: 'Main' });
+		const version = nav.getByTestId('version');
+		await expect(version).toHaveText(tag);
+		const shrink = nav.getByRole('button', { name: 'Shrink menu' });
+		const [v, s] = [await version.boundingBox(), await shrink.boundingBox()];
+		expect(v!.y, 'below Shrink menu').toBeGreaterThanOrEqual(s!.y + s!.height);
+		expect(await version.evaluate((e) => e.parentElement!.lastElementChild === e && !e.closest('.foot')!.nextElementSibling), 'the very bottom').toBe(true);
+		expect(await looks(version, nav.getByRole('link', { name: 'Messages', exact: true }))).toBe(await muted(page));
+		await page.screenshot({ path: info.outputPath(`version-menu-${role}.png`) });
+		expect(await axeOf(page), `${role}: axe, the menu at 1,280 px`).toEqual([]);
+		// Shrunk: still there, inside the narrow menu.
+		await shrink.click();
+		await expect(version).toHaveText(tag);
+		const [vs, ns] = [await version.boundingBox(), await nav.boundingBox()];
+		expect(vs!.x + vs!.width, 'inside the shrunk menu').toBeLessThanOrEqual(ns!.x + ns!.width + 1);
+		await page.screenshot({ path: info.outputPath(`version-shrunk-${role}.png`) });
+		expect(await axeOf(page), `${role}: axe, the shrunk menu`).toEqual([]);
+		await nav.getByRole('button', { name: 'Widen the menu' }).click();
+		await page.context().close();
+
+		// Phone: the bottom of More.
+		const phone = await (await signedIn(browser, role, { viewport: { width: 375, height: 740 }, hasTouch: true })).newPage();
+		await phone.goto('/');
+		await waitLive(phone);
+		await phone.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'More' }).click();
+		const more = phone.getByRole('dialog', { name: 'More' });
+		const inMore = more.getByTestId('version');
+		await expect(inMore).toHaveText(tag);
+		expect(await inMore.evaluate((e) => e.parentElement!.lastElementChild === e), 'the bottom of More').toBe(true);
+		expect(await looks(inMore, more.getByRole('link', { name: 'Profile', exact: true }))).toBe(await muted(phone));
+		expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll').toBe(true);
+		await phone.screenshot({ path: info.outputPath(`version-more-${role}.png`) });
+		expect(await axeOf(phone), `${role}: axe, More at 375 px`).toEqual([]);
+		await phone.context().close();
+	}
+	// Signed out: no menu, no version.
+	const out = await (await browser.newContext()).newPage();
+	await out.goto('/signin');
+	await expect(out.getByTestId('version')).toHaveCount(0);
+	await out.context().close();
+	console.log(`R77/R81: ${tag} at the foot of the side menu (open and shrunk) and of More, for the user and the admin; none signed out; axe clean`);
+});
+
 // WCAG 2.1 AA: 4.5:1 for text (1.4.3), 3:1 for focus rings, control borders
 // and the marks that show priority (1.4.11), each token as the browser
 // resolves it, in each look (R82d), light and dark. Priorities carry their

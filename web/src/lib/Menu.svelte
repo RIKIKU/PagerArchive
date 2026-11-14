@@ -5,7 +5,9 @@
 	// with a tooltip and an accessible name, and hovering over one or
 	// focusing it opens a panel of its pages. R44b, R55: Administration
 	// carries the count of alias requests waiting; R67: the print sheet its
-	// count of messages; R39: admins see when a receiver has gone quiet.
+	// count of messages; R39: admins see when a receiver has gone quiet. At
+	// the very bottom, the build's version, as the API reports it (owner,
+	// 2026-11-14).
 	import { albums } from './albums.svelte.ts';
 	import Icon from './Icon.svelte';
 	import { entryOf, messages, visible, type Entry, type Group } from './nav.ts';
@@ -17,8 +19,9 @@
 		listHref,
 		waiting,
 		sheetCount,
-		quiet
-	}: { path: string; admin: boolean; listHref: string; waiting: number; sheetCount: number; quiet: number } = $props();
+		quiet,
+		version
+	}: { path: string; admin: boolean; listHref: string; waiting: number; sheetCount: number; quiet: number; version: string } = $props();
 
 	const shrunk = $derived(menu.shrunk);
 	const current = $derived(entryOf(path));
@@ -123,6 +126,7 @@
 			>
 			{#if shrunk}<span class="tip" aria-hidden="true">Show the pages' names again</span>{/if}
 		</div>
+		{#if version}<p class="version" data-testid="version">v{version}</p>{/if}
 	</div>
 </div>
 
@@ -264,6 +268,20 @@
 	}
 	.shrink {
 		color: var(--muted);
+	}
+	/* Just the tag, muted and small; shrunk, it wraps to the narrow menu. */
+	.version {
+		margin: 0;
+		padding: var(--space-2xs) var(--space-sm) 0;
+		color: var(--muted);
+		font-size: var(--text-xxs);
+		line-height: var(--leading-tight);
+		overflow-wrap: anywhere;
+	}
+	.shrunk .version {
+		width: 100%;
+		padding: var(--space-2xs) 0 0;
+		text-align: center;
 	}
 
 	/* Shrunk: the group icons only; hovering over one or focusing it opens

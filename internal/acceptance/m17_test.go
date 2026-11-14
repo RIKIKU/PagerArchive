@@ -2,6 +2,7 @@ package acceptance
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
+	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
 // R84: the API sets up the locked-accounts metric's role itself, on every
@@ -116,4 +118,20 @@ ALTER TABLE authentik_stages_authenticator_email_emaildevice OWNER TO authentik`
 		t.Fatalf("after dropping the role: %v", err)
 	}
 	check(first)
+}
+
+// R77, R81 (owner, 2026-11-14): every signed-in user's meta carries the
+// build's version, as `pagerarchive version` reports it, for the foot of the
+// menu.
+func TestMenuVersionInMeta(t *testing.T) {
+	e := setup(t)
+	for name, m := range map[string]*member{"user": e.user, "admin": e.admin} {
+		var meta server.Meta
+		if code, p := m.call(http.MethodGet, "/api/v1/meta", nil, &meta); code != http.StatusOK {
+			t.Fatalf("%s: meta: %d %s", name, code, p.Error)
+		}
+		if meta.Version != "test" {
+			t.Errorf("%s: meta's version is %q, want the build's, %q", name, meta.Version, "test")
+		}
+	}
 }
