@@ -2706,7 +2706,7 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 	const watch = (p: Page) => p.on('request', (r) => !r.url().startsWith('data:') && origins.add(new globalThis.URL(r.url()).origin));
 	const expected = {
 		Tools: ['Print sheet', 'Unknown capcodes', 'Large events'],
-		Reports: ['Capcode report'],
+		Reports: ['Capcode report', 'Busiest capcodes', 'Busiest localities', "When it's busy", 'Event type mix', 'Job size', 'Long-running jobs', 'Appliance activity', 'Large events over time'],
 		Account: ['Profile', 'Integrations', 'My requests', 'Invite someone'],
 		Administration: ['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings']
 	};
