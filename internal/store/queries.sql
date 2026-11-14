@@ -28,7 +28,7 @@ RETURNING id;
 INSERT INTO aliases (pattern, name, template_id, ignored) VALUES ($1, $2, $3, $4) RETURNING id;
 
 -- name: AliasesMatching :many
-SELECT a.id, a.pattern, a.name, t.agency_profile
+SELECT a.id, a.pattern, a.name, a.ignored, t.agency_profile
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE sqlc.arg(capcode)::text LIKE a.pattern;
@@ -132,10 +132,15 @@ SELECT pg_notify('pagerarchive_reparse', '');
 DELETE FROM reparse_requests RETURNING capcode_pattern, reason;
 
 -- name: MessagesToReparse :many
-SELECT id, capcode, text, priority, heartbeat
-FROM messages
-WHERE capcode LIKE sqlc.arg(pattern)::text AND id > sqlc.arg(after_id)::bigint
-ORDER BY id
+-- R23a. in_event and live tell the re-parse which pages large events are
+-- rebuilt around (ADR 0027 §9): a page in an event, or a live page (one a
+-- client heard, not only an import: R83b) that may now count.
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.capcode LIKE sqlc.arg(pattern)::text AND m.id > sqlc.arg(after_id)::bigint
+ORDER BY m.id
 LIMIT sqlc.arg(batch)::int;
 
 -- name: UpdateParsed :exec
@@ -673,10 +678,13 @@ LIMIT sqlc.arg(batch)::int;
 UPDATE messages SET text = $2, dedup_key = $3 WHERE id = $1;
 
 -- name: MessagesByIDs :many
-SELECT id, capcode, text, priority, heartbeat
-FROM messages
-WHERE id = ANY(sqlc.arg(ids)::bigint[])
-ORDER BY id;
+-- As MessagesToReparse, for the messages retroactive redaction changed.
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY m.id;
 
 -- name: CapcodeReport :many
 -- R38: Emergency messages to one capcode in a date range, by event type.
@@ -1151,14 +1159,18 @@ DELETE FROM albums WHERE owner_id = $1;
 SELECT pg_advisory_xact_lock(4242008700);
 
 -- name: JobEventPages :many
--- The pages of a job that count (R87: Emergency, to an aliased capcode, not a
--- heartbeat), oldest first, with the event each is in, if any. One row per
--- stored message, so a copy from another receiver (R19) counts once towards
--- the job's number of Emergency pages.
+-- The pages of a job that count (R87: Emergency, to a capcode whose alias
+-- isn't ignored (R27; owner, 2026-11-14), not a heartbeat, and heard by a
+-- client: an imported page never counts, R83b), oldest first, with the event
+-- each is in, if any. One row per stored message, so a copy from another
+-- receiver (R19) counts once towards the job's number of Emergency pages.
+-- RegroupPages counts the same pages.
 SELECT m.id, m.sent_at, lem.event_id
 FROM messages m
+JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
 LEFT JOIN large_event_messages lem ON lem.message_id = m.id
-WHERE m.job_number = sqlc.arg(job_number)::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
+WHERE m.job_number = sqlc.arg(job_number)::text AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
 ORDER BY m.sent_at, m.id
 LIMIT 5000;
 
@@ -1265,3 +1277,84 @@ WHERE s.event_id = e.id AND (e.first_at <> s.first_at OR e.last_at <> s.last_at)
 -- name: LargeEventPages :one
 -- R87c, R87d: how many Emergency pages an event holds (all its pages count, R87).
 SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1;
+
+-- Rebuilding large events after a re-parse (R23a, R87; owner, 2026-11-14;
+-- ADR 0027 §9). Each runs in a rebuild's transaction, under LockLargeEvents.
+-- The pages that count are those JobEventPages counts.
+
+-- name: RegroupEventsNear :many
+-- The events pages sent between lo and hi could join (R87a): from 12 hours
+-- before an event's first page to 12 hours after its last. Oldest first.
+SELECT id, first_at, last_at FROM large_events
+WHERE last_at >= sqlc.arg(lo)::timestamptz - interval '12 hours'
+  AND first_at <= sqlc.arg(hi)::timestamptz + interval '12 hours'
+ORDER BY id;
+
+-- name: RegroupJobsExtent :one
+-- The first and last counting pages of every job with a counting page sent
+-- between lo and hi: a job's pages join its event whenever they were sent,
+-- so a rebuild takes them all. lo and hi themselves when there's none.
+WITH jobs AS (
+    SELECT DISTINCT m.job_number
+    FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+    WHERE m.sent_at BETWEEN sqlc.arg(lo)::timestamptz AND sqlc.arg(hi)::timestamptz
+      AND m.job_number IS NOT NULL AND m.priority = 'Emergency' AND NOT m.heartbeat
+      AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
+)
+SELECT COALESCE(min(m.sent_at), sqlc.arg(lo)::timestamptz)::timestamptz AS first_at,
+       COALESCE(max(m.sent_at), sqlc.arg(hi)::timestamptz)::timestamptz AS last_at
+FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+WHERE m.job_number IN (SELECT job_number FROM jobs)
+  AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id);
+
+-- name: RegroupPages :many
+-- The pages sent between lo and hi that count: the pages a rebuild groups.
+-- text is read for codes (R5), never logged.
+SELECT m.id, m.sent_at, m.job_number, m.text
+FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+WHERE m.sent_at BETWEEN sqlc.arg(lo)::timestamptz AND sqlc.arg(hi)::timestamptz
+  AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
+ORDER BY m.sent_at, m.id;
+
+-- name: RegroupMembers :many
+-- The pages that the events a rebuild replaces hold now.
+SELECT message_id, event_id FROM large_event_messages
+WHERE event_id = ANY(sqlc.arg(event_ids)::bigint[])
+ORDER BY event_id, message_id;
+
+-- name: PutLargeEventPages :exec
+-- A rebuild's pages, each into its event, moved from any other.
+INSERT INTO large_event_messages (message_id, event_id)
+SELECT unnest(sqlc.arg(message_ids)::bigint[]), unnest(sqlc.arg(event_ids)::bigint[])
+ON CONFLICT (message_id) DO UPDATE SET event_id = EXCLUDED.event_id;
+
+-- name: RemoveLargeEventPages :exec
+-- The pages a rebuild leaves in no event.
+DELETE FROM large_event_messages WHERE message_id = ANY(sqlc.arg(message_ids)::bigint[]);
+
+-- name: PutLargeEventSpan :exec
+-- A rebuilt event's first and last pages' times.
+UPDATE large_events SET first_at = sqlc.arg(first_at)::timestamptz, last_at = sqlc.arg(last_at)::timestamptz
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: RehomeEventDeliveries :execrows
+-- R87d after a rebuild, before the replaced events go: a large-event
+-- delivery stays with whatever event now holds the page that carried it.
+-- That is one about a replaced event, or one about no event whose page the
+-- rebuild put back into one (pages: those it put into events). If no event
+-- holds the page, the delivery is kept, about no event, and one not yet
+-- sent is cancelled: a rebuild never sends anything.
+UPDATE deliveries d SET
+    event_id = h.event_id,
+    status = CASE WHEN h.event_id IS NULL AND d.status = 'pending' THEN 'cancelled' ELSE d.status END,
+    next_attempt_at = CASE WHEN h.event_id IS NULL THEN NULL ELSE d.next_attempt_at END,
+    updated_at = now()
+FROM (SELECT d2.integration_id, d2.message_id, lem.event_id
+      FROM deliveries d2 LEFT JOIN large_event_messages lem ON lem.message_id = d2.message_id
+      JOIN integrations i ON i.id = d2.integration_id
+      WHERE d2.event_id = ANY(sqlc.arg(event_ids)::bigint[])
+         OR (d2.event_id IS NULL AND i.large_events AND d2.message_id = ANY(sqlc.arg(pages)::bigint[]))) h
+WHERE d.integration_id = h.integration_id AND d.message_id = h.message_id
+  AND d.event_id IS DISTINCT FROM h.event_id;

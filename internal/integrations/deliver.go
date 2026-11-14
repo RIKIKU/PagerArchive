@@ -301,6 +301,12 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 		return false
 	}
 	p := s.pageOf(*m, l.ownerRole == adminRole)
+	if d.EventID == nil && l.row.LargeEvents {
+		// A large-event integration is never sent a page: a delivery whose
+		// event a rebuild took away (ADR 0027 §9) is cancelled, not sent.
+		finish(statusCancelled, result{})
+		return false
+	}
 	if d.EventID != nil {
 		// A large event's delivery (R87d): its summary, never the page.
 		if !l.row.LargeEvents {

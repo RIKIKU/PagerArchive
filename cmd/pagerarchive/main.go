@@ -286,6 +286,7 @@ func serve(stderr io.Writer) error {
 	worker := &reparse.Worker{
 		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
 		ProfileHash: hash, Log: log, Poll: time.Minute, Tracer: tracer,
+		Regroup: &events.Regrouper{Network: net},
 	}
 	if err := worker.CheckProfiles(ctx); err != nil {
 		return fmt.Errorf("profile change check: %s", store.SafeError(err))
