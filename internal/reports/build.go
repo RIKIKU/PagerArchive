@@ -14,7 +14,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -49,10 +48,6 @@ type Service struct {
 	Log      *slog.Logger
 	// Poll is how often Run looks for jobs to count again.
 	Poll time.Duration
-
-	mu           sync.Mutex
-	eventTypes   []string // FilterOptions', kept for OptionsFresh
-	eventTypesAt time.Time
 }
 
 func (s *Service) tz() string {

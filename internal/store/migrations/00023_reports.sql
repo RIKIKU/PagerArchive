@@ -33,6 +33,9 @@ CREATE TABLE report_jobs (
 -- By day, holding what R38g needs to pick the longest jobs of a range of up
 -- to two years in an index-only scan.
 CREATE INDEX report_jobs_day_idx ON report_jobs (day) INCLUDE (first_at, last_at, template_id, event_type, priority, job_key);
+-- The event types jobs have, for the filter (R38a), skipped through in a few
+-- probes.
+CREATE INDEX report_jobs_event_type_idx ON report_jobs (event_type);
 -- R38g: the longest jobs first, for longer ranges.
 CREATE INDEX report_jobs_span_idx ON report_jobs ((last_at - first_at) DESC, first_at) WHERE last_at > first_at;
 

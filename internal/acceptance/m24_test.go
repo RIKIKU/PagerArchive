@@ -150,6 +150,16 @@ func TestA91BusiestCapcodes(t *testing.T) {
 	if want := "1 Station 1 2 100% was 1; 1 Station 2 2 100% was 0; 3 Station 3 1 50% was 0"; busiestRows(r) != want || r.Jobs != 2 {
 		t.Errorf("Emergency HSF1: %s (%d jobs)\nwant %s (2 jobs)", busiestRows(r), r.Jobs, want)
 	}
+	// The filters' values: every agency, and the event types jobs have.
+	var o server.ReportOptions
+	e.report("options", "", &o)
+	var types []string
+	for _, t := range o.EventTypes {
+		types = append(types, deref(t.Code)+" "+t.Label)
+	}
+	if strings.Join(o.Agencies, ", ") != "Example Fire Service, Example Rescue Service" || strings.Join(types, ", ") != "GRS3 Grass fire, HSF1 House fire, MED1 Medical assistance" {
+		t.Errorf("options: agencies %v, event types %v", o.Agencies, types)
+	}
 	// An empty range: no rows, no jobs.
 	e.report("busiest", "from=2026-01-01&to=2026-01-31", &r)
 	if len(r.Rows) != 0 || r.Jobs != 0 {

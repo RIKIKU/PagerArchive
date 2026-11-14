@@ -322,11 +322,9 @@ type Options struct {
 	EventTypes []string
 }
 
-// OptionsFresh is how long the event types are kept before they're counted
-// again: counting them reads every day's rows.
-const OptionsFresh = 5 * time.Minute
-
-// FilterOptions are the filters' values.
+// FilterOptions are the filters' values. The event types are found by
+// skipping through report_jobs' index on them: a probe per event type, not
+// a read of every job.
 func (s *Service) FilterOptions(ctx context.Context) (Options, error) {
 	var o Options
 	rows, err := s.Pool.Query(ctx, `SELECT DISTINCT agency FROM templates ORDER BY 1`)
@@ -336,24 +334,17 @@ func (s *Service) FilterOptions(ctx context.Context) (Options, error) {
 	if o.Agencies, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
 		return o, err
 	}
-	s.mu.Lock()
-	kept, at := s.eventTypes, s.eventTypesAt
-	s.mu.Unlock()
-	if time.Since(at) < OptionsFresh && kept != nil {
-		o.EventTypes = kept
-		return o, nil
-	}
-	rows, err = s.Pool.Query(ctx, `SELECT DISTINCT event_type FROM report_days WHERE kind = 'p' AND event_type <> '' ORDER BY 1`)
+	rows, err = s.Pool.Query(ctx, `WITH RECURSIVE t (event_type) AS (
+			(SELECT event_type FROM report_jobs WHERE event_type > '' ORDER BY event_type LIMIT 1)
+			UNION ALL
+			SELECT (SELECT j.event_type FROM report_jobs j WHERE j.event_type > t.event_type ORDER BY j.event_type LIMIT 1)
+			FROM t WHERE t.event_type IS NOT NULL)
+		SELECT event_type FROM t WHERE event_type IS NOT NULL`)
 	if err != nil {
 		return o, err
 	}
-	if o.EventTypes, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
-		return o, err
-	}
-	s.mu.Lock()
-	s.eventTypes, s.eventTypesAt = o.EventTypes, time.Now()
-	s.mu.Unlock()
-	return o, nil
+	o.EventTypes, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	return o, err
 }
 
 // ParseDay reads a YYYY-MM-DD day.

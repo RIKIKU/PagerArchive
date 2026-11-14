@@ -148,6 +148,11 @@ type ReportOptions struct {
 }
 
 func (s *Server) reportOptions(w http.ResponseWriter, r *http.Request) {
+	// The event types of the jobs counted so far, after those just changed.
+	if err := s.Reports.CatchUp(r.Context(), reportCatchUp); err != nil && !errors.Is(err, reports.ErrBusy) {
+		s.reportFailed(w, err)
+		return
+	}
 	o, err := s.Reports.FilterOptions(r.Context())
 	if err != nil {
 		s.reportFailed(w, err)

@@ -2739,6 +2739,8 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 				}
 				await link.click();
 				clicks++;
+				// The list's own heading is there before the page has gone.
+				await page.waitForURL((u) => u.pathname !== '/');
 				await expect(page.locator('main h1').first(), `${role}: ${g} > ${label}`).toBeVisible();
 				console.log(`A68 (${role}): ${g} > ${label} in ${clicks} click(s), ${Date.now() % 100000}`);
 				expect(clicks, `${g} > ${label}`).toBeLessThanOrEqual(2);
