@@ -3102,6 +3102,16 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 	expect(typeof meta.version, 'meta reports the version').toBe('string');
 	expect(meta.version).not.toBe('');
 	const tag = `v${meta.version}`;
+	const RELEASES = 'https://github.com/RIKIKU/PagerArchive/releases';
+	const hrefOf = (v: string) => (/^\d+\.\d+\.\d+$/.test(v) ? `${RELEASES}/tag/v${v}` : RELEASES);
+	// A link to the release's page on GitHub, or the list of releases for a
+	// build that isn't one (owner, 2026-11-15); a new tab, no opener or referrer.
+	const links = async (el: Locator, v: string) => {
+		await expect(el).toHaveAttribute('href', hrefOf(v));
+		await expect(el).toHaveAttribute('target', '_blank');
+		await expect(el).toHaveAttribute('rel', 'noopener noreferrer');
+		await expect(el).toHaveAccessibleName(`Release notes for v${v}`);
+	};
 	const looks = async (el: Locator, than: Locator) => {
 		const [mine, theirs] = await Promise.all([el, than].map((l) => l.evaluate((e) => ({ size: parseFloat(getComputedStyle(e).fontSize), color: getComputedStyle(e).color }))));
 		expect(mine.size, 'smaller than the menu').toBeLessThan(theirs.size);
@@ -3124,10 +3134,11 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 		const nav = page.getByRole('navigation', { name: 'Main' });
 		const version = nav.getByTestId('version');
 		await expect(version).toHaveText(tag);
+		await links(version, meta.version);
 		const shrink = nav.getByRole('button', { name: 'Shrink menu' });
 		const [v, s] = [await version.boundingBox(), await shrink.boundingBox()];
 		expect(v!.y, 'below Shrink menu').toBeGreaterThanOrEqual(s!.y + s!.height);
-		expect(await version.evaluate((e) => e.parentElement!.lastElementChild === e && !e.closest('.foot')!.nextElementSibling), 'the very bottom').toBe(true);
+		expect(await version.evaluate((e) => e.parentElement!.parentElement!.lastElementChild === e.parentElement && !e.closest('.foot')!.nextElementSibling), 'the very bottom').toBe(true);
 		expect(await looks(version, nav.getByRole('link', { name: 'Messages', exact: true }))).toBe(await muted(page));
 		await page.screenshot({ path: info.outputPath(`version-menu-${role}.png`) });
 		expect(await axeOf(page), `${role}: axe, the menu at 1,280 px`).toEqual([]);
@@ -3149,12 +3160,25 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 		const more = phone.getByRole('dialog', { name: 'More' });
 		const inMore = more.getByTestId('version');
 		await expect(inMore).toHaveText(tag);
-		expect(await inMore.evaluate((e) => e.parentElement!.lastElementChild === e), 'the bottom of More').toBe(true);
+		await links(inMore, meta.version);
+		expect(await inMore.evaluate((e) => e.parentElement!.parentElement!.lastElementChild === e.parentElement), 'the bottom of More').toBe(true);
 		expect(await looks(inMore, more.getByRole('link', { name: 'Profile', exact: true }))).toBe(await muted(phone));
 		expect(await phone.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll').toBe(true);
 		await phone.screenshot({ path: info.outputPath(`version-more-${role}.png`) });
 		expect(await axeOf(phone), `${role}: axe, More at 375 px`).toEqual([]);
 		await phone.context().close();
+	}
+	// A release and a dev build, whatever this build is: the API's answer stood in for.
+	for (const v of ['1.10.0', '0.0.0-dev', '1.9.1-dev+abc1234']) {
+		const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+		await page.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), version: v } }));
+		await page.goto('/');
+		const link = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: `Release notes for v${v}` });
+		await expect(link).toHaveText(`v${v}`);
+		await links(link, v);
+		await link.focus();
+		await expect(link).toBeFocused();
+		await page.context().close();
 	}
 	// Signed out: no menu, no version.
 	const out = await (await browser.newContext()).newPage();

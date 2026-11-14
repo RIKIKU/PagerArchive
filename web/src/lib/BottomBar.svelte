@@ -5,6 +5,7 @@
 	// At the bottom of More, the build's version, as at the foot of the side
 	// menu (owner, 2026-11-14).
 	import Icon from './Icon.svelte';
+	import { releaseHref } from './release.ts';
 	import { entryOf, visible } from './nav.ts';
 
 	let { path, admin, listHref, mapHref, version }: { path: string; admin: boolean; listHref: string; mapHref: string; version: string } = $props();
@@ -55,7 +56,7 @@
 			{/each}
 		</ul>
 	{/each}
-	{#if version}<p class="version" data-testid="version">v{version}</p>{/if}
+	{#if version}<p class="version"><a data-testid="version" href={releaseHref(version)} target="_blank" rel="noopener noreferrer" aria-label={`Release notes for v${version}`}>v{version}</a></p>{/if}
 </dialog>
 
 <style>
@@ -101,6 +102,9 @@
 		color: var(--muted);
 		font-size: var(--text-xxs);
 		overflow-wrap: anywhere;
+	}
+	.version a {
+		color: inherit;
 	}
 	.more ul {
 		margin: 0;

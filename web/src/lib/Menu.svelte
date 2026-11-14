@@ -10,6 +10,7 @@
 	// 2026-11-14).
 	import { albums } from './albums.svelte.ts';
 	import Icon from './Icon.svelte';
+	import { releaseHref } from './release.ts';
 	import { entryOf, messages, visible, type Entry, type Group } from './nav.ts';
 	import { isOpen, menu, toggleGroup, toggleShrunk } from './menu.svelte.ts';
 
@@ -126,7 +127,7 @@
 			>
 			{#if shrunk}<span class="tip" aria-hidden="true">Show the pages' names again</span>{/if}
 		</div>
-		{#if version}<p class="version" data-testid="version">v{version}</p>{/if}
+		{#if version}<p class="version"><a data-testid="version" href={releaseHref(version)} target="_blank" rel="noopener noreferrer" aria-label={`Release notes for v${version}`}>v{version}</a></p>{/if}
 	</div>
 </div>
 
@@ -277,6 +278,9 @@
 		font-size: var(--text-xxs);
 		line-height: var(--leading-tight);
 		overflow-wrap: anywhere;
+	}
+	.version a {
+		color: inherit;
 	}
 	.shrunk .version {
 		width: 100%;
