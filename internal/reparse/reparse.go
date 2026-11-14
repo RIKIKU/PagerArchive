@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
@@ -41,6 +42,9 @@ type Worker struct {
 	Poll        time.Duration
 	// Tracer traces each re-parse that has work (R72); nil traces nothing.
 	Tracer trace.Tracer
+	// Regroup rebuilds the large events around the re-parsed pages after
+	// each re-parse (R87; owner, 2026-11-14; ADR 0027 §9); nil rebuilds none.
+	Regroup *events.Regrouper
 }
 
 // CheckProfiles queues a full re-parse if the profiles or address dataset
@@ -119,6 +123,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	n := 0
+	var aff events.Affected
 	for pattern := range patterns {
 		var after int64
 		for {
@@ -128,7 +133,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 				return n, err
 			}
 			for _, m := range rows {
-				if err := w.reparse(ctx, cands, m); err != nil {
+				if err := w.reparse(ctx, cands, m, &aff); err != nil {
 					w.requeue(ctx, patterns)
 					return n, err
 				}
@@ -142,6 +147,10 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 	}
 	span.SetAttributes(attribute.Int("pagerarchive.reparse.messages", n))
 	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", len(reqs))
+	if err := w.regroup(ctx, &aff); err != nil {
+		w.requeue(ctx, patterns)
+		return n, err
+	}
 	return n, nil
 }
 
@@ -153,7 +162,7 @@ func (w *Worker) candidates(ctx context.Context) ([]ingest.Candidate, error) {
 	}
 	cands := make([]ingest.Candidate, len(aliases))
 	for i, a := range aliases {
-		cands[i] = ingest.Candidate{ID: a.ID, Pattern: a.Pattern, AgencyProfile: a.AgencyProfile}
+		cands[i] = ingest.Candidate{ID: a.ID, Pattern: a.Pattern, AgencyProfile: a.AgencyProfile, Ignored: a.Ignored}
 	}
 	return cands, nil
 }
@@ -172,15 +181,38 @@ func (w *Worker) ReparseIDs(ctx context.Context, ids []int64) error {
 	if err != nil {
 		return err
 	}
+	var aff events.Affected
 	for _, m := range rows {
-		if err := w.reparse(ctx, cands, db.MessagesToReparseRow(m)); err != nil {
+		if err := w.reparse(ctx, cands, db.MessagesToReparseRow(m), &aff); err != nil {
 			return err
 		}
 	}
+	return w.regroup(ctx, &aff)
+}
+
+// regroup rebuilds the large events around the re-parsed pages that aff
+// holds (R87; owner, 2026-11-14). It sends nothing (R87d).
+func (w *Worker) regroup(ctx context.Context, aff *events.Affected) error {
+	if w.Regroup == nil || aff.Len() == 0 {
+		return nil
+	}
+	ctx, span := telemetry.Or(w.Tracer).Start(ctx, "reparse.events")
+	defer span.End()
+	start := time.Now()
+	r, err := w.Regroup.Rebuild(ctx, w.Store, aff)
+	if err != nil {
+		return err
+	}
+	span.SetAttributes(attribute.Int("pagerarchive.reparse.event_batches", r.Batches), attribute.Int("pagerarchive.reparse.event_pages", r.Pages))
+	w.Log.InfoContext(ctx, "rebuilt large events", "batches", r.Batches, "pages", r.Pages, "events", r.Events,
+		"created", r.Created, "deleted", r.Deleted, "moved", r.Moved, "ms", time.Since(start).Milliseconds(), "longest_batch_ms", r.Longest.Milliseconds())
 	return nil
 }
 
-func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.MessagesToReparseRow) error {
+// reparse re-parses one message. A page in a large event, or a live page
+// that now counts and has a job or a code, is added to aff: the events around
+// it are rebuilt afterwards (Worker.regroup).
+func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) error {
 	var matching []ingest.Candidate
 	for _, c := range cands {
 		if ingest.LikeMatch(c.Pattern, m.Capcode) {
@@ -189,8 +221,10 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 	}
 	var aliasID *int64
 	var agency *profile.Agency
+	ignored := false
 	if best := ingest.BestAlias(matching); best != nil {
 		aliasID = &best.ID
+		ignored = best.Ignored
 		if best.AgencyProfile != nil {
 			agency = w.Agencies[*best.AgencyProfile]
 		}
@@ -210,6 +244,10 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 		LargeEventField: f.LargeEventField,
 	}); err != nil {
 		return err
+	}
+	p := events.Page{ID: m.ID, SentAt: m.SentAt, Text: m.Text, Priority: m.Priority, AliasID: aliasID, Ignored: ignored, Heartbeat: m.Heartbeat, Job: f.JobNumber}
+	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || f.LargeEventField || events.HasCode(w.Network, m.Text))) {
+		aff.Add(m.SentAt)
 	}
 	return ingest.Locate(ctx, w.Geo, w.Store.Queries, m.ID, f)
 }

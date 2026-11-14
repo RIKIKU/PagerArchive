@@ -699,7 +699,7 @@ func (q *Queries) AliasView(ctx context.Context, id int64) (AliasViewRow, error)
 }
 
 const aliasesMatching = `-- name: AliasesMatching :many
-SELECT a.id, a.pattern, a.name, t.agency_profile
+SELECT a.id, a.pattern, a.name, a.ignored, t.agency_profile
 FROM aliases a
 LEFT JOIN templates t ON t.id = a.template_id
 WHERE $1::text LIKE a.pattern
@@ -709,6 +709,7 @@ type AliasesMatchingRow struct {
 	ID            int64
 	Pattern       string
 	Name          string
+	Ignored       bool
 	AgencyProfile *string
 }
 
@@ -725,6 +726,7 @@ func (q *Queries) AliasesMatching(ctx context.Context, capcode string) ([]Aliase
 			&i.ID,
 			&i.Pattern,
 			&i.Name,
+			&i.Ignored,
 			&i.AgencyProfile,
 		); err != nil {
 			return nil, err
@@ -2862,8 +2864,10 @@ func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]Invit
 const jobEventPages = `-- name: JobEventPages :many
 SELECT m.id, m.sent_at, lem.event_id
 FROM messages m
+JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
 LEFT JOIN large_event_messages lem ON lem.message_id = m.id
-WHERE m.job_number = $1::text AND m.priority = 'Emergency' AND m.alias_id IS NOT NULL AND NOT m.heartbeat
+WHERE m.job_number = $1::text AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
 ORDER BY m.sent_at, m.id
 LIMIT 5000
 `
@@ -2874,10 +2878,12 @@ type JobEventPagesRow struct {
 	EventID *int64
 }
 
-// The pages of a job that count (R87: Emergency, to an aliased capcode, not a
-// heartbeat), oldest first, with the event each is in, if any. One row per
-// stored message, so a copy from another receiver (R19) counts once towards
-// the job's number of Emergency pages.
+// The pages of a job that count (R87: Emergency, to a capcode whose alias
+// isn't ignored (R27; owner, 2026-11-14), not a heartbeat, and heard by a
+// client: an imported page never counts, R83b), oldest first, with the event
+// each is in, if any. One row per stored message, so a copy from another
+// receiver (R19) counts once towards the job's number of Emergency pages.
+// RegroupPages counts the same pages.
 func (q *Queries) JobEventPages(ctx context.Context, jobNumber string) ([]JobEventPagesRow, error) {
 	rows, err := q.db.Query(ctx, jobEventPages, jobNumber)
 	if err != nil {
@@ -3813,10 +3819,12 @@ func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]Mes
 }
 
 const messagesByIDs = `-- name: MessagesByIDs :many
-SELECT id, capcode, text, priority, heartbeat
-FROM messages
-WHERE id = ANY($1::bigint[])
-ORDER BY id
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.id = ANY($1::bigint[])
+ORDER BY m.id
 `
 
 type MessagesByIDsRow struct {
@@ -3825,8 +3833,12 @@ type MessagesByIDsRow struct {
 	Text      string
 	Priority  *string
 	Heartbeat bool
+	SentAt    time.Time
+	InEvent   bool
+	Live      bool
 }
 
+// As MessagesToReparse, for the messages retroactive redaction changed.
 func (q *Queries) MessagesByIDs(ctx context.Context, ids []int64) ([]MessagesByIDsRow, error) {
 	rows, err := q.db.Query(ctx, messagesByIDs, ids)
 	if err != nil {
@@ -3842,6 +3854,9 @@ func (q *Queries) MessagesByIDs(ctx context.Context, ids []int64) ([]MessagesByI
 			&i.Text,
 			&i.Priority,
 			&i.Heartbeat,
+			&i.SentAt,
+			&i.InEvent,
+			&i.Live,
 		); err != nil {
 			return nil, err
 		}
@@ -3892,10 +3907,12 @@ func (q *Queries) MessagesForRedaction(ctx context.Context, arg MessagesForRedac
 }
 
 const messagesToReparse = `-- name: MessagesToReparse :many
-SELECT id, capcode, text, priority, heartbeat
-FROM messages
-WHERE capcode LIKE $1::text AND id > $2::bigint
-ORDER BY id
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.capcode LIKE $1::text AND m.id > $2::bigint
+ORDER BY m.id
 LIMIT $3::int
 `
 
@@ -3911,8 +3928,14 @@ type MessagesToReparseRow struct {
 	Text      string
 	Priority  *string
 	Heartbeat bool
+	SentAt    time.Time
+	InEvent   bool
+	Live      bool
 }
 
+// R23a. in_event and live tell the re-parse which pages large events are
+// rebuilt around (ADR 0027 §9): a page in an event, or a live page (one a
+// client heard, not only an import: R83b) that may now count.
 func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparseParams) ([]MessagesToReparseRow, error) {
 	rows, err := q.db.Query(ctx, messagesToReparse, arg.Pattern, arg.AfterID, arg.Batch)
 	if err != nil {
@@ -3928,6 +3951,9 @@ func (q *Queries) MessagesToReparse(ctx context.Context, arg MessagesToReparsePa
 			&i.Text,
 			&i.Priority,
 			&i.Heartbeat,
+			&i.SentAt,
+			&i.InEvent,
+			&i.Live,
 		); err != nil {
 			return nil, err
 		}
@@ -4120,6 +4146,40 @@ func (q *Queries) PruneDeliveries(ctx context.Context, before time.Time) (int64,
 	return result.RowsAffected(), nil
 }
 
+const putLargeEventPages = `-- name: PutLargeEventPages :exec
+INSERT INTO large_event_messages (message_id, event_id)
+SELECT unnest($1::bigint[]), unnest($2::bigint[])
+ON CONFLICT (message_id) DO UPDATE SET event_id = EXCLUDED.event_id
+`
+
+type PutLargeEventPagesParams struct {
+	MessageIds []int64
+	EventIds   []int64
+}
+
+// A rebuild's pages, each into its event, moved from any other.
+func (q *Queries) PutLargeEventPages(ctx context.Context, arg PutLargeEventPagesParams) error {
+	_, err := q.db.Exec(ctx, putLargeEventPages, arg.MessageIds, arg.EventIds)
+	return err
+}
+
+const putLargeEventSpan = `-- name: PutLargeEventSpan :exec
+UPDATE large_events SET first_at = $1::timestamptz, last_at = $2::timestamptz
+WHERE id = $3::bigint
+`
+
+type PutLargeEventSpanParams struct {
+	FirstAt time.Time
+	LastAt  time.Time
+	ID      int64
+}
+
+// A rebuilt event's first and last pages' times.
+func (q *Queries) PutLargeEventSpan(ctx context.Context, arg PutLargeEventSpanParams) error {
+	_, err := q.db.Exec(ctx, putLargeEventSpan, arg.FirstAt, arg.LastAt, arg.ID)
+	return err
+}
+
 const reactivateUser = `-- name: ReactivateUser :execrows
 UPDATE users SET status = 'active', deactivated_at = NULL WHERE id = $1 AND status = 'deactivated'
 `
@@ -4250,6 +4310,198 @@ func (q *Queries) RefreshLargeEventSpans(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const regroupEventsNear = `-- name: RegroupEventsNear :many
+
+SELECT id, first_at, last_at FROM large_events
+WHERE last_at >= $1::timestamptz - interval '12 hours'
+  AND first_at <= $2::timestamptz + interval '12 hours'
+ORDER BY id
+`
+
+type RegroupEventsNearParams struct {
+	Lo time.Time
+	Hi time.Time
+}
+
+type RegroupEventsNearRow struct {
+	ID      int64
+	FirstAt time.Time
+	LastAt  time.Time
+}
+
+// Rebuilding large events after a re-parse (R23a, R87; owner, 2026-11-14;
+// ADR 0027 §9). Each runs in a rebuild's transaction, under LockLargeEvents.
+// The pages that count are those JobEventPages counts.
+// The events pages sent between lo and hi could join (R87a): from 12 hours
+// before an event's first page to 12 hours after its last. Oldest first.
+func (q *Queries) RegroupEventsNear(ctx context.Context, arg RegroupEventsNearParams) ([]RegroupEventsNearRow, error) {
+	rows, err := q.db.Query(ctx, regroupEventsNear, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RegroupEventsNearRow
+	for rows.Next() {
+		var i RegroupEventsNearRow
+		if err := rows.Scan(&i.ID, &i.FirstAt, &i.LastAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const regroupJobsExtent = `-- name: RegroupJobsExtent :one
+WITH jobs AS (
+    SELECT DISTINCT m.job_number
+    FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+    WHERE m.sent_at BETWEEN $1::timestamptz AND $2::timestamptz
+      AND m.job_number IS NOT NULL AND m.priority = 'Emergency' AND NOT m.heartbeat
+      AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
+)
+SELECT COALESCE(min(m.sent_at), $1::timestamptz)::timestamptz AS first_at,
+       COALESCE(max(m.sent_at), $2::timestamptz)::timestamptz AS last_at
+FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+WHERE m.job_number IN (SELECT job_number FROM jobs)
+  AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
+`
+
+type RegroupJobsExtentParams struct {
+	Lo time.Time
+	Hi time.Time
+}
+
+type RegroupJobsExtentRow struct {
+	FirstAt time.Time
+	LastAt  time.Time
+}
+
+// The first and last counting pages of every job with a counting page sent
+// between lo and hi: a job's pages join its event whenever they were sent,
+// so a rebuild takes them all. lo and hi themselves when there's none.
+func (q *Queries) RegroupJobsExtent(ctx context.Context, arg RegroupJobsExtentParams) (RegroupJobsExtentRow, error) {
+	row := q.db.QueryRow(ctx, regroupJobsExtent, arg.Lo, arg.Hi)
+	var i RegroupJobsExtentRow
+	err := row.Scan(&i.FirstAt, &i.LastAt)
+	return i, err
+}
+
+const regroupMembers = `-- name: RegroupMembers :many
+SELECT message_id, event_id FROM large_event_messages
+WHERE event_id = ANY($1::bigint[])
+ORDER BY event_id, message_id
+`
+
+// The pages that the events a rebuild replaces hold now.
+func (q *Queries) RegroupMembers(ctx context.Context, eventIds []int64) ([]LargeEventMessage, error) {
+	rows, err := q.db.Query(ctx, regroupMembers, eventIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEventMessage
+	for rows.Next() {
+		var i LargeEventMessage
+		if err := rows.Scan(&i.MessageID, &i.EventID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const regroupPages = `-- name: RegroupPages :many
+SELECT m.id, m.sent_at, m.job_number, m.text, m.large_event_field
+FROM messages m JOIN aliases a ON a.id = m.alias_id AND NOT a.ignored
+WHERE m.sent_at BETWEEN $1::timestamptz AND $2::timestamptz
+  AND m.priority = 'Emergency' AND NOT m.heartbeat
+  AND EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id)
+ORDER BY m.sent_at, m.id
+`
+
+type RegroupPagesParams struct {
+	Lo time.Time
+	Hi time.Time
+}
+
+type RegroupPagesRow struct {
+	ID              int64
+	SentAt          time.Time
+	JobNumber       *string
+	Text            string
+	LargeEventField bool
+}
+
+// The pages sent between lo and hi that count: the pages a rebuild groups.
+// text is read for codes (R5), never logged; large_event_field is a field
+// value its agency profile lists (R7), which opens an event as a code does.
+func (q *Queries) RegroupPages(ctx context.Context, arg RegroupPagesParams) ([]RegroupPagesRow, error) {
+	rows, err := q.db.Query(ctx, regroupPages, arg.Lo, arg.Hi)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RegroupPagesRow
+	for rows.Next() {
+		var i RegroupPagesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SentAt,
+			&i.JobNumber,
+			&i.Text,
+			&i.LargeEventField,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const rehomeEventDeliveries = `-- name: RehomeEventDeliveries :execrows
+UPDATE deliveries d SET
+    event_id = h.event_id,
+    status = CASE WHEN h.event_id IS NULL AND d.status = 'pending' THEN 'cancelled' ELSE d.status END,
+    next_attempt_at = CASE WHEN h.event_id IS NULL THEN NULL ELSE d.next_attempt_at END,
+    updated_at = now()
+FROM (SELECT d2.integration_id, d2.message_id, lem.event_id
+      FROM deliveries d2 LEFT JOIN large_event_messages lem ON lem.message_id = d2.message_id
+      JOIN integrations i ON i.id = d2.integration_id
+      WHERE d2.event_id = ANY($1::bigint[])
+         OR (d2.event_id IS NULL AND i.large_events AND d2.message_id = ANY($2::bigint[]))) h
+WHERE d.integration_id = h.integration_id AND d.message_id = h.message_id
+  AND d.event_id IS DISTINCT FROM h.event_id
+`
+
+type RehomeEventDeliveriesParams struct {
+	EventIds []int64
+	Pages    []int64
+}
+
+// R87d after a rebuild, before the replaced events go: a large-event
+// delivery stays with whatever event now holds the page that carried it.
+// That is one about a replaced event, or one about no event whose page the
+// rebuild put back into one (pages: those it put into events). If no event
+// holds the page, the delivery is kept, about no event, and one not yet
+// sent is cancelled: a rebuild never sends anything.
+func (q *Queries) RehomeEventDeliveries(ctx context.Context, arg RehomeEventDeliveriesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rehomeEventDeliveries, arg.EventIds, arg.Pages)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const relinkUser = `-- name: RelinkUser :exec
 UPDATE users SET subject = $2, name = $3, invited_by = $4, status = 'active', deactivated_at = NULL
 WHERE id = $1
@@ -4293,6 +4545,16 @@ func (q *Queries) RemoveFromAlbum(ctx context.Context, arg RemoveFromAlbumParams
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const removeLargeEventPages = `-- name: RemoveLargeEventPages :exec
+DELETE FROM large_event_messages WHERE message_id = ANY($1::bigint[])
+`
+
+// The pages a rebuild leaves in no event.
+func (q *Queries) RemoveLargeEventPages(ctx context.Context, messageIds []int64) error {
+	_, err := q.db.Exec(ctx, removeLargeEventPages, messageIds)
+	return err
 }
 
 const requestReparse = `-- name: RequestReparse :exec

@@ -125,7 +125,7 @@ func (s *Service) Candidates(ctx context.Context, q *db.Queries, capcode string)
 	}
 	cands := make([]Candidate, len(rows))
 	for i, r := range rows {
-		cands[i] = Candidate{ID: r.ID, Pattern: r.Pattern, AgencyProfile: r.AgencyProfile}
+		cands[i] = Candidate{ID: r.ID, Pattern: r.Pattern, AgencyProfile: r.AgencyProfile, Ignored: r.Ignored}
 	}
 	return cands, nil
 }
@@ -135,6 +135,7 @@ type Draft struct {
 	Params     db.InsertMessageParams
 	Fields     Fields
 	ReceivedAt time.Time
+	Ignored    bool // its alias is marked ignored (R27): it doesn't count towards large events
 }
 
 // Draft parses a prepared page with the alias that wins among cands (R3, R27).
@@ -142,9 +143,11 @@ func (s *Service) Draft(prep pipeline.Prepared, cands []Candidate, pg Page) (Dra
 	alias := BestAlias(cands)
 	var aliasID *int64
 	var agency *profile.Agency
+	ignored := false
 	if alias != nil {
 		aliasID = &alias.ID
 		agency = s.agencyFor(alias.AgencyProfile)
+		ignored = alias.Ignored
 	}
 	parsed := pipeline.Parse(s.Network, agency, s.Streets, prep)
 	fields, err := FieldsOf(parsed)
@@ -153,7 +156,7 @@ func (s *Service) Draft(prep pipeline.Prepared, cands []Candidate, pg Page) (Dra
 	}
 	params := messageParams(prep, fields, pg)
 	params.AliasID = aliasID
-	return Draft{Params: params, Fields: fields, ReceivedAt: pg.ReceivedAt}, nil
+	return Draft{Params: params, Fields: fields, ReceivedAt: pg.ReceivedAt, Ignored: ignored}, nil
 }
 
 // Save merges a page into the message it duplicates (R19, R21) or stores it
@@ -201,7 +204,7 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 		if s.Events != nil {
 			ectx, espan := tr.Start(ctx, "ingest.events")
 			err := s.Events.Stored(ectx, q, events.Page{ID: id, SentAt: d.Params.SentAt, Text: d.Params.Text, Priority: d.Params.Priority,
-				AliasID: d.Params.AliasID, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber, LargeEventField: d.Fields.LargeEventField})
+				AliasID: d.Params.AliasID, Ignored: d.Ignored, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber, LargeEventField: d.Fields.LargeEventField})
 			espan.End()
 			if err != nil {
 				return "", 0, err
@@ -296,6 +299,7 @@ type Candidate struct {
 	ID            int64
 	Pattern       string
 	AgencyProfile *string
+	Ignored       bool // marked ignored (R27)
 }
 
 // BestAlias picks the alias that wins for a capcode among those whose pattern

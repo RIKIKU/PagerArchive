@@ -75,7 +75,7 @@ The API loads the dataset into the database before it starts listening, but only
 
   Problems that stop the server and fail `validate-profile`: a field no format extracts (a named group not starting with `_`, or an `address_split` output), a list field (`units`, or any field a format splits), the same field in two rules, no values, an empty value or one listed twice, a value with a space at either end (extracted values are trimmed, so it could never match), and a rule without `field` or `values` or with any other key.
 
-  The flag is worked out when a page is parsed and stored with it, so a change to the rule applies to older pages when they're re-parsed (R23a), which a changed profile does at start-up.
+  The flag is worked out when a page is parsed and stored with it, so a change to the rule applies to older pages when they're re-parsed (R23a), which a changed profile does at start-up. The re-parse then rebuilds the large events around them (R87f): older pages at a listed value form events, and no integration is told of them.
 
 A page whose capcode has an agency profile but matches no format is stored in full and flagged `parse_failed` (admins only).
 

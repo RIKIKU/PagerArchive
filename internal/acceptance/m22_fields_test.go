@@ -142,25 +142,109 @@ func TestFieldValueJoinsCodeEvents(t *testing.T) {
 	}
 }
 
-// R23a: the flag is a parsed column, so a re-parse with a changed rule
-// changes it. (A re-parse doesn't regroup events on this branch; see ADR
-// 0029.)
-func TestFieldValueFollowsReparse(t *testing.T) {
+// reparseAll queues a re-parse of every page, as a changed profile does at
+// start-up (R23a), and runs it, rebuilding the events around them (R87f).
+func (e *env) reparseAll() {
+	e.t.Helper()
+	if err := e.st.RequestReparse(e.ctx, db.RequestReparseParams{CapcodePattern: "%", Reason: "profiles changed"}); err != nil {
+		e.t.Fatal(err)
+	}
+	e.reparseNow()
+}
+
+// withoutRule makes ingest and the re-parse worker use the example agency
+// without its large_event_fields, and returns the agencies they had.
+func (e *env) withoutRule() map[string]*profile.Agency {
+	e.t.Helper()
+	was := e.srv.Ingest.Agencies
+	fire := *was["example-fire"]
+	fire.LargeEventFields = nil
+	none := map[string]*profile.Agency{"example-fire": &fire}
+	e.srv.Ingest.Agencies, e.worker.Agencies = none, none
+	return was
+}
+
+// R87f: a rebuild (here after every page is re-parsed) keeps an event a
+// field value opened, with its ID and pages, and sends nothing.
+func TestRebuildKeepsFieldValueEvents(t *testing.T) {
 	e := setup(t)
-	id := e.mustPost("a", "0100001", alarmPage("EX0000321", "2", "STN1"), e.now).MessageID
-	if e.largeEventField(id) {
-		t.Fatal("level 2 stored as listed")
+	e.allowLoopback()
+	e.runWorker()
+	hook := standin.Webhook()
+	defer hook.Close()
+	e.createIntegration(e.user, integrations.Request{Name: "Large events", Kind: integrations.Webhook, LargeEvents: true,
+		Secrets: integrations.Secrets{URL: hook.URL + "/hook"}})
+	at := e.now.Add(-time.Minute)
+	opener := e.mustPost("a", "0100001", alarmPage("EX0000331", "3", "STN1"), at).MessageID
+	// Level 2 on another job: in no event, before the rebuild or after.
+	e.mustPost("a", "0100002", alarmPage("EX0000332", "2", "STN2"), at.Add(10*time.Second))
+	evs := e.largeEvents(e.user)
+	if len(evs) != 1 {
+		t.Fatalf("before the re-parse: %+v, want one event", evs)
 	}
-	fire := *e.srv.Ingest.Agencies["example-fire"]
-	fire.LargeEventFields = []profile.LargeEventField{{Field: "alarm_level", Values: map[string]bool{"2": true}}}
-	e.worker.Agencies = map[string]*profile.Agency{"example-fire": &fire}
-	if err := e.st.RequestReparse(e.ctx, db.RequestReparseParams{CapcodePattern: "%", Reason: "test"}); err != nil {
-		t.Fatal(err)
+	id := evs[0].ID
+	if !eventually(5*time.Second, func() bool { return len(hook.Requests()) == 1 }) {
+		t.Fatalf("the event's delivery: %d, want 1", len(hook.Requests()))
 	}
-	if _, err := e.worker.RunOnce(e.ctx); err != nil {
-		t.Fatal(err)
+
+	e.reparseAll()
+	evs = e.largeEvents(e.user)
+	if len(evs) != 1 || evs[0].ID != id || evs[0].EmergencyPages != 1 || evs[0].Jobs != 1 {
+		t.Fatalf("after the rebuild: %+v, want event %d still, with 1 page", evs, id)
 	}
-	if !e.largeEventField(id) {
-		t.Error("after a re-parse listing 2, the page isn't flagged")
+	if held := e.heldBy(id); len(held) != 1 || held[0] != opener {
+		t.Errorf("after the rebuild the event holds %v, want [%d]", held, opener)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if n := len(hook.Requests()); n != 1 {
+		t.Errorf("after the rebuild: %d deliveries, want still 1", n)
+	}
+}
+
+// R23a, R87f: pages stored before the profile listed their level open no
+// event; once the rule is added and the pages re-parsed (a changed profile
+// re-parses everything at start-up), the rebuild forms the events live
+// ingest would have made, from the listed levels only, and tells no
+// integration (R87d: only live ingest does).
+func TestRuleAddedThenReparseFormsEvents(t *testing.T) {
+	e := setup(t)
+	e.allowLoopback()
+	e.runWorker()
+	hook := standin.Webhook()
+	defer hook.Close()
+	v := e.createIntegration(e.user, integrations.Request{Name: "Large events", Kind: integrations.Webhook, LargeEvents: true,
+		Secrets: integrations.Secrets{URL: hook.URL + "/hook"}})
+	withRule := e.withoutRule()
+
+	at := e.now.Add(-30 * time.Hour)
+	l3 := e.mustPost("a", "0100001", alarmPage("EX0000341", "3", "STN1"), at).MessageID
+	l2 := e.mustPost("a", "0100002", alarmPage("EX0000342", "2", "STN2"), at.Add(time.Hour)).MessageID
+	l5 := e.mustPost("a", "0100003", alarmPage("EX0000343", "5", "STN3"), at.Add(20*time.Hour)).MessageID
+	if evs := e.largeEvents(e.user); len(evs) != 0 {
+		t.Fatalf("with no rule: %d events, want none", len(evs))
+	}
+	if e.largeEventField(l3) || e.largeEventField(l5) {
+		t.Fatal("with no rule, pages are flagged")
+	}
+
+	e.worker.Agencies = withRule
+	e.reparseAll()
+	if !e.largeEventField(l3) || e.largeEventField(l2) || !e.largeEventField(l5) {
+		t.Errorf("after the re-parse: flags %v %v %v, want true false true", e.largeEventField(l3), e.largeEventField(l2), e.largeEventField(l5))
+	}
+	// Level 3 and level 5 are 20 hours apart: two events, each of one page.
+	evs := e.largeEvents(e.user)
+	if len(evs) != 2 || evs[0].EmergencyPages != 1 || evs[1].EmergencyPages != 1 {
+		t.Fatalf("after the re-parse: %+v, want two events of one page each", evs)
+	}
+	if a, b := e.heldBy(evs[1].ID), e.heldBy(evs[0].ID); len(a) != 1 || a[0] != l3 || len(b) != 1 || b[0] != l5 {
+		t.Errorf("the events hold %v and %v, want [%d] and [%d]", a, b, l3, l5)
+	}
+	time.Sleep(1500 * time.Millisecond)
+	if n := len(hook.Requests()); n != 0 {
+		t.Errorf("the rebuild sent %d deliveries, want none", n)
+	}
+	if ds := e.deliveries(e.user, v.ID); len(ds) != 0 {
+		t.Errorf("deliveries %+v, want none", ds)
 	}
 }

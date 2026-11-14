@@ -3486,7 +3486,17 @@ FROM generate_series(0, 2) AS p (i);`);
 	const list = page.getByTestId('message-list');
 	await expect.poll(() => firstInView(page)).toBe(`SCRUBBER ${n} DAY 20 PAGE 2`);
 	await expect(target).toHaveClass(/current/);
-	await expect(page.getByRole('button', { name: 'Load newer messages' })).toBeVisible();
+	// Newer messages are still there above: the button, or (as the list loads
+	// newer pages early, 3 screens ahead) rows newer than the day already in.
+	await expect
+		.poll(() =>
+			page.evaluate(() => {
+				if ([...document.querySelectorAll('button')].some((b) => b.textContent?.trim() === 'Load newer messages')) return true;
+				const first = document.querySelector('[data-testid="message-list"] article p.text')?.textContent ?? '';
+				return first !== '' && !first.includes('DAY 20');
+			})
+		)
+		.toBe(true);
 
 	// Yesterday's 14:00 hour, then zoom: twelve 5-minute blocks, and picking
 	// the 14:20 one moves the list there.

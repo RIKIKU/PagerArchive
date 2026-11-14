@@ -8,6 +8,10 @@
 // Detection runs in the ingest transaction of each new page (not a duplicate
 // copy), so an event and the deliveries it fires commit with the page that
 // made them. Page text is read to find the codes and never logged.
+//
+// A re-parse rebuilds the events around the pages it touched (regroup.go,
+// R87f; owner, 2026-11-14), to what live ingest of the same pages would have
+// made, and sends nothing.
 package events
 
 import (
@@ -74,6 +78,7 @@ type Page struct {
 	Text      string // stored text, marker included; never logged
 	Priority  *string
 	AliasID   *int64
+	Ignored   bool // its alias is marked ignored (R27)
 	Heartbeat bool
 	Job       *string
 	// LargeEventField: one of its fields holds a value its agency profile
@@ -83,9 +88,11 @@ type Page struct {
 }
 
 // Counts reports whether a page counts towards events (R87): Emergency, to a
-// capcode with an alias, not a heartbeat.
+// capcode with an alias that isn't ignored (R27; owner, 2026-11-14: ignored
+// pages are usually the network's own, unrelated to emergencies), not a
+// heartbeat. JobEventPages and RegroupPages count the same pages.
 func (p Page) Counts() bool {
-	return p.Priority != nil && *p.Priority == string(profile.Emergency) && p.AliasID != nil && !p.Heartbeat
+	return p.Priority != nil && *p.Priority == string(profile.Emergency) && p.AliasID != nil && !p.Ignored && !p.Heartbeat
 }
 
 // Fire queues the deliveries of an event that has just opened, carried by
