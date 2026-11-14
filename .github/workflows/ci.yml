@@ -276,14 +276,15 @@ jobs:
 
   # A75: R33b's searches on 10 years of made-up pages (ADR 0017), each within
   # 1 second and listing the same pages as the query before M13a, including
-  # the first run after a restart with both caches cold. Its own job, as
-  # seeding 4,562,500 pages takes minutes.
+  # the first run after a restart with both caches cold; then A71's scrubber
+  # counts and A99's reports (ADR 0031) on the same pages. Its own job, as
+  # seeding 4,562,500 pages and counting their jobs takes minutes.
   search:
     name: Search speed (A75)
     needs: [stamp, changes]
     if: needs.changes.outputs.search == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 55
     services:
       postgres:
         image: postgis/postgis:18-3.7
@@ -314,7 +315,7 @@ jobs:
       - name: A75 on 4,562,500 made-up pages
         env:
           PAGERARCHIVE_A75_CONTAINER: ${{ job.services.postgres.id }}
-        run: go test -count=1 -v -timeout 35m -run TestA75SearchSpeed ./internal/acceptance/
+        run: go test -count=1 -v -timeout 50m -run TestA75SearchSpeed ./internal/acceptance/
       - name: Disk after
         if: always()
         run: df -h /
@@ -324,7 +325,7 @@ jobs:
     needs: [stamp, changes]
     if: needs.changes.outputs.import == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 70
+    timeout-minutes: 85
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - name: Stamp the build's version

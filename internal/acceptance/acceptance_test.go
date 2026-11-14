@@ -35,6 +35,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
+	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/server"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
@@ -204,6 +205,7 @@ func setup(t *testing.T, with ...traced) *env {
 		Location:     time.UTC,
 		Accounts:     e.acc,
 		Catalog:      &catalog.Catalog{Store: st},
+		Reports:      &reports.Service{Pool: st.Pool, Location: time.UTC, Log: log},
 	}
 	e.srv = srv
 	e.cat = srv.Catalog
@@ -213,7 +215,7 @@ func setup(t *testing.T, with ...traced) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr}
+	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr, Reports: srv.Reports}
 	srv.Nightly = e.job
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)
