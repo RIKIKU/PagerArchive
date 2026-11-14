@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { api, type AdminAliasRow } from '#lib/api.ts';
+	import { api, type AdminAliasRow, type AliasRef, type SharedName } from '#lib/api.ts';
 	import AliasForm from '#lib/AliasForm.svelte';
 
 	// R53: every alias, searchable, with Add and Export (R58). ?add=<capcode>
@@ -31,6 +31,19 @@
 			.catch((e) => (error = e.message));
 	}
 	load();
+
+	// R27b: names several aliases share, ignoring letter case, from before
+	// names had to be unique: each group once, and each alias's others.
+	let shared: SharedName[] = $state([]);
+	api
+		.sharedNames()
+		.then((s) => (shared = s))
+		.catch(() => {});
+	const sharing = $derived.by(() => {
+		const others = new Map<number, AliasRef[]>();
+		for (const g of shared) for (const a of g.aliases) others.set(a.id, g.aliases.filter((o) => o.id !== a.id));
+		return others;
+	});
 
 	function typed() {
 		clearTimeout(timer);
@@ -70,6 +83,15 @@
 	<input id="alias-q" type="search" bind:value={q} oninput={typed} placeholder="Name, capcode or pattern" autocomplete="off" />
 </div>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if shared.length}
+	<div class="notice" data-testid="shared-names">
+		<p>
+			Alias names must be unique, ignoring letter case. These aliases share names from before that rule:
+			{#each shared as g, i}{i ? '; ' : ''}{#each g.aliases as a, j}{j ? ' and ' : ''}<a href="/admin/aliases/{a.id}">'{a.name}' ({a.pattern})</a>{/each}{/each}.
+		</p>
+		<p>They keep working, but no new name can match them. Rename all but one of each.</p>
+	</div>
+{/if}
 {#if rows}
 	<p class="status" aria-live="polite">
 		{rows.length === 0 ? 'No aliases match.' : `${rows.length}${more ? '+' : ''} alias${rows.length === 1 ? '' : 'es'}${more ? '; search to narrow them down' : ''}.`}
@@ -86,6 +108,10 @@
 							<td>
 								<a href="/admin/aliases/{a.id}">{a.name}</a>
 								{#if a.waiting_requests}<span class="tag warn">{a.waiting_requests} waiting</span>{/if}
+								{#if sharing.get(a.id)?.length}<span class="tag warn" data-testid="shared-tag">same name as {sharing
+											.get(a.id)!
+											.map((o) => o.pattern)
+											.join(', ')}, ignoring case</span>{/if}
 							</td>
 							<td class="mono">{a.pattern}</td>
 							<td>{a.template ?? 'None'}</td>
@@ -99,6 +125,22 @@
 {/if}
 
 <style>
+	.notice {
+		margin: 0 0 var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		border-radius: var(--radius);
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+	}
+	.notice p {
+		margin: 0;
+	}
+	.notice p + p {
+		margin-top: var(--space-2xs);
+	}
+	.notice a {
+		color: inherit;
+	}
 	.ok {
 		margin: 0 0 var(--space-sm);
 	}

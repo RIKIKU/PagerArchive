@@ -183,8 +183,14 @@ func addAlias(ctx context.Context, q *db.Queries, s settings, by By, rp reparses
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return 0, dbErr("alias "+s.pattern, err)
 	}
+	if err := aliasNameTaken(ctx, q, s.name, 0); err != nil {
+		return 0, err
+	}
 	id, err := q.CreateAlias(ctx, db.CreateAliasParams{Pattern: s.pattern, Name: s.name, TemplateID: s.tplID, Ignored: s.ignored})
 	if err != nil {
+		if isNameViolation(err) {
+			return 0, errNameRaced(s.name)
+		}
 		if isUniqueViolation(err) {
 			return 0, errRaced
 		}
@@ -231,6 +237,11 @@ func changeAlias(ctx context.Context, q *db.Queries, id int64, c change, by By, 
 		ch["pattern"] = [2]any{cur.pattern, next.pattern}
 	}
 	if c.name != nil && *c.name != cur.name {
+		// Its own name as it is (a form sends every field) is no rename,
+		// even for a name shared from before the rule (migration 00024).
+		if err := aliasNameTaken(ctx, q, *c.name, id); err != nil {
+			return err
+		}
 		next.name = *c.name
 		ch["name"] = [2]any{cur.name, next.name}
 	}
@@ -246,10 +257,18 @@ func changeAlias(ctx context.Context, q *db.Queries, id int64, c change, by By, 
 		return nil
 	}
 	if err := q.SetAlias(ctx, db.SetAliasParams{ID: id, Pattern: next.pattern, Name: next.name, TemplateID: next.tplID, Ignored: next.ignored}); err != nil {
+		if isNameViolation(err) {
+			return errNameRaced(next.name)
+		}
 		if isUniqueViolation(err) {
 			return errRaced
 		}
 		return dbErr("update alias", err)
+	}
+	if _, ok := ch["name"]; ok {
+		if err := q.SettleNameDuplicates(ctx); err != nil {
+			return dbErr("settle name duplicates", err)
+		}
 	}
 	if err := record(ctx, q, id, next.pattern, next.name, "changed", ch, by); err != nil {
 		return err
@@ -305,6 +324,9 @@ func deleteAlias(ctx context.Context, q *db.Queries, id int64, by By, rp reparse
 	if _, err := q.DeleteAlias(ctx, id); err != nil {
 		return d, dbErr("delete alias", err)
 	}
+	if err := q.SettleNameDuplicates(ctx); err != nil {
+		return d, dbErr("settle name duplicates", err)
+	}
 	rp.add(cur.pattern, "alias deleted")
 	return d, nil
 }
@@ -326,6 +348,97 @@ var errRaced = errors.New("unique violation")
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// isNameViolation is a unique violation of alias names (R27b): another
+// writer took the name at the same moment.
+func isNameViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "aliases_name_lower_key"
+}
+
+// errNameRaced is the refusal when another writer took a name meanwhile:
+// the transaction can't look up which alias has it now.
+func errNameRaced(name string) error {
+	return refuse(http.StatusConflict, "duplicate_name", "There's already an alias called %q, ignoring letter case. Alias names are unique ignoring case: choose another name.", name)
+}
+
+// NameTakenError refuses an alias name that another alias has, ignoring
+// letter case (R27b, owner 2026-11-15). It names that alias, so like a
+// Refusal it's shown to the person and never logged.
+type NameTakenError struct {
+	Name     string // the name asked for
+	Existing string // the other alias's name
+	Pattern  string // the other alias's capcode or pattern
+}
+
+func (e *NameTakenError) Error() string { return e.Refusal().Msg }
+
+// Refusal is what an admin, a PowerShell command or a user's request sees.
+func (e *NameTakenError) Refusal() *Refusal {
+	if e.Existing == e.Name {
+		return &Refusal{Status: http.StatusConflict, Code: "duplicate_name",
+			Msg: fmt.Sprintf("There's already an alias called %q (%s). Alias names are unique: choose another name.", e.Existing, e.Pattern)}
+	}
+	return &Refusal{Status: http.StatusConflict, Code: "duplicate_name",
+		Msg: fmt.Sprintf("There's already an alias called %q (%s), which differs from %q only in letter case. Alias names are unique ignoring case: choose another name.", e.Existing, e.Pattern, e.Name)}
+}
+
+// aliasNameTaken refuses a name another alias has, ignoring letter case (R27b).
+// id is the alias being renamed, which may change its own name's case, or 0.
+func aliasNameTaken(ctx context.Context, q *db.Queries, name string, id int64) error {
+	same, err := q.AliasesNamed(ctx, name)
+	if err != nil {
+		return dbErr("aliases named", err)
+	}
+	for _, a := range same {
+		if a.ID != id {
+			return &NameTakenError{Name: name, Existing: a.Name, Pattern: a.Pattern}
+		}
+	}
+	return nil
+}
+
+// AliasRef names an alias: its Id, capcode or pattern and name.
+type AliasRef struct {
+	ID      int64  `json:"id"`
+	Pattern string `json:"pattern"`
+	Name    string `json:"name"`
+}
+
+// NameDuplicates lists the aliases whose names match another's, ignoring
+// letter case, from before names were unique (R27b, migration 00024): one
+// group per name, oldest first, so they can be logged and shown in
+// Administration until an admin renames or deletes all but one of each.
+func (c *Catalog) NameDuplicates(ctx context.Context) ([][]AliasRef, error) {
+	rows, err := c.Store.NameDuplicateAliases(ctx)
+	if err != nil {
+		return nil, dbErr("name duplicate aliases", err)
+	}
+	out := [][]AliasRef{}
+	for i, r := range rows {
+		if i == 0 || r.NameKey != rows[i-1].NameKey {
+			out = append(out, nil)
+		}
+		out[len(out)-1] = append(out[len(out)-1], AliasRef{ID: r.ID, Pattern: r.Pattern, Name: r.Name})
+	}
+	return out, nil
+}
+
+// SameNameAs lists the other aliases with this alias's name, ignoring
+// letter case: from before names were unique (R27b), or none.
+func (c *Catalog) SameNameAs(ctx context.Context, id int64, name string) ([]AliasRef, error) {
+	same, err := c.Store.AliasesNamed(ctx, name)
+	if err != nil {
+		return nil, dbErr("aliases named", err)
+	}
+	var out []AliasRef
+	for _, a := range same {
+		if a.ID != id {
+			out = append(out, AliasRef{ID: a.ID, Pattern: a.Pattern, Name: a.Name})
+		}
+	}
+	return out, nil
 }
 
 // DuplicateAliasError rejects a second alias for a capcode or pattern (R27a).
@@ -438,6 +551,10 @@ func forAdmin(err error) error {
 	var dup *DuplicateAliasError
 	if errors.As(err, &dup) {
 		return dup.ForAdmin()
+	}
+	var taken *NameTakenError
+	if errors.As(err, &taken) {
+		return taken.Refusal()
 	}
 	return err
 }

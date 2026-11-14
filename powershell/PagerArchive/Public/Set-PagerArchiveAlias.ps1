@@ -12,7 +12,8 @@ function Set-PagerArchiveAlias {
 
     An alias piped from Get-PagerArchiveAlias, or any object with an Id, is
     chosen by its Id: exactly that alias, even when other aliases have the
-    same name. Names typed or piped as text are matched as -Name says.
+    same name from before names were unique (R27b). Names typed or piped
+    as text are matched as -Name says.
     -WhatIf and the confirmation name each alias with its capcode or pattern,
     name and Id.
 

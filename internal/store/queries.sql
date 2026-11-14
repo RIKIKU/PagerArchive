@@ -737,7 +737,8 @@ GROUP BY event_type
 ORDER BY event_type NULLS LAST;
 
 -- name: AliasesNamed :many
--- R38: the aliases with this name, ignoring case (names may repeat, A19).
+-- R38, R27b: the aliases with this name, ignoring case (names shared from
+-- before names were unique, migration 00024, are all reported).
 SELECT id, name, pattern FROM aliases
 WHERE lower(name) = lower(sqlc.arg(name)::text)
 ORDER BY pattern;
@@ -960,7 +961,33 @@ FOR UPDATE OF a;
 SELECT id FROM aliases WHERE pattern_key = sqlc.arg(pattern_key)::text;
 
 -- name: SetAlias :exec
-UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5 WHERE id = $1;
+-- A renamed alias is no longer a name duplicate (R27b, migration 00024).
+UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5,
+    name_duplicate = name_duplicate AND name = $3
+WHERE id = $1;
+
+-- name: NameDuplicateAliases :many
+-- R27b: aliases whose names match another's, ignoring letter case, from
+-- before names were unique (migration 00024), in groups, oldest first.
+SELECT id, pattern, name, lower(name) AS name_key FROM aliases a
+WHERE EXISTS (SELECT 1 FROM aliases o WHERE o.id <> a.id AND lower(o.name) = lower(a.name))
+ORDER BY lower(name), id;
+
+-- name: SettleNameDuplicates :exec
+-- R27b: after an alias is renamed or deleted, a group left with no alias
+-- under the unique index (all marked name_duplicate) puts its oldest back
+-- under it.
+UPDATE aliases a SET name_duplicate = false
+WHERE a.name_duplicate
+  AND a.id = (SELECT min(o.id) FROM aliases o WHERE lower(o.name) = lower(a.name))
+  AND NOT EXISTS (SELECT 1 FROM aliases o WHERE lower(o.name) = lower(a.name) AND NOT o.name_duplicate);
+
+-- name: AliasNamesIgnoringCase :many
+-- R27b, the import: every alias whose name is one of these, ignoring letter
+-- case.
+SELECT id, pattern, name, lower(name)::text AS name_key FROM aliases
+WHERE lower(name) = ANY(SELECT lower(n) FROM unnest(sqlc.arg(names)::text[]) AS n)
+ORDER BY id;
 
 -- name: TemplateByID :one
 SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE id = $1;

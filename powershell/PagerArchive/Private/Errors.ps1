@@ -36,7 +36,7 @@ function New-PaErrorRecord {
             403 { 'PermissionDenied'; break }
             404 { 'ObjectNotFound'; break }
             409 {
-                if ($ErrorId -in @('duplicate_alias', 'template_exists', 'already_exists')) { 'ResourceExists' } else { 'InvalidOperation' }
+                if ($ErrorId -in @('duplicate_alias', 'duplicate_name', 'template_exists', 'already_exists')) { 'ResourceExists' } else { 'InvalidOperation' }
                 break
             }
             429 { 'LimitsExceeded'; break }

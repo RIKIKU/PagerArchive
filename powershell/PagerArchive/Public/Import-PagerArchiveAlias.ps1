@@ -5,7 +5,7 @@ function Import-PagerArchiveAlias {
 
     .DESCRIPTION
     Takes alias rows from the pipeline, usually from Import-Csv, and applies
-    them together (R27a, R30, R58, R63):
+    them together (R27a, R27b, R30, R58, R63):
 
     - New capcodes and patterns are added. One template is created for each
       new agency, with the profile -AgencyProfile maps it to.
@@ -17,6 +17,11 @@ function Import-PagerArchiveAlias {
       conflict: nothing is imported, and each row involved is reported as
       an error, so you can leave out or fix rows in the pipeline (for
       example with Where-Object) and import again.
+    - Alias names are unique, ignoring letter case. A row that would give an
+      alias a name another alias has, or another row gives, is a conflict
+      too, and its error names that alias or those rows. A row that leaves
+      an alias's name as it is never conflicts, so an export imports
+      unchanged.
     - A row without a valid capcode or pattern, or without a name, is
       reported as an error and skipped.
 
@@ -162,6 +167,14 @@ function Import-PagerArchiveAlias {
                 foreach ($conflict in $report.report.conflicts) {
                     foreach ($index in $conflict.rows) {
                         $row = $rows[$index - 1]
+                        if ($conflict.PSObject.Properties['kind'] -and $conflict.kind -eq 'name') {
+                            # A name another alias or row has (R27b): the
+                            # API says which.
+                            $result = $report.report.rows[$index - 1]
+                            $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'import_conflict' -Status 409 -TargetObject $inputs[$index - 1] `
+                                        -Message "Row $index ($($result.pattern), '$($row.name)'): $($result.problem) Nothing was imported. Leave out or fix the rows, and import again."))
+                            continue
+                        }
                         $others = ($conflict.rows | Where-Object -FilterScript { $_ -ne $index }) -join ', '
                         $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'import_conflict' -Status 409 -TargetObject $inputs[$index - 1] `
                                     -Message "Row $index ($($conflict.pattern), '$($row.name)') differs from row(s) $others for the same capcode, so nothing was imported. Leave out or fix the rows, and import again."))
@@ -186,9 +199,6 @@ function Import-PagerArchiveAlias {
                 $applied = $true
             }
             Write-Progress -Activity 'Importing aliases' -Completed
-            foreach ($repeated in $report.repeated_names) {
-                Write-Verbose -Message "$(@($repeated.patterns).Count) aliases share one name: $($repeated.patterns -join ', ')"
-            }
             foreach ($result in $report.rows) {
                 if ($result.result -eq 'invalid') {
                     $PSCmdlet.WriteError((New-PaErrorRecord -ErrorId 'invalid_row' -Category InvalidData -TargetObject $(if ($result.index -le $inputs.Count) { $inputs[$result.index - 1] }) `

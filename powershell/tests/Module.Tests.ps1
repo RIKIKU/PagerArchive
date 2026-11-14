@@ -245,6 +245,7 @@ Describe 'Errors (guidelines section 7)' {
         @{ Status = 403; Code = 'powershell_admins_only'; Category = 'PermissionDenied' }
         @{ Status = 404; Code = 'no_alias'; Category = 'ObjectNotFound' }
         @{ Status = 409; Code = 'duplicate_alias'; Category = 'ResourceExists' }
+        @{ Status = 409; Code = 'duplicate_name'; Category = 'ResourceExists' }
         @{ Status = 409; Code = 'template_in_use'; Category = 'InvalidOperation' }
         @{ Status = 429; Code = 'x'; Category = 'LimitsExceeded' }
         @{ Status = 502; Code = 'x'; Category = 'ConnectionError' }
@@ -327,7 +328,7 @@ Describe 'Records piped from Get-* are chosen by Id (R63, owner 2026-11-12)' {
     }
     BeforeEach {
         # Two templates whose names differ only in case, and two aliases
-        # with the same name (A19).
+        # with the same name, from before names were unique (R27b).
         Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/templates' -and $Method -eq 'GET' } -MockWith {
             @([pscustomobject]@{ id = 48; name = 'Example Fire'; agency = 'Example Fire Service'; colour = $null; agency_profile = $null; icon = $null; aliases = 0 }
                 [pscustomobject]@{ id = 49; name = 'example fire'; agency = 'Example Fire Service'; colour = $null; agency_profile = $null; icon = $null; aliases = 0 })
@@ -608,5 +609,104 @@ Describe 'Import-PagerArchiveAlias: a refusal that isn''t a conflict (R64)' {
             $_.CategoryInfo.Category | Should -Be 'ResourceExists'
         }
         Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -Times 2 -Exactly
+    }
+}
+
+Describe 'Alias names are unique ignoring case (R27b)' {
+    BeforeEach {
+        # Two aliases sharing a name from before the rule, and a third.
+        $script:aliasRows = @(
+            [pscustomobject]@{ id = 3; pattern = '0300001'; name = 'Brigade'; template_id = $null; template = $null; colour = $null; ignored = $false }
+            [pscustomobject]@{ id = 4; pattern = '0300002'; name = 'brigade'; template_id = $null; template = $null; colour = $null; ignored = $false }
+            [pscustomobject]@{ id = 5; pattern = '0300003'; name = 'Tanker'; template_id = $null; template = $null; colour = $null; ignored = $false }
+        )
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases' -and $Method -eq 'GET' } -MockWith {
+            [pscustomobject]@{ more = $false; aliases = $script:aliasRows }
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -like '/api/v1/admin/aliases/*' -and $Method -eq 'GET' } -MockWith {
+            $id = [long]($Path -replace '^.*/', '')
+            $script:aliasRows | Where-Object -FilterScript { $_.id -eq $id }
+        }
+        # The API: a name another alias has, in any case, is refused, naming it.
+        $script:taken = {
+            param($Name, $Id)
+            # Its own name as it is is no rename.
+            if ($script:aliasRows | Where-Object -FilterScript { $_.id -eq $Id -and $_.name -ceq $Name }) { return }
+            $other = $script:aliasRows | Where-Object -FilterScript { $_.name -eq $Name -and $_.id -ne $Id } | Select-Object -First 1
+            if ($other) {
+                throw (& (Get-Module PagerArchive) { param($n, $o) New-PaErrorRecord -ErrorId 'duplicate_name' -Status 409 -Message "There's already an alias called `"$($o.name)`" ($($o.pattern)), which differs from `"$n`" only in letter case. Alias names are unique ignoring case: choose another name." } $Name $other)
+            }
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -like '/api/v1/admin/aliases/*' -and $Method -eq 'PUT' } -MockWith {
+            $id = [long]($Path -replace '^.*/', '')
+            & $script:taken $Body.name $id
+            ($script:aliasRows | Where-Object -FilterScript { $_.id -eq $id }).name = $Body.name
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases' -and $Method -eq 'POST' } -MockWith {
+            & $script:taken $Body.name 0
+            [pscustomobject]@{ id = 9 }
+        }
+    }
+
+    It 'New-PagerArchiveAlias reports a name another alias has as ResourceExists, naming that alias' {
+        $split = Split-Output -All (New-PagerArchiveAlias -Pattern 0300009 -Name 'TANKER' 2>&1)
+        $split.Errors.Count | Should -Be 1
+        $split.Errors[0].FullyQualifiedErrorId | Should -Be 'duplicate_name,New-PagerArchiveAlias'
+        $split.Errors[0].CategoryInfo.Category | Should -Be 'ResourceExists'
+        $split.Errors[0].Exception.Message | Should -BeLike '*"Tanker" (0300003)*'
+        $split.Errors[0].TargetObject | Should -Be '0300009'
+    }
+    It 'Rename-PagerArchiveAlias reports the refusal, naming that alias, and lets an alias change its own name''s case' {
+        $split = Split-Output -All (Rename-PagerArchiveAlias -Pattern 0300001 -NewName 'tanker' 2>&1)
+        $split.Errors.Count | Should -Be 1
+        $split.Errors[0].FullyQualifiedErrorId | Should -Be 'duplicate_name,Rename-PagerArchiveAlias'
+        $split.Errors[0].CategoryInfo.Category | Should -Be 'ResourceExists'
+        $split.Errors[0].Exception.Message | Should -BeLike '*"Tanker" (0300003)*'
+        $split.Errors[0].TargetObject.Pattern | Should -Be '0300001'
+        Rename-PagerArchiveAlias -Pattern 0300003 -NewName 'TANKER' -ErrorAction Stop
+        ($script:aliasRows | Where-Object -Property id -EQ 5).name | Should -BeExactly 'TANKER'
+    }
+    It 'Rename-PagerArchiveAlias with a shared name renames the first and reports the rest' {
+        $split = Split-Output -All (Rename-PagerArchiveAlias -Name 'Brigade' -NewName 'Brigade North' 2>&1)
+        ($script:aliasRows | Where-Object -Property id -EQ 3).name | Should -Be 'Brigade North'
+        ($script:aliasRows | Where-Object -Property id -EQ 4).name | Should -BeExactly 'brigade'
+        $split.Errors.Count | Should -Be 1
+        $split.Errors[0].FullyQualifiedErrorId | Should -Be 'duplicate_name,Rename-PagerArchiveAlias'
+        $split.Errors[0].TargetObject.Pattern | Should -Be '0300002'
+    }
+    It 'Set-PagerArchiveAlias still changes an alias that shares its name from before the rule' {
+        Set-PagerArchiveAlias -Pattern 0300002 -Ignored $true -ErrorAction Stop
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PUT' -and $Path -eq '/api/v1/admin/aliases/4' -and $Body.name -ceq 'brigade' -and $Body.ignored } -Times 1 -Exactly
+    }
+    It 'Import-PagerArchiveAlias reports each row whose name is taken with the API''s reason, and applies nothing' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -MockWith {
+            [pscustomobject]@{ error = 'Some rows conflict'; code = 'import_conflict'; report = [pscustomobject]@{
+                    rows      = @(
+                        [pscustomobject]@{ index = 1; pattern = '0300005'; name = 'Pump A'; result = 'conflict'; problem = 'Row 2 (0300006) gives the same name. Alias names are unique ignoring case.' }
+                        [pscustomobject]@{ index = 2; pattern = '0300006'; name = 'pump a'; result = 'conflict'; problem = 'Row 1 (0300005) gives the same name. Alias names are unique ignoring case.' }
+                        [pscustomobject]@{ index = 3; pattern = '0300007'; name = 'TANKER'; result = 'conflict'; problem = 'There''s already an alias called "Tanker" (0300003). Alias names are unique ignoring case.' }
+                        [pscustomobject]@{ index = 4; pattern = '0300008'; name = 'Hilltop'; result = '' }
+                    )
+                    conflicts = @(
+                        [pscustomobject]@{ kind = 'name'; name = 'Pump A'; rows = @(1, 2) }
+                        [pscustomobject]@{ kind = 'name'; name = 'TANKER'; rows = @(3); aliases = @([pscustomobject]@{ id = 5; pattern = '0300003'; name = 'Tanker' }) }
+                    )
+                }
+            }
+        }
+        $rows = @(
+            [pscustomobject]@{ address = '0300005'; alias = 'Pump A' }
+            [pscustomobject]@{ address = '0300006'; alias = 'pump a' }
+            [pscustomobject]@{ address = '0300007'; alias = 'TANKER' }
+            [pscustomobject]@{ address = '0300008'; alias = 'Hilltop' }
+        )
+        $split = Split-Output -All ($rows | Import-PagerArchiveAlias -Confirm:$false 2>&1)
+        $split.Out.Count | Should -Be 0
+        $split.Errors.Count | Should -Be 3
+        $split.Errors | ForEach-Object -Process { $_.FullyQualifiedErrorId | Should -Be 'import_conflict,Import-PagerArchiveAlias' }
+        $split.Errors[0].Exception.Message | Should -Be 'Row 1 (0300005, ''Pump A''): Row 2 (0300006) gives the same name. Alias names are unique ignoring case. Nothing was imported. Leave out or fix the rows, and import again.'
+        $split.Errors[2].Exception.Message | Should -BeLike 'Row 3 (0300007, ''TANKER''): There''s already an alias called "Tanker" (0300003).*'
+        $split.Errors[2].TargetObject.alias | Should -Be 'TANKER'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -Times 1 -Exactly
     }
 }

@@ -182,6 +182,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/aliases":                      s.adminOnly(s.adminAliases),
 		"POST /api/v1/admin/aliases":                     s.adminOnly(s.createAlias),
 		"GET /api/v1/admin/aliases/export":               s.adminOnly(s.exportAliases),
+		"GET /api/v1/admin/aliases/shared-names":         s.adminOnly(s.sharedNames),
 		"GET /api/v1/admin/aliases/{id}":                 s.adminOnly(s.adminAlias),
 		"PUT /api/v1/admin/aliases/{id}":                 s.adminOnly(s.editAlias),
 		"DELETE /api/v1/admin/aliases/{id}":              s.adminOnly(s.deleteAlias),

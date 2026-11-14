@@ -355,6 +355,20 @@ export interface AdminAliasRow {
 export interface AdminAlias extends AliasView {
 	requests: AliasRequest[];
 	integrations: number;
+	/** R27b: other aliases with its name, ignoring letter case (from before names were unique). */
+	same_name_as?: AliasRef[];
+}
+
+/** An alias by its Id, capcode or pattern and name. */
+export interface AliasRef {
+	id: number;
+	pattern: string;
+	name: string;
+}
+
+/** R27b: a name several aliases share, ignoring letter case, from before names were unique: oldest first. */
+export interface SharedName {
+	aliases: AliasRef[];
 }
 
 export interface AliasDeleted {
@@ -812,6 +826,7 @@ export const api = {
 		request<void>('POST', `/api/v1/admin/alias-requests/${id}/reject`, { feedback }),
 	adminAliases: (q: string) =>
 		get<{ aliases: AdminAliasRow[]; more: boolean }>(`/api/v1/admin/aliases?q=${encodeURIComponent(q)}`),
+	sharedNames: () => get<SharedName[]>('/api/v1/admin/aliases/shared-names'),
 	adminAlias: (id: number | string) => get<AdminAlias>(`/api/v1/admin/aliases/${encodeURIComponent(id)}`),
 	createAlias: (a: AliasInput) => request<{ id: number }>('POST', '/api/v1/admin/aliases', a),
 	editAlias: (id: number, a: AliasInput) => request<void>('PUT', `/api/v1/admin/aliases/${id}`, a),

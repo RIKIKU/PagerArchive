@@ -106,6 +106,9 @@ func prepare(ctx context.Context, q *db.Queries, in RequestInput) (prepared, err
 		} else if !errors.Is(err, pgx.ErrNoRows) {
 			return p, dbErr("alias", err)
 		}
+		if err := aliasNameTaken(ctx, q, name, 0); err != nil {
+			return p, forAdmin(err)
+		}
 		return p, nil
 	case KindChange, KindDelete:
 	default:
@@ -144,6 +147,9 @@ func prepare(ctx context.Context, q *db.Queries, in RequestInput) (prepared, err
 			return p, err
 		}
 		if name != cur.Name {
+			if err := aliasNameTaken(ctx, q, name, cur.ID); err != nil {
+				return p, forAdmin(err)
+			}
 			p.name = &name
 		}
 	}
@@ -281,8 +287,9 @@ func closeRequest(ctx context.Context, q *db.Queries, id int64, status string, r
 }
 
 // ApproveRequest applies a waiting request exactly as submitted (R55):
-// a change sets only the fields it asks for. A new alias is checked
-// against R27a again; if the capcode or pattern has an alias now, approval
+// a change sets only the fields it asks for. It is checked against R27a
+// and R27b again (a new name another alias has taken meanwhile is
+// refused); for a new alias, if the capcode or pattern has an alias now, approval
 // is refused with the reason and the request stays waiting. The change and
 // its history entry (naming the requester and the approver, R57) are made
 // in the same transaction as the approval.
@@ -329,6 +336,12 @@ func (c *Catalog) ApproveRequest(ctx context.Context, adminID, id int64) error {
 		}
 		return errors.New("unknown request kind")
 	})
+	// R27b: another alias has taken the name since the request was made.
+	var taken *NameTakenError
+	if errors.As(err, &taken) {
+		return refuse(http.StatusConflict, "duplicate_name",
+			"Can't approve: there's now an alias called %q (%s), and alias names are unique ignoring case (R27b). Reject this request with feedback instead.", taken.Existing, taken.Pattern)
+	}
 	if errors.Is(err, errRaced) {
 		return refuse(http.StatusConflict, "duplicate_alias", "Can't approve: that capcode or pattern got an alias at the same moment (R27a). Reload to see it.")
 	}

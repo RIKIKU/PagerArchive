@@ -6,12 +6,15 @@ function Rename-PagerArchiveAlias {
     .DESCRIPTION
     Gives an alias, chosen by capcode or pattern, or by name, a new name.
     Names are shown as they are now, everywhere, at once (R23a). The change
-    is recorded in the alias's history as yours (R57). The same name may be
-    used for several capcodes (a brigade can have several pagers).
+    is recorded in the alias's history as yours (R57). Alias names are
+    unique, ignoring letter case (R27b): a name another alias has, in any
+    case, is refused with an error naming that alias (ResourceExists,
+    duplicate_name). An alias may change its own name's case.
 
     An alias piped from Get-PagerArchiveAlias, or any object with an Id, is
     chosen by its Id: exactly that alias, even when other aliases have the
-    same name. Names typed or piped as text are matched as -Name says.
+    same name from before names were unique. Names typed or piped as text
+    are matched as -Name says.
     -WhatIf and the confirmation name the alias with its capcode or pattern,
     name and Id.
 
@@ -61,8 +64,10 @@ function Rename-PagerArchiveAlias {
         [ValidateNotNullOrEmpty()]
         [string] $Pattern,
 
-        # The name of the alias to rename. No wildcards: a name used by
-        # several aliases renames each of them.
+        # The name of the alias to rename. No wildcards. A name several
+        # aliases share from before names were unique matches each of them,
+        # and all but the first are refused, as they can't share the new
+        # name.
         [Parameter(Mandatory, ValueFromPipeline, ParameterSetName = 'Name')]
         [ValidateNotNullOrEmpty()]
         [string] $Name,
@@ -79,7 +84,8 @@ function Rename-PagerArchiveAlias {
         try {
             $escaped = if ($Name) { [System.Management.Automation.WildcardPattern]::Escape($Name) } else { $null }
             # An Id, when one is bound (a piped record), wins over its Pattern and Name.
-            $aliases = if ($Id) { @(Find-PaAlias -Id $Id) } else { @(Find-PaAlias -Pattern $Pattern -Name $escaped) }
+            # An unbound [string] -Pattern is '', not $null: pass only the one given.
+            $aliases = if ($Id) { @(Find-PaAlias -Id $Id) } elseif ($Pattern) { @(Find-PaAlias -Pattern $Pattern) } else { @(Find-PaAlias -Name $escaped) }
         } catch {
             $PSCmdlet.WriteError((Copy-PaErrorRecord -ErrorRecord $_ -TargetObject $_.TargetObject))
             return

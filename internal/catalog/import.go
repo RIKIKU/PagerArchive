@@ -67,28 +67,31 @@ type RowResult struct {
 	Result       string   `json:"result"`
 	Changes      []string `json:"changes,omitempty"` // e.g. name: "Brigade" → "Brigade North"
 	SquashedInto int      `json:"squashed_into,omitempty"`
-	Problem      string   `json:"problem,omitempty"` // why an invalid row was skipped
+	Problem      string   `json:"problem,omitempty"` // why an invalid row was skipped, or why a row conflicts over its name
 }
 
-// Conflict is a capcode or pattern given by rows that differ (R27a).
+// Kinds of conflict.
+const (
+	ConflictCapcode = "capcode" // rows that differ for one capcode or pattern (R27a)
+	ConflictName    = "name"    // a name another alias or row has, ignoring case (R27b)
+)
+
+// Conflict is a capcode or pattern given by rows that differ (R27a), or a
+// name, ignoring letter case, that rows would give aliases although another
+// alias has it or several rows give it (R27b).
 type Conflict struct {
-	Pattern string `json:"pattern"`
-	Rows    []int  `json:"rows"` // indexes
-}
-
-// RepeatedName is an alias name used for several capcodes. That's allowed
-// (a brigade can have several pagers); the report lists it for checking.
-type RepeatedName struct {
-	Name     string   `json:"name"`
-	Patterns []string `json:"patterns"`
+	Kind    string     `json:"kind"`
+	Pattern string     `json:"pattern,omitempty"` // a capcode conflict's
+	Name    string     `json:"name,omitempty"`    // a name conflict's, as its first row gives it
+	Rows    []int      `json:"rows"`              // indexes
+	Aliases []AliasRef `json:"aliases,omitempty"` // a name conflict's: the aliases that have the name
 }
 
 // ImportReport says what an import did, or would do.
 type ImportReport struct {
-	Rows             []RowResult    `json:"rows"`
-	Conflicts        []Conflict     `json:"conflicts"`
-	TemplatesCreated []string       `json:"templates_created"`
-	RepeatedNames    []RepeatedName `json:"repeated_names"`
+	Rows             []RowResult `json:"rows"`
+	Conflicts        []Conflict  `json:"conflicts"`
+	TemplatesCreated []string    `json:"templates_created"`
 	// Plan fingerprints the outcome, so applying can refuse if anything
 	// changed since the dry run (ADR 0009 §8).
 	Plan    string `json:"plan"`
@@ -97,7 +100,7 @@ type ImportReport struct {
 
 // Refusals that stop the whole import. Nothing is changed.
 var (
-	errConflict    = refuse(http.StatusConflict, "import_conflict", "Some capcodes are given by rows that differ, so nothing was imported. Leave out or fix the rows, and import again.")
+	errConflict    = refuse(http.StatusConflict, "import_conflict", "Some rows conflict: they differ from other rows for the same capcode, or give a name another alias or row has (alias names are unique ignoring case). Nothing was imported. Leave out or fix the rows, and import again.")
 	errPlanChanged = refuse(http.StatusConflict, "import_changed", "The aliases changed since the dry run, so nothing was imported. Run the import again to see the new results.")
 )
 
@@ -130,16 +133,17 @@ func clean(s string) string {
 }
 
 // Import adds aliases, and with Update changes existing ones, from rows in
-// one transaction (R27a, R30, R58). New agencies get a template each, with
+// one transaction (R27a, R27b, R30, R58). New agencies get a template each, with
 // the most common colour among their rows and the profile from the mapping.
 // An empty agency means no template. Rows for one capcode that are
 // identical are squashed, keeping the first; rows that differ are a
-// conflict, and then nothing changes. An existing alias is changed only
+// conflict, and so is a row giving a name another alias or row has,
+// ignoring case (R27b): then nothing changes. An existing alias is changed only
 // with Update; otherwise its differences are reported. Every change is
 // recorded in history as made by the admin, and every message is re-parsed
 // once (R23a).
 func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions) (ImportReport, error) {
-	rep := ImportReport{Rows: make([]RowResult, len(in)), Conflicts: []Conflict{}, TemplatesCreated: []string{}, RepeatedNames: []RepeatedName{}}
+	rep := ImportReport{Rows: make([]RowResult, len(in)), Conflicts: []Conflict{}, TemplatesCreated: []string{}}
 	if len(in) > MaxImportRows {
 		return rep, refuse(http.StatusRequestEntityTooLarge, "too_many_rows", "An import takes at most %d rows.", MaxImportRows)
 	}
@@ -172,7 +176,7 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 	for _, p := range order {
 		cands := byPattern[p]
 		if !identical(cands) {
-			cf := Conflict{Pattern: p}
+			cf := Conflict{Kind: ConflictCapcode, Pattern: p}
 			for _, c := range cands {
 				cf.Rows = append(cf.Rows, c.index)
 				rep.Rows[c.index-1].Result = InConflict
@@ -185,10 +189,6 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 		}
 		rows = append(rows, cands[0])
 	}
-	if len(rep.Conflicts) > 0 {
-		return rep, errConflict
-	}
-	rep.RepeatedNames = repeatedNames(rows)
 
 	colours := map[string]map[string]int{}
 	for _, row := range rows {
@@ -208,6 +208,26 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 
 	by := byImport(opts.By)
 	err := c.Store.InTx(ctx, func(q *db.Queries) error {
+		// The aliases the rows are for, if they exist.
+		curs := make([]*db.AliasDetailByKeyRow, len(rows))
+		for i, row := range rows {
+			cur, err := q.AliasDetailByKey(ctx, row.pattern)
+			if errors.Is(err, pgx.ErrNoRows) {
+				continue
+			}
+			if err != nil {
+				return dbErr(fmt.Sprintf("row %d", row.index), err)
+			}
+			curs[i] = &cur
+		}
+		// R27b: names another alias or row has. Reported with the capcode
+		// conflicts (R27a); either way, nothing is imported.
+		if err := nameConflicts(ctx, q, rows, curs, opts.Update, &rep); err != nil {
+			return err
+		}
+		if len(rep.Conflicts) > 0 {
+			return errConflict
+		}
 		ids := map[string]int64{}
 		for _, agency := range agencies {
 			if tpl, err := q.TemplateByName(ctx, agency); err == nil {
@@ -237,15 +257,15 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 			rep.TemplatesCreated = append(rep.TemplatesCreated, agency)
 		}
 		changed := 0
-		for _, row := range rows {
+		for i, row := range rows {
 			res := &rep.Rows[row.index-1]
 			var tid *int64
 			if row.agency != "" {
 				id := ids[row.agency]
 				tid = &id
 			}
-			cur, err := q.AliasDetailByKey(ctx, row.pattern)
-			if errors.Is(err, pgx.ErrNoRows) {
+			cur := curs[i]
+			if cur == nil {
 				if _, err := addAlias(ctx, q, settings{pattern: row.pattern, name: row.name, tplID: tid, tplName: optional(row.agency), ignored: row.ignored}, by, reparses{}); err != nil {
 					return fmt.Errorf("row %d: %w", row.index, err)
 				}
@@ -253,10 +273,7 @@ func (c *Catalog) Import(ctx context.Context, in []ImportRow, opts ImportOptions
 				changed++
 				continue
 			}
-			if err != nil {
-				return dbErr(fmt.Sprintf("row %d", row.index), err)
-			}
-			res.Changes = differences(cur, row)
+			res.Changes = differences(*cur, row)
 			switch {
 			case len(res.Changes) == 0:
 				res.Result = Unchanged
@@ -373,18 +390,89 @@ func identical(rows []importRow) bool {
 	return true
 }
 
-func repeatedNames(rows []importRow) []RepeatedName {
-	by := map[string][]string{}
-	for _, r := range rows {
-		by[r.name] = append(by[r.name], r.pattern)
+// nameConflicts finds the rows that would give an alias a name, ignoring
+// letter case, that another alias has before the import or that another row
+// gives (R27b), marks them conflicts with the reason, and lists each name
+// once in the report's conflicts. A row gives a name when it adds an alias,
+// or with update renames one; a row that leaves an alias's name as it is
+// never conflicts, so an export imports unchanged, even with names shared
+// from before the rule. An alias's own row may change its name's case.
+// curs are the aliases the rows are for (nil: none yet).
+func nameConflicts(ctx context.Context, q *db.Queries, rows []importRow, curs []*db.AliasDetailByKeyRow, update bool, rep *ImportReport) error {
+	type giver struct {
+		row importRow
+		own int64 // the alias it's for, or 0
 	}
-	out := []RepeatedName{}
-	for name, ps := range by {
-		if len(ps) > 1 {
-			sort.Strings(ps)
-			out = append(out, RepeatedName{Name: name, Patterns: ps})
+	byKey := map[string][]giver{}
+	var keys, names []string
+	for i, row := range rows {
+		cur := curs[i]
+		if cur != nil && (!update || cur.Name == row.name) {
+			continue
 		}
+		g := giver{row: row}
+		if cur != nil {
+			g.own = cur.ID
+		}
+		key := strings.ToLower(row.name)
+		if _, seen := byKey[key]; !seen {
+			keys = append(keys, key)
+			names = append(names, row.name)
+		}
+		byKey[key] = append(byKey[key], g)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
-	return out
+	if len(keys) == 0 {
+		return nil
+	}
+	have, err := q.AliasNamesIgnoringCase(ctx, names)
+	if err != nil {
+		return dbErr("aliases named", err)
+	}
+	holders := map[string][]AliasRef{}
+	for _, h := range have {
+		holders[h.NameKey] = append(holders[h.NameKey], AliasRef{ID: h.ID, Pattern: h.Pattern, Name: h.Name})
+	}
+	for _, key := range keys {
+		givers := byKey[key]
+		cf := Conflict{Kind: ConflictName, Name: givers[0].row.name}
+		for _, g := range givers {
+			var why []string
+			// Another alias with the name before the import: one this row
+			// isn't for.
+			for _, h := range holders[key] {
+				if h.ID != g.own {
+					why = append(why, fmt.Sprintf("there's already an alias called %q (%s)", h.Name, h.Pattern))
+					break
+				}
+			}
+			var rowsToo []string
+			for _, o := range givers {
+				if o.row.index != g.row.index {
+					rowsToo = append(rowsToo, fmt.Sprintf("%d (%s)", o.row.index, o.row.pattern))
+				}
+			}
+			switch len(rowsToo) {
+			case 0:
+			case 1:
+				why = append(why, "row "+rowsToo[0]+" gives the same name")
+			default:
+				why = append(why, "rows "+strings.Join(rowsToo, ", ")+" give the same name")
+			}
+			if len(why) == 0 {
+				continue
+			}
+			msg := strings.Join(why, ", and ")
+			res := &rep.Rows[g.row.index-1]
+			res.Result = InConflict
+			res.Problem = strings.ToUpper(msg[:1]) + msg[1:] + ". Alias names are unique ignoring case."
+			cf.Rows = append(cf.Rows, g.row.index)
+		}
+		if len(cf.Rows) == 0 {
+			continue
+		}
+		cf.Aliases = holders[key]
+		sort.Ints(cf.Rows)
+		rep.Conflicts = append(rep.Conflicts, cf)
+	}
+	return nil
 }
