@@ -151,6 +151,11 @@ function Import-PagerArchiveAlias {
         try {
             Write-Progress -Activity 'Importing aliases' -Status "Checking $($rows.Count) rows"
             $report = Invoke-PaApi -Method POST -Path '/api/v1/admin/aliases/import' -Body $request -Accept 409
+            if ($report.PSObject.Properties['code'] -and -not $report.PSObject.Properties['report']) {
+                # Any other refusal, such as an agency that differs from a
+                # template's name only in letter case (R64): nothing applied.
+                throw (New-PaErrorRecord -ErrorId $report.code -Status 409 -Message $report.error)
+            }
             if ($report.PSObject.Properties['code']) {
                 # A conflict: nothing was applied, and each row involved is
                 # reported (guidelines section 7).

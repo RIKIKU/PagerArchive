@@ -12,6 +12,19 @@
 	let error = $state('');
 	let adding = $state(false);
 	const deleted = $derived(page.url.searchParams.has('deleted'));
+	// R64: names that differ only in letter case, from before they had to
+	// differ by more: each group once.
+	const caseGroups = $derived.by(() => {
+		const seen = new Set<string>();
+		const out: string[][] = [];
+		for (const t of rows ?? []) {
+			if (!t.same_name_as?.length || seen.has(t.name)) continue;
+			const group = [t.name, ...t.same_name_as];
+			group.forEach((n) => seen.add(n));
+			out.push(group);
+		}
+		return out;
+	});
 
 	api
 		.adminTemplates()
@@ -52,6 +65,15 @@
 
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if rows}
+	{#if caseGroups.length}
+		<div class="notice" data-testid="case-duplicates">
+			<p>
+				Template names must differ by more than letter case. These are from before that rule:
+				{#each caseGroups as g, i}{i ? '; ' : ''}{g.map((n) => `'${n}'`).join(' and ')}{/each}.
+			</p>
+			<p>They keep working, but no new name can match them. Rename all but one of each, or move their aliases to one and delete the others.</p>
+		</div>
+	{/if}
 	<p class="status" aria-live="polite">{rows.length === 0 ? 'No templates yet.' : `${rows.length} template${rows.length === 1 ? '' : 's'}.`}</p>
 	{#if rows.length}
 		<div class="scroll">
@@ -69,7 +91,10 @@
 				<tbody>
 					{#each rows as t (t.id)}
 						<tr data-template={t.name}>
-							<td><a href="/admin/templates/{t.id}">{t.name}</a></td>
+							<td>
+								<a href="/admin/templates/{t.id}">{t.name}</a>
+								{#if t.same_name_as?.length}<span class="tag warn">same name as {t.same_name_as.map((n) => `'${n}'`).join(', ')}, ignoring case</span>{/if}
+							</td>
 							<td>{#if t.icon}<AgencyIcon src={t.icon} alt={t.agency} />{:else}<span class="none">None</span>{/if}</td>
 							<td>{t.agency}</td>
 							<td>
@@ -92,6 +117,19 @@
 {/if}
 
 <style>
+	.notice {
+		margin: 0 0 var(--space-sm);
+		padding: var(--space-sm) var(--space-md);
+		border-radius: var(--radius);
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+	}
+	.notice p {
+		margin: 0;
+	}
+	.notice p + p {
+		margin-top: var(--space-2xs);
+	}
 	.ok {
 		margin: 0 0 var(--space-sm);
 	}

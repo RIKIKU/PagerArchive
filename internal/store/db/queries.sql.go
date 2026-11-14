@@ -1048,6 +1048,40 @@ func (q *Queries) CapcodeReport(ctx context.Context, arg CapcodeReportParams) ([
 	return items, nil
 }
 
+const caseDuplicateTemplates = `-- name: CaseDuplicateTemplates :many
+SELECT id, name, lower(name) AS name_key FROM templates t
+WHERE EXISTS (SELECT 1 FROM templates o WHERE o.id <> t.id AND lower(o.name) = lower(t.name))
+ORDER BY lower(name), id
+`
+
+type CaseDuplicateTemplatesRow struct {
+	ID      int64
+	Name    string
+	NameKey string
+}
+
+// R64: templates whose names differ only in letter case from another's, from
+// before names were unique ignoring case (migration 00022), in groups.
+func (q *Queries) CaseDuplicateTemplates(ctx context.Context) ([]CaseDuplicateTemplatesRow, error) {
+	rows, err := q.db.Query(ctx, caseDuplicateTemplates)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []CaseDuplicateTemplatesRow
+	for rows.Next() {
+		var i CaseDuplicateTemplatesRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.NameKey); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const claimReparseRequests = `-- name: ClaimReparseRequests :many
 DELETE FROM reparse_requests RETURNING capcode_pattern, reason
 `
@@ -5344,6 +5378,21 @@ func (q *Queries) SetUserTrusted(ctx context.Context, arg SetUserTrustedParams) 
 	return result.RowsAffected(), nil
 }
 
+const settleCaseDuplicates = `-- name: SettleCaseDuplicates :exec
+UPDATE templates t SET case_duplicate = false
+WHERE t.case_duplicate
+  AND t.id = (SELECT min(o.id) FROM templates o WHERE lower(o.name) = lower(t.name))
+  AND NOT EXISTS (SELECT 1 FROM templates o WHERE lower(o.name) = lower(t.name) AND NOT o.case_duplicate)
+`
+
+// R64: after a template is renamed or deleted, a group left with no template
+// under the unique index (all marked case_duplicate) puts its oldest back
+// under it.
+func (q *Queries) SettleCaseDuplicates(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, settleCaseDuplicates)
+	return err
+}
+
 const streetPoint = `-- name: StreetPoint :one
 SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
 FROM street_points
@@ -5419,6 +5468,36 @@ func (q *Queries) TemplateByName(ctx context.Context, name string) (TemplateByNa
 		&i.AgencyProfile,
 	)
 	return i, err
+}
+
+const templatesNamedIgnoringCase = `-- name: TemplatesNamedIgnoringCase :many
+SELECT id, name FROM templates WHERE lower(name) = lower($1) ORDER BY id
+`
+
+type TemplatesNamedIgnoringCaseRow struct {
+	ID   int64
+	Name string
+}
+
+// R64: templates whose names differ from $1 only in letter case, or match it.
+func (q *Queries) TemplatesNamedIgnoringCase(ctx context.Context, lower string) ([]TemplatesNamedIgnoringCaseRow, error) {
+	rows, err := q.db.Query(ctx, templatesNamedIgnoringCase, lower)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []TemplatesNamedIgnoringCaseRow
+	for rows.Next() {
+		var i TemplatesNamedIgnoringCaseRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const touchClient = `-- name: TouchClient :exec
@@ -5772,7 +5851,9 @@ func (q *Queries) UpdateRedactedText(ctx context.Context, arg UpdateRedactedText
 }
 
 const updateTemplate = `-- name: UpdateTemplate :exec
-UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5 WHERE id = $1
+UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5,
+    case_duplicate = case_duplicate AND name = $2
+WHERE id = $1
 `
 
 type UpdateTemplateParams struct {
@@ -5783,6 +5864,7 @@ type UpdateTemplateParams struct {
 	AgencyProfile *string
 }
 
+// A renamed template is no longer a case duplicate (R64, migration 00022).
 func (q *Queries) UpdateTemplate(ctx context.Context, arg UpdateTemplateParams) error {
 	_, err := q.db.Exec(ctx, updateTemplate,
 		arg.ID,

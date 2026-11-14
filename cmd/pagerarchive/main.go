@@ -411,6 +411,18 @@ func serve(stderr io.Writer) error {
 		Locks:             locks,
 		Version:           version,
 	}
+	// R64: template names from before they had to differ by more than letter
+	// case (migration 00022), on every start until an admin sorts them out.
+	if dups, err := srv.Catalog.CaseDuplicates(ctx); err != nil {
+		log.Warn("templates whose names differ only in case couldn't be listed", "error", err.Error())
+	} else if len(dups) > 0 {
+		names := make([]string, len(dups))
+		for i, d := range dups {
+			names[i] = fmt.Sprintf("%q (id %d)", d.Name, d.ID)
+		}
+		log.Warn("template names differ only in letter case, from before names had to differ by more: new names can't match them. Rename or delete all but one of each, in Administration, Templates",
+			"templates", strings.Join(names, ", "))
+	}
 	// The app's page is sent in the signed-in user's look (R82d).
 	srv.UI = web.Handler(srv.PageLook)
 	addr := getenv("LISTEN_ADDR", ":8080")

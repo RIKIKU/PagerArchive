@@ -22,6 +22,9 @@ type AdminTemplate struct {
 	AgencyProfile *string `json:"agency_profile"`
 	Icon          *string `json:"icon"` // its URL, or null (R65)
 	Aliases       int64   `json:"aliases"`
+	// R64: other templates whose names differ from this one's only in letter
+	// case, from before names had to differ by more (migration 00022).
+	SameNameAs []string `json:"same_name_as,omitempty"`
 }
 
 // profileNames are the agency profiles loaded at start-up.
@@ -40,9 +43,20 @@ func (s *Server) adminTemplates(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
+	dups, err := s.Catalog.CaseDuplicates(r.Context())
+	if err != nil {
+		s.Log.Error("templates", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	same := map[int64][]string{}
+	for _, d := range dups {
+		same[d.ID] = d.SameNameAs
+	}
 	out := make([]AdminTemplate, len(rows))
 	for i, t := range rows {
 		out[i] = AdminTemplate{ID: t.ID, Name: t.Name, Agency: t.Agency, Colour: t.Colour, AgencyProfile: t.AgencyProfile, Icon: iconURL(t.IconSha256), Aliases: t.AliasCount}
+		out[i].SameNameAs = same[t.ID]
 	}
 	writeJSON(w, http.StatusOK, out)
 }

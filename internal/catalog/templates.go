@@ -110,14 +110,14 @@ func (c *Catalog) CreateTemplate(ctx context.Context, in TemplateInput, profiles
 	}
 	var id int64
 	err = c.Store.InTx(ctx, func(q *db.Queries) error {
-		if _, err := q.TemplateByName(ctx, name); err == nil {
-			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", name)
-		} else if !errors.Is(err, pgx.ErrNoRows) {
-			return dbErr("template", err)
+		if err := nameTaken(ctx, q, name, 0); err != nil {
+			return err
 		}
+		var err error
 		id, err = q.CreateTemplate(ctx, db.CreateTemplateParams{Name: name, Agency: agency, Colour: colour, AgencyProfile: prof})
 		if isUniqueViolation(err) {
-			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", name)
+			// Another admin, at the same moment.
+			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q, ignoring letter case.", name)
 		}
 		if err != nil {
 			return dbErr("create template", err)
@@ -143,10 +143,13 @@ func (c *Catalog) EditTemplate(ctx context.Context, id int64, in TemplateChange,
 			if next.Name, err = checkText("name", *in.Name); err != nil {
 				return err
 			}
-			if other, err := q.TemplateByName(ctx, next.Name); err == nil && other.ID != id {
-				return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", next.Name)
-			} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-				return dbErr("template", err)
+			// Its own name as it is (a form sends every field) is no rename,
+			// even for a name that differs from another only in case, from
+			// before the rule (migration 00022).
+			if next.Name != cur.Name {
+				if err := nameTaken(ctx, q, next.Name, id); err != nil {
+					return err
+				}
 			}
 		}
 		if in.Agency != nil {
@@ -165,9 +168,14 @@ func (c *Catalog) EditTemplate(ctx context.Context, id int64, in TemplateChange,
 			}
 		}
 		if err := q.UpdateTemplate(ctx, next); isUniqueViolation(err) {
-			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", next.Name)
+			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q, ignoring letter case.", next.Name)
 		} else if err != nil {
 			return dbErr("update template", err)
+		}
+		if next.Name != cur.Name {
+			if err := q.SettleCaseDuplicates(ctx); err != nil {
+				return dbErr("settle case duplicates", err)
+			}
 		}
 		if deref(next.AgencyProfile) == deref(cur.AgencyProfile) {
 			return nil
@@ -213,6 +221,9 @@ func (c *Catalog) RemoveTemplate(ctx context.Context, id int64) error {
 		if _, err := q.DeleteTemplate(ctx, id); err != nil {
 			return dbErr("delete template", err)
 		}
+		if err := q.SettleCaseDuplicates(ctx); err != nil {
+			return dbErr("settle case duplicates", err)
+		}
 		return nil
 	})
 }
@@ -242,4 +253,57 @@ func plural(n int, one, many string) string {
 		return one
 	}
 	return many
+}
+
+// nameTaken refuses a template name another template has, ignoring letter
+// case (R64, owner 2026-11-14): "emv" while "EMV" exists. The refusal names
+// the template that has it. id is the template being renamed, or 0.
+func nameTaken(ctx context.Context, q *db.Queries, name string, id int64) error {
+	same, err := q.TemplatesNamedIgnoringCase(ctx, name)
+	if err != nil {
+		return dbErr("template", err)
+	}
+	for _, t := range same {
+		if t.ID == id {
+			continue
+		}
+		if t.Name == name {
+			return refuse(http.StatusConflict, "template_exists", "There's already a template called %q.", name)
+		}
+		return refuse(http.StatusConflict, "template_exists", "There's already a template called %q, which differs from %q only in letter case. Template names are unique ignoring case: choose another name, or use %q.", t.Name, name, t.Name)
+	}
+	return nil
+}
+
+// CaseDuplicate is a template whose name differs from another's only in
+// letter case, from before names had to differ by more (R64, migration
+// 00022): SameNameAs are the others' names.
+type CaseDuplicate struct {
+	ID         int64
+	Name       string
+	SameNameAs []string
+}
+
+// CaseDuplicates lists them, each group together, oldest first, so they can
+// be logged and shown in Administration until an admin renames or deletes
+// all but one of each.
+func (c *Catalog) CaseDuplicates(ctx context.Context) ([]CaseDuplicate, error) {
+	rows, err := c.Store.CaseDuplicateTemplates(ctx)
+	if err != nil {
+		return nil, dbErr("case duplicate templates", err)
+	}
+	names := map[string][]string{}
+	for _, r := range rows {
+		names[r.NameKey] = append(names[r.NameKey], r.Name)
+	}
+	out := make([]CaseDuplicate, len(rows))
+	for i, r := range rows {
+		out[i] = CaseDuplicate{ID: r.ID, Name: r.Name}
+		for _, n := range names[r.NameKey] {
+			if n != r.Name {
+				out[i].SameNameAs = append(out[i].SameNameAs, n)
+			}
+		}
+	}
+	return out, nil
 }

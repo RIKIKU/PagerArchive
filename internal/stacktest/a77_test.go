@@ -48,6 +48,9 @@ type a77State struct {
 	ScannedLink string `json:"scanned_link,omitempty"`
 	// Whether the scan used it up: on a release from before ADR 0021, yes.
 	ScannedUsedUp bool `json:"scanned_used_up,omitempty"`
+	// R64: the seed made two templates whose names differ only in case,
+	// which a release from before the rule allows (this one refuses it).
+	CasePair bool `json:"case_pair,omitempty"`
 }
 
 const (
@@ -245,10 +248,24 @@ func TestA77Seed(t *testing.T) {
 		t.Fatalf("integration: %d %s", code, msg)
 	}
 
+	// R64: names that differ only in case (the owner had EMV and emv), which
+	// the upgrade must cope with. A release with the rule refuses the second.
+	casePair := true
+	for _, name := range []string{"A77 Water", "a77 water"} {
+		code, msg := o.api(http.MethodPost, "/api/v1/admin/templates", map[string]any{"name": name, "agency": "A77 Water Service"}, nil)
+		if code == http.StatusConflict && name == "a77 water" && strings.Contains(msg, "only in letter case") {
+			casePair = false
+			t.Logf("A77: this release refused %q beside \"A77 Water\": %s", name, msg)
+		} else if code != http.StatusCreated {
+			t.Fatalf("template %q: %d %s", name, code, msg)
+		}
+	}
+
 	st := a77Read(t, o, u)
 	if len(st.Messages) != 5 || len(st.Aliases) == 0 || len(st.Templates) == 0 || st.IconSHA256 == "" || len(st.Integrations) != 1 || len(st.Users) != 2 {
 		t.Fatalf("the made-up data isn't all there: %+v", st)
 	}
+	st.CasePair = casePair
 	// ADR 0021: two waiting invitations. A scanner opens one; on a release
 	// whose invitations are single-use, that uses it up.
 	st.WaitingLink = u.invite(a77Waiting)
@@ -295,6 +312,29 @@ func TestA77Check(t *testing.T) {
 		}
 	}
 	t.Logf("A77: still there: %d pages, %d aliases, %d templates, the icon, %d integration, %d users", len(got.Messages), len(got.Aliases), len(got.Templates), len(got.Integrations), len(got.Users))
+
+	// R64: the two names that differ only in case came through the upgrade
+	// (above, with every template), Administration lists them, and a new
+	// name matching them is refused, naming the template that has it.
+	if want.CasePair {
+		var tpls []struct {
+			Name       string   `json:"name"`
+			SameNameAs []string `json:"same_name_as"`
+		}
+		o.a77JSON("/api/v1/admin/templates", &tpls)
+		same := map[string]string{}
+		for _, tpl := range tpls {
+			same[tpl.Name] = strings.Join(tpl.SameNameAs, ",")
+		}
+		if same["A77 Water"] != "a77 water" || same["a77 water"] != "A77 Water" || same[a77Template] != "" {
+			t.Errorf("Administration's names that differ only in case: %v", same)
+		}
+		code, msg := o.api(http.MethodPost, "/api/v1/admin/templates", map[string]any{"name": "A77 WATER", "agency": "A77 Water Service"}, nil)
+		if code != http.StatusConflict || !strings.Contains(msg, `"A77 Water"`) {
+			t.Errorf("adding \"A77 WATER\" after the upgrade: %d %s", code, msg)
+		}
+		t.Logf("A77: \"A77 Water\" and \"a77 water\" upgraded and listed; \"A77 WATER\" refused: %s", msg)
+	}
 
 	// The migrations have run: the newest one in this checkout is applied.
 	files, err := filepath.Glob(filepath.Join("..", "store", "migrations", "*.sql"))

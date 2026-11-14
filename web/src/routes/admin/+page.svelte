@@ -19,12 +19,19 @@
 		.backup()
 		.then((b) => (backup = b))
 		.catch(() => {});
+	// R64: templates whose names differ from another's only in letter case.
+	let sameName = $state(0);
+	api
+		.adminTemplates()
+		.then((ts) => (sameName = ts.filter((t) => t.same_name_as?.length).length))
+		.catch(() => {});
 </script>
 
 {#if backup}<BackupAlert status={backup} tz={meta?.time_zone} />{/if}
 
 <GroupPage group={groups.find((g) => g.id === 'admin')!} testid="admin-screens">
 	{#snippet extra(e)}
+		{#if e.href === '/admin/templates' && sameName > 0}<span class="tag" data-testid="case-tag">{sameName} named alike, ignoring case</span>{/if}
 		{#if e.href === '/admin/clients' && quiet > 0}<span class="tag">{quiet} not receiving</span>{/if}
 		{#if e.href === '/admin/backups' && (backup?.state === 'failed' || backup?.state === 'overdue')}<span class="tag">{backup.state}</span>{/if}
 		{#if e.href === '/admin/requests' && waiting.count > 0}<span class="tag" data-testid="waiting-tag">{waiting.count} waiting</span>{/if}

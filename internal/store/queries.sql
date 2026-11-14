@@ -85,8 +85,31 @@ ORDER BY t.name;
 -- name: TemplateByName :one
 SELECT id, name, agency, icon_sha256, colour, agency_profile FROM templates WHERE name = $1;
 
+-- name: TemplatesNamedIgnoringCase :many
+-- R64: templates whose names differ from $1 only in letter case, or match it.
+SELECT id, name FROM templates WHERE lower(name) = lower($1) ORDER BY id;
+
+-- name: CaseDuplicateTemplates :many
+-- R64: templates whose names differ only in letter case from another's, from
+-- before names were unique ignoring case (migration 00022), in groups.
+SELECT id, name, lower(name) AS name_key FROM templates t
+WHERE EXISTS (SELECT 1 FROM templates o WHERE o.id <> t.id AND lower(o.name) = lower(t.name))
+ORDER BY lower(name), id;
+
+-- name: SettleCaseDuplicates :exec
+-- R64: after a template is renamed or deleted, a group left with no template
+-- under the unique index (all marked case_duplicate) puts its oldest back
+-- under it.
+UPDATE templates t SET case_duplicate = false
+WHERE t.case_duplicate
+  AND t.id = (SELECT min(o.id) FROM templates o WHERE lower(o.name) = lower(t.name))
+  AND NOT EXISTS (SELECT 1 FROM templates o WHERE lower(o.name) = lower(t.name) AND NOT o.case_duplicate);
+
 -- name: UpdateTemplate :exec
-UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5 WHERE id = $1;
+-- A renamed template is no longer a case duplicate (R64, migration 00022).
+UPDATE templates SET name = $2, agency = $3, colour = $4, agency_profile = $5,
+    case_duplicate = case_duplicate AND name = $2
+WHERE id = $1;
 
 -- name: SetTemplateIcon :execrows
 -- R65: a 64×64 PNG the API encoded and its SHA-256, or NULL for none.

@@ -593,3 +593,20 @@ Describe 'Backups: Get-PagerArchiveBackup and Start-PagerArchiveBackup (R86a)' {
         { Start-PagerArchiveBackup -Wait -Timeout ([timespan]::Zero) -Confirm:$false } | Should -Throw -ErrorId 'ParameterArgumentValidationError,Start-PagerArchiveBackup'
     }
 }
+
+Describe 'Import-PagerArchiveAlias: a refusal that isn''t a conflict (R64)' {
+    It 'stops with the API''s code and message, naming the template' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -MockWith {
+            [pscustomobject]@{ code = 'template_exists'; error = 'The agency "emv" differs from the template "EMV" only in letter case, and template names are unique ignoring case. Use "EMV" in the CSV, or rename the template.' }
+        }
+        $rows = [pscustomobject]@{ address = '0300001'; alias = 'Brigade'; agency = 'emv' }
+        { $rows | Import-PagerArchiveAlias -Confirm:$false } | Should -Throw -ErrorId 'template_exists,Import-PagerArchiveAlias'
+        try {
+            $rows | Import-PagerArchiveAlias -Confirm:$false
+        } catch {
+            $_.Exception.Message | Should -BeLike '*"EMV" only in letter case*'
+            $_.CategoryInfo.Category | Should -Be 'ResourceExists'
+        }
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -Times 2 -Exactly
+    }
+}
