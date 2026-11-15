@@ -298,6 +298,23 @@ func serve(stderr io.Writer) error {
 		log.Info("address dataset loaded", "addresses", stats.Addresses, "streets", stats.Streets, "localities", stats.Localities, "seconds", int(time.Since(started).Seconds()))
 	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
+	// Pages stored before their derived localities were kept get theirs, in
+	// the background, once, and the report counts are built again with them
+	// (R24, ADR 0034).
+	rep := &reports.Service{Pool: st.Pool, Location: loc, Log: log}
+	go func() {
+		for ctx.Err() == nil {
+			err := geocoder.BackfillLocalities(ctx, st, log, 30*time.Second, rep.Rebuild)
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			log.Error("stored pages' localities", "error", store.SafeError(err))
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Minute):
+			}
+		}
+	}()
 	worker := &reparse.Worker{
 		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
 		ProfileHash: hash, Log: log, Poll: time.Minute, Tracer: tracer,
@@ -324,7 +341,6 @@ func serve(stderr io.Writer) error {
 	}
 	// M24's reports (R38a-R38i, ADR 0031): built in the background on the
 	// first start, then kept in step as pages change, and by the nightly run.
-	rep := &reports.Service{Pool: st.Pool, Location: loc, Log: log}
 	go rep.Run(ctx)
 	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer, Reports: rep}
 	go job.Run(ctx)

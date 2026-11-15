@@ -78,12 +78,14 @@ func (s *Service) Pending(ctx context.Context) (int64, error) {
 
 // basePages is every page a report counts, with its job's key: an
 // Emergency page with a job number (R38a; owner, 2026-11-15), not a
-// heartbeat (R35b), not to an ignored alias (R27). %s narrows it.
+// heartbeat (R35b), not to an ignored alias (R27). %s narrows it. A page's
+// locality is its locality field, else the one the geocoder derived for it
+// (R24, ADR 0034).
 const basePages = `
 SELECT 'j' || m.job_number AS job_key, m.id, m.job_number, m.capcode, m.sent_at, m.alias_id,
-       COALESCE(a.template_id, 0) AS template_id, m.event_type, m.locality, m.units,
+       COALESCE(a.template_id, 0) AS template_id, m.event_type, COALESCE(m.locality, ml.locality) AS locality, m.units,
        CASE m.priority WHEN 'Emergency' THEN 3 WHEN 'Non-emergency' THEN 2 WHEN 'Admin' THEN 1 ELSE 0 END AS rank
-FROM messages m LEFT JOIN aliases a ON a.id = m.alias_id
+FROM messages m LEFT JOIN aliases a ON a.id = m.alias_id LEFT JOIN message_localities ml ON ml.message_id = m.id
 WHERE m.priority = 'Emergency' AND m.job_number IS NOT NULL AND NOT m.heartbeat AND a.ignored IS NOT TRUE AND (%s)`
 
 // countJobs writes report_jobs and report_job_whos for the jobs whose pages

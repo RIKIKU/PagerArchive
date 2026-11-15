@@ -1830,6 +1830,15 @@ func (q *Queries) DeleteLargeEvents(ctx context.Context, ids []int64) error {
 	return err
 }
 
+const deleteMessageLocality = `-- name: DeleteMessageLocality :exec
+DELETE FROM message_localities WHERE message_id = $1
+`
+
+func (q *Queries) DeleteMessageLocality(ctx context.Context, messageID int64) error {
+	_, err := q.db.Exec(ctx, deleteMessageLocality, messageID)
+	return err
+}
+
 const deleteMessagesBefore = `-- name: DeleteMessagesBefore :one
 WITH gone AS (
     DELETE FROM messages
@@ -5356,6 +5365,24 @@ func (q *Queries) SetLocation(ctx context.Context, arg SetLocationParams) error 
 		arg.Mismatch,
 		arg.ID,
 	)
+	return err
+}
+
+const setMessageLocality = `-- name: SetMessageLocality :exec
+INSERT INTO message_localities (message_id, locality) VALUES ($1::bigint, $2::text)
+ON CONFLICT (message_id) DO UPDATE SET locality = EXCLUDED.locality
+WHERE message_localities.locality IS DISTINCT FROM EXCLUDED.locality
+`
+
+type SetMessageLocalityParams struct {
+	ID       int64
+	Locality string
+}
+
+// R24, ADR 0034: a page's derived locality, for a page whose profile gives
+// none. Unchanged rows aren't written, so its job isn't counted again.
+func (q *Queries) SetMessageLocality(ctx context.Context, arg SetMessageLocalityParams) error {
+	_, err := q.db.Exec(ctx, setMessageLocality, arg.ID, arg.Locality)
 	return err
 }
 

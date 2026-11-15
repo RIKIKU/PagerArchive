@@ -44,6 +44,11 @@ type Result struct {
 	Point    *geo.Point
 	Source   string
 	Mismatch bool // R26, admins only
+	// Locality is the dataset's locality the message is in, as R25 finds it
+	// for the grid reference (Geocoder.locality), whether or not it was
+	// placed; "" when the dataset has none of them. A page's derived
+	// locality when its profile gives none (R24, ADR 0034).
+	Locality string
 }
 
 // Geocoder places messages. Index is the street index built from the same
@@ -68,18 +73,13 @@ func (g *Geocoder) Locate(ctx context.Context, q *db.Queries, in Input) (Result,
 		}
 	}
 
+	locality := g.locality(place, in)
+	if g.Index.HasLocality(locality) {
+		res.Locality = locality
+	}
+
 	var grid *geo.Point
 	if in.GridRef != "" && g.GridSystem == geo.GridSystem6InLocalitySquare {
-		// The locality comes from the parsed address, else the locality
-		// field, else the end of the description when no address was split
-		// from it (ADR 0005).
-		locality := place.Locality
-		if locality == "" {
-			locality = streets.NormaliseLocality(in.Locality)
-		}
-		if locality == "" && in.Address == "" {
-			locality, _ = g.Index.LocalityAtEnd(in.Description)
-		}
 		if locality != "" {
 			ext, err := q.LocalityExtent(ctx, locality)
 			switch {
@@ -116,6 +116,40 @@ func (g *Geocoder) Locate(ctx context.Context, q *db.Queries, in Input) (Result,
 		res.Source = ""
 	}
 	return res, nil
+}
+
+// locality is the locality a message is in, as the grid reference is
+// completed in (R25): the parsed address's, else the locality field
+// (normalised), else the end of the description when no address was split
+// from it (ADR 0005). It may be one the dataset doesn't have (a locality
+// field's).
+func (g *Geocoder) locality(place streets.Place, in Input) string {
+	if place.Locality != "" {
+		return place.Locality
+	}
+	if l := streets.NormaliseLocality(in.Locality); l != "" {
+		return l
+	}
+	if in.Address == "" {
+		l, _ := g.Index.LocalityAtEnd(in.Description)
+		return l
+	}
+	return ""
+}
+
+// Locality is the dataset's locality Locate settles on for a message
+// (Result.Locality), worked out from the street index alone, with no
+// lookups: for placing the localities of messages stored before it was kept
+// (ADR 0034).
+func (g *Geocoder) Locality(in Input) string {
+	var place streets.Place
+	if in.Address != "" {
+		place, _ = g.Index.ParseAddress(in.Address, in.Locality)
+	}
+	if l := g.locality(place, in); g.Index.HasLocality(l) {
+		return l
+	}
+	return ""
 }
 
 // addressPoint finds the house number (as written, then simpler forms),
