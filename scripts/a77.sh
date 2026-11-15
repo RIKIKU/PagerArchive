@@ -227,6 +227,26 @@ if grep -q '"case_pair": true' "$OUT/a77-state.json"; then
 		;;
 	esac
 fi
+# R27b: the seed's two aliases sharing a name, from the previous release,
+# which allowed them: logged on start, by capcode (never by name).
+if grep -q '"name_pair": true' "$OUT/a77-state.json"; then
+	line=$(stack_compose logs --no-color api | grep 'aliases share names' | tail -n 1)
+	case $line in
+	*'0100078 (id '*' = 0100079 (id '*)
+		case $line in
+		*'A77 Pump'* | *'a77 pump'*)
+			echo "FAIL: the API logged the aliases' names: $line" >&2
+			status=1
+			;;
+		*) echo "--- logged: ${line#*\"aliases\":}" ;;
+		esac
+		;;
+	*)
+		echo "FAIL: the API didn't log the aliases sharing a name: $line" >&2
+		status=1
+		;;
+	esac
+fi
 stack_check_logs || status=1
 
 echo "=== A77: a patch release under the same tag: pull and up, nothing else"

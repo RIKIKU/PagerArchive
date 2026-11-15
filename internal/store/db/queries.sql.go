@@ -558,6 +558,46 @@ func (q *Queries) AliasIDsNamed(ctx context.Context, arg AliasIDsNamedParams) ([
 	return items, nil
 }
 
+const aliasNamesIgnoringCase = `-- name: AliasNamesIgnoringCase :many
+SELECT id, pattern, name, lower(name)::text AS name_key FROM aliases
+WHERE lower(name) = ANY(SELECT lower(n) FROM unnest($1::text[]) AS n)
+ORDER BY id
+`
+
+type AliasNamesIgnoringCaseRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+	NameKey string
+}
+
+// R27b, the import: every alias whose name is one of these, ignoring letter
+// case.
+func (q *Queries) AliasNamesIgnoringCase(ctx context.Context, names []string) ([]AliasNamesIgnoringCaseRow, error) {
+	rows, err := q.db.Query(ctx, aliasNamesIgnoringCase, names)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []AliasNamesIgnoringCaseRow
+	for rows.Next() {
+		var i AliasNamesIgnoringCaseRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.NameKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const aliasPatternsForTemplate = `-- name: AliasPatternsForTemplate :many
 SELECT pattern FROM aliases WHERE template_id = $1
 `
@@ -751,7 +791,8 @@ type AliasesNamedRow struct {
 	Pattern string
 }
 
-// R38: the aliases with this name, ignoring case (names may repeat, A19).
+// R38, R27b: the aliases with this name, ignoring case (names shared from
+// before names were unique, migration 00024, are all reported).
 func (q *Queries) AliasesNamed(ctx context.Context, name string) ([]AliasesNamedRow, error) {
 	rows, err := q.db.Query(ctx, aliasesNamed, name)
 	if err != nil {
@@ -4083,6 +4124,46 @@ func (q *Queries) MyAlbums(ctx context.Context, ownerID int64) ([]MyAlbumsRow, e
 	return items, nil
 }
 
+const nameDuplicateAliases = `-- name: NameDuplicateAliases :many
+SELECT id, pattern, name, lower(name) AS name_key FROM aliases a
+WHERE EXISTS (SELECT 1 FROM aliases o WHERE o.id <> a.id AND lower(o.name) = lower(a.name))
+ORDER BY lower(name), id
+`
+
+type NameDuplicateAliasesRow struct {
+	ID      int64
+	Pattern string
+	Name    string
+	NameKey string
+}
+
+// R27b: aliases whose names match another's, ignoring letter case, from
+// before names were unique (migration 00024), in groups, oldest first.
+func (q *Queries) NameDuplicateAliases(ctx context.Context) ([]NameDuplicateAliasesRow, error) {
+	rows, err := q.db.Query(ctx, nameDuplicateAliases)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NameDuplicateAliasesRow
+	for rows.Next() {
+		var i NameDuplicateAliasesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Pattern,
+			&i.Name,
+			&i.NameKey,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextDeliveryDue = `-- name: NextDeliveryDue :one
 SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending'
 `
@@ -5177,7 +5258,9 @@ func (q *Queries) SetAlbumNote(ctx context.Context, arg SetAlbumNoteParams) (int
 }
 
 const setAlias = `-- name: SetAlias :exec
-UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5 WHERE id = $1
+UPDATE aliases SET pattern = $2, name = $3, template_id = $4, ignored = $5,
+    name_duplicate = name_duplicate AND name = $3
+WHERE id = $1
 `
 
 type SetAliasParams struct {
@@ -5188,6 +5271,7 @@ type SetAliasParams struct {
 	Ignored    bool
 }
 
+// A renamed alias is no longer a name duplicate (R27b, migration 00024).
 func (q *Queries) SetAlias(ctx context.Context, arg SetAliasParams) error {
 	_, err := q.db.Exec(ctx, setAlias,
 		arg.ID,
@@ -5390,6 +5474,21 @@ WHERE t.case_duplicate
 // under it.
 func (q *Queries) SettleCaseDuplicates(ctx context.Context) error {
 	_, err := q.db.Exec(ctx, settleCaseDuplicates)
+	return err
+}
+
+const settleNameDuplicates = `-- name: SettleNameDuplicates :exec
+UPDATE aliases a SET name_duplicate = false
+WHERE a.name_duplicate
+  AND a.id = (SELECT min(o.id) FROM aliases o WHERE lower(o.name) = lower(a.name))
+  AND NOT EXISTS (SELECT 1 FROM aliases o WHERE lower(o.name) = lower(a.name) AND NOT o.name_duplicate)
+`
+
+// R27b: after an alias is renamed or deleted, a group left with no alias
+// under the unique index (all marked name_duplicate) puts its oldest back
+// under it.
+func (q *Queries) SettleNameDuplicates(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, settleNameDuplicates)
 	return err
 }
 

@@ -211,21 +211,6 @@ func TestA18OverlappingPatternAllowed(t *testing.T) {
 	}
 }
 
-// A19. The same name on different capcodes is allowed and reported.
-func TestA19RepeatedNamesAllowedAndReported(t *testing.T) {
-	e := setup(t)
-	csvText := "id,address,alias,agency\n1,0300001,Testville Brigade,WX\n2,300002,Testville Brigade,WX\n3,0300003,Other,WX\n"
-	res, err := e.importCSV(csvText, catalog.ImportOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resultList(res) != "added,added,added" || len(res.RepeatedNames) != 1 || res.RepeatedNames[0].Name != "Testville Brigade" ||
-		strings.Join(res.RepeatedNames[0].Patterns, ",") != "0300001,0300002" {
-		t.Fatalf("result %+v", res)
-	}
-	t.Logf("A19: repeated names %+v", res.RepeatedNames)
-}
-
 // A20. Rows that differ for one capcode stop the import and change nothing;
 // leaving one out (from M8, in the pipeline) lets it through. Identical
 // rows are squashed.

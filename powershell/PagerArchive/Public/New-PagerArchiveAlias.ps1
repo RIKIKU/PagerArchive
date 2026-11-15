@@ -7,7 +7,9 @@ function New-PagerArchiveAlias {
     Adds an alias for a capcode, or for a pattern of capcodes with % (any
     run of characters) and _ (one character), with a name and, optionally,
     a template (R27, R53). Each capcode or pattern has one alias: adding a
-    second is refused, naming the existing one (R27a). Its pages are
+    second is refused, naming the existing one (R27a). Alias names are
+    unique, ignoring letter case: a name another alias has, in any case, is
+    refused, naming that alias (R27b). Its pages are
     re-parsed in the background, and the change is recorded in the alias's
     history as yours (R57).
 

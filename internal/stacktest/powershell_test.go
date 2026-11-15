@@ -631,6 +631,9 @@ func TestPowerShellA54Import(t *testing.T) {
 	w := ps.window(t, ps.psHome(t))
 	ps.connect(w, owner, "")
 	p := "03" + ps.prefix + ps.run // capcodes 03PRRxx, unique to this run
+	// Names unique to this run too: alias names are unique (R27b), and each
+	// vault's run shares the stack.
+	brigade, north, brigade2 := "Brigade "+p, "Brigade North "+p, "Brigade 2 "+p
 	csv := filepath.Join(w.dir, "a21.csv")
 	write := func(name, content string) string {
 		f := filepath.Join(w.dir, name)
@@ -639,8 +642,8 @@ func TestPowerShellA54Import(t *testing.T) {
 		}
 		return f
 	}
-	write("a21-first.csv", fmt.Sprintf("id,address,alias,agency,icon,color,ignore\n1,%s01,Brigade,WX,,,0\n", p))
-	write("a21.csv", fmt.Sprintf("id,address,alias,agency,icon,color,pluginconf,ignore\n1,%s01,Brigade North,WX,,,{\"apikey\":\"S3CRET\"},0\n2,%s02,Tanker,WX,,,,0\n", p, p))
+	write("a21-first.csv", fmt.Sprintf("id,address,alias,agency,icon,color,ignore\n1,%s01,%s,WX,,,0\n", p, brigade))
+	write("a21.csv", fmt.Sprintf("id,address,alias,agency,icon,color,pluginconf,ignore\n1,%s01,%s,WX,,,{\"apikey\":\"S3CRET\"},0\n2,%s02,Tanker %s,WX,,,,0\n", p, north, p, p))
 	type result struct {
 		Index   int
 		Result  string
@@ -660,15 +663,15 @@ func TestPowerShellA54Import(t *testing.T) {
 	if len(r) != 2 || r[0].Result != "Different" || r[0].Applied || r[1].Result != "Added" || r[1].Applied {
 		t.Errorf("-WhatIf: %q", out)
 	}
-	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `*').Name -join ','`); strings.Join(aliases, "") != "Brigade" {
+	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `*').Name -join ','`); strings.Join(aliases, "") != brigade {
 		t.Errorf("-WhatIf changed something: %q", aliases)
 	}
 	t.Logf("A54: -WhatIf: %q", out)
 	r, out = run(`Import-Csv -Path '` + csv + `' | Import-PagerArchiveAlias -Confirm:$false`)
-	if len(r) != 2 || r[0].Result != "Different" || strings.Join(r[0].Changes, "") != `name: "Brigade" → "Brigade North"` || !r[0].Applied || r[1].Result != "Added" {
+	if len(r) != 2 || r[0].Result != "Different" || strings.Join(r[0].Changes, "") != fmt.Sprintf("name: %q → %q", brigade, north) || !r[0].Applied || r[1].Result != "Added" {
 		t.Errorf("A21 without -Update: %q", out)
 	}
-	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `01').Name`); strings.Join(aliases, "") != "Brigade" {
+	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `01').Name`); strings.Join(aliases, "") != brigade {
 		t.Errorf("A21: the import changed an existing alias: %q", aliases)
 	}
 	t.Logf("A21/A54: without -Update: %q", out)
@@ -677,7 +680,7 @@ func TestPowerShellA54Import(t *testing.T) {
 		t.Errorf("A21 with -Update: %q", out)
 	}
 	ids := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `01' | ForEach-Object { "$($_.Name)|$($_.Id)" })`)
-	if len(ids) != 1 || !strings.HasPrefix(ids[0], "Brigade North|") {
+	if len(ids) != 1 || !strings.HasPrefix(ids[0], north+"|") {
 		t.Fatalf("after -Update: %q", ids)
 	}
 	var view struct {
@@ -710,7 +713,7 @@ Import-Csv -Path '` + exported + `' | Import-PagerArchiveAlias -Confirm:$false`)
 	t.Logf("A54: Export-Csv then Import-Csv | Import-PagerArchiveAlias: %d of %d unchanged", unchanged, len(r))
 
 	// A20: two rows for one capcode that differ stop the import.
-	a20 := write("a20.csv", fmt.Sprintf("id,address,alias,agency\n10,%s11,Brigade (old name),WX\n11,%s12,Tanker 2,WX\n12,%s,Brigade 2,WX\n", p, p, strings.TrimLeft(p, "0")+"11"))
+	a20 := write("a20.csv", fmt.Sprintf("id,address,alias,agency\n10,%s11,Brigade (old name) %s,WX\n11,%s12,Tanker 2 %s,WX\n12,%s,%s,WX\n", p, p, p, p, strings.TrimLeft(p, "0")+"11", brigade2))
 	r, out = run(`Import-Csv -Path '` + a20 + `' | Import-PagerArchiveAlias -Confirm:$false`)
 	conflicts := 0
 	for _, l := range out {
@@ -729,15 +732,30 @@ Import-Csv -Path '` + exported + `' | Import-PagerArchiveAlias -Confirm:$false`)
 	if len(r) != 2 || r[0].Result != "Added" || r[1].Result != "Added" {
 		t.Errorf("A20 with Where-Object: %q", out)
 	}
-	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `11').Name`); strings.Join(aliases, "") != "Brigade 2" {
+	if aliases := w.do(`(Get-PagerArchiveAlias -Pattern '` + p + `11').Name`); strings.Join(aliases, "") != brigade2 {
 		t.Errorf("A20: the kept row's alias: %q", aliases)
 	}
-	same := write("same.csv", fmt.Sprintf("id,address,alias,agency,color,ignore\n20,%s13,Weather,WX,#1565c0,0\n21,%s13,Weather,WX,#1565c0,0\n", p, p))
+	same := write("same.csv", fmt.Sprintf("id,address,alias,agency,color,ignore\n20,%s13,Weather %s,WX,#1565c0,0\n21,%s13,Weather %s,WX,#1565c0,0\n", p, p, p, p))
 	r, out = run(`Import-Csv -Path '` + same + `' | Import-PagerArchiveAlias -Confirm:$false`)
 	if len(r) != 2 || r[0].Result != "Added" || r[1].Result != "Squashed" {
 		t.Errorf("A20 identical rows: %q", out)
 	}
 	t.Logf("A20: identical rows: %q", out)
+
+	// A19 (R27b): a name another alias has, in any case, is refused by the
+	// import, naming that alias, and by New- and Rename-PagerArchiveAlias.
+	taken := write("taken.csv", fmt.Sprintf("id,address,alias\n30,%s14,%s\n31,%s15,Pump %s\n", p, strings.ToUpper(brigade2), p, p))
+	r, out = run(`Import-Csv -Path '` + taken + `' | Import-PagerArchiveAlias -Confirm:$false`)
+	if len(r) != 0 || !hasLine(out, "ERROR import_conflict,Import-PagerArchiveAlias") || !strings.Contains(strings.Join(out, "\n"), fmt.Sprintf(`"%s" (%s11)`, brigade2, p)) {
+		t.Errorf("A19: an import giving %q: %q", strings.ToUpper(brigade2), out)
+	}
+	t.Logf("A19: import: %q", out)
+	out = w.do(fmt.Sprintf(`New-PagerArchiveAlias -Pattern %s16 -Name '%s'
+Rename-PagerArchiveAlias -Pattern %s12 -NewName '%s'`, p, strings.ToLower(brigade2), p, north))
+	if n := strings.Count(strings.Join(out, "\n"), "ERROR duplicate_name,"); n != 2 {
+		t.Errorf("A19: New- and Rename-PagerArchiveAlias with names that are taken: %q", out)
+	}
+	t.Logf("A19: New- and Rename-: %q", out)
 }
 
 // A55. Messages from PowerShell: filters, one request for piped aliases,

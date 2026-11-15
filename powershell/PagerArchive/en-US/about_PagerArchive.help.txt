@@ -77,8 +77,10 @@ LONG DESCRIPTION
 
     The rows are one batch. New capcodes are added; existing aliases are
     left alone and their differences reported, unless -Update. Rows for one
-    capcode that differ stop the whole import and are listed as errors;
-    leave rows out in the pipeline and import again:
+    capcode that differ stop the whole import and are listed as errors, and
+    so do rows giving a name another alias or row has (alias names are
+    unique, ignoring letter case). Leave rows out in the pipeline and
+    import again:
 
         Import-Csv -Path aliases.csv | Where-Object -FilterScript { $_.id -ne '10' } | Import-PagerArchiveAlias
 
