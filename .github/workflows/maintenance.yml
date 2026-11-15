@@ -60,11 +60,21 @@ jobs:
         with:
           client-id: ${{ vars.MAINTENANCE_APP_CLIENT_ID }}
           private-key: ${{ secrets.MAINTENANCE_APP_PRIVATE_KEY }}
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      # R85 (ADR 0032): renovate.json5 holds every base image update, as
+      # Renovate can't date them; this lets through the ones whose registry
+      # says they're 3 days old, as package rules Renovate adds to its own.
+      - name: The base images that are 3 days old
+        id: hold
+        run: echo "rules=$(sh scripts/ci/base-image-hold.sh)" >>"$GITHUB_OUTPUT"
       - uses: renovatebot/github-action@1c0cf989c02653fba0efe7ca5772338860ca71dc # v46.3.12
         with:
           renovate-version: 44.222.4
           token: ${{ steps.app.outputs.token }}
         env:
+          RENOVATE_PACKAGE_RULES: ${{ steps.hold.outputs.rules }}
           RENOVATE_REPOSITORIES: ${{ github.repository }}
           RENOVATE_ONBOARDING: "false"
           RENOVATE_REQUIRE_CONFIG: required

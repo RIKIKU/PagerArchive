@@ -61,7 +61,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# limited <when>: R84i, A101: the API connects only as its own role, which owns
+# limited <when>: R84i, A102: the API connects only as its own role, which owns
 # every table and may create more (its migrations), isn't a superuser, and
 # can't connect to Authentik's database.
 limited() {

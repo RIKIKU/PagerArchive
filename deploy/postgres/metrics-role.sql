@@ -1,5 +1,5 @@
 -- The locked-accounts metric's role, pagerarchive_metrics (SPEC.md R52, R84i;
--- ADR 0006, ADR 0032), in Authentik's database. Run as the superuser, in the
+-- ADR 0006, ADR 0033), in Authentik's database. Run as the superuser, in the
 -- database authentik, by 20-pagerarchive.sh on a new install and by
 -- api-role.sh. Safe to run again. The role may connect to Authentik's database
 -- and call pagerarchive_locked_accounts(), and nothing else. The password is set

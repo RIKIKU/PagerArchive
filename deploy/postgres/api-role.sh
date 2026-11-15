@@ -1,6 +1,6 @@
 #!/bin/sh
 # Switches an existing install's API from the PostgreSQL superuser to its own
-# role, pagerarchive (SPEC.md R84i, ADR 0032; docs/deploy.md, "The API's
+# role, pagerarchive (SPEC.md R84i, ADR 0033; docs/deploy.md, "The API's
 # database role"). Part of the release's archive. Run it on the host, from
 # anywhere, as the user who runs `docker compose` for this install, with the
 # stack running:

@@ -1,6 +1,6 @@
 #!/bin/sh
 # PagerArchive's own roles in the shared PostgreSQL container (SPEC.md R84i,
-# R52; ADR 0032). Part of the release's archive; runs once, when the data
+# R52; ADR 0033). Part of the release's archive; runs once, when the data
 # volume is new, after 10-authentik.sh. The SQL files are mounted beside it,
 # in pagerarchive/, which the image's start-up leaves alone.
 #

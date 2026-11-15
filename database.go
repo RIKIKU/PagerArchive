@@ -13,7 +13,7 @@ import _ "embed"
 var LockedAccountsSQL string
 
 // APIRoleSQL makes the API's own role, pagerarchive, and hands it
-// PagerArchive's objects (R84i, ADR 0032). Plain SQL, run as the superuser in
+// PagerArchive's objects (R84i, ADR 0033). Plain SQL, run as the superuser in
 // PagerArchive's database; it sets no password.
 //
 //go:embed deploy/postgres/api-role.sql

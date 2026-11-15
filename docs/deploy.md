@@ -310,7 +310,7 @@ Anything above 0 means its worker isn't picking up work. Restart Authentik as ab
 
 ## The API's database role
 
-The API connects to PostgreSQL as its own role, `pagerarchive`, not as the superuser (SPEC.md R84i, ADR 0032). The role owns PagerArchive's tables and may create new ones for its migrations, and nothing more: it isn't a superuser, can't make roles or databases, can't read or write the server's files or run programs, and can't connect to Authentik's database. So a flaw in the API can't reach Authentik's accounts or the database server itself. The backup service still connects as the superuser, as it dumps and restores both databases.
+The API connects to PostgreSQL as its own role, `pagerarchive`, not as the superuser (SPEC.md R84i, ADR 0033). The role owns PagerArchive's tables and may create new ones for its migrations, and nothing more: it isn't a superuser, can't make roles or databases, can't read or write the server's files or run programs, and can't connect to Authentik's database. So a flaw in the API can't reach Authentik's accounts or the database server itself. The backup service still connects as the superuser, as it dumps and restores both databases.
 
 **A new install** gets the role from `.env`: set `PAGERARCHIVE_DB_PASSWORD` like the other secrets, letters and digits only, and leave `PAGERARCHIVE_DB_USER=pagerarchive` as it is. The database makes the role on its first start.
 

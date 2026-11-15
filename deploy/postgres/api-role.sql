@@ -1,4 +1,4 @@
--- The API's own database role, pagerarchive (SPEC.md R84i, ADR 0032). Run as
+-- The API's own database role, pagerarchive (SPEC.md R84i, ADR 0033). Run as
 -- the superuser, in PagerArchive's database (postgres), by the database's
 -- first-start script (20-pagerarchive.sh) on a new install and by
 -- api-role.sh, which switches an existing install over. Safe to run again:

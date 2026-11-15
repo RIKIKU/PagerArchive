@@ -502,7 +502,7 @@ func a77CheckInvitations(t *testing.T, s *stack, u *browser, want a77State) {
 	t.Log("A77: the waiting invitation survived two scans and enrolled; the used-up one was resent and enrolled, both with the user as inviter")
 }
 
-// TestA77Role (R84i, A101): after deploy/postgres/api-role.sh has switched the
+// TestA77Role (R84i, A102): after deploy/postgres/api-role.sh has switched the
 // upgraded install to the API's own role, everything from the previous
 // release is still there (and the page TestA77Check stored), both users sign
 // in, the locked-accounts metric still works (its role and function now made

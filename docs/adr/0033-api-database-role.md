@@ -1,8 +1,8 @@
-# ADR 0032: The API's own database role
+# ADR 0033: The API's own database role
 
 ## Status
 
-Status: Proposed. The owner's decision of 2026-11-15 on the security review's finding D1 (with the API review's F4): SPEC.md R84i and A101, on the branch `sec-dbrole`. Scope, from the owner the same day: new installs get the role from the start; the one existing install is switched by hand with a script, not by an automatic upgrade; a release with the role must still run, unchanged, on an install that hasn't switched, so automatic upgrades can install it and roll back from it. The PowerShell module doesn't change.
+Status: Proposed. The owner's decision of 2026-11-15 on the security review's finding D1 (with the API review's F4): SPEC.md R84i and A102, on the branch `sec-dbrole`. Scope, from the owner the same day: new installs get the role from the start; the one existing install is switched by hand with a script, not by an automatic upgrade; a release with the role must still run, unchanged, on an install that hasn't switched, so automatic upgrades can install it and roll back from it. The PowerShell module doesn't change.
 
 ## Context
 
@@ -58,4 +58,4 @@ Why not automatic, in an upgrade: the owner's decision, as there is one existing
 - An unswitched install keeps working, with a WARN on every start, until its operator runs the script.
 - The locked-accounts metric's role is made by the database's first start or by the script, not by the API, once the API has its role: setting or changing `AUTHENTIK_METRICS_DB_PASSWORD` later means running `api-role.sh`.
 - After a PostGIS image update, a switched install needs `ALTER EXTENSION … UPDATE` run as the superuser (the WARN says so). Open question for the owner: should something privileged do this on its own, such as a one-shot service on `up` or the backup service?
-- Tests: A101 in the database tests (`TestA101APIRole`: an older install's database and a new one, rights checked directly, migrations as the role, rows kept, the SQL run twice), A77 (an install of the latest release upgraded, still the superuser with the WARN, then switched by the script, checked, and the script run again) and A80 (a new install and its restore both end with the role). The stack tests, A78 and the monitoring checks run new installs, so they run as the role too.
+- Tests: A102 in the database tests (`TestA102APIRole`: an older install's database and a new one, rights checked directly, migrations as the role, rows kept, the SQL run twice), A77 (an install of the latest release upgraded, still the superuser with the WARN, then switched by the script, checked, and the script run again) and A80 (a new install and its restore both end with the role). The stack tests, A78 and the monitoring checks run new installs, so they run as the role too.

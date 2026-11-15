@@ -14,7 +14,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store"
 )
 
-// A101 (R84i): the API's own database role. Given an install from before it
+// A102 (R84i): the API's own database role. Given an install from before it
 // (tables made by the superuser, with rows in them) and a new one, when
 // deploy/postgres/api-role.sql runs (by api-role.sh on the first, by the
 // database's first-start script on the second), then the API, connecting as
@@ -22,7 +22,7 @@ import (
 // and type of PagerArchive's, finds every row still there, isn't a superuser,
 // can't connect to another database, can't run a program or read the
 // server's files; running it again changes nothing.
-func TestA101APIRole(t *testing.T) {
+func TestA102APIRole(t *testing.T) {
 	url := os.Getenv("PAGERARCHIVE_TEST_DATABASE_URL")
 	if url == "" {
 		if os.Getenv("PAGERARCHIVE_REQUIRE_DB") == "1" {
@@ -44,8 +44,8 @@ func TestA101APIRole(t *testing.T) {
 	// Databases of this test's own; the role is the real one's name, which no
 	// other test uses. Afterwards every database is open to PUBLIC again, as
 	// the other tests expect.
-	const old, fresh, other = "pa_a101_old", "pa_a101_new", "pa_a101_other"
-	const password = "a101-test-password"
+	const old, fresh, other = "pa_a102_old", "pa_a102_new", "pa_a102_other"
+	const password = "a102-test-password"
 	cleanup := func() {
 		for _, db := range []string{old, fresh, other} {
 			_, _ = admin.Exec(ctx, `DROP DATABASE IF EXISTS `+db+` WITH (FORCE)`)
@@ -172,9 +172,9 @@ SELECT kind || ' ' || name FROM o WHERE owner IS DISTINCT FROM to_regrole('pager
 		denied("COPY TO PROGRAM", `COPY (SELECT 1) TO PROGRAM 'true'`)
 		denied("COPY FROM a server file", `CREATE TEMP TABLE f (l text); COPY f FROM '/etc/passwd'`)
 		denied("reading a server file", `SELECT pg_read_file('/etc/passwd')`)
-		denied("making a role", `CREATE ROLE pa_a101_made`)
-		denied("making a database", `CREATE DATABASE pa_a101_made`)
-		denied("an untrusted language", `CREATE FUNCTION pa_a101_c() RETURNS int LANGUAGE c AS 'x', 'y'`)
+		denied("making a role", `CREATE ROLE pa_a102_made`)
+		denied("making a database", `CREATE DATABASE pa_a102_made`)
+		denied("an untrusted language", `CREATE FUNCTION pa_a102_c() RETURNS int LANGUAGE c AS 'x', 'y'`)
 		for _, db := range []string{other, "template1"} {
 			if c, err := pgx.Connect(ctx, urlOf(db, "pagerarchive", password)); err == nil {
 				c.Close(ctx)
@@ -182,7 +182,7 @@ SELECT kind || ' ' || name FROM o WHERE owner IS DISTINCT FROM to_regrole('pager
 			}
 		}
 		// What its migrations will need: a new table.
-		if _, err := app.Exec(ctx, `CREATE TABLE pa_a101_new_table (n int); DROP TABLE pa_a101_new_table`); err != nil {
+		if _, err := app.Exec(ctx, `CREATE TABLE pa_a102_new_table (n int); DROP TABLE pa_a102_new_table`); err != nil {
 			t.Errorf("%s: the role can't create a table: %v", db, err)
 		}
 		if n := notOwned(app); len(n) > 0 {
@@ -207,7 +207,7 @@ SELECT kind || ' ' || name FROM o WHERE owner IS DISTINCT FROM to_regrole('pager
 	if su, err := st.Superuser(ctx); err != nil || !su {
 		t.Errorf("as the superuser, Superuser() = %v, %v", su, err)
 	}
-	for _, id := range []string{"a101-one", "a101-two"} {
+	for _, id := range []string{"a102-one", "a102-two"} {
 		if _, err := st.AddClient(ctx, id, ""); err != nil {
 			t.Fatal(err)
 		}
