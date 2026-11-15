@@ -72,6 +72,6 @@ On cld01 (4 vCPU, 11 GB, the database on a spinning disk), in a throwaway PostGI
 | The backfill: 3,100,000 pages read, 2,790,000 localities kept, half of it waiting between batches | 10 min 31 s |
 | The report counts built again after it | 1 min 43 s |
 
-Afterwards all 516,667 jobs had a locality, and the backfill had queued no jobs (the 516,667 in the queue were the seeding's own; the test now clears them first). On the production host, a small box, the estimate is 15 to 30 minutes in the background after the upgrade: the backfill is mostly reading pages in id order and the rebuild is one statement, both bounded by the disk. Until the rebuild commits, reports count the localities they had before (all "No locality" there).
+Afterwards all 516,667 jobs had a locality, and the backfill had queued no jobs: a second run, with the seeding's own queue cleared first, found 0 queued (backfill 10 min 48 s, rebuild 1 min 32 s). On the production host, a small box, the estimate is 15 to 30 minutes in the background after the upgrade: the backfill is mostly reading pages in id order and the rebuild is one statement, both bounded by the disk. Until the rebuild commits, reports count the localities they had before (all "No locality" there).
 
 The first version's run on the same data (with the queue left to count job by job) is the 37 min 9 s in section 5.
