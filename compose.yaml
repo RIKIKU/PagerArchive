@@ -194,7 +194,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [serve]
     labels:
-      pagerarchive.config: "6c8aeedee0be95fd"
+      pagerarchive.config: "b054047a72199fa0"
     environment:
       PGHOST: db
       # The superuser, unlike the API (R84i): it dumps everything in both
