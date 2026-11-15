@@ -431,6 +431,23 @@ func serve(stderr io.Writer) error {
 		log.Warn("template names differ only in letter case, from before names had to differ by more: new names can't match them. Rename or delete all but one of each, in Administration, Templates",
 			"templates", strings.Join(names, ", "))
 	}
+	// R27b: aliases sharing a name, ignoring case, from before names were
+	// unique (migration 00024), on every start until an admin sorts them
+	// out. By capcode and id: alias names are never logged.
+	if groups, err := srv.Catalog.NameDuplicates(ctx); err != nil {
+		log.Warn("aliases that share a name couldn't be listed", "error", err.Error())
+	} else if len(groups) > 0 {
+		list := make([]string, len(groups))
+		for i, g := range groups {
+			each := make([]string, len(g))
+			for j, a := range g {
+				each[j] = fmt.Sprintf("%s (id %d)", a.Pattern, a.ID)
+			}
+			list[i] = strings.Join(each, " = ")
+		}
+		log.Warn("aliases share names, ignoring letter case, from before names had to be unique: new names can't match them. Rename all but one of each, in Administration, Aliases",
+			"groups", len(groups), "aliases", strings.Join(list, "; "))
+	}
 	// The app's page is sent in the signed-in user's look (R82d).
 	srv.UI = web.Handler(srv.PageLook)
 	addr := getenv("LISTEN_ADDR", ":8080")

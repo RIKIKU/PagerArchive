@@ -51,6 +51,9 @@ type a77State struct {
 	// R64: the seed made two templates whose names differ only in case,
 	// which a release from before the rule allows (this one refuses it).
 	CasePair bool `json:"case_pair,omitempty"`
+	// R27b: the seed made aliases sharing a name, in any case, which a
+	// release from before the rule allows (this one refuses the second).
+	NamePair bool `json:"name_pair,omitempty"`
 }
 
 const (
@@ -261,11 +264,26 @@ func TestA77Seed(t *testing.T) {
 		}
 	}
 
+	// R27b: aliases sharing a name, in any case, which the upgrade must
+	// cope with. A release with the rule refuses the second.
+	namePair := true
+	for i, name := range []string{"A77 Pump", "a77 pump"} {
+		pattern := fmt.Sprintf("010007%d", 8+i)
+		code, msg := o.api(http.MethodPost, "/api/v1/admin/aliases", map[string]any{"pattern": pattern, "name": name, "template_id": tpl.ID}, nil)
+		if code == http.StatusConflict && i == 1 && strings.Contains(msg, "only in letter case") {
+			namePair = false
+			t.Logf("A77: this release refused %q beside \"A77 Pump\": %s", name, msg)
+		} else if code != http.StatusCreated {
+			t.Fatalf("alias %s %q: %d %s", pattern, name, code, msg)
+		}
+	}
+
 	st := a77Read(t, o, u)
 	if len(st.Messages) != 5 || len(st.Aliases) == 0 || len(st.Templates) == 0 || st.IconSHA256 == "" || len(st.Integrations) != 1 || len(st.Users) != 2 {
 		t.Fatalf("the made-up data isn't all there: %+v", st)
 	}
 	st.CasePair = casePair
+	st.NamePair = namePair
 	// ADR 0021: two waiting invitations. A scanner opens one; on a release
 	// whose invitations are single-use, that uses it up.
 	st.WaitingLink = u.invite(a77Waiting)
@@ -334,6 +352,26 @@ func TestA77Check(t *testing.T) {
 			t.Errorf("adding \"A77 WATER\" after the upgrade: %d %s", code, msg)
 		}
 		t.Logf("A77: \"A77 Water\" and \"a77 water\" upgraded and listed; \"A77 WATER\" refused: %s", msg)
+	}
+	// R27b: the two aliases sharing a name came through the upgrade (above,
+	// with every alias), Administration lists them, and a new name matching
+	// them is refused, naming the alias that has it.
+	if want.NamePair {
+		var shared []struct {
+			Aliases []struct {
+				Pattern string `json:"pattern"`
+				Name    string `json:"name"`
+			} `json:"aliases"`
+		}
+		o.a77JSON("/api/v1/admin/aliases/shared-names", &shared)
+		if len(shared) != 1 || len(shared[0].Aliases) != 2 || shared[0].Aliases[0].Pattern != "0100078" || shared[0].Aliases[1].Pattern != "0100079" {
+			t.Errorf("Administration's aliases sharing a name: %+v", shared)
+		}
+		code, msg := o.api(http.MethodPost, "/api/v1/admin/aliases", map[string]any{"pattern": "0100080", "name": "A77 PUMP"}, nil)
+		if code != http.StatusConflict || !strings.Contains(msg, `"A77 Pump" (0100078)`) {
+			t.Errorf("adding \"A77 PUMP\" after the upgrade: %d %s", code, msg)
+		}
+		t.Logf("A77: \"A77 Pump\" and \"a77 pump\" upgraded and listed; \"A77 PUMP\" refused: %s", msg)
 	}
 
 	// The migrations have run: the newest one in this checkout is applied.

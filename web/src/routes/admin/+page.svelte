@@ -33,6 +33,12 @@
 		.adminTemplates()
 		.then((ts) => (sameName = ts.filter((t) => t.same_name_as?.length).length))
 		.catch(() => {});
+	// R27b: aliases sharing a name, ignoring letter case.
+	let sharedNames = $state(0);
+	api
+		.sharedNames()
+		.then((s) => (sharedNames = s.reduce((n, g) => n + g.aliases.length, 0)))
+		.catch(() => {});
 </script>
 
 {#if backup}<BackupAlert status={backup} tz={meta?.time_zone} />{/if}
@@ -40,6 +46,7 @@
 
 <GroupPage group={groups.find((g) => g.id === 'admin')!} testid="admin-screens">
 	{#snippet extra(e)}
+		{#if e.href === '/admin/aliases' && sharedNames > 0}<span class="tag" data-testid="shared-names-tag">{sharedNames} share names</span>{/if}
 		{#if e.href === '/admin/templates' && sameName > 0}<span class="tag" data-testid="case-tag">{sameName} named alike, ignoring case</span>{/if}
 		{#if e.href === '/admin/clients' && quiet > 0}<span class="tag">{quiet} not receiving</span>{/if}
 		{#if e.href === '/admin/backups' && (backup?.state === 'failed' || backup?.state === 'overdue')}<span class="tag">{backup.state}</span>{/if}

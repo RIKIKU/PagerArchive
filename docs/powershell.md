@@ -98,11 +98,13 @@ Rename-PagerArchiveAlias -Pattern 0100005 -NewName 'Station Five'
 Remove-PagerArchiveAlias -Pattern 0100005
 ```
 
+Alias names are unique, ignoring letter case (SPEC R27b): `New-` and `Rename-PagerArchiveAlias` refuse a name another alias has, in any case, with an error (`duplicate_name`, category `ResourceExists`) naming that alias and its capcode. An alias may change its own name's case. Aliases that shared a name before this rule keep it, and are listed in Administration, Aliases, until all but one of each are renamed; `Set-PagerArchiveAlias` still changes their other settings.
+
 `-WhatIf` and `-Confirm` work as for built-in commands. Removing asks for confirmation.
 
 ### Choosing records
 
-A template or alias piped from `Get-PagerArchiveTemplate` or `Get-PagerArchiveAlias` (or any object with an `Id`) is chosen by its **Id**: the `Remove-`, `Set-` and `Rename-` commands act on exactly that record. This matters when two templates' names differ only in case, or when several aliases share a name:
+A template or alias piped from `Get-PagerArchiveTemplate` or `Get-PagerArchiveAlias` (or any object with an `Id`) is chosen by its **Id**: the `Remove-`, `Set-` and `Rename-` commands act on exactly that record. This matters when two templates' names differ only in case, or when several aliases share a name from before names were unique:
 
 ```powershell
 Get-PagerArchiveTemplate -Name 'example fire' | Where-Object -Property Id -EQ 49 | Remove-PagerArchiveTemplate
@@ -123,7 +125,7 @@ Import-Csv aliases.csv | Import-PagerArchiveAlias -AgencyProfile @{ 'Example Fir
 - The CSV's `address`, `alias`, `agency`, `color` and `ignore` columns bind by name. Other columns (an export's `id` or `icon`, a plugin's settings) are never read.
 - New capcodes are added, with one template created per new agency and the profile `-AgencyProfile` maps it to. The mapping can live in a JSON file the deployment keeps: `-AgencyProfile (Get-Content profiles.json -Raw | ConvertFrom-Json -AsHashtable)`. An unknown profile name refuses the whole import.
 - Existing aliases aren't changed: each difference comes out as a `Different` result. `-Update` applies them (`Updated`), and asks first.
-- Rows for one capcode that are identical are squashed into the first (`Squashed`). Rows that **differ** stop the import, changing nothing, and each is reported as an error. Fix the file, or leave rows out in the pipeline, and run it again:
+- Rows for one capcode that are identical are squashed into the first (`Squashed`). Rows that **differ** stop the import, changing nothing, and each is reported as an error. So does a row that would give an alias a name another alias has, or another row gives, ignoring letter case: its error names that alias or those rows. A row that leaves an alias's name as it is never conflicts, so an export imports unchanged. Fix the file, or leave rows out in the pipeline, and run it again:
 
   ```powershell
   Import-Csv aliases.csv | Where-Object -Property id -NE '10' | Import-PagerArchiveAlias

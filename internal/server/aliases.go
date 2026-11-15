@@ -29,6 +29,12 @@ func (s *Server) catalogError(w http.ResponseWriter, r *http.Request, op string,
 		writeJSON(w, r.Status, Problem{Error: r.Msg, Code: r.Code})
 		return
 	}
+	var taken *catalog.NameTakenError
+	if errors.As(err, &taken) {
+		r := taken.Refusal()
+		writeJSON(w, r.Status, Problem{Error: r.Msg, Code: r.Code})
+		return
+	}
 	// Catalog errors carry SQLSTATEs and capcodes, never names (store.SafeError).
 	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
@@ -239,6 +245,9 @@ type AdminAlias struct {
 	AliasView
 	Requests     []catalog.RequestView `json:"requests"`
 	Integrations int64                 `json:"integrations"`
+	// R27b: other aliases with its name, ignoring letter case, from before
+	// names were unique (migration 00024).
+	SameNameAs []catalog.AliasRef `json:"same_name_as,omitempty"`
 }
 
 func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +272,32 @@ func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
 	if out.Integrations, err = s.Store.CountIntegrationsSelectingAlias(r.Context(), id); err != nil {
 		s.catalogError(w, r, "admin alias", fmt.Errorf("integrations: %s", store.SafeError(err)))
 		return
+	}
+	if out.SameNameAs, err = s.Catalog.SameNameAs(r.Context(), id, v.Name); err != nil {
+		s.catalogError(w, r, "admin alias", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// SharedName is a name several aliases have, ignoring letter case, from
+// before names were unique (R27b, migration 00024): its aliases, oldest
+// first.
+type SharedName struct {
+	Aliases []catalog.AliasRef `json:"aliases"`
+}
+
+// sharedNames lists them for Administration, until all but one of each are
+// renamed or deleted.
+func (s *Server) sharedNames(w http.ResponseWriter, r *http.Request) {
+	groups, err := s.Catalog.NameDuplicates(r.Context())
+	if err != nil {
+		s.catalogError(w, r, "shared names", err)
+		return
+	}
+	out := make([]SharedName, len(groups))
+	for i, g := range groups {
+		out[i] = SharedName{Aliases: g}
 	}
 	writeJSON(w, http.StatusOK, out)
 }

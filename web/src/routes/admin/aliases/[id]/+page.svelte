@@ -69,6 +69,16 @@
 	{#if notice}<p class="ok" role="status">{notice}</p>{/if}
 </div>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
+{#if a?.same_name_as?.length}
+	<!-- R27b: from before names had to be unique. -->
+	<div class="notice" data-testid="shared-name">
+		<p>
+			{a.same_name_as.length === 1 ? 'Another alias has' : 'Other aliases have'} this name, ignoring letter case, from before alias names had to be unique:
+			{#each a.same_name_as as o, i}{i ? ', ' : ''}<a href="/admin/aliases/{o.id}">'{o.name}' ({o.pattern})</a>{/each}. Its other settings can still be changed;
+			rename it or {a.same_name_as.length === 1 ? 'the other' : 'the others'} so each name is used once.
+		</p>
+	</div>
+{/if}
 {#if a}
 	{#key formKey}
 		<AliasForm
@@ -114,6 +124,20 @@
 {/if}
 
 <style>
+	.notice {
+		margin: var(--space-sm) 0;
+		padding: var(--space-sm) var(--space-md);
+		border-radius: var(--radius);
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+		max-width: var(--measure);
+	}
+	.notice p {
+		margin: 0;
+	}
+	.notice a {
+		color: inherit;
+	}
 	.links {
 		margin: 0;
 		font-size: var(--text-sm);

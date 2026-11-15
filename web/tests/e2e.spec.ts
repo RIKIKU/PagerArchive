@@ -4437,6 +4437,74 @@ test('A89 template names unique ignoring case', async ({ browser }, info) => {
 	await expect(admin.getByTestId('case-tag')).toHaveCount(0);
 });
 
+// A19 (R27b): an alias name another alias has, in any case, is refused in
+// the form, naming that alias. A100: names shared from before the rule (put
+// straight into the database, as an upgrade leaves them) are listed on
+// Aliases with a tag on each, on each one's page, and as a tag on the
+// Administration start page, until one is renamed.
+test('A19 A100 alias names unique ignoring case', async ({ browser }, info) => {
+	const n = projectN(info);
+	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	await admin.goto('/admin/aliases');
+	await admin.getByRole('button', { name: 'Add alias' }).click();
+	const add = admin.getByTestId('alias-form');
+	await add.getByLabel('Capcode or pattern').fill(`08100${n}1`);
+	await add.getByLabel('Name').fill('STATION 1');
+	await add.getByRole('button', { name: 'Add alias' }).click();
+	await expect(add.getByRole('alert')).toContainText('There\'s already an alias called "Station 1" (0100001), which differs from "STATION 1" only in letter case.');
+
+	const shared = `Shared name ${n}`;
+	const pair: [string, string][] = [
+		[`08100${n}2`, shared],
+		[`08100${n}3`, shared.toUpperCase()]
+	];
+	sql(
+		pair
+			.map(([p, name], i) => `INSERT INTO aliases (pattern, name, template_id, name_duplicate) SELECT '${p}', '${name}', id, ${i > 0} FROM templates WHERE name = 'Example Fire';`)
+			.join('\n')
+	);
+	try {
+		await admin.goto('/admin/aliases');
+		const notice = admin.getByTestId('shared-names');
+		for (const [p, name] of pair) await expect(notice).toContainText(`'${name}' (${p})`);
+		await expect(notice).toContainText('Rename all but one of each');
+		const row = (name: string) =>
+			admin
+				.getByTestId('alias-table')
+				.getByRole('row')
+				.filter({ has: admin.getByRole('link', { name, exact: true }) });
+		await expect(row(pair[0][1]).getByTestId('shared-tag')).toHaveText(`same name as ${pair[1][0]}, ignoring case`);
+		await expect(row(pair[1][1]).getByTestId('shared-tag')).toHaveText(`same name as ${pair[0][0]}, ignoring case`);
+		expect(await axeOf(admin), 'axe: aliases sharing a name').toEqual([]);
+		await admin.goto('/admin');
+		await expect(admin.getByTestId('shared-names-tag')).toHaveText('2 share names');
+		expect(await axeOf(admin), 'axe: Administration with the tag').toEqual([]);
+
+		// The newer one's page names the other; renamed, it isn't listed.
+		await admin.goto('/admin/aliases');
+		await row(pair[1][1]).getByRole('link', { name: pair[1][1], exact: true }).click();
+		await expect(admin.getByTestId('shared-name')).toContainText(`'${pair[0][1]}' (${pair[0][0]})`);
+		expect(await axeOf(admin), 'axe: an alias sharing its name').toEqual([]);
+		const form = admin.getByTestId('alias-form');
+		await form.getByLabel('Name').fill(pair[0][1]);
+		await form.getByRole('button', { name: 'Save' }).click();
+		await expect(form.getByRole('alert')).toContainText(`There's already an alias called "${pair[0][1]}" (${pair[0][0]})`);
+		await form.getByLabel('Name').fill(`${shared} North`);
+		await form.getByRole('button', { name: 'Save' }).click();
+		await expect(admin.getByRole('status')).toContainText('Saved');
+		await expect(admin.getByTestId('shared-name')).toHaveCount(0);
+		await admin.goto('/admin/aliases');
+		await expect(admin.getByTestId('alias-table')).toBeVisible();
+		await expect(admin.getByTestId('shared-names')).toHaveCount(0);
+		await admin.goto('/admin');
+		await expect(admin.getByRole('link', { name: /Aliases/ }).first()).toBeVisible();
+		await expect(admin.getByTestId('shared-names-tag')).toHaveCount(0);
+	} finally {
+		sql(`DELETE FROM aliases WHERE pattern IN (${pair.map(([p]) => `'${p}'`).join(', ')});`);
+	}
+	await admin.context().close();
+});
+
 // M24 (R38a-R38i): the reports in the browser, on each browser project's own
 // made-up week (agency "Report agency n", Report stations n1-n4, from
 // scripts/e2e.sh); the counts themselves are checked in Go (A91-A99). Each

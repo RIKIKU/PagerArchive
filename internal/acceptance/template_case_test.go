@@ -20,7 +20,7 @@ import (
 // R64 (owner, 2026-11-14): a template name that differs from another's only
 // in letter case is refused, when adding and renaming, and by the import,
 // naming the template that has it. A template's own name in other case is a
-// rename it may make. Aliases are unchanged: they may share names (A19).
+// rename it may make. (Alias names, R27b: alias_names_test.go.)
 func TestTemplateNamesUniqueIgnoringCase(t *testing.T) {
 	e := setup(t)
 	create := func(name string) (int, server.Problem) {
@@ -67,15 +67,6 @@ func TestTemplateNamesUniqueIgnoringCase(t *testing.T) {
 	}
 	if _, ok := e.adminTemplates()["EXAMPLE FIRE"]; ok {
 		t.Error("the refused import made a template")
-	}
-
-	// A19: aliases may still share names, in any case.
-	fire := e.adminTemplates()["Example Fire"].ID
-	for _, pattern := range []string{"0700002", "0700003"} {
-		name := map[string]string{"0700002": "Brigade", "0700003": "BRIGADE"}[pattern]
-		if code, p := e.admin.call(http.MethodPost, "/api/v1/admin/aliases", map[string]any{"pattern": pattern, "name": name, "template_id": fire}, nil); code != http.StatusCreated {
-			t.Errorf("alias %s %q: %d %+v", pattern, name, code, p)
-		}
 	}
 }
 
