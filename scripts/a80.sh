@@ -61,6 +61,22 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# limited <when>: R84i, A101: the API connects only as its own role, which owns
+# every table and may create more (its migrations), isn't a superuser, and
+# can't connect to Authentik's database.
+limited() {
+	_q() { stack_compose exec -T db psql -X -q -At -U postgres -d postgres -c "$1" | tr -d '\r'; }
+	_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(stack_compose ps -q api)")
+	_users=$(_q "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$_ip'")
+	[ "$_users" = pagerarchive ] || fail "$1: the API connects as $_users, not only as pagerarchive"
+	[ "$(_q "SELECT rolsuper OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname = 'pagerarchive'")" = f ] || fail "$1: the role has rights it mustn't"
+	[ "$(_q "SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND relowner <> 'pagerarchive'::regrole AND relname <> 'spatial_ref_sys'")" = 0 ] ||
+		fail "$1: some of PagerArchive's tables aren't the role's"
+	[ "$(_q "SELECT has_schema_privilege('pagerarchive', 'public', 'CREATE') AND NOT has_database_privilege('pagerarchive', 'authentik', 'CONNECT')")" = t ] ||
+		fail "$1: the role can't create tables, or can connect to Authentik's database"
+	echo "--- $1: the API connects as pagerarchive, which owns its tables and has no more rights than it needs"
+}
+
 start_mailpit() {
 	docker run -d --name "$MAILPIT" --network "${COMPOSE_PROJECT_NAME}_default" --network-alias mailpit \
 		-e MP_SMTP_AUTH_ACCEPT_ANY=true -e MP_SMTP_AUTH_ALLOW_INSECURE=true \
@@ -104,6 +120,7 @@ chmod 777 "$CTL"
 stack_compose up -d
 start_mailpit
 stack_wait_ready
+limited "a new install"
 gateway=$(docker network inspect "${COMPOSE_PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}')
 key=$(stack_compose exec -T api /usr/local/bin/pagerarchive client add a80-receiver "A80 receiver" | tail -n 1)
 export PA_STACK_APP_URL=http://localhost:8080 PA_STACK_AUTHENTIK_URL=http://localhost:9000 \
@@ -300,6 +317,7 @@ start_mailpit
 stack_wait_ready
 echo "--- running: $(stack_compose exec -T api /usr/local/bin/pagerarchive version)"
 PA_STACK_PHASE=a77-check go test -count=1 -v -run 'TestA77Check' ./internal/stacktest/ || fail "after the restore, the data isn't all there"
+limited "after the restore"
 
 echo "=== A80: the restored install backs up too"
 backup_now --night 2031-01-19

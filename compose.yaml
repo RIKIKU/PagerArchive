@@ -96,15 +96,24 @@ services:
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       AUTHENTIK_DB_PASSWORD: ${AUTHENTIK_DB_PASSWORD:?set AUTHENTIK_DB_PASSWORD in .env}
+      # Read only by the first-start script, 20-pagerarchive.sh (R84i).
+      PAGERARCHIVE_DB_USER: ${PAGERARCHIVE_DB_USER:-}
+      PAGERARCHIVE_DB_PASSWORD: ${PAGERARCHIVE_DB_PASSWORD:-}
+      AUTHENTIK_METRICS_DB_PASSWORD: ${AUTHENTIK_METRICS_DB_PASSWORD:-}
     # P1: statement text (which can contain page text) is never logged.
     command: >-
       postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse
       -c shared_buffers=128MB -c work_mem=4MB -c max_connections=100
     volumes:
       - db:/var/lib/postgresql
-      # Runs once, when the volume is new, so it has no label: a change to it
-      # means nothing to a database that already exists.
+      # Run once, when the volume is new, so they have no label: a change to
+      # them means nothing to a database that already exists. The SQL files go
+      # in a folder of their own, which the image's start-up doesn't run.
       - ./deploy/postgres/10-authentik.sh:/docker-entrypoint-initdb.d/10-authentik.sh:ro
+      - ./deploy/postgres/20-pagerarchive.sh:/docker-entrypoint-initdb.d/20-pagerarchive.sh:ro
+      - ./deploy/postgres/api-role.sql:/docker-entrypoint-initdb.d/pagerarchive/api-role.sql:ro
+      - ./deploy/postgres/metrics-role.sql:/docker-entrypoint-initdb.d/pagerarchive/metrics-role.sql:ro
+      - ./deploy/postgres/locked-accounts.sql:/docker-entrypoint-initdb.d/pagerarchive/locked-accounts.sql:ro
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-h", "127.0.0.1"]
       interval: 5s
@@ -126,7 +135,12 @@ services:
     image: ghcr.io/rikiku/pagerarchive:main
     restart: unless-stopped
     environment:
-      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/postgres?sslmode=disable
+      # The API's own role, pagerarchive (R84i, docs/deploy.md, "The API's
+      # database role"): never the superuser, so the API can't reach Authentik's
+      # database or the database server. An install from before this role has
+      # neither setting and connects as the superuser, with a warning, until
+      # deploy/postgres/api-role.sh switches it over.
+      DATABASE_URL: postgres://${PAGERARCHIVE_DB_USER:-postgres}:${PAGERARCHIVE_DB_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/postgres?sslmode=disable
       PROFILES_DIR: /profiles
       TZ: ${TZ:-UTC}
       APP_URL: ${APP_URL}
@@ -180,9 +194,12 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [serve]
     labels:
-      pagerarchive.config: "7f128f3aeba7fb46"
+      pagerarchive.config: "6c8aeedee0be95fd"
     environment:
       PGHOST: db
+      # The superuser, unlike the API (R84i): it dumps everything in both
+      # databases, and a restore makes them again and gives the roles their
+      # rights. Its container runs nothing but the archive's script.
       PGUSER: postgres
       PGPASSWORD: ${POSTGRES_PASSWORD}
       TZ: ${TZ:-UTC}
@@ -192,6 +209,10 @@ services:
       BACKUP_GID: ${BACKUP_GID:-0}
     volumes:
       - ./deploy/backup/backup.sh:/usr/local/bin/pagerarchive-backup:ro
+      # What a restore runs to give the roles their rights back (R84i).
+      - ./deploy/postgres/api-role.sql:/usr/local/share/pagerarchive/api-role.sql:ro
+      - ./deploy/postgres/metrics-role.sql:/usr/local/share/pagerarchive/metrics-role.sql:ro
+      - ./deploy/postgres/locked-accounts.sql:/usr/local/share/pagerarchive/locked-accounts.sql:ro
       - ${BACKUP_DIR:-./backups}:/backups
       - backup-status:/status
       - backup-request:/requests
@@ -208,7 +229,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [check-serve]
     labels:
-      pagerarchive.config: "7f128f3aeba7fb46"
+      pagerarchive.config: "6ccf19ac04054cf6"
     environment:
       BACKUP_UID: ${BACKUP_UID:-0}
       BACKUP_GID: ${BACKUP_GID:-0}

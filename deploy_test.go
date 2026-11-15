@@ -553,3 +553,66 @@ func (n *needs) UnmarshalYAML(v *yaml.Node) error {
 	*n = list
 	return err
 }
+
+// R84i: the API connects as its own role once .env names it, and the
+// superuser's password reaches it only as the fallback for an install that
+// hasn't switched over. The SQL that makes the roles is where the database's
+// first-start script and a restore look for it, with the file it includes.
+func TestR84iAPIConnectsAsItsOwnRole(t *testing.T) {
+	data, err := os.ReadFile("compose.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(data, &env); err != nil {
+		t.Fatal(err)
+	}
+	const want = "postgres://${PAGERARCHIVE_DB_USER:-postgres}:${PAGERARCHIVE_DB_PASSWORD:-${POSTGRES_PASSWORD}}@db:5432/postgres?sslmode=disable"
+	if got := env.Services["api"].Environment["DATABASE_URL"]; got != want {
+		t.Errorf("the API's DATABASE_URL is %s, want %s", got, want)
+	}
+	for k, v := range env.Services["api"].Environment {
+		if k != "DATABASE_URL" && strings.Contains(v, "POSTGRES_PASSWORD") {
+			t.Errorf("the API's %s has the superuser's password", k)
+		}
+	}
+	c := composeFiles(t)[0]
+	mounts := func(service string) map[string]string {
+		out := map[string]string{}
+		for _, v := range c.Services[service].Volumes {
+			if parts := strings.Split(v, ":"); len(parts) >= 2 && strings.HasPrefix(parts[0], "./") {
+				out[parts[1]] = strings.TrimPrefix(parts[0], "./")
+			}
+		}
+		return out
+	}
+	for service, dir := range map[string]string{"db": "/docker-entrypoint-initdb.d/pagerarchive", "backup": "/usr/local/share/pagerarchive"} {
+		m := mounts(service)
+		for _, f := range []string{"api-role.sql", "metrics-role.sql", "locked-accounts.sql"} {
+			if m[dir+"/"+f] != "deploy/postgres/"+f {
+				t.Errorf("%s doesn't mount deploy/postgres/%s at %s/%s", service, f, dir, f)
+			}
+		}
+	}
+	if m := mounts("db"); m["/docker-entrypoint-initdb.d/20-pagerarchive.sh"] != "deploy/postgres/20-pagerarchive.sh" {
+		t.Error("db doesn't run deploy/postgres/20-pagerarchive.sh on its first start")
+	}
+	for _, e := range []string{"PAGERARCHIVE_DB_PASSWORD", "AUTHENTIK_METRICS_DB_PASSWORD"} {
+		if env.Services["db"].Environment[e] == "" {
+			t.Errorf("db's first-start script needs %s", e)
+		}
+	}
+	example, err := os.ReadFile(".env.example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range []string{"PAGERARCHIVE_DB_USER=pagerarchive\n", "PAGERARCHIVE_DB_PASSWORD=\n"} {
+		if !strings.Contains(string(example), "\n"+line) {
+			t.Errorf(".env.example has no line %q: a new install gets the API's own role from it", strings.TrimSpace(line))
+		}
+	}
+}

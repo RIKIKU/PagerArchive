@@ -92,7 +92,8 @@ Templates and aliases are managed in the browser or with the PagerArchive
 PowerShell module (docs/powershell.md), which uses the same API and rules.
 
 serve reads its settings from the environment:
-  DATABASE_URL     PostgreSQL connection string (required)
+  DATABASE_URL     PostgreSQL connection string (required): the API's own role,
+                   pagerarchive, not a superuser (docs/deploy.md)
   PROFILES_DIR     directory of profile files (default /profiles; /dev/null mounted
                    there means the example built into the image, with a warning)
   NETWORK_PROFILE  network profile name (default: the only one in PROFILES_DIR)
@@ -122,6 +123,8 @@ serve reads its settings from the environment:
   METRICS_TOKEN                bearer token for GET /metrics (default: metrics off)
   AUTHENTIK_METRICS_DB_PASSWORD  the pagerarchive_metrics role's password, for the
                                locked-accounts metric; the role is created on start
+                               while DATABASE_URL is a superuser (otherwise by
+                               deploy/postgres/api-role.sh)
                                (or AUTHENTIK_METRICS_DATABASE_URL, for one set up elsewhere)
   OTEL_EXPORTER_OTLP_ENDPOINT  where to send traces and logs over OTLP/HTTP, e.g.
                                http://alloy:4318 (default: telemetry off); the other
@@ -249,6 +252,15 @@ func serve(stderr io.Writer) error {
 	// After the migrations: keep PostGIS's extensions at the image's version
 	// (R84c). A failure is a warning, and the API starts anyway.
 	store.UpdatePostGIS(ctx, st.Pool, log)
+	// R84i: the API's own role, not the superuser. An install from before it
+	// still connects as the superuser, and works, with this warning on every
+	// start until it's switched over (deploy/postgres/api-role.sh).
+	superuser, err := st.Superuser(ctx)
+	if err != nil {
+		log.Warn("couldn't check the API's database role", "error", store.SafeError(err))
+	} else if superuser {
+		log.Warn("the API connects to PostgreSQL as a superuser, which can reach Authentik's database and the database server itself: switch it to its own role with deploy/postgres/api-role.sh (docs/deploy.md, \"The API's database role\")")
+	}
 
 	loc, err := time.LoadLocation(getenv("TZ", "UTC"))
 	if err != nil {
@@ -356,9 +368,11 @@ func serve(stderr io.Writer) error {
 		}
 		defer pool.Close()
 		locks = &authentik.Locks{Pool: pool}
-		// With its own URL, the role is someone else's to set up. A failure
+		// With its own URL, the role is someone else's to set up, and with the
+		// API's own database role (R84i) it's the database's first-start
+		// script's or api-role.sh's: only a superuser can make it. A failure
 		// costs this one metric, so it doesn't stop the API.
-		if pw := os.Getenv("AUTHENTIK_METRICS_DB_PASSWORD"); pw != "" && os.Getenv("AUTHENTIK_METRICS_DATABASE_URL") == "" {
+		if pw := os.Getenv("AUTHENTIK_METRICS_DB_PASSWORD"); pw != "" && os.Getenv("AUTHENTIK_METRICS_DATABASE_URL") == "" && superuser {
 			if err := authentik.EnsureLocksRole(ctx, dbURL, pw); err != nil {
 				log.Warn("the locked-accounts metric's role couldn't be set up", "error", store.SafeError(err))
 			}

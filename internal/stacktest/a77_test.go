@@ -501,3 +501,76 @@ func a77CheckInvitations(t *testing.T, s *stack, u *browser, want a77State) {
 	}
 	t.Log("A77: the waiting invitation survived two scans and enrolled; the used-up one was resent and enrolled, both with the user as inviter")
 }
+
+// TestA77Role (R84i, A101): after deploy/postgres/api-role.sh has switched the
+// upgraded install to the API's own role, everything from the previous
+// release is still there (and the page TestA77Check stored), both users sign
+// in, the locked-accounts metric still works (its role and function now made
+// by the script, not the API), and a new page is stored and found.
+func TestA77Role(t *testing.T) {
+	s := setup(t, "a77-role")
+	o := s.browser(t, a77Owner)
+	if ok, c := o.signIn(); !ok {
+		t.Fatalf("the admin can't sign in after the switch: %s %s", c.errorText(), c.raw)
+	}
+	u := s.browser(t, a77User)
+	if ok, c := u.signIn(); !ok {
+		t.Fatalf("the user can't sign in after the switch: %s %s", c.errorText(), c.raw)
+	}
+	var want a77State
+	data, err := os.ReadFile(os.Getenv("PA_A77_STATE"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &want); err != nil {
+		t.Fatal(err)
+	}
+	got := a77Read(t, o, u)
+	for name, pair := range map[string][2]any{
+		"aliases": {want.Aliases, got.Aliases}, "templates": {want.Templates, got.Templates},
+		"integrations": {want.Integrations, got.Integrations}, "the icon": {want.IconSHA256, got.IconSHA256},
+	} {
+		if !reflect.DeepEqual(pair[0], pair[1]) {
+			t.Errorf("%s changed in the switch:\nbefore %+v\nafter  %+v", name, pair[0], pair[1])
+		}
+	}
+	// Every user from before, and the two invitees TestA77Check enrolled.
+	users := map[string]bool{}
+	for _, e := range got.Users {
+		users[e] = true
+	}
+	for _, e := range want.Users {
+		if !users[e] {
+			t.Errorf("the user %s is gone after the switch", e)
+		}
+	}
+	// Every page from before, and the one TestA77Check stored.
+	have := map[int64]a77Message{}
+	for _, m := range got.Messages {
+		have[m.ID] = m
+	}
+	for _, m := range want.Messages {
+		if !reflect.DeepEqual(have[m.ID], m) {
+			t.Errorf("page %d changed in the switch:\nbefore %+v\nafter  %+v", m.ID, m, have[m.ID])
+		}
+	}
+	if len(got.Messages) != len(want.Messages)+1 {
+		t.Errorf("%d pages after the switch, want the %d from before and the upgrade's probe", len(got.Messages), len(want.Messages))
+	}
+	t.Logf("A77: after the switch: %d pages, %d aliases, %d templates, the icon, %d integration, %d users", len(got.Messages), len(got.Aliases), len(got.Templates), len(got.Integrations), len(got.Users))
+	if !lockedLine.MatchString(s.scrape(t)) {
+		t.Error("no pagerarchive_accounts_locked in the metrics after the switch")
+	} else {
+		t.Log("A77: the locked-accounts metric is there after the switch")
+	}
+	a77Post(t, s, a77Probe)
+	var found struct {
+		Messages []a77Message `json:"messages"`
+	}
+	o.a77JSON("/api/v1/messages?q=A77PROBE&limit=10", &found)
+	if len(found.Messages) != 2 {
+		t.Errorf("searching for the probe after the switch found %d pages, want 2", len(found.Messages))
+	} else {
+		t.Log("A77: a new page is stored and found as the API's own role")
+	}
+}

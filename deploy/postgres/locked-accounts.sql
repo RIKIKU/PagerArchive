@@ -3,7 +3,8 @@
 -- of accounts the guessing protection has locked now, by the same rule as the
 -- pagerarchive-not-locked policy in deploy/authentik/blueprints. It returns
 -- only that count. The role pagerarchive_metrics may call it and read nothing
--- else. The API runs this on every start (EnsureLocksRole).
+-- else. Run by metrics-role.sql on a new install and by api-role.sh, and by
+-- the API on every start while it connects as the superuser (EnsureLocksRole).
 --
 -- The rule: 5 failures within 15 minutes lock an account until 15 minutes after
 -- the fifth; a successful sign-in starts the count again; 5 wrong enrolment
