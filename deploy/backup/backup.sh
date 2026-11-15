@@ -41,6 +41,9 @@ AT=${BACKUP_AT:-04:00}
 CHECK_TIMEOUT=${BACKUP_CHECK_TIMEOUT:-43200}
 OWNER=${BACKUP_UID:-0}:${BACKUP_GID:-0}
 SOCKET=/var/run/postgresql
+# The SQL that gives the API's and the metric's roles their rights, which a
+# restore gives back (R84i).
+SQL_DIR=${PA_SQL_DIR:-/usr/local/share/pagerarchive}
 THROWAWAY=/var/lib/postgresql/check
 TAB=$(printf '\t')
 # PostgreSQL's database name : the name in the folder.
@@ -416,6 +419,17 @@ SQL
 		echo "couldn't empty the databases: is something connected to them? docker compose stop api authentik-server authentik-worker, and run this again" >&2
 		return 1
 	fi
+	# A dump from an install with the API's own role (R84i) names it as its
+	# tables' owner. Roles aren't in the dumps: a new install whose .env has
+	# no PAGERARCHIVE_DB_PASSWORD hasn't made it, so it's made here, unable to
+	# sign in until api-role.sh gives it a password.
+	if pg_restore -l "$DIR/$_night.pagerarchive.dump" 2>/dev/null | awk '{print $NF}' | grep -qx pagerarchive &&
+		! psql -X -q -At -d template1 -c "SELECT 1 FROM pg_roles WHERE rolname = 'pagerarchive'" 2>/dev/null | grep -q 1; then
+		if ! psql -X -q -v ON_ERROR_STOP=1 -d template1 -c 'CREATE ROLE pagerarchive' >/dev/null 2>&1; then
+			echo "couldn't make the role that owns the dump's tables" >&2
+			return 1
+		fi
+	fi
 	for _pair in $DATABASES; do
 		_db=${_pair%%:*} _name=${_pair##*:}
 		if ! pg_restore -d "$_db" --exit-on-error --single-transaction --no-privileges <"$DIR/$_night.$_name.dump" >/dev/null 2>&1; then
@@ -429,6 +443,19 @@ SQL
 		fi
 		say "$_name restored, with the night's tables and row counts"
 	done
+	# The new databases have none of the rights the roles had: the dumps hold
+	# no grants. So the API's role gets its rights back, and the
+	# locked-accounts metric's role its function, as api-role.sh gives them.
+	if psql -X -q -At -d template1 -c "SELECT 1 FROM pg_roles WHERE rolname = 'pagerarchive'" 2>/dev/null | grep -q 1 &&
+		! psql -X -q -v ON_ERROR_STOP=1 -d postgres -f "$SQL_DIR/api-role.sql" >/dev/null 2>&1; then
+		echo "couldn't give the API's role, pagerarchive, its rights again: run deploy/postgres/api-role.sh after starting the stack" >&2
+		return 1
+	fi
+	if psql -X -q -At -d template1 -c "SELECT 1 FROM pg_roles WHERE rolname = 'pagerarchive_metrics'" 2>/dev/null | grep -q 1 &&
+		! psql -X -q -v ON_ERROR_STOP=1 -d authentik -f "$SQL_DIR/metrics-role.sql" >/dev/null 2>&1; then
+		echo "couldn't give the locked-accounts metric's role its function again: run deploy/postgres/api-role.sh after starting the stack" >&2
+		return 1
+	fi
 	say "$_night is restored. Start the stack: docker compose up -d"
 }
 

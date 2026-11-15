@@ -21,6 +21,12 @@
 # GHCR. Before the upgrade the metrics role is dropped, so the API has to
 # create it again: nothing may be left for a hand step.
 #
+# Then deploy/postgres/api-role.sh switches the upgraded install, which still
+# connects as the superuser with a warning, to the API's own role (R84i), and
+# the checks run again: the role is all the API connects as, it can't reach
+# Authentik's database or run a program, and nothing is lost. A second run
+# changes nothing.
+#
 # Last comes a patch release (R84b): a newer image under the same tag, with
 # nothing in the folder changed, and pull and up again.
 #
@@ -140,6 +146,9 @@ ALLOWED_EMAIL_DOMAINS=$ALLOWED_EMAIL_DOMAINS
 INITIAL_ADMIN_EMAIL=$INITIAL_ADMIN_EMAIL
 VARS
 fill_env "$DIR/.env" "$WORK/vars"
+# As an install from before the API's own role (R84i): it connects as the
+# superuser, and its .env has neither setting.
+sed -i -E '/^PAGERARCHIVE_DB_(USER|PASSWORD)=/d' "$DIR/.env"
 chmod -R a+rX "$WORK"
 
 stack_compose up -d
@@ -247,6 +256,63 @@ if grep -q '"name_pair": true' "$OUT/a77-state.json"; then
 		;;
 	esac
 fi
+stack_check_logs || status=1
+
+# R84i: the upgraded install still connects as the superuser, and works, with
+# the warning on every start.
+n=$(stack_compose logs --no-color api | grep -c 'connects to PostgreSQL as a superuser' || true)
+if [ "$n" -lt 1 ]; then
+	echo "FAIL: no warning that the API connects as the superuser" >&2
+	status=1
+fi
+echo "--- superuser warnings in the API's log since the upgrade: $n"
+
+echo "=== A77: switching the API to its own role (deploy/postgres/api-role.sh)"
+# api_role: the script, from the install's folder, with only what a host has.
+api_role() {
+	(cd "$DIR" && env -i PATH="$PATH" HOME="$HOME" ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} \
+		COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" sh deploy/postgres/api-role.sh "$@")
+}
+dbq() { stack_compose exec -T db psql -X -q -At -U postgres -d "${2:-postgres}" -c "$1" | tr -d '\r'; }
+if ! api_role >"$OUT/a77-role.txt" 2>&1; then
+	cat "$OUT/a77-role.txt" >&2
+	echo "FAIL: api-role.sh failed" >&2
+	exit 1
+fi
+cat "$OUT/a77-role.txt"
+pw=$(sed -n 's/^PAGERARCHIVE_DB_PASSWORD=//p' "$DIR/.env")
+case $pw in
+*[!0-9a-f]* | "") echo "FAIL: .env has no new hex PAGERARCHIVE_DB_PASSWORD" >&2 && status=1 ;;
+esac
+[ ${#pw} -eq 64 ] || { echo "FAIL: the new password is ${#pw} characters, not 64" >&2; status=1; }
+grep -q "$pw" "$OUT/a77-role.txt" && { echo "FAIL: api-role.sh printed the password" >&2; status=1; }
+grep -qx "PAGERARCHIVE_DB_USER=pagerarchive" "$DIR/.env" || { echo "FAIL: .env doesn't name the role" >&2; status=1; }
+# What the API connects as to PagerArchive's database, seen from there: its
+# container's address. (The locked-accounts metric connects to Authentik's as
+# its own role.)
+api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(stack_compose ps -q api)")
+users=$(dbq "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$api_ip' AND datname = 'postgres'")
+[ "$users" = pagerarchive ] || { echo "FAIL: the API connects as $users, not only as pagerarchive" >&2; status=1; }
+[ "$(dbq "SELECT rolsuper OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname = 'pagerarchive'")" = f ] ||
+	{ echo "FAIL: the role has rights it mustn't" >&2; status=1; }
+others=$(dbq "SELECT count(*) FROM pg_class c WHERE c.relnamespace = 'public'::regnamespace AND c.relkind = 'r' AND c.relowner <> 'pagerarchive'::regrole AND c.relname <> 'spatial_ref_sys'")
+[ "$others" = 0 ] || { echo "FAIL: $others of PagerArchive's tables aren't the role's" >&2; status=1; }
+# As the role, as the API is: no Authentik database, no programs.
+as_role() { PGPASSWORD=$pw stack_compose exec -T -e PGPASSWORD db psql -X -q -At -h 127.0.0.1 -U pagerarchive "$@"; }
+as_role -d authentik -c 'SELECT 1' >/dev/null 2>&1 && { echo "FAIL: the role connects to Authentik's database" >&2; status=1; }
+as_role -d postgres -c "COPY (SELECT 1) TO PROGRAM 'true'" >/dev/null 2>&1 && { echo "FAIL: the role runs programs" >&2; status=1; }
+echo "--- the API connects as pagerarchive ($users), which owns every table, isn't a superuser, can't reach Authentik's database or run a program"
+n=$(stack_compose logs --no-color api | grep -c 'connects to PostgreSQL as a superuser' || true)
+[ "$n" -eq 0 ] || { echo "FAIL: the API still warns that it connects as the superuser" >&2; status=1; }
+PA_STACK_PHASE=a77-role go test -count=1 -v -run 'TestA77Role' ./internal/stacktest/ || status=1
+
+echo "=== A77: api-role.sh again: harmless"
+env_sum=$(sha256sum "$DIR/.env")
+api_id=$(stack_compose ps -q api)
+api_role >"$OUT/a77-role-again.txt" 2>&1 || { cat "$OUT/a77-role-again.txt" >&2; echo "FAIL: api-role.sh failed the second time" >&2; status=1; }
+[ "$(sha256sum "$DIR/.env")" = "$env_sum" ] || { echo "FAIL: the second run changed .env" >&2; status=1; }
+[ "$(stack_compose ps -q api)" = "$api_id" ] || { echo "FAIL: the second run recreated the API" >&2; status=1; }
+echo "--- the second run changed nothing: $(tail -n 1 "$OUT/a77-role-again.txt")"
 stack_check_logs || status=1
 
 echo "=== A77: a patch release under the same tag: pull and up, nothing else"

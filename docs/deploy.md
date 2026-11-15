@@ -263,7 +263,7 @@ Users forward new pages to their own systems from **Integrations**: a webhook, M
 `GET /metrics` on the `api` port gives Prometheus-format metrics (SPEC.md R52), for your own monitoring to alert on: each receiver's last-seen time and whether it's receiving (R39) or its clock is ahead, pages received by outcome, messages with each admin flag, integration deliveries by result (`delivered`, `failed`, `too_old`, `cancelled`), integrations by status, accounts locked by guessing protection, and the last nightly run. There is no page text in it, and receivers appear by client ID only.
 
 - **Set `METRICS_TOKEN`** in `.env` (`openssl rand -base64 36 | tr -d '/+='`). Without it, `/metrics` is off. Scrapes need it as a bearer token.
-- **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env`, and the API creates the role when it starts, or changes its password. Without it, that one metric is left out.
+- **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env`. On a new install the database makes the role on its first start. On an install whose API still connects as the superuser, the API makes it when it starts, or changes its password. Once the API has [its own role](#the-apis-database-role), run `deploy/postgres/api-role.sh` after setting or changing the password. Without it, that one metric is left out.
 - Scrape it on your LAN, and keep `/metrics` out of your reverse proxy's public locations.
 
 ```yaml
@@ -307,6 +307,24 @@ docker compose exec db psql -U postgres -d authentik -tAc \
 ```
 
 Anything above 0 means its worker isn't picking up work. Restart Authentik as above.
+
+## The API's database role
+
+The API connects to PostgreSQL as its own role, `pagerarchive`, not as the superuser (SPEC.md R84i, ADR 0033). The role owns PagerArchive's tables and may create new ones for its migrations, and nothing more: it isn't a superuser, can't make roles or databases, can't read or write the server's files or run programs, and can't connect to Authentik's database. So a flaw in the API can't reach Authentik's accounts or the database server itself. The backup service still connects as the superuser, as it dumps and restores both databases.
+
+**A new install** gets the role from `.env`: set `PAGERARCHIVE_DB_PASSWORD` like the other secrets, letters and digits only, and leave `PAGERARCHIVE_DB_USER=pagerarchive` as it is. The database makes the role on its first start.
+
+**An install from before the role** has neither setting, so its API connects as the superuser, as it always did, and logs a warning on every start: "the API connects to PostgreSQL as a superuser". It works as before, and upgrades (by hand or automatic) and rollbacks need nothing new. To switch it over, with the stack running and no upgrade under way, from the folder with `compose.yaml`:
+
+```sh
+deploy/postgres/api-role.sh
+```
+
+It counts every table's rows; then, in one transaction, makes the role, hands it PagerArchive's tables, functions and types, takes away what it mustn't have, and sets a new random password; signs in as the role and checks it can't do what it mustn't; writes `PAGERARCHIVE_DB_USER` and `PAGERARCHIVE_DB_PASSWORD` into `.env` (the password is never printed); recreates the API, and only the API; and checks that the API connects as the role and every table still has its rows. If it stops before `.env` is written, nothing has changed for the API; if the API doesn't come back as the role, it puts `.env` back and the API connects as the superuser again. With `AUTHENTIK_METRICS_DB_PASSWORD` set, it also makes the locked-accounts metric's role and function (see [Metrics](#metrics)), which the API can no longer make itself. It's safe to run again: on a switched install it checks everything and repairs what's missing, and changes nothing else.
+
+To go back to the superuser: `deploy/postgres/api-role.sh undo`. That takes the two lines out of `.env` and recreates the API; the role stays, and a superuser needs nothing from it. An automatic upgrade's rollback to a release from before the role needs no undo: that release's `compose.yaml` ignores the two lines.
+
+Once switched, the API can't update PostGIS's extensions after a newer `postgis/postgis` image (R84c): it logs a WARN naming each one and the fix, as in [Upgrading](#upgrading), and keeps working on the older version until you run it.
 
 ## Moving from an existing archive
 
@@ -368,7 +386,7 @@ Without a date, it lists the nights. It starts the database, restores both dumps
 docker compose up -d
 ```
 
-Everything is as it was that night, and people sign in with the passwords they had then. It won't overwrite anything: if the install has tables in it, it stops and says so. It also refuses a night that failed its check, unless you add `--unchecked` after the date. Database migrations for a newer version run when the API starts, as for any upgrade, so a dump can go into a newer install, but not an older one.
+Everything is as it was that night, and people sign in with the passwords they had then. The restore gives the API's role and the locked-accounts metric's role their rights again, as the dumps hold none. Restoring an install whose API had [its own role](#the-apis-database-role) needs the old `.env`, with its `PAGERARCHIVE_DB_PASSWORD`; without it, run `deploy/postgres/api-role.sh` once the stack is up. It won't overwrite anything: if the install has tables in it, it stops and says so. It also refuses a night that failed its check, unless you add `--unchecked` after the date. Database migrations for a newer version run when the API starts, as for any upgrade, so a dump can go into a newer install, but not an older one.
 
 ### Copying the folder off the host
 

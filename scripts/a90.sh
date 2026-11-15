@@ -101,6 +101,9 @@ BACKUP_UID=$(id -u)
 BACKUP_GID=$(id -g)
 VARS
 fill_env "$DIR/.env" "$WORK/vars"
+# As an install from before the API's own role (R84i), as A77's: the previous
+# release's .env has neither setting, and the upgrade keeps the superuser.
+sed -i -E '/^PAGERARCHIVE_DB_(USER|PASSWORD)=/d' "$DIR/.env"
 chmod -R a+rX "$WORK"
 stack_compose up -d
 stack_wait_ready
