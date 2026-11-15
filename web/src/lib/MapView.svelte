@@ -9,7 +9,11 @@
 	import { Protocol } from 'pmtiles';
 	import { layers, namedFlavor } from '@protomaps/basemaps';
 	import { onMount } from 'svelte';
+	import { pushState } from '$app/navigation';
+	import { page } from '$app/state';
 	import type { Message, Meta } from './api.ts';
+	import Icon from './Icon.svelte';
+	import { screen } from './screen.svelte.ts';
 
 	// variant 'single': the small map in a message's detail view (R35c), one
 	// point and no clusters, below the text on phones (P2).
@@ -18,12 +22,15 @@
 		meta,
 		focus = null,
 		variant = 'full',
+		strip = '',
 		onselect = () => {}
 	}: {
 		messages: Message[];
 		meta: Meta;
 		focus?: number | null;
 		variant?: 'full' | 'single';
+		// R35f: what the map is for, in a strip above it in full screen.
+		strip?: string;
 		onselect?: (ids: number[]) => void;
 	} = $props();
 	const single = $derived(variant === 'single');
@@ -35,6 +42,104 @@
 	// the page still lists the located messages.
 	let unavailable = $state(false);
 	let fitted = false;
+
+	// R35f: full screen. Where the browser can put an element full screen
+	// (and not on a phone), the map and its strip are (the Fullscreen API);
+	// otherwise, and on phones, they're a fixed overlay over the whole
+	// viewport, moved to the end of the body so nothing on the page (a
+	// stacking context, a container) holds it in, with a history entry of
+	// its own so Back closes it. The map keeps its centre and zoom both ways.
+	const uid = $props.id();
+	let slot: HTMLDivElement;
+	let frame: HTMLDivElement;
+	let button: HTMLButtonElement | undefined = $state();
+	let open = $state(false);
+	let overlay = $state(false);
+	let tipOff = $state(false);
+	let inerted: Element[] = [];
+	// Where the page was scrolled to, to come back to it.
+	let scrolled = [0, 0];
+
+	/** The map fills its new size: a frame after the change. */
+	function resized() {
+		requestAnimationFrame(() => map?.resize());
+	}
+
+	async function enter() {
+		if (open) return;
+		scrolled = [scrollX, scrollY];
+		if (!screen.phone && document.fullscreenEnabled && typeof frame.requestFullscreen === 'function') {
+			try {
+				await frame.requestFullscreen();
+				return;
+			} catch {
+				// Refused: the overlay instead.
+			}
+		}
+		pushState('', { ...page.state, mapFullscreen: uid });
+		showOverlay();
+	}
+
+	function showOverlay() {
+		overlay = true;
+		open = true;
+		document.body.append(frame);
+		// The page behind can't be reached (focus, screen readers) or scrolled.
+		for (const el of document.body.children) {
+			if (el !== frame && !el.hasAttribute('inert')) {
+				el.setAttribute('inert', '');
+				inerted.push(el);
+			}
+		}
+		button?.focus({ preventScroll: true });
+		resized();
+	}
+
+	function hideOverlay(refocus = true) {
+		if (!overlay) return;
+		overlay = false;
+		open = false;
+		for (const el of inerted) el.removeAttribute('inert');
+		inerted = [];
+		slot?.append(frame);
+		if (refocus) button?.focus({ preventScroll: true });
+		resized();
+	}
+
+	function exit() {
+		if (document.fullscreenElement === frame) document.exitFullscreen();
+		else if (overlay) {
+			// Its history entry goes too, so Back then leaves the page as before.
+			history.back();
+		}
+	}
+
+	// The page behind doesn't scroll, or keep its scroll bar's room (app.css);
+	// closed, it's where it was (the wider page may have scrolled less).
+	$effect(() => {
+		if (!open) return;
+		document.documentElement.classList.add('map-full');
+		return () => {
+			document.documentElement.classList.remove('map-full');
+			scrollTo(scrolled[0], scrolled[1]);
+		};
+	});
+
+	// Back (the button or a phone's back gesture) closes the overlay: it
+	// leaves the overlay's own history entry, a shallow one (SvelteKit's
+	// pushState), so the page itself stays.
+	$effect(() => {
+		if (!overlay) return;
+		const back = () => hideOverlay();
+		addEventListener('popstate', back);
+		return () => removeEventListener('popstate', back);
+	});
+
+	function frameKey(e: KeyboardEvent) {
+		if (e.key !== 'Escape') return;
+		tipOff = true;
+		if (overlay) exit();
+	}
 
 	maplibregl.setWorkerUrl(workerUrl);
 	let protocolAdded = false;
@@ -75,6 +180,14 @@
 	// What the messages are drawn with, from the tokens (R82c), kept on the
 	// map's element so a test can see the map follows them.
 	let drawn = $state('');
+	// Where the map is looking (centre and zoom), kept on its element too, so
+	// a test can see full screen keeps it (R35f).
+	let view = $state('');
+	function looked() {
+		if (!map) return;
+		const c = map.getCenter();
+		view = `${c.lng.toFixed(6)},${c.lat.toFixed(6)},${map.getZoom().toFixed(2)}`;
+	}
 
 	function dark(): boolean {
 		const t = document.documentElement.dataset.theme;
@@ -228,6 +341,8 @@
 		// drawn (seen in about 1 in 20 detail views in the A34 check); one
 		// more frame once everything has loaded shows them.
 		map.once('idle', () => map?.triggerRepaint());
+		map.on('moveend', looked);
+		map.on('resize', looked);
 		map.on('click', 'clusters', async (e) => {
 			const f = e.features?.[0];
 			if (!f || !map) return;
@@ -261,7 +376,18 @@
 		mq.addEventListener('change', restyle);
 		const mo = new MutationObserver(restyle);
 		mo.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'data-look'] });
+		// R35f: in and out of the browser's full screen (the button, or Esc).
+		const fullscreen = () => {
+			if (overlay) return;
+			open = document.fullscreenElement === frame;
+			resized();
+		};
+		document.addEventListener('fullscreenchange', fullscreen);
 		return () => {
+			document.removeEventListener('fullscreenchange', fullscreen);
+			if (document.fullscreenElement === frame) document.exitFullscreen().catch(() => {});
+			hideOverlay(false);
+			frame.remove();
 			mq.removeEventListener('change', restyle);
 			mo.disconnect();
 			map?.remove();
@@ -284,25 +410,60 @@
 	}
 </script>
 
-<div
-	class="map"
-	class:unavailable
-	class:single
-	bind:this={container}
-	role="region"
-	aria-label={single
-		? 'Map showing where this message was placed. The location is also described in the details.'
-		: 'Map of located messages. The same messages are listed below the map.'}
-	data-testid="map"
-	data-ready={unavailable ? 'unavailable' : ready}
-	data-drawn={drawn || undefined}
->
-	{#if unavailable}
-		<p>
-			This browser can't show the map (it needs WebGL, which may be turned off).
-			{single ? 'The location is described in the details.' : 'The located messages are listed below.'}
-		</p>
-	{/if}
+<!-- R35f: the slot keeps the map's room on the page while the overlay is away at the end of the body. -->
+<div class="slot" class:away={overlay} class:small={single} bind:this={slot}>
+	<!-- svelte-ignore a11y_no_static_element_interactions, a11y_no_noninteractive_element_interactions (Escape closes the overlay and hides the tooltip: WCAG 1.4.13) -->
+	<div
+		class="frame"
+		class:open
+		class:overlay
+		bind:this={frame}
+		role={open ? 'dialog' : undefined}
+		aria-modal={open ? 'true' : undefined}
+		aria-labelledby={open ? `${uid}-strip` : undefined}
+		data-testid="map-frame"
+		data-fullscreen={open ? (overlay ? 'overlay' : 'native') : undefined}
+		onkeydown={frameKey}
+	>
+		{#if open}<p class="strip" id="{uid}-strip" data-testid="map-strip">{strip || 'Map'}</p>{/if}
+		<div class="stage">
+			<div
+				class="map"
+				class:unavailable
+				class:single
+				bind:this={container}
+				role="region"
+				aria-label={single
+					? 'Map showing where this message was placed. The location is also described in the details.'
+					: 'Map of located messages. The same messages are listed below the map.'}
+				data-testid="map"
+				data-ready={unavailable ? 'unavailable' : ready}
+				data-drawn={drawn || undefined}
+				data-view={view || undefined}
+			>
+				{#if unavailable}
+					<p>
+						This browser can't show the map (it needs WebGL, which may be turned off).
+						{single ? 'The location is described in the details.' : 'The located messages are listed below.'}
+					</p>
+				{/if}
+			</div>
+			{#if ready}
+				<span class="fs has-tip" class:tip-off={tipOff || open} onpointerleave={() => (tipOff = false)} onfocusout={() => (tipOff = false)}>
+					<button
+						bind:this={button}
+						type="button"
+						class="secondary"
+						class:icon-button={!open}
+						aria-label={open ? 'Exit full screen' : 'Full screen map'}
+						onclick={() => (open ? exit() : enter())}
+						><Icon name={open ? 'exitfullscreen' : 'fullscreen'} />{#if open}Exit full screen{/if}</button
+					>
+					<span class="tooltip" aria-hidden="true">Full screen map</span>
+				</span>
+			{/if}
+		</div>
+	</div>
 </div>
 
 <style>
@@ -324,5 +485,69 @@
 		height: auto;
 		min-height: 0;
 		padding: var(--space-md);
+	}
+	/* R35f: while the overlay is away, its room stays, so nothing behind it moves. */
+	.slot.away {
+		height: var(--map-height);
+		min-height: var(--map-min-height);
+	}
+	.slot.away.small {
+		height: var(--map-height-small);
+		min-height: 0;
+	}
+	.stage {
+		position: relative;
+	}
+	/* Full screen, either way: the strip, then the map filling the rest. */
+	.frame.open {
+		display: flex;
+		flex-direction: column;
+		background: var(--bg);
+		color: var(--fg);
+	}
+	/* The overlay: the whole viewport as it is now (dynamic viewport height),
+	   inside the safe areas, above the page's header and bottom bar. */
+	.frame.overlay {
+		position: fixed;
+		inset: 0;
+		z-index: var(--layer-overlay);
+		height: var(--full-height);
+		padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+	}
+	.strip {
+		margin: 0;
+		padding: var(--space-xs) var(--space-md);
+		background: var(--surface);
+		border-bottom: var(--border-width) solid var(--border);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-strong);
+		line-height: var(--leading-tight);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.open .stage {
+		display: flex;
+		flex: 1 1 auto;
+		min-height: 0;
+	}
+	.open .map {
+		flex: 1 1 auto;
+		height: auto;
+		min-height: 0;
+		border: 0;
+		border-radius: 0;
+	}
+	/* The button: the map's top-left corner (zoom is top right, the credit
+	   bottom right), its tooltip opening to the right, inside the map. */
+	.fs {
+		position: absolute;
+		top: var(--space-sm);
+		left: var(--space-sm);
+		z-index: var(--layer-content);
+	}
+	.fs > .tooltip {
+		left: 0;
+		transform: none;
 	}
 </style>

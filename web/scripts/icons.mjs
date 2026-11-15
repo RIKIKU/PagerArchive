@@ -73,7 +73,10 @@ const icons = {
 	earlier: 'caret-down',
 	newest: 'chevrons-up',
 	// M22: large events (R87c), in Tools and Administration.
-	largeevents: 'flame'
+	largeevents: 'flame',
+	// Full screen on every map (R35f): four corner arrows out, and back in.
+	fullscreen: 'arrows-maximize',
+	exitfullscreen: 'arrows-minimize'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

@@ -7,7 +7,7 @@
 	import Icon from '#lib/Icon.svelte';
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
-	import { apiParams, criteria } from '#lib/search.ts';
+	import { apiParams, boxText, criteria } from '#lib/search.ts';
 
 	// R35: located messages, the last 24 hours unless the search gives dates,
 	// following the search box (R33a) and live updates (section 14).
@@ -27,6 +27,10 @@
 	const ranged = $derived(query.has('from') || query.has('to'));
 	const shown = $derived(selected.length ? messages.filter((m) => selected.includes(m.id)) : messages);
 	const listHref = $derived(query.toString() ? `/?${query}` : '/');
+	// R35f: what the map shows, in its strip in full screen: the search and the dates.
+	const strip = $derived(
+		`Located messages, ${ranged ? `${query.get('from') ?? '…'} to ${query.get('to') ?? '…'}` : 'the last 24 hours'}${boxText(query) ? `: ${boxText(query)}` : ''}`
+	);
 
 	api.meta().then((m) => (meta = m)).catch((e) => (error = e.message));
 
@@ -98,7 +102,7 @@
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 
 {#if meta}
-	<MapView bind:this={mapView} {messages} {meta} {focus} onselect={(ids) => (selected = ids)} />
+	<MapView bind:this={mapView} {messages} {meta} {focus} {strip} onselect={(ids) => (selected = ids)} />
 {/if}
 
 <section aria-labelledby="located-h" class="located">

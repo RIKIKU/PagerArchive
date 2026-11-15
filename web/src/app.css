@@ -486,6 +486,17 @@
 	}
 }
 
+/* R35f: while a map is open full screen (MapView.svelte), the page behind it
+   doesn't scroll, and the scroll bar's room goes, so the map has the whole
+   width. */
+:root.map-full {
+	scrollbar-gutter: auto;
+}
+:root.map-full,
+:root.map-full body {
+	overflow: hidden;
+}
+
 :root[data-theme='light'] {
 	color-scheme: light;
 }
