@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-15). The owner's report: on the production network, Busiest localities (R38c) shows only "No locality". Every stored page's `locality` is null and every counted job's locality is empty, because the network's profile has no `locality` field: its locality is at the end of the address, or of the description. The geocoder found that locality (R24, R25) but didn't keep it. SPEC.md R24, R38a and R38c change, with A102 and A103. On the branch `locality` from main; migration 00025; the pull request is labelled `bug`.
+Proposed (2026-11-15). The owner's report: on the production network, Busiest localities (R38c) shows only "No locality". Every stored page's `locality` is null and every counted job's locality is empty, because the network's profile has no `locality` field: its locality is at the end of the address, or of the description. The geocoder found that locality (R24, R25) but didn't keep it. SPEC.md R24, R38a and R38c change, with A103 and A104. On the branch `locality` from main; migration 00025; the pull request is labelled `bug`.
 
 ## Context
 
@@ -39,7 +39,7 @@ Triggers on `message_localities` (statement-level, like ADR 0031 §3's on `messa
 `geocode.Geocoder.BackfillLocalities`, started by the API after the dataset is loaded, reads the pages with no locality field in id order, 2,000 at a time, works out each one's derived locality from the street index, and inserts the rows and how far it got (`settings` row `message_localities_backfill`: the last id, then `recount`, then `done`) in one transaction per batch. So:
 
 - **resumable**: a restart carries on from the last batch committed;
-- **idempotent**: `ON CONFLICT DO NOTHING`, and only for a page that still has no locality field, so a row ingest or a re-parse wrote meanwhile is kept; run again from the start, it changes nothing (A103);
+- **idempotent**: `ON CONFLICT DO NOTHING`, and only for a page that still has no locality field, so a row ingest or a re-parse wrote meanwhile is kept; run again from the start, it changes nothing (A104);
 - **gentle**: between batches it waits as long as the batch took, so it takes at most half of one connection, as the reports' catch-up does;
 - **logged**: every 30 seconds, pages read, localities found, percent and seconds; counts only (P1).
 
@@ -57,8 +57,8 @@ The first version let the backfill's rows queue their jobs and the reports' work
 
 ## Tests
 
-- `TestA102DerivedLocalities`: a made-up agency profile with no `locality` field; pages whose address ends in a dataset locality (with a house number, and a street only), one with no address whose description ends in one, and one whose locality the dataset doesn't have; the localities report, its map points, the message view's `locality` still null, a page with a field keeping no row, a re-parse, retention.
-- `TestA103LocalitiesBackfilled`: a database at v1.11.1's migration 00024 with such pages and the report counts built, upgraded: the backfill, its state, nothing queued, the counts after its rebuild, a restart before the rebuild, running again, the log holding no page text.
+- `TestA103DerivedLocalities`: a made-up agency profile with no `locality` field; pages whose address ends in a dataset locality (with a house number, and a street only), one with no address whose description ends in one, and one whose locality the dataset doesn't have; the localities report, its map points, the message view's `locality` still null, a page with a field keeping no row, a re-parse, retention.
+- `TestA104LocalitiesBackfilled`: a database at v1.11.1's migration 00024 with such pages and the report counts built, upgraded: the backfill, its state, nothing queued, the counts after its rebuild, a restart before the rebuild, running again, the log holding no page text.
 - `TestLocalityBackfillSpeed` (`PAGERARCHIVE_LOCALITY_SPEED=1`, by hand): the Evidence below.
 
 ## Evidence

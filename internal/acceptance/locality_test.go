@@ -64,8 +64,8 @@ func localityReport(r server.LocalitiesReport) string {
 	return strings.Join(got, "; ")
 }
 
-// A102. Derived localities (R24, R38c; ADR 0034).
-func TestA102DerivedLocalities(t *testing.T) {
+// A103. Derived localities (R24, R38c; ADR 0034).
+func TestA103DerivedLocalities(t *testing.T) {
 	e := setup(t)
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "example-no-locality.json"), []byte(noLocalityAgency), 0o644); err != nil {
@@ -147,10 +147,10 @@ func TestA102DerivedLocalities(t *testing.T) {
 	}
 }
 
-// A103. An upgrade from v1.11.1 (migration 00024) with pages stored and the
+// A104. An upgrade from v1.11.1 (migration 00024) with pages stored and the
 // report counts built: the API works out the stored pages' localities in
 // the background, once, and the counts pick them up (R24, R38c; ADR 0034).
-func TestA103LocalitiesBackfilled(t *testing.T) {
+func TestA104LocalitiesBackfilled(t *testing.T) {
 	url := os.Getenv("PAGERARCHIVE_TEST_DATABASE_URL")
 	if url == "" {
 		if os.Getenv("PAGERARCHIVE_REQUIRE_DB") == "1" {
