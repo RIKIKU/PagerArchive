@@ -202,6 +202,8 @@ jobs:
         run: sh scripts/ci/release-version-checks.sh
       - name: A failed automatic update is assigned to the owner (tell-owner.sh)
         run: sh scripts/ci/tell-owner-checks.sh
+      - name: A base image update waits 3 days (base-image-hold.sh)
+        run: sh scripts/ci/base-image-hold-checks.sh
       # ADR 0025: what a pull request runs, and the retries.
       - name: The checks each change runs (changes.sh)
         run: sh scripts/ci/changes-checks.sh

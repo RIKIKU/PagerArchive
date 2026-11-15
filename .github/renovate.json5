@@ -30,8 +30,10 @@
   // A fix for a known vulnerability (GitHub's alerts, and the OSV database's)
   // gets its own pull request at once, whatever the schedule, labelled
   // "security" as well as "maintenance". When it merges, security-release.yml
-  // releases main straight away (SPEC.md 12.1).
-  vulnerabilityAlerts: {addLabels: ["security"]},
+  // releases main straight away (SPEC.md 12.1). It doesn't wait the 3 days
+  // the rules below set for libraries and base images: Renovate forces this
+  // over every package rule (owner, 2026-11-15: alert fixes go at once).
+  vulnerabilityAlerts: {addLabels: ["security"], minimumReleaseAge: null},
   osvVulnerabilityAlerts: true,
   npm: {rangeStrategy: "bump"},
   // A patch is never held back by a newer minor version: it has its own pull
@@ -40,12 +42,18 @@
   packageRules: [
     // R85: the base images under our own images, in every FROM, build stages
     // included, pinned by digest. A new digest or patch, daily, is one pull
-    // request that merges on its own, in the next release.
+    // request that merges on its own, in the next release. Each waits 3 days
+    // after its release first, as the libraries do (owner, 2026-11-15), but
+    // Renovate has no date for any of them (Docker Hub gives none past 1,000
+    // tags, gcr.io none at all; ADR 0032), so this holds them all, and
+    // scripts/ci/base-image-hold.sh lets through, by a rule of its own for each,
+    // the ones the registry says are 3 days old (maintenance.yml passes them in).
     {
       matchManagers: ["dockerfile"],
       matchUpdateTypes: ["digest", "pinDigest", "patch"],
       groupName: "base images",
       group: {branchTopic: "base-images"},
+      minimumReleaseAge: "3 days",
       automerge: true,
       commitBody: "Merges on its own once every check passes (SPEC.md R85c).",
     },
