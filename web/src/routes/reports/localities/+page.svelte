@@ -22,7 +22,7 @@
 >
 	{#snippet body(d: LocalitiesReport, meta)}
 		<div class="charts">
-			<MapView {meta} variant="heat" heat={d.rows.filter((r) => r.lon !== undefined && r.lat !== undefined).map((r) => ({ name: r.locality ?? '', lon: r.lon!, lat: r.lat!, jobs: r.jobs }))} />
+			<MapView {meta} variant="heat" strip={`Busiest localities, ${longDay(d.from)} to ${longDay(d.to)}${d.agency ? `, ${d.agency}` : ''}`} heat={d.rows.filter((r) => r.lon !== undefined && r.lat !== undefined).map((r) => ({ name: r.locality ?? '', lon: r.lon!, lat: r.lat!, jobs: r.jobs }))} />
 			<div data-chart>
 				<BarChart label="Bar chart of the 15 localities with the most jobs, as in the table" bars={d.rows.slice(0, 15).map((r) => ({ label: name(r.locality), value: r.jobs, text: `${r.jobs} (${percent(r.share)})` }))} />
 			</div>

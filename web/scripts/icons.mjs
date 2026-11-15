@@ -86,7 +86,10 @@ const icons = {
 	eventsovertime: 'chart-line',
 	download: 'download',
 	copy: 'copy',
-	image: 'photo'
+	image: 'photo',
+	// Full screen on every map (R35f): four corner arrows out, and back in.
+	fullscreen: 'arrows-maximize',
+	exitfullscreen: 'arrows-minimize'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

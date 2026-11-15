@@ -2,7 +2,7 @@
 // Browser acceptance checks (SPEC.md section 9). scripts/e2e.sh starts the API
 // on a fresh database with the standard test fixture, a client key, and a
 // signed-in user and admin (their session tokens).
-import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext } from '@playwright/test';
+import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext, type TestInfo } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
@@ -618,6 +618,162 @@ for (const width of [375, 1280]) {
 		await expect(page.getByTestId('location')).toContainText('Not placed on the map');
 		await expect(page.getByTestId('map')).toHaveCount(0);
 		await page.context().close();
+	});
+}
+
+
+// R35f, A34a. Every map has a full-screen button. Where the browser can put
+// an element full screen (Chromium at 1280 px), the map and its strip are;
+// on phones (375 px) and where it can't, they're an overlay over the whole
+// viewport that Back closes. The strip says what the map is for, the map
+// still works inside, and closing goes back to the same place with the same
+// view. Headless Firefox has no WebGL, so no map and no button there.
+async function fullScreenCheck(page: Page, info: TestInfo, opts: { width: number; strip: RegExp; shots?: string; expect: 'native' | 'overlay' | 'either' }) {
+	const map = page.getByTestId('map');
+	await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	if ((await map.getAttribute('data-ready')) !== 'true') {
+		expect(info.project.name, 'only headless Firefox has no map').toBe('firefox');
+		await expect(page.getByRole('button', { name: 'Full screen map' })).toHaveCount(0);
+		return;
+	}
+	const frame = page.getByTestId('map-frame');
+	const open = page.getByRole('button', { name: 'Full screen map' });
+	await expect(map).toHaveAttribute('data-view', /./);
+	const before = { view: await map.getAttribute('data-view'), url: page.url(), scroll: await page.evaluate(() => scrollY) };
+	if (opts.shots) await page.screenshot({ path: info.outputPath(`${opts.shots}-closed.png`) });
+	// The button: a target's size (R82c), and reached and pressed by keyboard.
+	const target = (await open.boundingBox())!;
+	expect(Math.min(target.width, target.height)).toBeGreaterThanOrEqual(36);
+	await open.focus();
+	// Where the page is once the button has focus (focus may scroll to it).
+	before.scroll = await page.evaluate(() => scrollY);
+	await page.keyboard.press('Enter');
+	await expect(frame).toHaveAttribute('data-fullscreen', /^(native|overlay)$/);
+	const how = (await frame.getAttribute('data-fullscreen'))!;
+	console.log(`R35f ${info.project.name} ${opts.width}px: ${how}`);
+	if (opts.expect !== 'either') expect(how).toBe(opts.expect);
+	const close = page.getByRole('button', { name: 'Exit full screen' });
+	await expect(close).toBeVisible();
+	await expect(close).toBeFocused();
+	// The map and strip fill the screen; the strip says what the map is for.
+	const vp = page.viewportSize()!;
+	const strip = page.getByTestId('map-strip');
+	await expect(strip).toHaveText(opts.strip);
+	await expect
+		.poll(async () => {
+			const b = (await frame.boundingBox())!;
+			return [Math.round(b.x), Math.round(b.y), Math.round(b.width), Math.round(b.height)];
+		})
+		.toEqual([0, 0, vp.width, vp.height]);
+	await expect
+		.poll(
+			async () => {
+				const s = (await strip.boundingBox())!;
+				const m = (await map.boundingBox())!;
+				return Math.abs(m.y - (s.y + s.height)) <= 1 && Math.abs(m.y + m.height - vp.height) <= 1 && Math.round(m.width) === vp.width;
+			},
+			{ message: 'the map fills the screen below the strip' }
+		)
+		.toBe(true);
+	if (how === 'overlay') {
+		expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow), 'the page behind does not scroll').toBe('hidden');
+		const behind = await page.evaluate(() => [...document.body.children].filter((e) => !e.matches('[data-testid="map-frame"]') && !e.hasAttribute('inert')).map((e) => e.tagName));
+		expect(behind, 'the page behind is inert').toEqual([]);
+	}
+	// The same view as before, resized to the screen.
+	await expect(map).toHaveAttribute('data-view', before.view!);
+	if (opts.shots) await page.screenshot({ path: info.outputPath(`${opts.shots}-open.png`) });
+	const axe = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+	expect(axe.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), 'axe, full screen').toEqual([]);
+	// It works as before: zoom in with the map's own control.
+	const zoom = (v: string | null) => Number(v!.split(',')[2]);
+	await map.getByRole('button', { name: 'Zoom in', exact: true }).click();
+	await expect.poll(async () => zoom(await map.getAttribute('data-view'))).toBeGreaterThan(zoom(before.view));
+	const inside = await map.getAttribute('data-view');
+	// Close: Back on a phone (the overlay's own history entry), else the button.
+	if (how === 'overlay') await page.goBack();
+	else await close.click();
+	await expect(frame).not.toHaveAttribute('data-fullscreen');
+	await expect(open).toBeFocused();
+	expect(page.url(), 'still on the same page').toBe(before.url);
+	await expect.poll(() => page.evaluate(() => scrollY)).toBe(before.scroll);
+	await expect(map).toHaveAttribute('data-view', inside!);
+	expect(await page.evaluate(() => getComputedStyle(document.documentElement).overflow)).not.toBe('hidden');
+	const axeClosed = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+	expect(axeClosed.violations.map((v) => `${v.id}: ${v.nodes.map((n) => n.target.join(' ')).join('; ')}`), 'axe, closed').toEqual([]);
+	if (how === 'overlay') {
+		await open.click();
+		await expect(frame).toHaveAttribute('data-fullscreen', 'overlay');
+		// Portrait and landscape.
+		await page.setViewportSize({ width: vp.height, height: vp.width });
+		await expect.poll(async () => [Math.round((await frame.boundingBox())!.width), Math.round((await frame.boundingBox())!.height)]).toEqual([vp.height, vp.width]);
+		await page.setViewportSize(vp);
+		await expect.poll(async () => Math.round((await frame.boundingBox())!.width)).toBe(vp.width);
+		// Escape closes it too, and takes its history entry with it.
+		await page.keyboard.press('Escape');
+		await expect(frame).not.toHaveAttribute('data-fullscreen');
+		await expect.poll(() => page.url()).toBe(before.url);
+	}
+}
+
+for (const width of [375, 1280]) {
+	const viewport = { width, height: width === 375 ? 812 : 900 };
+	test(`R35f full-screen map in the detail view, ${width}px`, async ({ browser, request }, info) => {
+		const job = uniqueJob();
+		await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+		const res = await request.get(`${URL}/api/v1/messages?q=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+		const id = (await res.json()).messages[0].id;
+		const ctx = await signedIn(browser, 'user', { viewport });
+		const page = await ctx.newPage();
+		await page.goto('/capcodes');
+		await page.goto(`/messages/${id}`);
+		await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+		// Scrolled a little, to come back to the same place.
+		await page.evaluate(() => scrollTo(0, 40));
+		const how = width === 375 ? 'overlay' : info.project.name === 'chromium' ? 'native' : 'either';
+		await fullScreenCheck(page, info, { width, strip: /^Station 1 \(0100001\), .*\d$/, shots: `r35f-detail-${width}`, expect: how });
+		// Back now leaves the message, as before: full screen left nothing in the history.
+		await page.goBack();
+		await expect(page).toHaveURL(/\/capcodes$/);
+		await ctx.close();
+	});
+
+	test(`R35f full-screen map on the map page, ${width}px`, async ({ browser, request }, info) => {
+		await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+		const ctx = await signedIn(browser, 'user', { viewport });
+		const page = await ctx.newPage();
+		await page.goto('/map');
+		const how = width === 375 ? 'overlay' : info.project.name === 'chromium' ? 'native' : 'either';
+		await fullScreenCheck(page, info, { width, strip: /^Located messages, the last 24 hours$/, shots: `r35f-map-${width}`, expect: how });
+		await ctx.close();
+	});
+}
+
+// R35f: a desktop browser without element full screen (as iPhone Safari) gets the overlay.
+test('R35f full-screen map without the Fullscreen API', async ({ browser, request }, info) => {
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+	const ctx = await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } });
+	await ctx.addInitScript(() => {
+		delete (Element.prototype as Partial<Element>).requestFullscreen;
+	});
+	const page = await ctx.newPage();
+	await page.goto('/map?q=SMOKE');
+	await fullScreenCheck(page, info, { width: 1280, strip: /^Located messages, the last 24 hours: SMOKE$/, expect: 'overlay' });
+	await ctx.close();
+});
+
+// R35f: the busiest localities' report map (R38c), its heat layer inside.
+for (const width of [375, 1280]) {
+	test(`R35f full-screen map in the busiest localities report, ${width}px`, async ({ browser, request }, info) => {
+		const n = projectN(info);
+		await reportWeek(request, n);
+		const ctx = await signedIn(browser, 'user', { viewport: { width, height: width === 375 ? 812 : 900 } });
+		const page = await ctx.newPage();
+		await page.goto(`/reports/localities?${reportRange(n)}`);
+		await expect(page.getByTestId('report')).toBeVisible();
+		const how = width === 375 ? 'overlay' : info.project.name === 'chromium' ? 'native' : 'either';
+		await fullScreenCheck(page, info, { width, strip: new RegExp(`^Busiest localities, .+ to .+, Report agency ${n}$`), shots: `r35f-report-${width}`, expect: how });
+		await ctx.close();
 	});
 }
 

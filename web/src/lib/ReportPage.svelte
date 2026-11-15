@@ -75,10 +75,14 @@
 	);
 	const query = $derived(defaults ? reportQuery(page.url.searchParams, defaults) : undefined);
 
+	// As text, so a change of the address that leaves the report's query as it
+	// was (a map's full-screen overlay and Back, R35f) doesn't count it again.
+	const queryText = $derived(query?.toString());
+
 	let asked = 0;
 	$effect(() => {
-		if (!query) return;
-		const q = new URLSearchParams(query);
+		if (queryText === undefined) return;
+		const q = new URLSearchParams(queryText);
 		const bad = rangeProblem(q.get('from'), q.get('to'));
 		data = undefined;
 		error = bad;

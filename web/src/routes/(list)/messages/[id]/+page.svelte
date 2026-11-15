@@ -88,7 +88,7 @@
 			</div>
 			<!-- R35c: where it was placed, after the text so the text stays first on phones (P2). -->
 			{#if m.location && meta}
-				<div class="where"><MapView messages={[m]} {meta} focus={m.id} variant="single" /></div>
+				<div class="where"><MapView messages={[m]} {meta} focus={m.id} variant="single" strip={`${m.alias ? `${m.alias} (${m.capcode})` : m.capcode}, ${dateTime(m.sent_at, tz)}`} /></div>
 			{/if}
 
 			<div class="rest">
