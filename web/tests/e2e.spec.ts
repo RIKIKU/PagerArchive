@@ -645,6 +645,8 @@ async function fullScreenCheck(page: Page, info: TestInfo, opts: { width: number
 	const target = (await open.boundingBox())!;
 	expect(Math.min(target.width, target.height)).toBeGreaterThanOrEqual(36);
 	await open.focus();
+	// Where the page is once the button has focus (focus may scroll to it).
+	before.scroll = await page.evaluate(() => scrollY);
 	await page.keyboard.press('Enter');
 	await expect(frame).toHaveAttribute('data-fullscreen', /^(native|overlay)$/);
 	const how = (await frame.getAttribute('data-fullscreen'))!;
