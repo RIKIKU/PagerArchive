@@ -4688,11 +4688,21 @@ async function postAt(request: APIRequestContext, capcode: string, text: string,
 }
 
 /** The project's week (3 jobs of "Report agency n") and its large events,
- * posted once per project: the first test to run posts them. */
+ * posted once per project: the first test to run posts them. Each is checked
+ * on its own: A86 deletes every large event, so an earlier test's week (the
+ * R35f localities report's) can still be there with its large events gone. */
 async function reportWeek(request: APIRequestContext, n: number) {
-	const posted = await request.get(`${URL}/api/v1/reports/busy-times?${reportRange(n)}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
-	if (posted.ok() && (await posted.json()).jobs > 0) return;
 	const s = (k: number) => `08000${n}${k}`;
+	const has = async (path: string, key: 'jobs' | 'events') => {
+		const res = await request.get(`${URL}/api/v1/reports/${path}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+		return res.ok() && (await res.json())[key] > 0;
+	};
+	const m = reportWeeks[n].month;
+	if (!(await has(`busy-times?${reportRange(n)}`, 'jobs'))) await reportJobs(request, n, s);
+	if (!(await has(`large-events?from=${m}-01&to=${m}-28`, 'events'))) await reportLargeEvents(request, m, s);
+}
+
+async function reportJobs(request: APIRequestContext, n: number, s: (k: number) => string) {
 	const [a, b, c] = [uniqueJob(), uniqueJob(), uniqueJob()];
 	for (const k of [1, 2, 3]) await postAt(request, s(k), `@@${a} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN${k}`, reportDay(n, 0, '14:10'));
 	await postAt(request, s(1), `@@${a} HSF1 SMOKE FROM ROOF, CALL BACK @ 12 FICTION ST, MADEUPTON UNITS P1 T1 #STN1`, reportDay(n, 0, '14:40'));
@@ -4703,9 +4713,11 @@ async function reportWeek(request: APIRequestContext, n: number) {
 	await postAt(request, s(3), 'QDTraining Wednesday 7pm at the station', reportDay(n, 2, '19:00'));
 	await postAt(request, s(1), `@@${c} HSF1 SMOKE IN KITCHEN @ 3 OTHER RD, SAMPLEBURY UNITS P1 #STN1`, reportDay(n, 5, '14:30'));
 	await postAt(request, s(2), `@@${c} HSF1 SMOKE IN KITCHEN @ 3 OTHER RD, SAMPLEBURY UNITS P1 #STN2`, reportDay(n, 5, '14:31'));
-	// Large events in the project's own month of 2025: one of two jobs, 5 h
-	// long, and one of a page.
-	const m = reportWeeks[n].month;
+}
+
+/** Large events in the project's own month of 2025: one of two jobs, 5 h
+ * long, and one of a page. */
+async function reportLargeEvents(request: APIRequestContext, m: string, s: (k: number) => string) {
 	const tz = m === '2025-03' ? '+11:00' : '+10:00';
 	await postAt(request, s(4), `@@${uniqueJob()} GRS3 DG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`, `${m}-03T10:00:00${tz}`);
 	await postAt(request, s(4), `@@${uniqueJob()} GRS3 DG0802 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN4`, `${m}-03T15:00:00${tz}`);
