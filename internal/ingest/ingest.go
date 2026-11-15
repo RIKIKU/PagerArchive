@@ -193,6 +193,11 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 		if err != nil {
 			return "", 0, err
 		}
+		if l := derivedLocality(d.Fields, res); l != "" {
+			if err := q.SetMessageLocality(ctx, db.SetMessageLocalityParams{ID: id, Locality: l}); err != nil {
+				return "", 0, err
+			}
+		}
 		if err := record(id); err != nil {
 			return "", 0, err
 		}
@@ -364,7 +369,23 @@ func Locate(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, id int64,
 	if err != nil {
 		return err
 	}
-	return q.SetLocation(ctx, geocode.SetLocationParams(id, res))
+	if err := q.SetLocation(ctx, geocode.SetLocationParams(id, res)); err != nil {
+		return err
+	}
+	if l := derivedLocality(f, res); l != "" {
+		return q.SetMessageLocality(ctx, db.SetMessageLocalityParams{ID: id, Locality: l})
+	}
+	return q.DeleteMessageLocality(ctx, id)
+}
+
+// derivedLocality is the locality kept beside a page (R24, ADR 0033): the
+// dataset's locality the geocoder settled on, for a page whose profile gave
+// no locality field. "" keeps none: a profile's own field wins.
+func derivedLocality(f Fields, res geocode.Result) string {
+	if f.Locality != nil {
+		return ""
+	}
+	return res.Locality
 }
 
 // place finds where parsed fields go. geo nil places nothing.

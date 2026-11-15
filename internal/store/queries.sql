@@ -193,6 +193,16 @@ SELECT ST_X(geom::geometry)::float8 AS lon, ST_Y(geom::geometry)::float8 AS lat
 FROM street_points
 WHERE locality = sqlc.arg(locality)::text AND street = sqlc.arg(street)::text;
 
+-- name: SetMessageLocality :exec
+-- R24, ADR 0033: a page's derived locality, for a page whose profile gives
+-- none. Unchanged rows aren't written, so its job isn't counted again.
+INSERT INTO message_localities (message_id, locality) VALUES (sqlc.arg(id)::bigint, sqlc.arg(locality)::text)
+ON CONFLICT (message_id) DO UPDATE SET locality = EXCLUDED.locality
+WHERE message_localities.locality IS DISTINCT FROM EXCLUDED.locality;
+
+-- name: DeleteMessageLocality :exec
+DELETE FROM message_localities WHERE message_id = $1;
+
 -- name: LocalityExtent :one
 SELECT min_lon, min_lat, max_lon, max_lat FROM localities WHERE name = $1;
 

@@ -173,6 +173,9 @@ func (ix *Index) LocalityAtEnd(text string) (string, bool) {
 	return best, best != ""
 }
 
+// HasLocality reports whether the dataset has locality (normalised).
+func (ix *Index) HasLocality(locality string) bool { return ix.streets[locality] != nil }
+
 // NormaliseStreet is a street as the index stores it: upper case, single
 // spaces, street type abbreviated.
 func (ix *Index) NormaliseStreet(street string) string { return ix.normalise(strings.Fields(street)) }

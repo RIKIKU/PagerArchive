@@ -214,6 +214,11 @@ type Message struct {
 	LargeEventField  bool
 }
 
+type MessageLocality struct {
+	MessageID int64
+	Locality  string
+}
+
 type Reception struct {
 	MessageID  int64
 	ClientID   string
