@@ -67,7 +67,7 @@ trap cleanup EXIT
 limited() {
 	_q() { stack_compose exec -T db psql -X -q -At -U postgres -d postgres -c "$1" | tr -d '\r'; }
 	_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(stack_compose ps -q api)")
-	_users=$(_q "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$_ip'")
+	_users=$(_q "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$_ip' AND datname = 'postgres'")
 	[ "$_users" = pagerarchive ] || fail "$1: the API connects as $_users, not only as pagerarchive"
 	[ "$(_q "SELECT rolsuper OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname = 'pagerarchive'")" = f ] || fail "$1: the role has rights it mustn't"
 	[ "$(_q "SELECT count(*) FROM pg_class WHERE relnamespace = 'public'::regnamespace AND relkind = 'r' AND relowner <> 'pagerarchive'::regrole AND relname <> 'spatial_ref_sys'")" = 0 ] ||

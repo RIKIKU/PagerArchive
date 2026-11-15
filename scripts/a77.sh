@@ -287,9 +287,11 @@ esac
 [ ${#pw} -eq 64 ] || { echo "FAIL: the new password is ${#pw} characters, not 64" >&2; status=1; }
 grep -q "$pw" "$OUT/a77-role.txt" && { echo "FAIL: api-role.sh printed the password" >&2; status=1; }
 grep -qx "PAGERARCHIVE_DB_USER=pagerarchive" "$DIR/.env" || { echo "FAIL: .env doesn't name the role" >&2; status=1; }
-# What the API connects as, seen from the database: its container's address.
+# What the API connects as to PagerArchive's database, seen from there: its
+# container's address. (The locked-accounts metric connects to Authentik's as
+# its own role.)
 api_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$(stack_compose ps -q api)")
-users=$(dbq "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$api_ip'")
+users=$(dbq "SELECT string_agg(DISTINCT usename, ',') FROM pg_stat_activity WHERE client_addr = '$api_ip' AND datname = 'postgres'")
 [ "$users" = pagerarchive ] || { echo "FAIL: the API connects as $users, not only as pagerarchive" >&2; status=1; }
 [ "$(dbq "SELECT rolsuper OR rolcreaterole OR rolcreatedb FROM pg_roles WHERE rolname = 'pagerarchive'")" = f ] ||
 	{ echo "FAIL: the role has rights it mustn't" >&2; status=1; }
