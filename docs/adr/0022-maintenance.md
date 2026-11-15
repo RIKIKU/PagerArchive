@@ -6,6 +6,8 @@ Status: Accepted (owner, 2026-11-09), with the review's changes below. The owner
 
 **Amended by [ADR 0024](0024-deliberate-releases.md) (owner, 2026-11-12):** an update no longer raises `VERSION` (decision 3 is gone: no `bump-version.sh`, no `postUpgradeTasks`; decision 4's minor versions are worked out when the release is cut), and a merge isn't a release: updates go out in the next one, cut by the Release workflow every Saturday, or at once for a pull request labelled `security` (Renovate's vulnerability alerts). The third-party images' weekly pull requests (R85b) are one, apart from Authentik's and PostGIS's.
 
+**Amended by [ADR 0032](0032-base-images-wait-3-days.md) (owner, 2026-11-15):** base images wait 3 days after their release too (the review's point 1 below no longer leaves them out), by their registry's date, as Renovate has none for them; vulnerability alert fixes still don't wait.
+
 ## Context
 
 Every merge to main is a release (12.1, ADR 0016), and CI fails a branch whose `VERSION` isn't higher than main's (`check-versions.sh`). A patch version may not change `compose.yaml` or the configuration archive (R84b). M18 adds three kinds of automatic update on top of that: base images daily (R85), libraries monthly (R85a) and third-party images weekly (R85b), each raising `VERSION` and passing every check (R85c). Four things in GitHub and in the existing rules decide how.
