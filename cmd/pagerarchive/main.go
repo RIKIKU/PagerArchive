@@ -288,7 +288,7 @@ func serve(stderr io.Writer) error {
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
 	// Pages stored before their derived localities were kept get theirs, in
 	// the background, once, and the report counts are built again with them
-	// (R24, ADR 0033).
+	// (R24, ADR 0034).
 	rep := &reports.Service{Pool: st.Pool, Location: loc, Log: log}
 	go func() {
 		for ctx.Err() == nil {

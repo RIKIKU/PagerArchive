@@ -5379,7 +5379,7 @@ type SetMessageLocalityParams struct {
 	Locality string
 }
 
-// R24, ADR 0033: a page's derived locality, for a page whose profile gives
+// R24, ADR 0034: a page's derived locality, for a page whose profile gives
 // none. Unchanged rows aren't written, so its job isn't counted again.
 func (q *Queries) SetMessageLocality(ctx context.Context, arg SetMessageLocalityParams) error {
 	_, err := q.db.Exec(ctx, setMessageLocality, arg.ID, arg.Locality)

@@ -378,7 +378,7 @@ func Locate(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, id int64,
 	return q.DeleteMessageLocality(ctx, id)
 }
 
-// derivedLocality is the locality kept beside a page (R24, ADR 0033): the
+// derivedLocality is the locality kept beside a page (R24, ADR 0034): the
 // dataset's locality the geocoder settled on, for a page whose profile gave
 // no locality field. "" keeps none: a profile's own field wins.
 func derivedLocality(f Fields, res geocode.Result) string {

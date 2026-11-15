@@ -194,7 +194,7 @@ FROM street_points
 WHERE locality = sqlc.arg(locality)::text AND street = sqlc.arg(street)::text;
 
 -- name: SetMessageLocality :exec
--- R24, ADR 0033: a page's derived locality, for a page whose profile gives
+-- R24, ADR 0034: a page's derived locality, for a page whose profile gives
 -- none. Unchanged rows aren't written, so its job isn't counted again.
 INSERT INTO message_localities (message_id, locality) VALUES (sqlc.arg(id)::bigint, sqlc.arg(locality)::text)
 ON CONFLICT (message_id) DO UPDATE SET locality = EXCLUDED.locality

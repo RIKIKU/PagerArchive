@@ -47,7 +47,7 @@ type Result struct {
 	// Locality is the dataset's locality the message is in, as R25 finds it
 	// for the grid reference (Geocoder.locality), whether or not it was
 	// placed; "" when the dataset has none of them. A page's derived
-	// locality when its profile gives none (R24, ADR 0033).
+	// locality when its profile gives none (R24, ADR 0034).
 	Locality string
 }
 
@@ -140,7 +140,7 @@ func (g *Geocoder) locality(place streets.Place, in Input) string {
 // Locality is the dataset's locality Locate settles on for a message
 // (Result.Locality), worked out from the street index alone, with no
 // lookups: for placing the localities of messages stored before it was kept
-// (ADR 0033).
+// (ADR 0034).
 func (g *Geocoder) Locality(in Input) string {
 	var place streets.Place
 	if in.Address != "" {

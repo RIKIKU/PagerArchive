@@ -1,4 +1,4 @@
-# ADR 0033: A page's derived locality, kept beside it
+# ADR 0034: A page's derived locality, kept beside it
 
 ## Status
 
@@ -44,6 +44,8 @@ Triggers on `message_localities` (statement-level, like ADR 0031 §3's on `messa
 - **logged**: every 30 seconds, pages read, localities found, percent and seconds; counts only (P1).
 
 The migration only creates the table and triggers, so the upgrade itself takes no longer (A77).
+
+It needs no rights beyond the API's own role (R84i, ADR 0033), which owns the app's tables: it reads `messages`, inserts into `message_localities` and writes its `settings` row, never updates a page, and `SET LOCAL pagerarchive.backfill` is a custom setting any role may set. The rebuild after it is the reports' own (ADR 0031 §4).
 
 Re-parse (R23a) was weighed instead: queueing a full re-parse on the upgrade would fill the table with nothing new, but it re-parses and re-places every page (two updates of `messages` each, the cost section 2 avoids), isn't resumable (a restart starts again) and logs only at the end.
 

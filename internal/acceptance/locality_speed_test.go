@@ -12,7 +12,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/streets"
 )
 
-// How long the derived localities' backfill (ADR 0033), with the report
+// How long the derived localities' backfill (ADR 0034), with the report
 // counts built again after it, takes on an archive the size of a real one:
 // 3,100,000 made-up pages, about 6 to a job (516,667 jobs), none with a
 // locality field, against a made-up street index of 3,000 localities with 50

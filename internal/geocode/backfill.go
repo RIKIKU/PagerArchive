@@ -22,7 +22,7 @@ const backfillKey = "message_localities_backfill"
 // transaction.
 const BackfillBatch = 2000
 
-// BackfillLocalities works out the derived locality (R24, ADR 0033) of
+// BackfillLocalities works out the derived locality (R24, ADR 0034) of
 // every page stored before migration 00025 kept them, a batch at a time, in
 // id order, then calls recount (the reports' Rebuild) once. Each batch's
 // rows and how far it got are written in one transaction, so a restart

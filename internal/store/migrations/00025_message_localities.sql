@@ -1,5 +1,5 @@
 -- +goose Up
--- A page's derived locality (R24, R38a, ADR 0033): the address dataset's
+-- A page's derived locality (R24, R38a, ADR 0034): the address dataset's
 -- locality the geocoder settled on, kept for a page whose profile gives no
 -- locality field. Derived, so it's beside the page rather than in
 -- messages.locality, which holds only what the page's text said (P3): search,
@@ -20,12 +20,12 @@ CREATE TABLE message_localities (
 -- nothing here: the page's own delete queued its job. The backfill's
 -- transactions (pagerarchive.backfill on) queue nothing: it adds a row for
 -- most stored pages, and one rebuild of the counts after it is quicker than
--- counting each job again (ADR 0033 §5).
+-- counting each job again (ADR 0034 §5).
 -- +goose StatementBegin
 CREATE FUNCTION report_dirty_locality_new() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF current_setting('pagerarchive.backfill', true) = 'on' THEN
-        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0033 §5)
+        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0034 §5)
     END IF;
     INSERT INTO report_dirty (job_key)
     SELECT DISTINCT 'j' || m.job_number FROM new_rows n JOIN messages m ON m.id = n.message_id
@@ -38,7 +38,7 @@ END $$;
 CREATE FUNCTION report_dirty_locality_old() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF current_setting('pagerarchive.backfill', true) = 'on' THEN
-        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0033 §5)
+        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0034 §5)
     END IF;
     INSERT INTO report_dirty (job_key)
     SELECT DISTINCT 'j' || m.job_number FROM old_rows o JOIN messages m ON m.id = o.message_id
@@ -51,7 +51,7 @@ END $$;
 CREATE FUNCTION report_dirty_locality_changed() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF current_setting('pagerarchive.backfill', true) = 'on' THEN
-        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0033 §5)
+        RETURN NULL; -- the backfill's rows: the counts are rebuilt after it (ADR 0034 §5)
     END IF;
     INSERT INTO report_dirty (job_key)
     SELECT DISTINCT 'j' || m.job_number FROM old_rows o JOIN new_rows n ON n.message_id = o.message_id

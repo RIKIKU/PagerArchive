@@ -28,7 +28,7 @@ import (
 
 // noLocalityAgency is a made-up agency profile with no locality field: its
 // locality is at the end of the address, or of the description when a page
-// has no address (R24, ADR 0033).
+// has no address (R24, ADR 0034).
 const noLocalityAgency = `{
   "kind": "agency",
   "name": "example-no-locality",
@@ -64,7 +64,7 @@ func localityReport(r server.LocalitiesReport) string {
 	return strings.Join(got, "; ")
 }
 
-// A102. Derived localities (R24, R38c; ADR 0033).
+// A102. Derived localities (R24, R38c; ADR 0034).
 func TestA102DerivedLocalities(t *testing.T) {
 	e := setup(t)
 	dir := t.TempDir()
@@ -149,7 +149,7 @@ func TestA102DerivedLocalities(t *testing.T) {
 
 // A103. An upgrade from v1.11.1 (migration 00024) with pages stored and the
 // report counts built: the API works out the stored pages' localities in
-// the background, once, and the counts pick them up (R24, R38c; ADR 0033).
+// the background, once, and the counts pick them up (R24, R38c; ADR 0034).
 func TestA103LocalitiesBackfilled(t *testing.T) {
 	url := os.Getenv("PAGERARCHIVE_TEST_DATABASE_URL")
 	if url == "" {
@@ -273,7 +273,7 @@ func TestA103LocalitiesBackfilled(t *testing.T) {
 		t.Errorf("derived localities: %s, want %s", got, wantRows)
 	}
 	// The counts follow: built again once, with nothing queued job by job
-	// (ADR 0033 §5).
+	// (ADR 0034 §5).
 	var queued int
 	if err := conn.QueryRow(ctx, `SELECT count(*) FROM report_dirty`).Scan(&queued); err != nil || queued != 0 {
 		t.Errorf("%d jobs queued by the backfill (%v), want 0", queued, err)

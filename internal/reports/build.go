@@ -80,7 +80,7 @@ func (s *Service) Pending(ctx context.Context) (int64, error) {
 // Emergency page with a job number (R38a; owner, 2026-11-15), not a
 // heartbeat (R35b), not to an ignored alias (R27). %s narrows it. A page's
 // locality is its locality field, else the one the geocoder derived for it
-// (R24, ADR 0033).
+// (R24, ADR 0034).
 const basePages = `
 SELECT 'j' || m.job_number AS job_key, m.id, m.job_number, m.capcode, m.sent_at, m.alias_id,
        COALESCE(a.template_id, 0) AS template_id, m.event_type, COALESCE(m.locality, ml.locality) AS locality, m.units,
