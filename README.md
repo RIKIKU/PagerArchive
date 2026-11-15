@@ -7,7 +7,7 @@ A self-hosted archive and live browser for POCSAG paging networks, received with
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
 - Per-user integrations forward new pages to your own systems (a convenience, not a replacement for your pager)
-- A year scrubber for big jumps through the archive, private albums with notes, a print sheet, capcode reports and an unknown-capcodes list
+- A year scrubber for big jumps through the archive, private albums with notes, a print sheet, an unknown-capcodes list, and reports: per capcode, busiest capcodes and localities, when it's busy, event type mix, job size, long-running jobs, appliances and large events over time, each as a table and a chart, downloadable as CSV and an image
 - Admin tools in the browser and a PowerShell module; nightly, self-checked backups; an example Grafana monitoring stack
 
 **Status:** in production use since v1.0.0 (November 2026), receiving a live network around the clock. Releases are cut deliberately, not on every merge: every Saturday when something changed, on demand, and straight away for a security update ([ADR 0024](docs/adr/0024-deliberate-releases.md)); each release lists what changed. What's built and what's next is in [`SPEC.md`](SPEC.md)'s delivery plan; the [releases](https://github.com/RIKIKU/PagerArchive/releases) say what each version brought.

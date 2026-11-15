@@ -54,9 +54,19 @@ export const groups: Group[] = [
 		id: 'reports',
 		label: 'Reports',
 		icon: 'reports',
-		text: 'Counts of past pages',
+		text: 'Counts of past pages and jobs',
 		href: '/reports',
-		entries: [{ href: '/reports/capcode', label: 'Capcode report', icon: 'reports', text: "One capcode's Emergency messages per event category, for a date range." }]
+		entries: [
+			{ href: '/reports/capcode', label: 'Capcode report', icon: 'reports', text: "One capcode's Emergency messages per event category, for a date range." },
+			{ href: '/reports/busiest', label: 'Busiest capcodes', icon: 'busiest', text: 'The aliases and capcodes with the most jobs, and how that changed from the period before.' },
+			{ href: '/reports/localities', label: 'Busiest localities', icon: 'localities', text: 'Jobs by locality, in a table and on the map.' },
+			{ href: '/reports/busy-times', label: "When it's busy", icon: 'busytimes', text: 'Jobs by hour of the day and day of the week.' },
+			{ href: '/reports/event-types', label: 'Event type mix', icon: 'eventtypes', text: "Each event type's share of the jobs, and how it changes month by month." },
+			{ href: '/reports/job-size', label: 'Job size', icon: 'jobsize', text: 'Pages, capcodes and appliances per job: typical and spread, by event type.' },
+			{ href: '/reports/long-jobs', label: 'Long-running jobs', icon: 'longjobs', text: 'The jobs with the longest time from first to last page.' },
+			{ href: '/reports/appliances', label: 'Appliance activity', icon: 'appliances', text: 'How often each appliance is named in jobs.' },
+			{ href: '/reports/large-events', label: 'Large events over time', icon: 'eventsovertime', text: 'Large events per week or month, how long they last and how many jobs they hold.' }
+		]
 	},
 	{
 		id: 'account',

@@ -55,6 +55,10 @@ type Job struct {
 	Log      *slog.Logger
 	// Tracer traces each run and its steps (R72); nil traces nothing.
 	Tracer trace.Tracer
+	// Reports, if set, counts again the jobs the run changed, in the same
+	// run (R38a, ADR 0031), so the reports' counts follow retention and
+	// retroactive redaction as the pages' own fields do (P1).
+	Reports interface{ Drain(context.Context) error }
 }
 
 // ParseAt reads a "HH:MM" time of day.
@@ -288,11 +292,20 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 			return fmt.Errorf("redaction setting: %s", store.SafeError(err))
 		}
 	}
+	if j.Reports != nil {
+		if err := j.Reports.Drain(ctx); err != nil {
+			return fmt.Errorf("report counts: %s", store.SafeError(err))
+		}
+	}
 	// 3. Vacuum, so deleted and replaced text doesn't linger in table pages
 	// (P1). Write-ahead logs and backups are out of scope.
 	vctx, vspan := tr.Start(ctx, "nightly.vacuum")
 	defer vspan.End()
-	for _, t := range []string{"messages", "receptions"} {
+	tables := []string{"messages", "receptions"}
+	if j.Reports != nil {
+		tables = append(tables, "report_jobs", "report_job_whos", "report_days")
+	}
+	for _, t := range tables {
 		if _, err := j.Store.Pool.Exec(vctx, "VACUUM (ANALYZE) "+t); err != nil {
 			return fmt.Errorf("vacuum %s: %s", t, store.SafeError(err))
 		}

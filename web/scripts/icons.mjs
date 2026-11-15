@@ -74,6 +74,19 @@ const icons = {
 	newest: 'chevrons-up',
 	// M22: large events (R87c), in Tools and Administration.
 	largeevents: 'flame',
+	// M24: the reports (R38b-R38i), and saving one as a CSV or its chart as
+	// an image.
+	busiest: 'trending-up',
+	localities: 'map-pins',
+	busytimes: 'clock-hour-4',
+	eventtypes: 'chart-pie',
+	jobsize: 'ruler-measure',
+	longjobs: 'hourglass',
+	appliances: 'truck',
+	eventsovertime: 'chart-line',
+	download: 'download',
+	copy: 'copy',
+	image: 'photo',
 	// Full screen on every map (R35f): four corner arrows out, and back in.
 	fullscreen: 'arrows-maximize',
 	exitfullscreen: 'arrows-minimize'
