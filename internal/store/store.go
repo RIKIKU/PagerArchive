@@ -147,3 +147,12 @@ func (s *Store) PageSpan(ctx context.Context) (first, last *time.Time, err error
 	err = s.Pool.QueryRow(ctx, `SELECT min(sent_at), max(sent_at) FROM messages`).Scan(&first, &last)
 	return first, last, err
 }
+
+// Superuser reports whether the API's database login is a superuser. From
+// R84i it's the API's own role, pagerarchive, which isn't; an install from
+// before that still connects as the superuser until it's switched over.
+func (s *Store) Superuser(ctx context.Context) (bool, error) {
+	var su bool
+	err := s.Pool.QueryRow(ctx, `SELECT rolsuper FROM pg_roles WHERE rolname = current_user`).Scan(&su)
+	return su, err
+}

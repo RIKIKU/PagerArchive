@@ -2,13 +2,14 @@ package authentik
 
 import (
 	"context"
-	_ "embed"
 	"errors"
 	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	pagerarchive "github.com/RIKIKU/PagerArchive"
 )
 
 // Locks counts accounts locked by the guessing protection (R44a) for the
@@ -47,15 +48,18 @@ func (l *Locks) Locked(ctx context.Context) (int, error) {
 	return n, nil
 }
 
-//go:embed locked_accounts.sql
-var lockedAccountsSQL string
+// lockedAccountsSQL is deploy/postgres/locked-accounts.sql, which the
+// database's first-start script runs too.
+var lockedAccountsSQL = pagerarchive.LockedAccountsSQL
 
 // EnsureLocksRole creates or updates what Locks needs in Authentik's database:
 // the role pagerarchive_metrics with this password, and
-// pagerarchive_locked_accounts(). The API does this on every start, so no
-// release leaves it for a hand step (R84). dbURL is a login with rights over
-// the server; the database "authentik" comes from Authentik's first-start
-// script (deploy/postgres/10-authentik.sh).
+// pagerarchive_locked_accounts(). The API does this on every start while it
+// connects as the superuser, so no release leaves it for a hand step (R84).
+// With its own role (R84i) it can't: the database's first-start script or
+// api-role.sh does it then (deploy/postgres/metrics-role.sql). dbURL is a
+// login with rights over the server; the database "authentik" comes from
+// Authentik's first-start script (deploy/postgres/10-authentik.sh).
 func EnsureLocksRole(ctx context.Context, dbURL, password string) error {
 	cfg, err := pgx.ParseConfig(dbURL)
 	if err != nil {
