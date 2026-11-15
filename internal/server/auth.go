@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"path"
 	"strings"
 	"sync"
 	"time"
@@ -148,12 +149,49 @@ func randomString() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
-// localPath keeps a post-sign-in redirect on this site.
+// localPath keeps the post-sign-in return path on this site (R40a). It
+// returns p when p is a plain path on this site, optionally with a query and
+// fragment, and "/" for anything else.
+//
+// Browsers drop tabs and newlines anywhere in a URL and read a backslash as
+// a slash, so a path that starts "/" + TAB + "/" or "/\" lands on another
+// host. So the whole value is refused if it holds a control character,
+// whitespace, a backslash or a non-ASCII byte. Its path, decoded once, is
+// checked the same way, must not start with "//", and must not lead to
+// /auth/ (the sign-in itself). Only the path is decoded for that check, so a
+// query such as "?q=SHED%20FIRE" is kept.
 func localPath(p string) string {
-	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") || strings.HasPrefix(p, "/\\") || strings.HasPrefix(p, "/auth/") {
+	if !plainPath(p) {
+		return "/"
+	}
+	u, err := url.Parse(p)
+	if err != nil || u.Scheme != "" || u.Host != "" || u.Opaque != "" || u.User != nil {
+		return "/"
+	}
+	raw, _, _ := strings.Cut(p, "?")
+	raw, _, _ = strings.Cut(raw, "#")
+	dec, err := url.PathUnescape(raw)
+	if err != nil || !plainPath(dec) {
+		return "/"
+	}
+	if c := path.Clean(dec); c == "/auth" || strings.HasPrefix(c, "/auth/") {
 		return "/"
 	}
 	return p
+}
+
+// plainPath reports whether p starts with exactly one "/" and holds no
+// control character, whitespace, backslash or non-ASCII byte.
+func plainPath(p string) bool {
+	if !strings.HasPrefix(p, "/") || strings.HasPrefix(p, "//") {
+		return false
+	}
+	for i := 0; i < len(p); i++ {
+		if b := p[i]; b <= ' ' || b >= 0x7f || b == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 type loginState struct {
@@ -252,7 +290,8 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	// lives as long as browsers allow.
 	s.setCookie(w, sessionCookie, token, "/", 400*24*time.Hour)
 	s.Log.Info("signed in", "user", u.ID)
-	http.Redirect(w, r, st.Return, http.StatusSeeOther)
+	// Checked again here: the cookie may be from before an upgrade.
+	http.Redirect(w, r, localPath(st.Return), http.StatusSeeOther)
 }
 
 func errString(err error) string {
