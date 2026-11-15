@@ -1,3 +1,13 @@
+<script lang="ts" module>
+	/** A locality on the heat layer (R38c): where, and its jobs. */
+	export interface HeatPoint {
+		name: string;
+		lon: number;
+		lat: number;
+		jobs: number;
+	}
+</script>
+
 <script lang="ts">
 	// R35: located messages on a self-hosted map. Tiles come from the API's
 	// PMTiles extract with range requests; fonts and icons are bundled. No
@@ -12,18 +22,23 @@
 	import type { Message, Meta } from './api.ts';
 
 	// variant 'single': the small map in a message's detail view (R35c), one
-	// point and no clusters, below the text on phones (P2).
+	// point and no clusters, below the text on phones (P2). variant 'heat':
+	// the busiest localities' report (R38c), a heat layer of localities
+	// weighted by their jobs, each labelled with its number, instead of
+	// messages.
 	let {
-		messages,
+		messages = [],
 		meta,
 		focus = null,
 		variant = 'full',
+		heat = [],
 		onselect = () => {}
 	}: {
-		messages: Message[];
+		messages?: Message[];
 		meta: Meta;
 		focus?: number | null;
-		variant?: 'full' | 'single';
+		variant?: 'full' | 'single' | 'heat';
+		heat?: HeatPoint[];
 		onselect?: (ids: number[]) => void;
 	} = $props();
 	const single = $derived(variant === 'single');
@@ -119,6 +134,52 @@
 		};
 	}
 
+	function heatGeojson(): FeatureCollection<Point, { name: string; jobs: number; label: string }> {
+		return {
+			type: 'FeatureCollection',
+			features: heat.map((h) => ({
+				type: 'Feature',
+				geometry: { type: 'Point', coordinates: [h.lon, h.lat] },
+				properties: { name: h.name, jobs: h.jobs, label: `${h.name}: ${h.jobs}` }
+			}))
+		};
+	}
+
+	// R38c: the heat layer, its colours and radius from the tokens, and a
+	// label with each locality's name and jobs, so colour isn't the only cue.
+	function addHeatLayers() {
+		if (!map) return;
+		const most = Math.max(1, ...heat.map((h) => h.jobs));
+		const look = { radius: px('--map-heat-radius'), font: font('--map-font'), label: rem('--text-sm'), halo: px('--map-stroke') };
+		drawn = JSON.stringify(look);
+		// From none at no density to the accent at the most (data, then tokens).
+		const ramp = ['interpolate', ['linear'], ['heatmap-density'], 0, token('--map-heat-none'), 0.2, token('--map-heat-low'), 1, token('--map-heat-high')];
+		map.addSource('heat', { type: 'geojson', data: heatGeojson() });
+		map.addLayer({
+			id: 'heat',
+			type: 'heatmap',
+			source: 'heat',
+			paint: {
+				'heatmap-weight': ['/', ['get', 'jobs'], most],
+				'heatmap-radius': look.radius,
+				'heatmap-color': ramp as maplibregl.ExpressionSpecification,
+				'heatmap-opacity': 0.85
+			}
+		});
+		map.addLayer({
+			id: 'heat-labels',
+			type: 'symbol',
+			source: 'heat',
+			layout: { 'text-field': ['get', 'label'], 'text-font': [look.font], 'text-size': look.label, 'text-allow-overlap': false },
+			paint: { 'text-color': token('--fg'), 'text-halo-color': token('--bg'), 'text-halo-width': look.halo }
+		});
+	}
+
+	function addLayers() {
+		if (variant === 'heat') addHeatLayers();
+		else addMessageLayers();
+	}
+
 	function addMessageLayers() {
 		if (!map) return;
 		const look = {
@@ -187,6 +248,14 @@
 
 	function fit(force = false) {
 		if (!map || (fitted && !force)) return;
+		if (variant === 'heat') {
+			if (!heat.length) return;
+			const b = new maplibregl.LngLatBounds();
+			for (const h of heat) b.extend([h.lon, h.lat]);
+			map.fitBounds(b, { padding: 64, maxZoom: 13, duration: 0 });
+			fitted = true;
+			return;
+		}
 		const pts = messages.filter((m) => m.location);
 		const target = focus != null ? pts.find((m) => m.id === focus) : undefined;
 		if (target) {
@@ -220,7 +289,7 @@
 		}
 		map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
 		map.on('load', () => {
-			addMessageLayers();
+			addLayers();
 			ready = true;
 			fit();
 		});
@@ -255,7 +324,7 @@
 			if (!map || drawnIn() === styledIn) return;
 			styledIn = drawnIn();
 			map.setStyle(style());
-			map.once('style.load', addMessageLayers);
+			map.once('style.load', addLayers);
 		};
 		const mq = matchMedia('(prefers-color-scheme: dark)');
 		mq.addEventListener('change', restyle);
@@ -269,11 +338,11 @@
 		};
 	});
 
-	// New and reloaded messages.
+	// New and reloaded messages, or localities.
 	$effect(() => {
-		const data = geojson();
+		const data = variant === 'heat' ? heatGeojson() : geojson();
 		if (!ready || !map) return;
-		(map.getSource('messages') as maplibregl.GeoJSONSource | undefined)?.setData(data);
+		(map.getSource(variant === 'heat' ? 'heat' : 'messages') as maplibregl.GeoJSONSource | undefined)?.setData(data);
 		fit();
 	});
 
@@ -290,9 +359,11 @@
 	class:single
 	bind:this={container}
 	role="region"
-	aria-label={single
-		? 'Map showing where this message was placed. The location is also described in the details.'
-		: 'Map of located messages. The same messages are listed below the map.'}
+	aria-label={variant === 'heat'
+		? 'Map of jobs by locality. The same localities and their jobs are in the table.'
+		: single
+			? 'Map showing where this message was placed. The location is also described in the details.'
+			: 'Map of located messages. The same messages are listed below the map.'}
 	data-testid="map"
 	data-ready={unavailable ? 'unavailable' : ready}
 	data-drawn={drawn || undefined}
@@ -300,7 +371,7 @@
 	{#if unavailable}
 		<p>
 			This browser can't show the map (it needs WebGL, which may be turned off).
-			{single ? 'The location is described in the details.' : 'The located messages are listed below.'}
+			{variant === 'heat' ? 'The localities are in the table.' : single ? 'The location is described in the details.' : 'The located messages are listed below.'}
 		</p>
 	{/if}
 </div>

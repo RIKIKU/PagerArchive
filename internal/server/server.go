@@ -26,6 +26,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
+	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
@@ -48,6 +49,8 @@ type Server struct {
 	Accounts *accounts.Service
 	// Catalog changes aliases (R53-R58).
 	Catalog *catalog.Catalog
+	// Reports counts jobs for M24's reports (R38a-R38i).
+	Reports *reports.Service
 	OIDC    *OIDC
 	// PowerShell checks the PowerShell module's tokens (R60); nil refuses them.
 	PowerShell *PowerShell
@@ -131,6 +134,15 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/map":                          s.mapMessages,
 		"GET /api/v1/map/tiles.pmtiles":            s.mapTiles,
 		"GET /api/v1/reports/capcode":              s.capcodeReport,
+		"GET /api/v1/reports/options":              s.reportOptions,
+		"GET /api/v1/reports/busiest":              s.busiestReport,
+		"GET /api/v1/reports/localities":           s.localitiesReport,
+		"GET /api/v1/reports/busy-times":           s.busyTimesReport,
+		"GET /api/v1/reports/event-types":          s.eventTypesReport,
+		"GET /api/v1/reports/job-size":             s.jobSizeReport,
+		"GET /api/v1/reports/long-jobs":            s.longJobsReport,
+		"GET /api/v1/reports/appliances":           s.appliancesReport,
+		"GET /api/v1/reports/large-events":         s.largeEventsReport,
 		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
 		"GET /api/v1/admin/backup":                 s.adminOnly(s.getBackup),
