@@ -4,7 +4,7 @@
 
 Proposed (2026-11-16). The owner: on a large job they needed the job's district at a glance, to know which radio channel to listen to; "position-based district and map layer first". SPEC.md R5 and section 10 change, with R88-R88e (section 7.26), A111 and A112, and M25. On the branch `districts` from main; migration 00026; the pull request is labelled `feature`.
 
-Revised (2026-11-17), before it was merged: the owner, having seen the demo, wants a second agency's fire districts shown too, so a profile names **layers** of areas (sections 10 and 11), and an areas file that doesn't load no longer stops the API (section 12). A113 is added. Migration 00026 hadn't been released, so it was changed rather than followed by another.
+Revised (2026-11-17), before it was merged: the owner, having seen the demo, wants a second agency's fire districts shown too, so a profile names **layers** of areas (sections 10 and 11), and an areas file that doesn't load no longer stops the API (section 12). A114 is added. Migration 00026 hadn't been released, so it was changed rather than followed by another.
 
 ## Context
 
@@ -110,7 +110,7 @@ The other layers load as ever. `validate-profile` still fails on such a file, so
 
 - `TestA111Areas`: the example's two layers, zones (two, one a MultiPolygon, the edge between them through 11 FICTION ST) and regions over them (made up, overlapping both zones); pages in each, on the zones' edge, a street only, outside, unplaced; each layer's area on the API's views in order, each layer's outlines' response and its caching, a layer the profile doesn't name, Administration; a re-parse; moved zones loaded and worked out again without the profile's parse hash changing, and the regions not worked out again; retention; overlapping zones; one layer removed, then all.
 - `TestA112AreasAfterUpgrade`: a database at migration 00025 with placed pages, upgraded with the zones: the backfill, its state, resuming, running again, the log holding no page text; then the regions added, worked out alone.
-- `TestA113AreasThatDontLoad`: a broken file and a missing one: the API's start, the log, the areas from before kept and shown, a new layer with no file, Administration, the file put right.
+- `TestA114AreasThatDontLoad`: a broken file and a missing one: the API's start, the log, the areas from before kept and shown, a new layer with no file, Administration, the file put right.
 - `TestParseHashLeavesOutAreas`, `TestAreasLayers`, `TestReadFileChecks`, `TestValidateProfileAreas`: the hash, the layers' ids and outlines, what a file may be, and `validate-profile` failing on a broken or missing file.
 - The browser (web/tests/e2e.spec.ts, A111): the job's view, a message's view, the map's list, both layers' outlines, the "Map layers" control and its panel (closed at first; focus; Esc, a click outside and the control closing it; inside the map), one layer hidden alone, with its credit, and remembered, in full screen too, the credits folding away (R35g), no control without layers, light and dark, 1,280 and 375 px, axe; Administration.
 - A15 (`scripts/a15.sh`) fails if the API logs that areas didn't load.

@@ -419,11 +419,11 @@ func TestA111Areas(t *testing.T) {
 	}
 }
 
-// A113. Areas that don't load don't stop the API (R88d; ADR 0035): a layer
+// A114. Areas that don't load don't stop the API (R88d; ADR 0035): a layer
 // whose file is missing, or broken, is logged as an error and Administration
 // says why; one loaded before keeps the areas it had until its file is put
 // right; the other layers load as ever.
-func TestA113AreasThatDontLoad(t *testing.T) {
+func TestA114AreasThatDontLoad(t *testing.T) {
 	e := setup(t)
 	id := e.mustPost("a", "0100001", "@@EX0000991 HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1", e.now).MessageID
 	dir := t.TempDir()

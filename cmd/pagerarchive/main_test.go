@@ -100,7 +100,7 @@ func TestValidateProfileLargeEventFieldErrors(t *testing.T) {
 	}
 }
 
-// A113 (R88): validate-profile checks each layer's areas file, and fails on
+// A114 (R88): validate-profile checks each layer's areas file, and fails on
 // one that's broken or missing, naming the layer and the file; the server
 // starts without such a layer instead (R88d).
 func TestValidateProfileAreas(t *testing.T) {
