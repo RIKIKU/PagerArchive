@@ -481,3 +481,71 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	await sixth.close();
 	console.log(`A81: five runs of one invitation, a resend among them, sent five code emails; the sixth sent none and said: ${told}`);
 });
+
+// R90, A116 (ADR 0037): an installed app signs in and out through Authentik,
+// on its own host, with the app's service worker in control, as it is in an
+// app installed on a phone. Sign-in leaves the app's site and comes back to
+// it (on a phone, Authentik shows in the app's own browser sheet or custom
+// tab); the worker leaves /auth/ to the browser and keeps nothing of it.
+test('A116 an installed app signs in and out through Authentik, its service worker in control', async ({ browser, baseURL }) => {
+	test.setTimeout(120_000);
+	const app = new URL(baseURL!).origin;
+	const ctx = await browser.newContext({ serviceWorkers: 'allow' });
+	const page = await ctx.newPage();
+	const signIn = async () => {
+		await page.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+		await answer(page, 'uidField', OWNER);
+		await answer(page, 'password', passwordOf('Owner Person'));
+		await page.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+		await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
+	};
+	const inControl = () => page.evaluate(() => !!navigator.serviceWorker.controller);
+	// Each sign-in's return is requested once: a second request would find its
+	// state used up ("the sign-in expired"), as navigation preload once made it.
+	const callbacks: string[] = [];
+	page.on('request', (r) => {
+		if (new URL(r.url()).pathname === '/auth/callback') callbacks.push(r.url());
+	});
+
+	// Signed out, from the app's start URL: to Authentik and back.
+	await page.goto('/');
+	await signIn();
+	await page.evaluate(async () => {
+		await navigator.serviceWorker.ready;
+	});
+	await page.reload();
+	await expect.poll(inControl).toBe(true);
+	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
+
+	// Signing out ends the app's session, and ends on Authentik's page.
+	await page.getByRole('button', { name: /^Account menu/ }).click();
+	await page.getByRole('button', { name: 'Sign out' }).click();
+	await page.waitForURL((u) => u.origin !== app, { timeout: 30_000 });
+	expect((await ctx.request.get(`${app}/api/v1/me`)).status(), 'signed out of the app').toBe(401);
+	await page.waitForTimeout(3000); // let Authentik's page finish drawing for the screenshot
+	await page.screenshot({ path: test.info().outputPath('a116-signed-out.png') });
+	console.log(`A116: signing out ends at Authentik's ${new URL(page.url()).pathname}`);
+
+	// Back to the app, the worker still in control: signed out, so through
+	// Authentik again, and signed in. Authentik's own session outlives the
+	// app's (its page offers to end it), so it may not ask again.
+	await page.goto('/');
+	const adminLink = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' });
+	const uidField = page.locator('input[name="uidField"]');
+	await expect(adminLink.or(uidField)).toBeVisible({ timeout: 30_000 });
+	const asked = new URL(page.url()).origin !== app;
+	if (asked) await signIn();
+	console.log(`A116: back in the app after signing out, Authentik ${asked ? 'asked for the password again' : 'signed straight back in (its own session still open)'}`);
+	await expect.poll(inControl).toBe(true);
+	const kept = await page.evaluate(async () => {
+		const out: string[] = [];
+		for (const name of await caches.keys()) for (const r of await (await caches.open(name)).keys()) out.push(new URL(r.url).pathname);
+		return out;
+	});
+	expect(callbacks, 'one return from Authentik per sign-in').toHaveLength(2);
+	expect(new Set(callbacks).size).toBe(2);
+	expect(kept.length).toBeGreaterThan(0);
+	expect(kept.filter((p) => p === '/' || p.startsWith('/auth/') || p.startsWith('/api/') || p.startsWith('/if/'))).toEqual([]);
+	console.log(`A116: signed in, out and in again through Authentik with the service worker in control; ${kept.length} shell files kept, none from /auth/ or /api/`);
+	await ctx.close();
+});

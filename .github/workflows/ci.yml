@@ -420,6 +420,11 @@ jobs:
       - name: Icons are as generated from @tabler/icons
         working-directory: web
         run: node scripts/icons.mjs --check
+      # R90, R82c: the manifest, the offline page and the theme-color lines
+      # are written from app.css's tokens.
+      - name: Installable app's files are as written from the tokens
+        working-directory: web
+        run: node scripts/pwa.mjs --check
       - name: Playwright is the image's version
         working-directory: web
         run: test "$(npx playwright --version)" = "Version 1.64.0"

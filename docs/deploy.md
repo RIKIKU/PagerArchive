@@ -141,6 +141,8 @@ Forward each hostname to its container, or to `API_BIND` and `AUTHENTIK_BIND` on
 - **The app** streams live updates with Server-Sent Events, so don't buffer them, and allow long-lived responses.
 - **Authentik** uses WebSockets.
 
+The proxy's HTTPS is also what lets people [install the app on their phones](phone.md). Don't cache the app's responses in the proxy: `/service-worker.js` must reach browsers fresh (the app sends it `no-cache`), so that an upgrade reaches installed apps.
+
 Both must receive the original `Host` header and `X-Forwarded-Proto`. Authentik also gets `X-Forwarded-For` set to the address the request came from, never the client's own header passed on: Authentik trusts that header from private addresses, so a header passed on would let anyone choose the address Authentik records.
 
 Authentik's **Base URL** (the address it's reached at) is `AUTHENTIK_URL`, unless `.env` sets `AUTHENTIK_WEB__BASE_URL`. Authentik copies it into its settings on a start when the setting is empty, and never overwrites it: if you later move Authentik to another address, change it under **System**, **Settings** in Authentik's admin interface too.

@@ -48,7 +48,17 @@ func Serve(root fs.FS, look func(*http.Request) string) http.Handler {
 				if strings.HasPrefix(p, "_app/immutable/") {
 					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 				} else {
+					// The service worker among them: a browser checks it for
+					// a new release on every navigation (R90).
 					w.Header().Set("Cache-Control", "no-cache")
+				}
+				switch {
+				case strings.HasSuffix(p, ".webmanifest"):
+					w.Header().Set("Content-Type", "application/manifest+json")
+				case strings.HasSuffix(p, ".html"), p == "service-worker.js":
+					// The offline page, and the service worker, whose own
+					// policy limits what it may fetch: this origin only.
+					w.Header().Set("Content-Security-Policy", csp)
 				}
 				fileServer.ServeHTTP(w, r)
 				return
