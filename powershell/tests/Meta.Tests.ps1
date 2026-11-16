@@ -79,7 +79,8 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
     }
     It 'declares a PagerArchive output type' {
         $output = @($command.OutputType.Name)
-        if ($Name -eq 'Disconnect-PagerArchive') {
+        # Commands that write nothing out: signing out, and writing a file.
+        if ($Name -in @('Disconnect-PagerArchive', 'Export-PagerArchiveCsv')) {
             $output | Should -Be @('System.Void')
         } else {
             $output | Should -Not -BeNullOrEmpty

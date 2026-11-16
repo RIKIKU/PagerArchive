@@ -100,7 +100,12 @@ LONG DESCRIPTION
 
         Get-PagerArchiveMessage -Capcode 0100001 -Priority Emergency |
             Select-Object -Property SentAt, Alias, Text |
-            Export-Csv -Path station1.csv
+            Export-PagerArchiveCsv -Path station1.csv
+
+    Export-PagerArchiveCsv works as Export-Csv, but writes a value that
+    starts with =, +, -, @, a tab or a carriage return with a leading
+    apostrophe, so a page sent to look like a formula never runs as one in
+    a spreadsheet. Use it for messages, rather than Export-Csv.
 
     New Emergency pages as they arrive, until Ctrl+C (a lost connection is
     retried, and what arrived meanwhile comes out once it's back):
