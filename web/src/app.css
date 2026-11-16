@@ -278,6 +278,30 @@
 	--map-heat-none: transparent;
 	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
+	/* R88: the areas' outlines on the map (MapView reads these), in each of
+	   the styles a layer may be drawn in: the line, its width, its dashes (in
+	   multiples of its width; none for a solid line) and the labels, with
+	   their halo; and an area's tag on a job's view. Each style differs in
+	   colour and in its line, so two layers tell apart in light and dark. */
+	--map-area-solid-line: var(--fg);
+	--map-area-solid-stroke: 1.5px;
+	--map-area-solid-dash: none;
+	--map-area-solid-label: var(--fg);
+	--map-area-dashed-line: var(--accent);
+	--map-area-dashed-stroke: 2px;
+	--map-area-dashed-dash: 3 2;
+	--map-area-dashed-label: var(--accent);
+	--map-area-dotted-line: var(--muted);
+	--map-area-dotted-stroke: 2.5px;
+	--map-area-dotted-dash: 0.1 2;
+	--map-area-dotted-label: var(--muted);
+	--map-area-halo: var(--bg);
+	--area-tag-bg: var(--surface-2);
+	--area-tag-border: var(--control-border);
+	/* R88c: the map layers panel lifted off the map. */
+	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
+	/* R35g: the map credits' line, at most this wide (it wraps). */
+	--map-credits-width: 16rem;
 }
 
 /* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
@@ -512,6 +536,30 @@
 	--map-heat-none: transparent;
 	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
+	/* R88: the areas' outlines on the map (MapView reads these), in each of
+	   the styles a layer may be drawn in: the line, its width, its dashes (in
+	   multiples of its width; none for a solid line) and the labels, with
+	   their halo; and an area's tag on a job's view. Each style differs in
+	   colour and in its line, so two layers tell apart in light and dark. */
+	--map-area-solid-line: var(--fg);
+	--map-area-solid-stroke: 1.5px;
+	--map-area-solid-dash: none;
+	--map-area-solid-label: var(--fg);
+	--map-area-dashed-line: var(--accent);
+	--map-area-dashed-stroke: 2px;
+	--map-area-dashed-dash: 3 2;
+	--map-area-dashed-label: var(--accent);
+	--map-area-dotted-line: var(--muted);
+	--map-area-dotted-stroke: 2.5px;
+	--map-area-dotted-dash: 0.1 2;
+	--map-area-dotted-label: var(--muted);
+	--map-area-halo: var(--bg);
+	--area-tag-bg: var(--surface-2);
+	--area-tag-border: var(--control-border);
+	/* R88c: the map layers panel lifted off the map. */
+	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
+	/* R35g: the map credits' line, at most this wide (it wraps). */
+	--map-credits-width: 16rem;
 }
 
 @media (pointer: coarse) {

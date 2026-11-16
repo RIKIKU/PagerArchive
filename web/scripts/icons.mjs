@@ -89,7 +89,9 @@ const icons = {
 	image: 'photo',
 	// Full screen on every map (R35f): four corner arrows out, and back in.
 	fullscreen: 'arrows-maximize',
-	exitfullscreen: 'arrows-minimize'
+	exitfullscreen: 'arrows-minimize',
+	// The map's layers control (R88c): a stack of sheets, the familiar sign.
+	layers: 'stack-2'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

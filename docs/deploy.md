@@ -18,7 +18,7 @@ You don't need a copy of the source repository. A deployment is one folder holdi
 - **Two hostnames** behind your reverse proxy, which handles TLS: one for the app (e.g. `pager.example.org`) and one for Authentik (e.g. `auth.example.org`).
 - **An SMTP account** Authentik can send mail through.
 - **Docker with Compose 2.24 or later.**
-- **A profile directory** for your network (see [profiles](profiles.md)), with its **address dataset**. Without one, the API uses the made-up example profile built into its image and warns on every start: its redaction rules aren't your network's, so details your network's rules would remove are stored (SPEC.md P1). Use it only to try PagerArchive out.
+- **A profile directory** for your network (see [profiles](profiles.md)), with its **address dataset** and any **areas** files it names (a missing one is logged and left off the map; `validate-profile` catches it). Without one, the API uses the made-up example profile built into its image and warns on every start: its redaction rules aren't your network's, so details your network's rules would remove are stored (SPEC.md P1). Use it only to try PagerArchive out.
 - **A map extract** of your area (see [Map](#map)). Without one, the made-up example map built into the image is used.
 
 ## Install

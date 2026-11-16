@@ -18,6 +18,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file. The attribution is shown in the app (R24). See [Address dataset](#address-dataset) |
 | `street_types` | Spelling to abbreviation, e.g. `"STREET": "ST"`, used to match streets |
 | `grid_reference` | `{system}`: how grid references are read (R25). `mgrs-6-digit-in-locality-square`: 3 digits of easting then 3 of northing, in 100 m, with no zone or 100 km square. The app completes them from the UTM zone and 100 km square that the page's locality lies in, and uses the centre of the 100 m cell |
+| `areas` | Optional. A list of layers, each `{id, path, label, name_property, attribution, outline}`: a GeoJSON file of named polygons a located page can fall in, such as districts, outlined on the map (R88). See [Areas](#areas) |
 
 ## Address dataset
 
@@ -38,6 +39,46 @@ How a page is placed (ADR 0005):
 If the address and the grid reference both place a page and they're more than 1 km apart, it gets the admin-only `location_mismatch` flag (R26). For a street-only address, the distance is measured to the nearest address on that street.
 
 The API loads the dataset into the database before it starts listening, but only when the file or `street_types` have changed. A dataset of several million addresses takes a few minutes. Messages are then placed again in the background.
+
+## Areas
+
+A network profile may name **layers** of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in, and another agency's districts over them. A page placed on the map (R24, R25) is in the area of each layer its point falls in, which its job's view, its detail view and the map's list show as the layer's label and the name (`District 08`), and the map page outlines and labels each layer in its own style, with a checkbox for each in the map's "Map layers" panel to hide it. A page with no location shows none; nor does a point in no area of a layer, on an area's edge, or in two of a layer's areas at once (for that layer).
+
+```json
+"areas": [
+  {
+    "id": "zones",
+    "path": "example-areas.geojson",
+    "label": "Zone",
+    "name_property": "zone",
+    "attribution": "Example zones, made up for PagerArchive",
+    "outline": "solid"
+  },
+  {
+    "id": "regions",
+    "path": "example-regions.geojson",
+    "label": "Region",
+    "name_property": "region",
+    "attribution": "Example regions, made up for PagerArchive",
+    "outline": "dashed"
+  }
+]
+```
+
+- `id`: the layer's machine name, unique in the profile: lower-case letters, digits and hyphens, starting with a letter. What's stored for the layer is kept under it, so changing it is removing the layer and adding a new one.
+- `path`: relative to the profile file. A GeoJSON `FeatureCollection` of `Polygon` and `MultiPolygon` features in WGS84 longitude and latitude (RFC 7946). A file whose `crs` names anything else is refused. Name it `.geojson`, so it isn't read as a profile.
+- `label`: shown before each name (`Zone A`), and in the map's layers panel (`Zone outlines`). A short agency name works too: a label `Metro` shows `Metro Central`.
+- `name_property`: the feature property that names each area: a string (trimmed), or a number as the file writes it, at most 40 characters. Features with the same name are one area (a district's land and its water, say).
+- `attribution`: the data's credit, shown in the map's credits while the layer is shown. Many open datasets require one.
+- `outline`: optional, `solid`, `dashed` or `dotted`: how the map draws the layer, in colours the look sets (light and dark). By default the first layer is solid, the second dashed and the third dotted.
+
+The layers are shown in the order listed. Areas of one layer shouldn't overlap each other (a point in two is in neither); layers overlap freely.
+
+The example's [`example-areas.geojson`](../profiles/example/example-areas.geojson) has two made-up zones either side of 11 FICTION ST, MADEUPTON, and [`example-regions.geojson`](../profiles/example/example-regions.geojson) two made-up regions over them. A real network's areas belong in its private profile repository, with their attribution.
+
+The API loads each layer into the database before it starts listening, when its file or `name_property` has changed, and then works out every located page's area of that layer again in the background, a batch at a time (pages keep the area they had until then); the other layers aren't worked out again, so adding a layer costs only that layer. Changing the areas, their label, attribution or outline re-parses no page: the `areas` key is left out of what decides a re-parse. Removing a layer removes every page's area of it. The map gets each layer's outlines simplified to under 400 KB (the area a page is in is worked out from the full detail), gzipped, and the browser keeps them until they change. Administration's start page says which layers are loaded.
+
+**A layer's file that's missing or broken doesn't stop the API** (R88d): it starts without that layer's changes, logs an error naming the layer and the problem, and Administration says so; a layer loaded before keeps showing the areas it had until the file is put right. `validate-profile` checks every layer's file as the server does, and fails on one that's missing or broken, so check a profile with it before you deploy it.
 
 ## Agency profile (attached to alias templates)
 

@@ -198,6 +198,12 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 				return "", 0, err
 			}
 		}
+		// The area it's in (R88a), from where it was placed.
+		if loc.Lon != nil {
+			if err := q.SetMessageArea(ctx, id); err != nil {
+				return "", 0, err
+			}
+		}
 		if err := record(id); err != nil {
 			return "", 0, err
 		}
@@ -370,6 +376,10 @@ func Locate(ctx context.Context, geo *geocode.Geocoder, q *db.Queries, id int64,
 		return err
 	}
 	if err := q.SetLocation(ctx, geocode.SetLocationParams(id, res)); err != nil {
+		return err
+	}
+	// The area it's in follows where it's placed (R88a, R88d).
+	if err := q.SetMessageArea(ctx, id); err != nil {
 		return err
 	}
 	if l := derivedLocality(f, res); l != "" {

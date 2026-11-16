@@ -26,6 +26,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/areas"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
@@ -172,6 +173,16 @@ func setup(t *testing.T, with ...traced) *env {
 	if _, err := geocode.Load(ctx, st, n.DatasetPath, ix, dsHash); err != nil {
 		t.Fatal(err)
 	}
+	// The example's areas (R88), as serve loads them.
+	areaSet := areas.Start(ctx, st, n.Areas, slog.New(slog.NewJSONHandler(e.logs, nil)))
+	for _, l := range areaSet {
+		if l.Error != "" {
+			t.Fatalf("areas %s: %s", l.ID, l.Error)
+		}
+	}
+	if err := areas.Backfill(ctx, st, nil, 0); err != nil {
+		t.Fatal(err)
+	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: n.GridSystem}
 	var handler slog.Handler = slog.NewJSONHandler(e.logs, &slog.HandlerOptions{Level: slog.LevelDebug})
 	if tel != nil {
@@ -207,6 +218,7 @@ func setup(t *testing.T, with ...traced) *env {
 		Catalog:      &catalog.Catalog{Store: st},
 		Reports:      &reports.Service{Pool: st.Pool, Location: time.UTC, Log: log},
 	}
+	srv.Areas = areaSet
 	e.srv = srv
 	e.cat = srv.Catalog
 	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute, Tracer: tr,

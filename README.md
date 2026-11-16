@@ -3,7 +3,7 @@
 A self-hosted archive and live browser for POCSAG paging networks, received with inexpensive RTL-SDR dongles and decoded with `multimon-ng`.
 
 - Many receivers, one server, with deduplication across receivers
-- Live updates, multi-criteria search, job grouping and a map
+- Live updates, multi-criteria search, job grouping and a map, with optional named areas (such as districts) outlined on it and shown on each located page and job
 - Network knowledge (page formats, redaction rules, ignored capcodes) in JSON **profiles**, so it works for any POCSAG network
 - Sensitive details are removed **before** anything is stored
 - Per-user integrations forward new pages to your own systems (a convenience, not a replacement for your pager)

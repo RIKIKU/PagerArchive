@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { api, type Message, type Meta } from '#lib/api.ts';
+	import { api, areaName, type Message, type Meta } from '#lib/api.ts';
 	import { rangeProblem } from '#lib/filters.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
@@ -119,6 +119,7 @@
 					{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 					<span class="who">{m.alias ?? m.capcode}</span>
 					<span class="where">{where(m)}</span>
+					{#if meta?.areas}{#each m.areas ?? [] as a (a.layer)}<span class="where" data-testid="located-area">{areaName(meta, a)}</span>{/each}{/if}
 					<span class="text">{m.display_text}</span>
 				</a>
 			</li>

@@ -59,7 +59,29 @@ type Network struct {
 	Attribution         string
 	StreetTypes         map[string]string
 	GridSystem          string // how grid references are read (R25); "" if not given
+	// Areas are the layers of named polygons a located page can fall in,
+	// drawn on the map (R88, ADR 0035), in the profile's order; none when it
+	// names none. A page can be in one area of each layer. They're left out
+	// of Hash: they don't change what a page says, so changing them
+	// re-parses nothing (R88d).
+	Areas []*Areas
 }
+
+// Areas is one layer of a network profile's areas (R88): a GeoJSON file of
+// named polygons, what one is called, whose data they are and how the map
+// outlines them.
+type Areas struct {
+	ID           string // the layer's machine name, unique in the profile, such as "districts"
+	Path         string // absolute or relative to the working directory
+	Label        string // shown before each name: "District" makes "District 08"
+	NameProperty string // the feature property holding each one's name
+	Attribution  string
+	Outline      string // how the map draws it: "solid", "dashed" or "dotted"
+}
+
+// Outlines are the map's outline styles (R88c), and the default of each
+// layer that names none, by its place in the list.
+var Outlines = []string{"solid", "dashed", "dotted"}
 
 // CapcodeRange is an inclusive range of capcodes.
 type CapcodeRange struct{ From, To int }
@@ -255,7 +277,58 @@ type networkJSON struct {
 		System string `json:"system"`
 	} `json:"grid_reference"`
 	StreetTypes map[string]string `json:"street_types"`
+	Areas       []struct {
+		ID           string `json:"id"`
+		Path         string `json:"path"`
+		Label        string `json:"label"`
+		NameProperty string `json:"name_property"`
+		Attribution  string `json:"attribution"`
+		Outline      string `json:"outline"`
+	} `json:"areas"`
 }
+
+// parseHash is a network profile's hash, which decides whether pages are
+// re-parsed (R23a): the file's, with its top-level "areas" member cut out,
+// so adding, changing or removing areas re-parses nothing (R88d). The cut
+// takes the member with the comma before it, or for a first member the comma
+// after it, so the file hashes as it would without the member.
+func parseHash(data []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return hashOf(data)
+	}
+	first := true
+	for dec.More() {
+		before := int(dec.InputOffset()) // the end of the previous value, or the '{'
+		t, err := dec.Token()
+		if err != nil {
+			return hashOf(data)
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return hashOf(data)
+		}
+		end := int(dec.InputOffset())
+		if key, _ := t.(string); key == "areas" {
+			from, to := before, end
+			if first {
+				// From the key itself to the next member's key.
+				for from < len(data) && isSpace(data[from]) {
+					from++
+				}
+				for to < len(data) && (isSpace(data[to]) || data[to] == ',') {
+					to++
+				}
+			}
+			cut := append(append([]byte{}, data[:from]...), data[to:]...)
+			return hashOf(cut)
+		}
+		first = false
+	}
+	return hashOf(data)
+}
+
+func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
 
 type redactionJSON struct {
 	Name         string   `json:"name"`
@@ -282,7 +355,7 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 	n := &Network{
 		Name:        j.Name,
 		File:        path,
-		Hash:        hashOf(data),
+		Hash:        parseHash(data),
 		Markers:     map[string]Priority{},
 		Attribution: j.AddressDataset.Attribution,
 		StreetTypes: j.StreetTypes,
@@ -297,6 +370,21 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 	n.DatasetPath = j.AddressDataset.Path
 	if !filepath.IsAbs(n.DatasetPath) {
 		n.DatasetPath = filepath.Join(filepath.Dir(path), n.DatasetPath)
+	}
+	ids := map[string]bool{}
+	for i, a := range j.Areas {
+		l := &Areas{ID: a.ID, Path: a.Path, Label: a.Label, NameProperty: a.NameProperty, Attribution: a.Attribution, Outline: a.Outline}
+		if !filepath.IsAbs(l.Path) {
+			l.Path = filepath.Join(filepath.Dir(path), l.Path)
+		}
+		if l.Outline == "" {
+			l.Outline = Outlines[i%len(Outlines)]
+		}
+		if ids[l.ID] {
+			fail(fmt.Sprintf("/areas/%d/id", i), fmt.Sprintf("duplicate areas id %q", l.ID))
+		}
+		ids[l.ID] = true
+		n.Areas = append(n.Areas, l)
 	}
 	for i, s := range j.Ignored {
 		r, err := parseRange(s)

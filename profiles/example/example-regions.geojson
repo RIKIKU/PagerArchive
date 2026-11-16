@@ -1,0 +1,26 @@
+{
+  "type": "FeatureCollection",
+  "_comment": "Made-up regions for the example network, a second layer of areas over its zones (SPEC.md section 10, R88): Region North over MADEUPTON north of 1 EXAMPLE ST, across both zones and the edge between them, and Region South, the rest of the zones' extent. TESTVILLE is in neither. Every coordinate is invented, in open ocean like the example's addresses.",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "region": "North" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-140.95, -34.8335], [-140.8, -34.8335], [-140.8, -34.8], [-140.95, -34.8], [-140.95, -34.8335]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "region": "South" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-140.95, -34.9], [-140.8, -34.9], [-140.8, -34.8335], [-140.95, -34.8335], [-140.95, -34.9]]
+        ]
+      }
+    }
+  ]
+}
