@@ -1,7 +1,7 @@
 {
   "uid": "pa-page-path",
-  "title": "PagerArchive: a page's path",
-  "description": "From the receiver's decoder to the database, the live update and integrations (R71). Open a page in the table to see its whole trace.",
+  "title": "A page's path",
+  "description": "From the receiver's decoder to the database, the live update and integrations (R71). Open a page in the table to see its whole trace. Grafana's own trace links open Explore at its default \"Last 1 hour\"; this dashboard's links (\"Open in Explore (this time range)\", \"Open the trace (this time range)\") carry the dashboard's time range.",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -10,23 +10,27 @@
   "panels": [
     {
       "id": 1, "type": "text", "title": "How to read this",
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt, which says why it failed (error.type: connection_refused, timeout, HTTP 503 ...). The table lists recent pages: click a span ID to open that page's trace. The top chart is the slowest 10 % of each step."}
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "Each page is one trace: the client's **decode**, **buffer** (waiting while the server was unreachable) and **send**, then the API's **ingest** steps (redact, parse, dedup, locate, store), the **live.publish** to open lists and each **integration.deliver** attempt, which says why it failed (error.type: connection_refused, timeout, HTTP 503 ...). The table lists recent pages: click a span ID to open that page's trace. The top chart is the slowest 10 % of each step. Each panel's **i** says what normal looks like.\n\nOn the graphs from traces, click a line to pin its tooltip, then **Open in Explore (this time range)** lists that step's spans, or those failed deliveries, in this dashboard's time range."}
     },
     {
       "id": 2, "type": "timeseries", "title": "Time in each step (90th percentile)",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 4},
+      "description": "How long the slowest 10 % of each step took. Normal: decode, send and the ingest steps take milliseconds; ingest.locate longer when it has to look up an address; buffer is near 0. Worry: buffer climbing (the client couldn't reach the server, so pages arrived late), ingest.store climbing (the database is slow), or integration.deliver taking seconds (a slow endpoint). Click a line, then \"Open in Explore (this time range)\" for that step's spans.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 5},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
         "query": "{name=~\"decode|buffer|send|ingest|ingest.redact|ingest.parse|ingest.dedup|ingest.locate|ingest.store|live.publish|integration.deliver\"} | quantile_over_time(duration, .9) by (name)"
       }],
-      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "showPoints": "auto"}}, "overrides": []},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+      "fieldConfig": {"defaults": {"unit": "s", "custom": {"drawStyle": "line", "lineWidth": 2, "showPoints": "auto"}, "links": [
+        {"title": "Open in Explore (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceqlSearch\",\"tableType\":\"spans\",\"limit\":50,\"filters\":[{\"id\":\"name\",\"tag\":\"name\",\"scope\":\"intrinsic\",\"operator\":\"=\",\"value\":${__field.labels.name},\"valueType\":\"string\"}]}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"}}}"}
+      ]}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"]}, "tooltip": {"mode": "single"}}
     },
     {
       "id": 3, "type": "timeseries", "title": "Pages by outcome (per minute)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 16},
+      "description": "Pages the clients posted each minute, by what the API did with them. stored: new pages kept; duplicate: a page another receiver (or a retry) already sent; ignored: a capcode the profile ignores; clock_ahead: refused because the client's clock was ahead. Normal: mostly stored, some duplicate with more than one receiver. Worry: no bars at all on a network that's never quiet (see the Clients dashboard), or clock_ahead at all (fix that client's clock).",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 17},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (outcome) (rate(pagerarchive_pages_received_total{job=\"pagerarchive\"}[$__rate_interval])) * 60", "legendFormat": "{{outcome}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
@@ -34,37 +38,48 @@
     },
     {
       "id": 4, "type": "table", "title": "Recent pages (the API's ingest span)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 26},
+      "description": "The newest pages the API received in the time range, with what it did with each (outcome), the client that sent it, the stored message's ID and, if it failed, why. Click a span ID to open that page's whole trace.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 27},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "tableType": "spans", "limit": 50, "spss": 1,
         "query": "{resource.service.name=\"pagerarchive\" && name=\"ingest\"} | select(span.pagerarchive.ingest.outcome, span.pagerarchive.client.id, span.pagerarchive.message.id, span.error.type)"
       }],
+      "fieldConfig": {"defaults": {}, "overrides": [
+        {"matcher": {"id": "byName", "options": "spanID"}, "properties": [
+          {"id": "links", "value": null},
+          {"id": "links", "value": [{"title": "Open the trace (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceql\",\"query\":\"${__data.fields.traceIdHidden}\"}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"},\"panelsState\":{\"trace\":{\"spanId\":\"${__value.raw}\"}}}}"}]}
+        ]}
+      ]},
       "options": {"showHeader": true, "cellHeight": "sm"}
     },
     {
       "id": 5, "type": "timeseries", "title": "Integration deliveries (per hour)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 36},
+      "description": "Integration deliveries finished each hour, by result. delivered: the destination took it; failed: it gave up after its retries; too_old: the page was too old to send by the time it could be; cancelled: the integration was changed or removed first. Normal: delivered only. Worry: failed or too_old: the integration's page in PagerArchive and the panel below say why.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 37},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (result) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\"}[1h]))", "legendFormat": "{{result}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
-      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "single"}}
     },
     {
       "id": 7, "type": "timeseries", "title": "Failed delivery attempts, by kind and cause",
-      "description": "Each failed integration.deliver span, by the integration's kind and error.type: connection_refused, dns_lookup_failed, timeout, tls_not_trusted, auth_refused, HTTP 503 ... Open a delivery's trace from the table above for its retries.",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 46},
+      "description": "Each failed integration.deliver attempt, by the integration's kind and error.type: connection_refused, dns_lookup_failed, timeout, tls_not_trusted, auth_refused, HTTP 503 ... Normal: empty, or a few retries that then worked. Worry: one cause that keeps coming: the destination is down, refusing the credentials, or its certificate isn't trusted. Click a bar, then \"Open in Explore (this time range)\" for those attempts and their traces.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 47},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{
         "refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range",
         "query": "{name=\"integration.deliver\" && status=error} | count_over_time() by (span.pagerarchive.delivery.kind, span.error.type)"
       }],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "custom": {"drawStyle": "bars", "fillOpacity": 60, "stacking": {"mode": "normal"}}, "links": [
+        {"title": "Open in Explore (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceqlSearch\",\"tableType\":\"spans\",\"limit\":50,\"filters\":[{\"id\":\"name\",\"tag\":\"name\",\"scope\":\"intrinsic\",\"operator\":\"=\",\"value\":\"integration.deliver\",\"valueType\":\"string\"},{\"id\":\"status\",\"tag\":\"status\",\"scope\":\"intrinsic\",\"operator\":\"=\",\"value\":\"error\",\"valueType\":\"keyword\"},{\"id\":\"kind\",\"tag\":\"pagerarchive.delivery.kind\",\"scope\":\"span\",\"operator\":\"=\",\"value\":${__field.labels[\"span.pagerarchive.delivery.kind\"]},\"valueType\":\"string\"},{\"id\":\"cause\",\"tag\":\"error.type\",\"scope\":\"span\",\"operator\":\"=\",\"value\":${__field.labels[\"span.error.type\"]},\"valueType\":\"string\"}]}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"}}}"}
+      ]}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
       "id": 6, "type": "logs", "title": "Log lines from pages and requests (click one to open its trace)",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 56},
+      "description": "Log lines from the API and the clients that belong to a page or a request. Click one, then \"Open the trace\" for the trace it belongs to. Worry: level error or warn lines; their trace shows what the page or request was doing.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 57},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"} | trace_id != \"\""}],
       "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
