@@ -50,7 +50,7 @@ groups:
           description: >-
             No page of any kind (heartbeats included) from this receiving
             client for longer than the threshold. Check its radio and its
-            connection: the "PagerArchive: clients" dashboard shows whether
+            connection: the "Clients" dashboard (in the PagerArchive folder) shows whether
             it still reads lines and whether its sends fail.
 
       # R86a: the last backup failed, or the last good one is more than 36 hours
@@ -174,7 +174,7 @@ groups:
             rtl_fm runs without squelch, so a working dongle always gives
             audio, even from a quiet channel. None means the dongle is stuck
             (reset it: unplug it, or restart the client) or rtl_fm isn't
-            running. The "PagerArchive: clients" dashboard shows the
+            running. The "Clients" dashboard (in the PagerArchive folder) shows the
             client's radio health and rtl_fm's errors by kind.
 
       # R76: the API can't be scraped: it's down, or unreachable from Alloy.
