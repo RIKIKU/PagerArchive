@@ -1,6 +1,6 @@
 {
   "uid": "pa-clients",
-  "title": "PagerArchive: clients",
+  "title": "Clients",
   "description": "Receiving clients: when the server last heard each one (R39), each client's own numbers (R74), which tell a stuck radio from a network problem, and the radio's health (R74a).",
   "tags": ["pagerarchive"],
   "timezone": "browser",

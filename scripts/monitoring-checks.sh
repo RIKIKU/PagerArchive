@@ -1,5 +1,5 @@
 #!/bin/sh
-# A65, A67, A80's alert and A90's Grafana part against the example
+# A65, A67, A80's alert, A90's Grafana part and A113 against the example
 # monitoring stack itself (deploy/monitoring): the API, its database and the
 # backup services from the compose file at the top (no Authentik: none of these
 # needs it), joined to the
@@ -216,7 +216,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_START_DB="docker compose -p $P --project-directory $PWD $APP_FILES start db" \
 	PA_MON_BACKUP_NOW="docker compose -p $P --project-directory $PWD $APP_FILES exec -T backup pagerarchive-backup now" \
 	PA_MON_AUTO_UPGRADE_DIR="$AUTOUP" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90}" ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then
