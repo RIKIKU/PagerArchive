@@ -278,6 +278,15 @@
 	--map-heat-none: transparent;
 	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
+	/* R88: the areas' outlines on the map (MapView reads these): the line, its
+	   width and dashes, and the labels with their halo; and an area's tag on
+	   a job's view. */
+	--map-area-line: var(--fg);
+	--map-area-stroke: 1.5px;
+	--map-area-label: var(--fg);
+	--map-area-halo: var(--bg);
+	--area-tag-bg: var(--surface-2);
+	--area-tag-border: var(--control-border);
 }
 
 /* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
@@ -512,6 +521,15 @@
 	--map-heat-none: transparent;
 	--map-heat-low: var(--accent-soft);
 	--map-heat-high: var(--accent);
+	/* R88: the areas' outlines on the map (MapView reads these): the line, its
+	   width and dashes, and the labels with their halo; and an area's tag on
+	   a job's view. */
+	--map-area-line: var(--fg);
+	--map-area-stroke: 1.5px;
+	--map-area-label: var(--fg);
+	--map-area-halo: var(--bg);
+	--area-tag-bg: var(--surface-2);
+	--area-tag-border: var(--control-border);
 }
 
 @media (pointer: coarse) {

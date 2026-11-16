@@ -156,6 +156,15 @@
 		if (overlay) exit();
 	}
 
+	// The map's credits: the address data's, and on the map page the areas'
+	// (R24, R88c).
+	function credits(): string[] | undefined {
+		const c: string[] = [];
+		if (meta.attribution) c.push(`Address data: ${meta.attribution}`);
+		if (variant === 'full' && meta.areas) c.push(`${meta.areas.label} outlines: ${meta.areas.attribution}`);
+		return c.length ? c : undefined;
+	}
+
 	maplibregl.setWorkerUrl(workerUrl);
 	let protocolAdded = false;
 
@@ -288,9 +297,67 @@
 		});
 	}
 
+	// R88c: the network's areas, outlined and labelled under the messages on
+	// the map page, shown or hidden by a button whose choice this browser
+	// remembers. The outlines are asked for by their version, so the browser
+	// keeps them until the areas change.
+	const withAreas = $derived(variant === 'full' && !!meta.areas);
+	const areasKey = 'pagerarchive.map.areas';
+	let showAreas = $state(true);
+	try {
+		showAreas = localStorage.getItem(areasKey) !== 'hidden';
+	} catch {
+		// No storage: shown.
+	}
+	// How many outlines are drawn, kept on the map's element for a test.
+	let areasDrawn = $state(0);
+
+	function addAreaLayers() {
+		if (!map || !meta.areas || variant !== 'full') return;
+		const look = { line: px('--map-area-stroke'), font: font('--map-font'), label: rem('--text-sm'), halo: px('--map-stroke') };
+		const visibility = showAreas ? 'visible' : 'none';
+		map.addSource('areas', { type: 'geojson', data: `${location.origin}/api/v1/map/areas?v=${encodeURIComponent(meta.areas.version)}` });
+		// Outlines are the features without a label point's mark.
+		map.addLayer({
+			id: 'area-lines',
+			type: 'line',
+			source: 'areas',
+			filter: ['!', ['has', 'label']],
+			layout: { visibility, 'line-join': 'round' },
+			paint: { 'line-color': token('--map-area-line'), 'line-width': look.line }
+		});
+		map.addLayer({
+			id: 'area-labels',
+			type: 'symbol',
+			source: 'areas',
+			filter: ['has', 'label'],
+			layout: {
+				visibility,
+				'text-field': ['concat', `${meta.areas.label} `, ['get', 'name']],
+				'text-font': [look.font],
+				'text-size': look.label,
+				'text-allow-overlap': false
+			},
+			paint: { 'text-color': token('--map-area-label'), 'text-halo-color': token('--map-area-halo'), 'text-halo-width': look.halo }
+		});
+	}
+
+	function toggleAreas() {
+		showAreas = !showAreas;
+		try {
+			localStorage.setItem(areasKey, showAreas ? 'shown' : 'hidden');
+		} catch {
+			// Not remembered.
+		}
+		for (const id of ['area-lines', 'area-labels']) if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', showAreas ? 'visible' : 'none');
+	}
+
 	function addLayers() {
 		if (variant === 'heat') addHeatLayers();
-		else addMessageLayers();
+		else {
+			addAreaLayers();
+			addMessageLayers();
+		}
 	}
 
 	function addMessageLayers() {
@@ -393,7 +460,7 @@
 			style: style(),
 			center: [0, 0],
 			zoom: 1,
-			attributionControl: { compact: true, customAttribution: meta.attribution ? `Address data: ${meta.attribution}` : undefined },
+			attributionControl: { compact: true, customAttribution: credits() },
 			cooperativeGestures: false
 			});
 		} catch {
@@ -410,6 +477,9 @@
 		// drawn (seen in about 1 in 20 detail views in the A34 check); one
 		// more frame once everything has loaded shows them.
 		map.once('idle', () => map?.triggerRepaint());
+		map.on('idle', () => {
+			if (map?.getLayer('area-lines')) areasDrawn = showAreas ? map.queryRenderedFeatures({ layers: ['area-lines'] }).length : 0;
+		});
 		map.on('moveend', looked);
 		map.on('resize', looked);
 		map.on('click', 'clusters', async (e) => {
@@ -511,6 +581,8 @@
 				data-ready={unavailable ? 'unavailable' : ready}
 				data-drawn={drawn || undefined}
 				data-view={view || undefined}
+				data-areas={withAreas ? (showAreas ? 'shown' : 'hidden') : undefined}
+				data-areas-drawn={withAreas ? areasDrawn : undefined}
 			>
 				{#if unavailable}
 					<p>
@@ -532,6 +604,9 @@
 					>
 					<span class="tooltip" aria-hidden="true">Full screen map</span>
 				</span>
+				{#if withAreas}
+					<button type="button" class="secondary areas-toggle" aria-pressed={showAreas} onclick={toggleAreas}>{meta.areas?.label} outlines</button>
+				{/if}
 			{/if}
 		</div>
 	</div>
@@ -620,5 +695,13 @@
 	.fs > .tooltip {
 		left: 0;
 		transform: none;
+	}
+	/* R88c: the areas' button, under the full-screen button: in sight at the
+	   top of the map on a phone, where the bottom bar may cover its foot. */
+	.areas-toggle {
+		position: absolute;
+		left: var(--space-sm);
+		top: calc(var(--space-sm) + var(--target) + var(--space-xs));
+		z-index: var(--layer-content);
 	}
 </style>

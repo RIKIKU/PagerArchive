@@ -4893,3 +4893,83 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect(page.getByTestId('report-empty')).toHaveText('No jobs in this range named an appliance.');
 	await expect(page.getByTestId('chart')).toHaveCount(0);
 });
+
+// A111 (R88b, R88c, R88e): the example's made-up zones in the browser. A job
+// whose pages are in two zones says both on its view; one in none says
+// nothing; a message's view and the map's list say each page's zone; the map
+// outlines and labels the zones under the messages, credits them, and its
+// button hides and shows them, remembered in this browser, in light and dark,
+// at 1,280 and 375 px, with no sideways scroll; Administration lists them.
+// Headless Firefox has no WebGL, so no map to draw them on there.
+for (const width of [1280, 375]) {
+	test(`A111 areas on a job, a message and the map at ${width} px`, async ({ browser, request }, info) => {
+		test.setTimeout(120_000);
+		const job = uniqueJob();
+		const outside = uniqueJob();
+		const west = await postId(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1`);
+		await postId(request, '0100002', `@@${job} HSF1 SMOKE FROM ROOF @ 5 EXAMPLE ST, MADEUPTON #STN2`);
+		const far = await postId(request, '0100001', `@@${outside} GRS3 GRASS FIRE @ 4 FICTION ST, TESTVILLE #STN1`);
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { colorScheme, viewport: { width, height: 900 } });
+			const page = await ctx.newPage();
+			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+
+			// The job's view: both zones, at a glance, above its pages.
+			await page.goto(`/jobs/${job}`);
+			const areas = page.getByTestId('job-areas');
+			await expect(areas.getByRole('listitem')).toHaveText(['Zone A', 'Zone B']);
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} job view`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-job-${colorScheme}-${width}.png`), fullPage: true });
+			await page.goto(`/jobs/${outside}`);
+			await expect(page.getByTestId('message-list')).toContainText(outside);
+			await expect(page.getByTestId('job-areas')).toHaveCount(0);
+
+			// A message's view says its zone beside its location; one in none doesn't.
+			await page.goto(`/messages/${west}`);
+			await expect(page.getByTestId('area')).toHaveText('Zone A');
+			await page.goto(`/messages/${far}`);
+			await expect(page.getByTestId('location')).toContainText('From the address');
+			await expect(page.getByTestId('area')).toHaveCount(0);
+
+			// The map: the list says each page's zone, and the outlines are drawn.
+			await page.goto(`/map?job=${job}`);
+			await expect(page.getByTestId('located-area')).toHaveText(['Zone B', 'Zone A']);
+			const map = page.getByTestId('map');
+			await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+			if ((await map.getAttribute('data-ready')) !== 'true') {
+				expect(info.project.name, 'only headless Firefox has no map').toBe('firefox');
+				await ctx.close();
+				continue;
+			}
+			await expect(map).toHaveAttribute('data-areas', 'shown');
+			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBeGreaterThan(0);
+			const toggle = page.getByRole('button', { name: 'Zone outlines' });
+			await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+			await expect(page.locator('.maplibregl-ctrl-attrib-inner')).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} map`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-map-${colorScheme}-${width}.png`) });
+			// Hidden, and still hidden on the next visit; then shown again.
+			await toggle.click();
+			await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+			await expect(map).toHaveAttribute('data-areas', 'hidden');
+			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBe(0);
+			await page.reload();
+			await expect(page.getByRole('button', { name: 'Zone outlines' })).toHaveAttribute('aria-pressed', 'false');
+			await page.getByRole('button', { name: 'Zone outlines' }).click();
+			await expect(map).toHaveAttribute('data-areas', 'shown');
+			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBeGreaterThan(0);
+			await ctx.close();
+		}
+
+		// R88e: Administration lists them.
+		const admin = await (await signedIn(browser, 'admin', { viewport: { width, height: 900 } })).newPage();
+		await admin.goto('/admin');
+		await expect(admin.getByTestId('admin-areas')).toContainText('2 Zone outlines');
+		await expect(admin.getByTestId('admin-areas')).toContainText('example-areas.geojson');
+		await expect(admin.getByTestId('admin-areas')).toContainText('Example zones, made up for PagerArchive');
+		expect(await axeOf(admin), 'Administration').toEqual([]);
+		await admin.context().close();
+	});
+}

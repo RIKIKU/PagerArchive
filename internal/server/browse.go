@@ -75,6 +75,10 @@ type Message struct {
 	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
 
 	Location *Location `json:"location"` // null when not placed (R24-R25)
+	// Area is the name of the area the message is in (R88a, R88b): derived
+	// from where it's placed, not a field (P3). null: no location, in no
+	// area, or the network profile names none.
+	Area *string `json:"area"`
 
 	Flags      *Flags      `json:"flags,omitempty"`      // admins only (R35c)
 	Note       *string     `json:"note,omitempty"`       // its note in the album listed (R82f)
@@ -169,11 +173,13 @@ type Meta struct {
 	// The build's version as `pagerarchive version` reports it, such as
 	// "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81).
 	Version string `json:"version"`
+	// The network profile's areas (R88), left out when it names none.
+	Areas *MetaAreas `json:"areas,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
-		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version}
+		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version, Areas: s.metaAreas()}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}
@@ -332,6 +338,11 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range rows {
 		page.Messages = append(page.Messages, s.toMessage(m, admin))
 	}
+	if err := s.addAreas(r.Context(), page.Messages); err != nil {
+		s.Log.Error("areas", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
 	if f.Album != nil {
 		if err := s.addNotes(r, *f.Album, page.Messages); err != nil {
 			s.Log.Error("album notes", "error", err.Error())
@@ -410,7 +421,13 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "no such message")
 		return
 	}
-	msg := s.toMessage(rows[0], admin)
+	msgs := []Message{s.toMessage(rows[0], admin)}
+	if err := s.addAreas(r.Context(), msgs); err != nil {
+		s.Log.Error("areas", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	msg := msgs[0]
 	recs, err := s.Store.MessageReceptions(r.Context(), id)
 	if err != nil {
 		s.Log.Error("receptions", "error", store.SafeError(err))
@@ -460,9 +477,18 @@ func (s *Server) messagesByID(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
+	listed := make([]Message, len(rows))
+	for i, m := range rows {
+		listed[i] = s.toMessage(m, admin)
+	}
+	if err := s.addAreas(r.Context(), listed); err != nil {
+		s.Log.Error("areas", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
 	found := map[int64]Message{}
-	for _, m := range rows {
-		found[m.ID] = s.toMessage(m, admin)
+	for _, m := range listed {
+		found[m.ID] = m
 	}
 	out := Messages{Messages: []Message{}, Missing: []int64{}}
 	for _, id := range ids {
@@ -493,6 +519,11 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	out := Job{JobNumber: job, Messages: []Message{}}
 	for _, m := range rows {
 		out.Messages = append(out.Messages, s.toMessage(m, admin))
+	}
+	if err := s.addAreas(r.Context(), out.Messages); err != nil {
+		s.Log.Error("areas", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -642,6 +673,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		msgs := make([]Message, len(rows))
 		for i, m := range rows {
 			msgs[i] = s.toMessage(m, admin)
+		}
+		if err := s.addAreas(ctx, msgs); err != nil {
+			return err
 		}
 		if withReceptions {
 			if err := s.addReceptions(ctx, msgs, admin); err != nil {

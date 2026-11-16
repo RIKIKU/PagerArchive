@@ -41,6 +41,8 @@ export interface Message {
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
 	location: Location | null;
+	/** The name of the area it's in (R88b), derived from where it's placed: null when it isn't, or the network names no areas. */
+	area: string | null;
 	flags?: Flags;
 	/** Its note in the album listed, if it has one (R82f). */
 	note?: string;
@@ -159,6 +161,33 @@ export interface Meta {
 	waiting_requests?: number;
 	/** The build's version, such as "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81). */
 	version: string;
+	/** The network profile's areas (R88), when it names some. */
+	areas?: MetaAreas;
+}
+
+/** What one of the network's areas is called ("District"), whose data they are, how many, and the version of their outlines (R88). */
+export interface MetaAreas {
+	label: string;
+	attribution: string;
+	version: string;
+	count: number;
+}
+
+/** Administration's view of the areas loaded (R88e). */
+export interface AdminAreas {
+	loaded: boolean;
+	label?: string;
+	attribution?: string;
+	/** The file's name. */
+	source?: string;
+	names: string[];
+	/** Stored pages' areas are still being worked out. */
+	pending: boolean;
+}
+
+/** "District 08": an area as people see it (R88b). */
+export function areaName(meta: Meta | undefined, name: string): string {
+	return meta?.areas ? `${meta.areas.label} ${name}` : name;
 }
 
 export interface MessagePage {
@@ -745,6 +774,10 @@ export const api = {
 		),
 	job: (job: string) =>
 		get<{ job_number: string; messages: Message[] }>(`/api/v1/jobs/${encodeURIComponent(job)}`),
+	/** R88b: the areas a job's pages are in, by name. */
+	jobAreas: (job: string) => get<{ areas: string[] }>(`/api/v1/jobs/${encodeURIComponent(job)}/areas`),
+	/** R88e: the areas loaded, for Administration. */
+	adminAreas: () => get<AdminAreas>('/api/v1/admin/areas'),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
 	/** R33a: every alias name, agency and paging group, which the search box
 	 *  suggests from (asked for once: searchValues.ts). */

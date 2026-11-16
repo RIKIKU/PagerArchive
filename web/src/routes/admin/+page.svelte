@@ -1,6 +1,6 @@
 <script lang="ts">
 	// R44b: the Administration start page links to every admin screen.
-	import { api, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta } from '#lib/api.ts';
+	import { api, type AdminAreas, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta } from '#lib/api.ts';
 	import BackupAlert from '#lib/BackupAlert.svelte';
 	import GroupPage from '#lib/GroupPage.svelte';
 	import { groups } from '#lib/nav.ts';
@@ -39,6 +39,12 @@
 		.sharedNames()
 		.then((s) => (sharedNames = s.reduce((n, g) => n + g.aliases.length, 0)))
 		.catch(() => {});
+	// R88e: the network profile's areas, if it names some.
+	let areas: AdminAreas | undefined = $state();
+	api
+		.adminAreas()
+		.then((a) => (areas = a))
+		.catch(() => {});
 </script>
 
 {#if backup}<BackupAlert status={backup} tz={meta?.time_zone} />{/if}
@@ -55,7 +61,35 @@
 	{/snippet}
 </GroupPage>
 
+{#if areas?.loaded}
+	<section class="areas" aria-labelledby="areas-h" data-testid="admin-areas">
+		<h2 id="areas-h">Areas on the map</h2>
+		<p>
+			{areas.names.length} {areas.label} outline{areas.names.length === 1 ? '' : 's'} from the network profile's <code>{areas.source}</code>{areas.pending
+				? "; stored pages' areas are still being worked out"
+				: ''}.
+		</p>
+		<p class="names">{areas.names.join(', ')}</p>
+		<p class="credit">{areas.attribution}</p>
+	</section>
+{/if}
+
 <style>
+	.areas {
+		max-width: var(--measure);
+		margin-top: var(--space-xl);
+	}
+	.areas h2 {
+		font-size: var(--text-lg);
+	}
+	.areas p {
+		margin: var(--space-xs) 0;
+	}
+	.names,
+	.credit {
+		color: var(--muted);
+		font-size: var(--text-sm);
+	}
 	.tag {
 		margin-left: var(--space-sm);
 		padding: 0 var(--space-sm);

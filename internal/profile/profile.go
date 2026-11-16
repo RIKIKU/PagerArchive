@@ -59,6 +59,20 @@ type Network struct {
 	Attribution         string
 	StreetTypes         map[string]string
 	GridSystem          string // how grid references are read (R25); "" if not given
+	// Areas are the named polygons a located page can fall in, drawn on the
+	// map (R88, ADR 0035); nil when the profile names none. They're left out
+	// of Hash: they don't change what a page says, so changing them
+	// re-parses nothing (R88d).
+	Areas *Areas
+}
+
+// Areas is a network profile's areas (R88): a GeoJSON file of named
+// polygons, what they're called and whose data they are.
+type Areas struct {
+	Path         string // absolute or relative to the working directory
+	Label        string // what one is called, such as "District"
+	NameProperty string // the feature property holding each one's name
+	Attribution  string
 }
 
 // CapcodeRange is an inclusive range of capcodes.
@@ -255,7 +269,56 @@ type networkJSON struct {
 		System string `json:"system"`
 	} `json:"grid_reference"`
 	StreetTypes map[string]string `json:"street_types"`
+	Areas       *struct {
+		Path         string `json:"path"`
+		Label        string `json:"label"`
+		NameProperty string `json:"name_property"`
+		Attribution  string `json:"attribution"`
+	} `json:"areas"`
 }
+
+// parseHash is a network profile's hash, which decides whether pages are
+// re-parsed (R23a): the file's, with its top-level "areas" member cut out,
+// so adding, changing or removing areas re-parses nothing (R88d). The cut
+// takes the member with the comma before it, or for a first member the comma
+// after it, so the file hashes as it would without the member.
+func parseHash(data []byte) string {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return hashOf(data)
+	}
+	first := true
+	for dec.More() {
+		before := int(dec.InputOffset()) // the end of the previous value, or the '{'
+		t, err := dec.Token()
+		if err != nil {
+			return hashOf(data)
+		}
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return hashOf(data)
+		}
+		end := int(dec.InputOffset())
+		if key, _ := t.(string); key == "areas" {
+			from, to := before, end
+			if first {
+				// From the key itself to the next member's key.
+				for from < len(data) && isSpace(data[from]) {
+					from++
+				}
+				for to < len(data) && (isSpace(data[to]) || data[to] == ',') {
+					to++
+				}
+			}
+			cut := append(append([]byte{}, data[:from]...), data[to:]...)
+			return hashOf(cut)
+		}
+		first = false
+	}
+	return hashOf(data)
+}
+
+func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
 
 type redactionJSON struct {
 	Name         string   `json:"name"`
@@ -282,7 +345,7 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 	n := &Network{
 		Name:        j.Name,
 		File:        path,
-		Hash:        hashOf(data),
+		Hash:        parseHash(data),
 		Markers:     map[string]Priority{},
 		Attribution: j.AddressDataset.Attribution,
 		StreetTypes: j.StreetTypes,
@@ -297,6 +360,12 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 	n.DatasetPath = j.AddressDataset.Path
 	if !filepath.IsAbs(n.DatasetPath) {
 		n.DatasetPath = filepath.Join(filepath.Dir(path), n.DatasetPath)
+	}
+	if a := j.Areas; a != nil {
+		n.Areas = &Areas{Path: a.Path, Label: a.Label, NameProperty: a.NameProperty, Attribution: a.Attribution}
+		if !filepath.IsAbs(n.Areas.Path) {
+			n.Areas.Path = filepath.Join(filepath.Dir(path), n.Areas.Path)
+		}
 	}
 	for i, s := range j.Ignored {
 		r, err := parseRange(s)

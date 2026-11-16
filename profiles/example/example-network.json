@@ -53,5 +53,12 @@
     "CRESCENT": "CRES",
     "PARADE": "PDE",
     "BOULEVARD": "BVD"
+  },
+  "areas": {
+    "_comment": "Made-up zones the example's pages can fall in, outlined on the map (R88).",
+    "path": "example-areas.geojson",
+    "label": "Zone",
+    "name_property": "zone",
+    "attribution": "Example zones, made up for PagerArchive"
   }
 }

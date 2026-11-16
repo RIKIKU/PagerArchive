@@ -203,6 +203,30 @@ WHERE message_localities.locality IS DISTINCT FROM EXCLUDED.locality;
 -- name: DeleteMessageLocality :exec
 DELETE FROM message_localities WHERE message_id = $1;
 
+-- name: SetMessageArea :exec
+-- R88a, ADR 0035: the area a page is in, from where it's placed now; none
+-- (no location, or in no area) deletes its row. Unchanged rows aren't
+-- written.
+WITH found AS (SELECT area_at(m.location) AS area FROM messages m WHERE m.id = sqlc.arg(id)::bigint),
+gone AS (
+    DELETE FROM message_areas
+    WHERE message_id = sqlc.arg(id)::bigint AND NOT EXISTS (SELECT 1 FROM found WHERE found.area IS NOT NULL)
+)
+INSERT INTO message_areas (message_id, area)
+SELECT sqlc.arg(id)::bigint, found.area FROM found WHERE found.area IS NOT NULL
+ON CONFLICT (message_id) DO UPDATE SET area = EXCLUDED.area
+WHERE message_areas.area IS DISTINCT FROM EXCLUDED.area;
+
+-- name: MessageAreas :many
+-- R88b: the areas of the messages a page of results shows.
+SELECT message_id, area FROM message_areas WHERE message_id = ANY(sqlc.arg(ids)::bigint[]);
+
+-- name: JobAreas :many
+-- R88b: the areas a job's pages are in, by name.
+SELECT DISTINCT ma.area FROM messages m JOIN message_areas ma ON ma.message_id = m.id
+WHERE m.job_number = sqlc.arg(job)::text
+ORDER BY ma.area;
+
 -- name: LocalityExtent :one
 SELECT min_lon, min_lat, max_lon, max_lat FROM localities WHERE name = $1;
 

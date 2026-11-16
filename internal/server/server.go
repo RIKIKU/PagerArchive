@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/areas"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
@@ -74,6 +75,8 @@ type Server struct {
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
+	// Areas are the network profile's areas (R88); nil when it names none.
+	Areas *areas.Areas
 	// Integrations forwards new pages to users' systems (R47-R51c); nil
 	// leaves them out.
 	Integrations *integrations.Service
@@ -127,12 +130,14 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/large-events":           s.adminOnly(s.getLargeEventSettings),
 		"PUT /api/v1/admin/large-events":           s.adminOnly(s.putLargeEventSettings),
 		"GET /api/v1/jobs/{job}":                   s.getJob,
+		"GET /api/v1/jobs/{job}/areas":             s.getJobAreas,
 		"GET /api/v1/capcodes/unaliased":           s.unaliased,
 		"GET /api/v1/search/values":                s.searchValues,
 		"GET /api/v1/capcodes/{capcode}":           s.getCapcode,
 		"GET /api/v1/aliases/{id}":                 s.getAlias,
 		"GET /api/v1/map":                          s.mapMessages,
 		"GET /api/v1/map/tiles.pmtiles":            s.mapTiles,
+		"GET /api/v1/map/areas":                    s.mapAreas,
 		"GET /api/v1/reports/capcode":              s.capcodeReport,
 		"GET /api/v1/reports/options":              s.reportOptions,
 		"GET /api/v1/reports/busiest":              s.busiestReport,
@@ -144,6 +149,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/reports/appliances":           s.appliancesReport,
 		"GET /api/v1/reports/large-events":         s.largeEventsReport,
 		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
+		"GET /api/v1/admin/areas":                  s.adminOnly(s.adminAreas),
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
 		"GET /api/v1/admin/backup":                 s.adminOnly(s.getBackup),
 		"POST /api/v1/admin/backup":                s.adminOnly(s.postBackup),

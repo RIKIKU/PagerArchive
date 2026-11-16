@@ -2945,6 +2945,33 @@ func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]Invit
 	return items, nil
 }
 
+const jobAreas = `-- name: JobAreas :many
+SELECT DISTINCT ma.area FROM messages m JOIN message_areas ma ON ma.message_id = m.id
+WHERE m.job_number = $1::text
+ORDER BY ma.area
+`
+
+// R88b: the areas a job's pages are in, by name.
+func (q *Queries) JobAreas(ctx context.Context, job string) ([]string, error) {
+	rows, err := q.db.Query(ctx, jobAreas, job)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var area string
+		if err := rows.Scan(&area); err != nil {
+			return nil, err
+		}
+		items = append(items, area)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const jobEventPages = `-- name: JobEventPages :many
 SELECT m.id, m.sent_at, lem.event_id
 FROM messages m
@@ -3829,6 +3856,31 @@ type MergeLargeEventsParams struct {
 func (q *Queries) MergeLargeEvents(ctx context.Context, arg MergeLargeEventsParams) error {
 	_, err := q.db.Exec(ctx, mergeLargeEvents, arg.Others, arg.ID)
 	return err
+}
+
+const messageAreas = `-- name: MessageAreas :many
+SELECT message_id, area FROM message_areas WHERE message_id = ANY($1::bigint[])
+`
+
+// R88b: the areas of the messages a page of results shows.
+func (q *Queries) MessageAreas(ctx context.Context, ids []int64) ([]MessageArea, error) {
+	rows, err := q.db.Query(ctx, messageAreas, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessageArea
+	for rows.Next() {
+		var i MessageArea
+		if err := rows.Scan(&i.MessageID, &i.Area); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const messageIDsAfter = `-- name: MessageIDsAfter :many
@@ -5365,6 +5417,26 @@ func (q *Queries) SetLocation(ctx context.Context, arg SetLocationParams) error 
 		arg.Mismatch,
 		arg.ID,
 	)
+	return err
+}
+
+const setMessageArea = `-- name: SetMessageArea :exec
+WITH found AS (SELECT area_at(m.location) AS area FROM messages m WHERE m.id = $1::bigint),
+gone AS (
+    DELETE FROM message_areas
+    WHERE message_id = $1::bigint AND NOT EXISTS (SELECT 1 FROM found WHERE found.area IS NOT NULL)
+)
+INSERT INTO message_areas (message_id, area)
+SELECT $1::bigint, found.area FROM found WHERE found.area IS NOT NULL
+ON CONFLICT (message_id) DO UPDATE SET area = EXCLUDED.area
+WHERE message_areas.area IS DISTINCT FROM EXCLUDED.area
+`
+
+// R88a, ADR 0035: the area a page is in, from where it's placed now; none
+// (no location, or in no area) deletes its row. Unchanged rows aren't
+// written.
+func (q *Queries) SetMessageArea(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, setMessageArea, id)
 	return err
 }
 

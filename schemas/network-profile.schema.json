@@ -100,6 +100,19 @@
       "description": "Street type spellings and the abbreviation they normalise to, e.g. STREET: ST.",
       "type": "object",
       "additionalProperties": { "type": "string", "minLength": 1 }
+    },
+    "areas": {
+      "description": "Optional. Named polygons a located page can fall in, outlined on the map (R88): a GeoJSON FeatureCollection of Polygon and MultiPolygon features in WGS84 longitude and latitude. path is relative to this file; label is what one is called (\"District\"); name_property is the feature property holding each one's name; attribution is shown on the map. Changing them re-parses no pages.",
+      "type": "object",
+      "required": ["path", "label", "name_property", "attribution"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "label": { "type": "string", "minLength": 1, "maxLength": 40 },
+        "name_property": { "type": "string", "minLength": 1 },
+        "attribution": { "type": "string", "minLength": 1 }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false
     }
   },
   "patternProperties": { "^_": {} },

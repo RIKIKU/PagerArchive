@@ -266,3 +266,51 @@ func TestNonProfileJSONIsSkipped(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// R88d: a network profile's areas are left out of its parse hash, wherever
+// the member is, so adding, changing or removing them re-parses nothing;
+// anything else changes it.
+func TestParseHashLeavesOutAreas(t *testing.T) {
+	const areas = `"areas": { "path": "zones.geojson", "label": "Zone", "name_property": "zone", "attribution": "Made up" }`
+	without := "{\n  \"kind\": \"network\",\n  \"name\": \"n\",\n  \"street_types\": {}\n}\n"
+	for name, with := range map[string]string{
+		"last":   "{\n  \"kind\": \"network\",\n  \"name\": \"n\",\n  \"street_types\": {},\n  " + areas + "\n}\n",
+		"first":  "{\n  " + areas + ",\n  \"kind\": \"network\",\n  \"name\": \"n\",\n  \"street_types\": {}\n}\n",
+		"middle": "{\n  \"kind\": \"network\",\n  " + areas + ",\n  \"name\": \"n\",\n  \"street_types\": {}\n}\n",
+	} {
+		if parseHash([]byte(with)) != hashOf([]byte(without)) {
+			t.Errorf("areas %s: the hash isn't the profile's without them", name)
+		}
+	}
+	if parseHash([]byte(without)) != hashOf([]byte(without)) {
+		t.Error("with no areas, the hash isn't the file's")
+	}
+	if parseHash([]byte(strings.Replace(without, `"n"`, `"m"`, 1))) == parseHash([]byte(without)) {
+		t.Error("a change outside the areas left the hash as it was")
+	}
+	// An "areas" key deeper down is the profile's own business.
+	nested := strings.Replace(without, `"street_types": {}`, `"street_types": {"areas": "AREAS"}`, 1)
+	if parseHash([]byte(nested)) == hashOf([]byte(without)) {
+		t.Error("an areas key inside another member was left out")
+	}
+
+	// The example: its areas were added after its pages were parsed, so its
+	// hash is still what it was without them.
+	b, err := os.ReadFile("../../profiles/example/example-network.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	i := strings.Index(s, ",\n  \"areas\": {")
+	if i < 0 {
+		t.Fatal("the example names no areas")
+	}
+	j := strings.Index(s[i:], "\n  }") + i + len("\n  }")
+	n, errs := loadNetwork("example-network.json", b)
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if n.Hash != hashOf([]byte(s[:i]+s[j:])) || n.Areas == nil || n.Areas.Label != "Zone" || filepath.Base(n.Areas.Path) != "example-areas.geojson" {
+		t.Errorf("the example: hash %s, areas %+v", n.Hash, n.Areas)
+	}
+}
