@@ -161,3 +161,43 @@ func TestSenderRetriesInOrder(t *testing.T) {
 		}
 	}
 }
+
+// R14a: a plain http:// server URL that leaves this machine is warned of;
+// https://, and http:// to this machine, aren't.
+func TestR14aPlainHTTP(t *testing.T) {
+	for u, want := range map[string]bool{
+		"http://pager.example.test":     true,
+		"http://192.0.2.10:8080":        true,
+		"HTTP://api:8080/":              true,
+		"http://[2001:db8::1]:8080":     true,
+		"http://localhost:8080":         false,
+		"http://LOCALHOST":              false,
+		"http://app.localhost:8080":     false,
+		"http://127.0.0.1:8080":         false,
+		"http://127.1.2.3":              false,
+		"http://[::1]:8080":             false,
+		"https://pager.example.test":    false,
+		"https://192.0.2.10":            false,
+		"http://127.0.0.1.example.test": true,
+		"http://localhost.example.test": true,
+	} {
+		if got := PlainHTTP(u); got != want {
+			t.Errorf("%s: %v, want %v", u, got, want)
+		}
+	}
+}
+
+// R14a: the warning, once, and not when ALLOW_PLAIN_HTTP=true says so.
+func TestR14aWarnPlainHTTP(t *testing.T) {
+	for _, c := range []struct {
+		url   string
+		allow bool
+		warns bool
+	}{{"http://192.0.2.10:8080", false, true}, {"http://192.0.2.10:8080", true, false}, {"https://pager.example.test", false, false}, {"http://localhost:8080", false, false}} {
+		var b bytes.Buffer
+		WarnPlainHTTP(slog.New(slog.NewTextHandler(&b, nil)), c.url, c.allow)
+		if got := strings.Count(b.String(), "level=WARN"); got != map[bool]int{true: 1, false: 0}[c.warns] || (c.warns && !strings.Contains(b.String(), "ALLOW_PLAIN_HTTP=true")) {
+			t.Errorf("%s allow=%v: %q", c.url, c.allow, b.String())
+		}
+	}
+}

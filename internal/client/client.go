@@ -13,7 +13,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -333,4 +335,32 @@ func (s *Sender) postOnce(ctx context.Context, p Page) (status int, outcome stri
 	default:
 		return resp.StatusCode, "", false, fmt.Errorf("server returned %d", resp.StatusCode)
 	}
+}
+
+// PlainHTTP reports whether serverURL sends the client's key unencrypted
+// across a network: an http:// URL whose host isn't this machine (localhost,
+// 127.0.0.0/8 or ::1). The client warns of it at start-up (R14a).
+func PlainHTTP(serverURL string) bool {
+	u, err := url.Parse(strings.TrimSpace(serverURL))
+	if err != nil || !strings.EqualFold(u.Scheme, "http") {
+		return false
+	}
+	host := strings.ToLower(u.Hostname())
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return false
+	}
+	if ip := net.ParseIP(host); ip != nil && ip.IsLoopback() {
+		return false
+	}
+	return true
+}
+
+// WarnPlainHTTP logs R14a's warning once, at start-up, when serverURL is
+// PlainHTTP and the owner hasn't said the network is their own (allow,
+// ALLOW_PLAIN_HTTP=true).
+func WarnPlainHTTP(log *slog.Logger, serverURL string, allow bool) {
+	if allow || !PlainHTTP(serverURL) {
+		return
+	}
+	log.Warn("SERVER_URL is plain http://, so this client's key and pages cross the network unencrypted, and anyone on the way can read the key and post pages as this receiver. Use the server's https:// URL; if the network between them is your own or a VPN, ALLOW_PLAIN_HTTP=true says so and stops this warning (docs/client.md, \"Reaching the server\")")
 }
