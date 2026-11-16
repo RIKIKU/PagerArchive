@@ -33,6 +33,7 @@ import (
 
 	pagerarchive "github.com/RIKIKU/PagerArchive"
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/areas"
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/events"
@@ -298,6 +299,27 @@ func serve(stderr io.Writer) error {
 		log.Info("address dataset loaded", "addresses", stats.Addresses, "streets", stats.Streets, "localities", stats.Localities, "seconds", int(time.Since(started).Seconds()))
 	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
+	// The profile's layers of areas (R88, ADR 0035): loaded when they change,
+	// before any page is placed, layers no longer named removed, and the area
+	// of every page stored before worked out in the background. A layer whose
+	// file is missing or broken is logged and left out: it doesn't stop the API
+	// (an automatic upgrade must come up), and Administration says so.
+	areaLayers := areas.Start(ctx, st, net.Areas, log)
+	if len(areaLayers) > 0 {
+		go func() {
+			for ctx.Err() == nil {
+				err := areas.Backfill(ctx, st, log, 30*time.Second)
+				if err == nil || ctx.Err() != nil {
+					return
+				}
+				log.Error("stored pages' areas", "error", store.SafeError(err))
+				select {
+				case <-ctx.Done():
+				case <-time.After(time.Minute):
+				}
+			}
+		}()
+	}
 	// Pages stored before their derived localities were kept get theirs, in
 	// the background, once, and the report counts are built again with them
 	// (R24, ADR 0034).
@@ -449,6 +471,7 @@ func serve(stderr io.Writer) error {
 		Started:               time.Now(),
 		MapTiles:              mapTiles,
 		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
+		Areas:                 areaLayers,
 		Integrations:          integ,
 		MetricsToken:          os.Getenv("METRICS_TOKEN"),
 		Locks:                 locks,

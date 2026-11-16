@@ -62,6 +62,11 @@ func (s *Server) mapMessages(w http.ResponseWriter, r *http.Request) {
 	for _, m := range rows {
 		out.Messages = append(out.Messages, s.toMessage(m, admin))
 	}
+	if err := s.addAreas(r.Context(), out.Messages); err != nil {
+		s.Log.Error("map", "error", err.Error())
+		problem(w, http.StatusInternalServerError, "search failed")
+		return
+	}
 	stamp := func(t *time.Time) *string {
 		if t == nil {
 			return nil

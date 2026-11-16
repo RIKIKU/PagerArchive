@@ -41,6 +41,8 @@ export interface Message {
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
 	location: Location | null;
+	/** The areas it's in, one of each layer at most, in the profile's order (R88b), derived from where it's placed: left out when it's in none. */
+	areas?: AreaRef[];
 	flags?: Flags;
 	/** Its note in the album listed, if it has one (R82f). */
 	note?: string;
@@ -159,7 +161,51 @@ export interface Meta {
 	waiting_requests?: number;
 	/** The build's version, such as "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81). */
 	version: string;
+	/** R88: the network profile's layers of areas with some to show, in its order. */
+	areas?: MetaAreas[];
 }
+
+/** One layer of the network's areas (R88): its id, what's shown before each name ("District", making "District 08"), whose data they are, how the map outlines it, how many, and the version of its outlines. */
+export interface MetaAreas {
+	id: string;
+	label: string;
+	attribution: string;
+	outline: 'solid' | 'dashed' | 'dotted';
+	version: string;
+	count: number;
+}
+
+/** One area a message or a job is in (R88b): its layer's id and its name. */
+export interface AreaRef {
+	layer: string;
+	name: string;
+}
+
+/** Administration's view of one layer of areas (R88e). */
+export interface AdminAreaLayer {
+	id: string;
+	label: string;
+	attribution: string;
+	outline: string;
+	/** The file's name. */
+	source: string;
+	/** It has areas to show. */
+	loaded: boolean;
+	names: string[];
+	/** Stored pages' areas of it are still being worked out. */
+	pending: boolean;
+	/** Why its file didn't load at the last start (R88d). */
+	error?: string;
+	/** The areas loaded before are shown meanwhile. */
+	stale?: boolean;
+}
+
+/** "District 08": an area as people see it, with its layer's label (R88b). */
+export function areaName(meta: Meta | undefined, a: AreaRef): string {
+	const l = meta?.areas?.find((x) => x.id === a.layer);
+	return l ? `${l.label} ${a.name}` : a.name;
+}
+
 
 export interface MessagePage {
 	messages: Message[];
@@ -745,6 +791,10 @@ export const api = {
 		),
 	job: (job: string) =>
 		get<{ job_number: string; messages: Message[] }>(`/api/v1/jobs/${encodeURIComponent(job)}`),
+	/** R88b: the areas a job's pages are in, each layer's, in the profile's order. */
+	jobAreas: (job: string) => get<{ areas: AreaRef[] }>(`/api/v1/jobs/${encodeURIComponent(job)}/areas`),
+	/** R88e: each layer of areas, for Administration. */
+	adminAreas: () => get<{ layers: AdminAreaLayer[] }>('/api/v1/admin/areas'),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
 	/** R33a: every alias name, agency and paging group, which the search box
 	 *  suggests from (asked for once: searchValues.ts). */

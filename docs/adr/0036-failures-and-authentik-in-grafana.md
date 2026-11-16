@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-17). The owner: "a failures dashboard would be good"; "Authentik dashboards and monitoring ... a possible gap in our observability right now". SPEC.md R89-R89b, with A117. On the branch `monitoring-failures-authentik` from main; the pull request is labelled `feature`.
+Proposed (2026-11-17). The owner: "a failures dashboard would be good"; "Authentik dashboards and monitoring ... a possible gap in our observability right now". SPEC.md R89-R89b, with A115. On the branch `monitoring-failures-authentik` from main; the pull request is labelled `feature`.
 
 ## Context
 
@@ -22,7 +22,7 @@ Rejected:
 - **Join Authentik to `monitoring`.** Every other app on that network (R76: it's shared) could then read the metrics, which have no credentials, and reach Authentik's port 9000 from inside.
 - **A proxy that adds a token.** Another container and its config for what a network already does.
 
-Only Alloy and the two Authentik containers are on the network, it has no way out, and nothing is published; the reverse proxy keeps forwarding only port 9000, which has no metrics (R84j's lesson from the security review's D8: the metrics must not be reachable through the proxy). `scripts/monitoring-checks.sh` checks who is on the network and that nothing publishes 9300, and A117 that port 9000 has no metrics. Joining an internal network as a second one leaves Authentik's way out (email) on its default network.
+Only Alloy and the two Authentik containers are on the network, it has no way out, and nothing is published; the reverse proxy keeps forwarding only port 9000, which has no metrics (R84j's lesson from the security review's D8: the metrics must not be reachable through the proxy). `scripts/monitoring-checks.sh` checks who is on the network and that nothing publishes 9300, and A115 that port 9000 has no metrics. Joining an internal network as a second one leaves Authentik's way out (email) on its default network.
 
 An address set to "" (`${VAR-default}`, so set-but-empty isn't replaced) drops that target (`discovery.relabel`), for a stack that watches no Authentik: no `up` series, so "Authentik down" has no data and stays quiet.
 

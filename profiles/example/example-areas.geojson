@@ -1,0 +1,27 @@
+{
+  "type": "FeatureCollection",
+  "_comment": "Made-up areas for the example network (SPEC.md section 10, R88): Zone A to the west of MADEUPTON and along SAMPLE RD, Zone B to the south-east, in two parts. The edge between them runs through 11 FICTION ST. TESTVILLE is in neither. Every coordinate is invented, in open ocean like the example's addresses.",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": { "zone": "A" },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [[-140.95, -34.9], [-140.865155, -34.9], [-140.865155, -34.827], [-140.8, -34.827], [-140.8, -34.8], [-140.95, -34.8], [-140.95, -34.9]]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": { "zone": "B" },
+      "geometry": {
+        "type": "MultiPolygon",
+        "coordinates": [
+          [[[-140.865155, -34.9], [-140.8, -34.9], [-140.8, -34.827], [-140.865155, -34.827], [-140.865155, -34.9]]],
+          [[[-140.7, -34.86], [-140.68, -34.86], [-140.68, -34.84], [-140.7, -34.84], [-140.7, -34.86]]]
+        ]
+      }
+    }
+  ]
+}

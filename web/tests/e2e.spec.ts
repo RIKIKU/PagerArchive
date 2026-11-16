@@ -4893,3 +4893,187 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect(page.getByTestId('report-empty')).toHaveText('No jobs in this range named an appliance.');
 	await expect(page.getByTestId('chart')).toHaveCount(0);
 });
+
+// A111 (R88b, R88c, R88e): the example's two made-up layers of areas, zones
+// and regions over them, in the browser. A job whose pages are in two zones
+// and one region says all three on its view; one in none says nothing; a
+// message's view and the map's list say each page's zone and region; the map
+// outlines and labels each layer under the messages, each in its own style,
+// credits both, and each layer's button hides and shows it alone, remembered
+// in this browser, in light and dark, at 1,280 and 375 px, with no sideways
+// scroll; Administration lists both. Headless Firefox has no WebGL, so no
+// map to draw them on there.
+for (const width of [1280, 375]) {
+	test(`A111 areas on a job, a message and the map at ${width} px`, async ({ browser, request }, info) => {
+		test.setTimeout(120_000);
+		const job = uniqueJob();
+		const outside = uniqueJob();
+		const west = await postId(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1`);
+		await postId(request, '0100002', `@@${job} HSF1 SMOKE FROM ROOF @ 5 EXAMPLE ST, MADEUPTON #STN2`);
+		const far = await postId(request, '0100001', `@@${outside} GRS3 GRASS FIRE @ 4 FICTION ST, TESTVILLE #STN1`);
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { colorScheme, viewport: { width, height: 900 } });
+			const page = await ctx.newPage();
+			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+
+			// The job's view: both zones and the region, at a glance, above its pages.
+			await page.goto(`/jobs/${job}`);
+			const areas = page.getByTestId('job-areas');
+			await expect(areas.getByRole('listitem')).toHaveText(['Zone A', 'Zone B', 'Region North']);
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} job view`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-job-${colorScheme}-${width}.png`), fullPage: true });
+			await page.goto(`/jobs/${outside}`);
+			await expect(page.getByTestId('message-list')).toContainText(outside);
+			await expect(page.getByTestId('job-areas')).toHaveCount(0);
+
+			// A message's view says its zone and region beside its location; one in none doesn't.
+			await page.goto(`/messages/${west}`);
+			await expect(page.getByTestId('area')).toHaveText(['Zone A', 'Region North']);
+			await page.goto(`/messages/${far}`);
+			await expect(page.getByTestId('location')).toContainText('From the address');
+			await expect(page.getByTestId('area')).toHaveCount(0);
+
+			// The map: the list says each page's areas, and each layer is drawn.
+			await page.goto(`/map?job=${job}`);
+			await expect(page.getByTestId('located-area')).toHaveText(['Zone B', 'Region North', 'Zone A', 'Region North']);
+			const map = page.getByTestId('map');
+			await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+			if ((await map.getAttribute('data-ready')) !== 'true') {
+				expect(info.project.name, 'only headless Firefox has no map').toBe('firefox');
+				await ctx.close();
+				continue;
+			}
+			// One "Map layers" control, closed at first: its panel has a checkbox for each layer.
+			const control = page.getByRole('button', { name: 'Map layers' });
+			const panel = page.getByRole('group', { name: 'Map layers' });
+			const zones = page.getByRole('checkbox', { name: 'Zone outlines' });
+			const regions = page.getByRole('checkbox', { name: 'Region outlines' });
+			const drawn = (b: typeof zones) => expect.poll(async () => Number(await b.getAttribute('data-drawn')), { timeout: 10_000 });
+			await expect(control).toHaveAttribute('aria-expanded', 'false');
+			await expect(panel).toBeHidden();
+			await expect(page.getByRole('button', { name: /outlines/ })).toHaveCount(0);
+			// R35g: the credits are open when the map opens, phones too, crediting both layers.
+			const credits = page.locator('.maplibregl-ctrl-attrib-inner');
+			const creditsButton = page.getByRole('button', { name: 'Map credits' });
+			await expect(credits).toBeVisible();
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'true');
+			await expect(credits).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			await expect(credits).toContainText('Region outlines: Example regions, made up for PagerArchive');
+			await page.screenshot({ path: info.outputPath(`a111-map-${colorScheme}-${width}.png`) });
+			// After five seconds they close to the ⓘ, a button opening and closing them from the keyboard.
+			await expect(credits).toBeHidden({ timeout: 10_000 });
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'false');
+			await expect(creditsButton).toBeVisible();
+			expect(await axeOf(page), `${colorScheme} map, credits closed`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-map-credits-closed-${colorScheme}-${width}.png`) });
+			await creditsButton.focus();
+			await page.keyboard.press('Enter');
+			await expect(credits).toBeVisible();
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'true');
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} map, credits open, layers closed`).toEqual([]);
+			await creditsButton.focus();
+			await page.keyboard.press('Enter');
+			await expect(credits).toBeHidden();
+			// Opened, focus goes to the first checkbox; both layers are shown and drawn.
+			await control.click();
+			await expect(control).toHaveAttribute('aria-expanded', 'true');
+			await expect(panel).toBeVisible();
+			await expect(control).toHaveAttribute('aria-controls', (await panel.getAttribute('id'))!);
+			await expect(zones).toBeFocused();
+			for (const b of [zones, regions]) {
+				await expect(b).toBeChecked();
+				await drawn(b).toBeGreaterThan(0);
+			}
+			// The panel stays inside the map, leaving most of it in sight.
+			const mapBox = (await map.boundingBox())!;
+			const panelBox = (await panel.boundingBox())!;
+			expect(panelBox.x + panelBox.width, 'panel inside the map').toBeLessThanOrEqual(mapBox.x + mapBox.width);
+			expect(panelBox.y + panelBox.height, 'panel inside the map').toBeLessThanOrEqual(mapBox.y + mapBox.height);
+			expect(panelBox.width * panelBox.height, 'panel covers under half the map').toBeLessThan((mapBox.width * mapBox.height) / 2);
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} map, layers open`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-map-layers-${colorScheme}-${width}.png`) });
+			// Escape closes it, focus back on the control (and the page stays as it was).
+			await page.keyboard.press('Escape');
+			await expect(panel).toBeHidden();
+			await expect(control).toBeFocused();
+			await expect(page.getByTestId('map-frame')).not.toHaveAttribute('data-fullscreen');
+			// From the keyboard: open, Space on a checkbox hides the regions alone.
+			await page.keyboard.press('Enter');
+			await expect(zones).toBeFocused();
+			await page.keyboard.press('Tab');
+			await expect(regions).toBeFocused();
+			await page.keyboard.press('Space');
+			await expect(regions).not.toBeChecked();
+			await drawn(regions).toBe(0);
+			await drawn(zones).toBeGreaterThan(0);
+			// R35g: the credits name the shown layers only.
+			await expect(credits).not.toContainText('Region outlines');
+			await expect(credits).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			// A click outside closes it; the control again closes it too.
+			await page.getByRole('heading', { level: 1 }).click();
+			await expect(panel).toBeHidden();
+			await control.click();
+			await expect(panel).toBeVisible();
+			await control.click();
+			await expect(panel).toBeHidden();
+			await expect(control).toHaveAttribute('aria-expanded', 'false');
+			// Still so on the next visit, closed; then shown again.
+			await page.reload();
+			await expect(panel).toBeHidden();
+			// R35g: open again on the next visit, and moving the map closes the credits at once.
+			await expect(map).toHaveAttribute('data-ready', 'true', { timeout: 15_000 });
+			await expect(credits).toBeVisible();
+			const box = (await map.boundingBox())!;
+			await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+			await page.mouse.down();
+			await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 30, { steps: 8 });
+			await page.mouse.up();
+			await expect(credits).toBeHidden({ timeout: 1_000 });
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'false');
+			await control.click();
+			await expect(regions).not.toBeChecked();
+			await expect(zones).toBeChecked();
+			await regions.check();
+			await drawn(regions).toBeGreaterThan(0);
+			// In full screen too.
+			await page.getByRole('button', { name: 'Full screen map' }).click();
+			await expect(page.getByTestId('map-frame')).toHaveAttribute('data-fullscreen', /overlay|native/);
+			await control.click();
+			await expect(panel).toBeVisible();
+			await regions.uncheck();
+			await drawn(regions).toBe(0);
+			await regions.check();
+			await ctx.close();
+		}
+
+		// R88e: Administration lists both layers.
+		const admin = await (await signedIn(browser, 'admin', { viewport: { width, height: 900 } })).newPage();
+		await admin.goto('/admin');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('2 Zone outlines');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('example-areas.geojson');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('Example zones, made up for PagerArchive');
+		await expect(admin.getByTestId('admin-areas-regions')).toContainText('2 Region outlines');
+		await expect(admin.getByTestId('admin-areas-regions')).toContainText('example-regions.geojson');
+		expect(await axeOf(admin), 'Administration').toEqual([]);
+		await admin.context().close();
+	});
+}
+
+// R88c: a network with no layers of areas has no layers control on its map.
+test('A111 no layers, no layers control', async ({ browser }) => {
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	await page.route('**/api/v1/meta', async (r) => {
+		const meta = await (await r.fetch()).json();
+		delete meta.areas;
+		await r.fulfill({ json: meta });
+	});
+	await page.goto('/map');
+	await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	if ((await page.getByTestId('map').getAttribute('data-ready')) === 'true') await expect(page.getByRole('button', { name: 'Full screen map' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Map layers' })).toHaveCount(0);
+	await ctx.close();
+});

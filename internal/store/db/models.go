@@ -81,6 +81,20 @@ type AliasRequest struct {
 	ClosedAt     *time.Time
 }
 
+type Area struct {
+	Layer      string
+	Name       string
+	Geom       interface{}
+	Outline    interface{}
+	LabelPoint interface{}
+}
+
+type AreaPart struct {
+	Layer string
+	Name  string
+	Geom  interface{}
+}
+
 type Client struct {
 	ID              string
 	Name            string
@@ -212,6 +226,12 @@ type Message struct {
 	Lon              *float64
 	Lat              *float64
 	LargeEventField  bool
+}
+
+type MessageArea struct {
+	MessageID int64
+	Layer     string
+	Area      string
 }
 
 type MessageLocality struct {

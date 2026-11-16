@@ -141,14 +141,14 @@ func signInWrongly(t *testing.T, authentik, address string, tries int) {
 	}
 }
 
-// A117 (R89, R89a, R89b): the Failures and Authentik dashboards load, every
+// A115 (R89, R89a, R89b): the Failures and Authentik dashboards load, every
 // query without an error, and show the stack's own made-up traffic; the
 // stack scrapes Authentik's server and worker without its metrics being
 // reachable through Authentik's published port; failed sign-ins fire
 // "Failed sign-ins" and name nobody in what the stack keeps; Authentik's
 // server stopping fires "Authentik down" for it, which resolves when it's
 // back; and "Failed sign-ins" resolves once the 5 minutes have passed.
-func TestA117FailuresAndAuthentik(t *testing.T) {
+func TestA115FailuresAndAuthentik(t *testing.T) {
 	s := newStack(t)
 	ak := os.Getenv("PA_MON_AUTHENTIK_URL")
 	if ak == "" {
@@ -166,7 +166,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 	if !waitFor(2*time.Minute, func() bool { return s.query(t, `up{job="authentik"} == 1`) == 2 }) {
 		t.Fatalf("Prometheus never had Authentik's server and worker up: %v", s.values(t, `up{job="authentik"}`, "instance"))
 	}
-	t.Logf("A117: Authentik scraped: %v", s.values(t, `up{job="authentik"}`, "instance"))
+	t.Logf("A115: Authentik scraped: %v", s.values(t, `up{job="authentik"}`, "instance"))
 	// Authentik's published port, where the reverse proxy sends the internet,
 	// has no metrics (D8): only the network Alloy is on does.
 	for _, path := range []string{"/metrics", "/-/metrics/"} {
@@ -182,14 +182,14 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 	}
 
 	// A page refused: a client key that isn't one.
-	body, _ := json.Marshal(map[string]any{"client_id": "a117-nobody", "capcode": "0100001", "text": "QDA117 refused", "received_at": time.Now().UTC(), "baud": 1200})
+	body, _ := json.Marshal(map[string]any{"client_id": "a115-nobody", "capcode": "0100001", "text": "QDA115 refused", "received_at": time.Now().UTC(), "baud": 1200})
 	req, _ := http.NewRequest(http.MethodPost, s.api+"/api/v1/pages", bytes.NewReader(body))
 	req.Header.Set("Authorization", "Bearer not-a-client-key")
 	if resp, err := http.DefaultClient.Do(req); err != nil {
 		t.Fatal(err)
 	} else {
 		resp.Body.Close()
-		t.Logf("A117: a page with a wrong client key: %d", resp.StatusCode)
+		t.Logf("A115: a page with a wrong client key: %d", resp.StatusCode)
 	}
 
 	// Failed sign-ins, as someone guessing: 12 wrong passwords for made-up
@@ -210,7 +210,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 			s.values(t, `pagerarchive_authentik_events_5m{action="login_failed"}`, "reason"))
 	}
 	at, _ := hook.find(guessed, "Failed sign-ins", "firing", "")
-	t.Logf("A117: \"Failed sign-ins\" fired %s after 12 failed sign-ins; counted by reason: %v", at.Sub(guessed).Round(time.Second),
+	t.Logf("A115: \"Failed sign-ins\" fired %s after 12 failed sign-ins; counted by reason: %v", at.Sub(guessed).Round(time.Second),
 		s.values(t, `pagerarchive_authentik_events_5m{action="login_failed"}`, "reason"))
 
 	// Nobody named in what Prometheus keeps, for Authentik or the API.
@@ -229,7 +229,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 				t.Errorf("Prometheus' series for %s contain %q", match, banned)
 			}
 		}
-		t.Logf("A117: %d series for %s, naming nobody", len(series.Data), match)
+		t.Logf("A115: %d series for %s, naming nobody", len(series.Data), match)
 	}
 
 	// The two dashboards: every query without an error, and the panels the
@@ -271,7 +271,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 				t.Errorf("%s, %q: no data", dash, title)
 			}
 		}
-		t.Logf("A117: %s: %d panels with queries, none failing; %d checked for data", dash, len(got), len(titles))
+		t.Logf("A115: %s: %d panels with queries, none failing; %d checked for data", dash, len(got), len(titles))
 	}
 
 	// Authentik's server stops: "Authentik down" fires for it; it's back: it
@@ -298,7 +298,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 		t.Fatal("\"Authentik down\" didn't fire for the server within 3 minutes of it stopping")
 	}
 	at, _ = instanceAlert(stopped, "firing")
-	t.Logf("A117: \"Authentik down\" fired for the server %s after it stopped", at.Sub(stopped).Round(time.Second))
+	t.Logf("A115: \"Authentik down\" fired for the server %s after it stopped", at.Sub(stopped).Round(time.Second))
 	for _, a := range hook.alerts(stopped, "firing") {
 		if a.name == "Authentik down" {
 			continue
@@ -313,7 +313,7 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 		t.Error("\"Authentik down\" didn't resolve within 4 minutes of the server starting")
 	} else {
 		at, _ = instanceAlert(started, "resolved")
-		t.Logf("A117: it resolved %s after the server started", at.Sub(started).Round(time.Second))
+		t.Logf("A115: it resolved %s after the server started", at.Sub(started).Round(time.Second))
 	}
 
 	// The failed sign-ins leave the 5 minutes: "Failed sign-ins" resolves.
@@ -324,6 +324,6 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 		t.Error("\"Failed sign-ins\" didn't resolve within 9 minutes of the sign-ins")
 	} else {
 		at, _ = hook.find(guessed, "Failed sign-ins", "resolved", "")
-		t.Logf("A117: \"Failed sign-ins\" resolved %s after the sign-ins", at.Sub(guessed).Round(time.Second))
+		t.Logf("A115: \"Failed sign-ins\" resolved %s after the sign-ins", at.Sub(guessed).Round(time.Second))
 	}
 }

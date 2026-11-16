@@ -7,6 +7,7 @@ import (
 	"io"
 	"sort"
 
+	"github.com/RIKIKU/PagerArchive/internal/areas"
 	"github.com/RIKIKU/PagerArchive/internal/golden"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/streets"
@@ -15,8 +16,9 @@ import (
 const validateUsage = `usage: pagerarchive validate-profile [flags] <dir>
 
 Validates every profile under <dir> against the JSON Schemas, compiles its
-patterns, and runs every golden-*.json table found under <dir>. Agency tables
-run with the named network profile. Needs no database (SPEC.md R10).
+patterns, checks the network profile's areas file if it names one, and runs
+every golden-*.json table found under <dir>. Agency tables run with the named
+network profile. Needs no database (SPEC.md R10).
 
 Exit status: 0 if every confirmed row passes, 1 otherwise. Rows with
 "status": "proposed" are reported but don't fail the run.
@@ -68,6 +70,15 @@ func validateProfile(args []string, stdout, stderr io.Writer) error {
 		}
 		ix = streets.NewIndex(ds.Streets, net.StreetTypes)
 		fmt.Fprintf(stdout, "network: %s; streets: %s (%d)\n", net.Name, path, len(ds.Streets))
+		// R88: each layer's areas file is checked as the server checks it.
+		// The server starts without a layer whose file is wrong; this fails.
+		for _, l := range net.Areas {
+			f, err := areas.ReadFile(l.Path, l.NameProperty)
+			if err != nil {
+				return fmt.Errorf("areas %q:\n%w", l.ID, err)
+			}
+			fmt.Fprintf(stdout, "areas %s: %s (%d, each a %q, %s outline)\n", l.ID, l.Path, len(f.Areas), l.Label, l.Outline)
+		}
 	}
 
 	tables, err := golden.LoadDir(dir)

@@ -3,7 +3,7 @@
 	// (R80), otherwise a page of its own. The full text comes first, then the
 	// small map, then every field (P2).
 	import { page } from '$app/state';
-	import { api, type Message, type Meta } from '#lib/api.ts';
+	import { api, areaName, type Message, type Meta } from '#lib/api.ts';
 	import { date, dateTime, isoAttr, isoDate, time } from '#lib/format.ts';
 	import AddToAlbum from '#lib/AddToAlbum.svelte';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
@@ -121,6 +121,12 @@
 							<a href="/map?focus={m.id}&from={isoDate(m.sent_at, tz)}&to={isoDate(m.sent_at, tz)}">Show on map</a>
 						{:else}Not placed on the map{/if}
 					</dd>
+					<!-- R88b: the area of each layer it's in, worked out from where it was placed (not a field, P3). -->
+					{#each m.areas ?? [] as a (a.layer)}
+						{@const l = meta?.areas?.find((x) => x.id === a.layer)}
+						{#if l}<dt>{l.label}</dt>
+							<dd data-testid="area">{areaName(meta, a)}</dd>{/if}
+					{/each}
 					{#each Object.entries(m.extra) as [k, v] (k)}
 						<dt>{humanise(k)}</dt>
 						<dd>{label(k, v)}</dd>

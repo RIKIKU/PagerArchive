@@ -38,7 +38,9 @@ if [ "$LOCALITIES" -gt 0 ]; then
 	mkdir -p "$WORK/profiles"
 	echo "--- making the address dataset ($LOCALITIES localities)"
 	go run scripts/a15/dataset.go -o "$WORK/profiles/a15-addresses.csv.gz" -sample "$WORK/sample.txt" -localities "$LOCALITIES"
-	cp profiles/example/example-fire.json "$WORK/profiles/"
+	# Every file of the example but its addresses (the agency profile, the
+	# areas: R88), so nothing the network profile names is missing.
+	find profiles/example -maxdepth 1 -type f ! -name example-addresses.json ! -name example-network.json -exec cp {} "$WORK/profiles/" \;
 	sed 's/"path": "example-addresses.json"/"path": "a15-addresses.csv.gz"/' profiles/example/example-network.json >"$WORK/profiles/example-network.json"
 	chmod -R a+rX "$WORK"
 	export PROFILES_DIR="$WORK/profiles"
