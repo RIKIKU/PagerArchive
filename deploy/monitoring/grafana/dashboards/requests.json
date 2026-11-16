@@ -1,7 +1,7 @@
 {
   "uid": "pa-requests",
-  "title": "PagerArchive: requests and load",
-  "description": "API requests by route, status and user ID, and what they cost: the database pool, live connections, memory and CPU (R72).",
+  "title": "Requests and load",
+  "description": "API requests by route, status and user ID, and what they cost: the database pool, live connections, memory and CPU (R72). Grafana's own trace links open Explore at its default \"Last 1 hour\"; this dashboard's links (\"Open in Explore (this time range)\", \"Open the trace (this time range)\") carry the dashboard's time range.",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -9,8 +9,14 @@
   "time": {"from": "now-1h", "to": "now"},
   "panels": [
     {
+      "id": 12, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "**Prometheus** counts every request the API answers, by route and status (never the real path). **Tempo** keeps each request's trace, with the signed-in user's numeric ID and role, nothing else about them (R70). Each panel's **i** says what normal looks like. In short, worry when **errors** appear, when the **slowest 10 %** stays up, when the **database pool** runs out (in use at max, waits climbing), or when **memory** or **goroutines** keep rising without falling back.\n\nThe graphs from traces: click a line to pin its tooltip, then **Open in Explore (this time range)** lists that user's requests or that query's runs, in this dashboard's time range. A dot is a sample request: click it for its trace. A trace opens whatever time range Explore shows."}
+    },
+    {
       "id": 1, "type": "timeseries", "title": "Requests per second, by route and status",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 0},
+      "description": "How many requests the API answers each second, by route and status. Normal: browsers' lists and live updates, receiving clients' posts, and Alloy's scrape of /metrics every 15 s, mostly status 200. Worry: a 401 or 403 line that keeps going (a client with a wrong key, or someone failing to sign in), any 5xx (see Errors), or a steady climb when nobody's using the archive (something polling).",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 5},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route, status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\"}[$__rate_interval]))", "legendFormat": "{{route}} {{status}}"}],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
@@ -18,7 +24,8 @@
     },
     {
       "id": 2, "type": "timeseries", "title": "Slowest 10 % of requests, by route (dots are sample requests: click one for its trace)",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 12},
+      "description": "How long the slowest 10 % of requests to each route took: 9 in 10 were faster. Normal: tens of milliseconds; searches, reports and exports take longer. Worry: a route that stays slow for minutes. Click a dot, a sample request, then \"Open the trace (this time range)\" to see which step took the time.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 17},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "exemplar": true, "expr": "histogram_quantile(0.9, sum by (le, route) (rate(pagerarchive_http_request_duration_seconds_bucket{job=\"pagerarchive\"}[$__rate_interval])))", "legendFormat": "{{route}}"}],
       "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
@@ -26,22 +33,33 @@
     },
     {
       "id": 3, "type": "timeseries", "title": "Requests per second, by user ID (from traces)",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 24},
+      "description": "Requests each second from each signed-in user, by their numeric ID (PagerArchive's /admin/users/ID page says who it is). Normal: a few a second while someone browses, then nothing. Worry: one ID making requests steadily for hours: a script, or a tab left polling. Click a line, then \"Open in Explore (this time range)\" for that user's requests.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 29},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range", "query": "{span.user.id != nil && kind=server} | rate() by (span.user.id)"}],
-      "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+      "fieldConfig": {"defaults": {"unit": "reqps", "links": [
+        {"title": "Open in Explore (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceqlSearch\",\"tableType\":\"spans\",\"limit\":50,\"filters\":[{\"id\":\"kind\",\"tag\":\"kind\",\"scope\":\"intrinsic\",\"operator\":\"=\",\"value\":\"server\",\"valueType\":\"keyword\"},{\"id\":\"user\",\"tag\":\"user.id\",\"scope\":\"span\",\"operator\":\"=\",\"value\":\"${__field.labels[\"span.user.id\"]}\",\"valueType\":\"int\"}]}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"}}}"}
+      ]}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["mean", "max"]}, "tooltip": {"mode": "single"}}
     },
     {
       "id": 4, "type": "table", "title": "Recent requests by signed-in users (user ID and role only, R70)",
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 36},
+      "description": "The newest requests from signed-in users in the time range: user ID, role, route and status. Click a span ID to open that request's trace.",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 41},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "tableType": "spans", "limit": 50, "spss": 1, "query": "{span.user.id != nil && kind=server} | select(span.user.id, span.user.role, span.http.route, span.http.response.status_code)"}],
+      "fieldConfig": {"defaults": {}, "overrides": [
+        {"matcher": {"id": "byName", "options": "spanID"}, "properties": [
+          {"id": "links", "value": null},
+          {"id": "links", "value": [{"title": "Open the trace (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceql\",\"query\":\"${__data.fields.traceIdHidden}\"}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"},\"panelsState\":{\"trace\":{\"spanId\":\"${__value.raw}\"}}}}"}]}
+        ]}
+      ]},
       "options": {"showHeader": true, "cellHeight": "sm"}
     },
     {
       "id": 5, "type": "timeseries", "title": "Errors (5xx) per second, by route",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 45},
+      "description": "Requests the API failed (status 5xx) each second, by route. Normal: empty. Worry: any line at all. The API's log and the failed request's trace say why: the trace's error span names the kind of error.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 50},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", status=~\"5..\"}[$__rate_interval]))", "legendFormat": "{{route}}"}],
       "fieldConfig": {"defaults": {"unit": "reqps"}, "overrides": []},
@@ -49,26 +67,32 @@
     },
     {
       "id": 6, "type": "timeseries", "title": "Database: slowest 10 % by query (from traces)",
-      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 53},
+      "description": "How long the slowest 10 % of runs of each database query took, by the query's name. Normal: a few milliseconds; searches and reports take longer. Worry: one query climbing week by week as the archive grows, or a query suddenly slow for everyone. Click a line, then \"Open in Explore (this time range)\" for that query's runs and their traces.",
+      "gridPos": {"h": 12, "w": 24, "x": 0, "y": 58},
       "datasource": {"type": "tempo", "uid": "tempo"},
       "targets": [{"refId": "A", "datasource": {"type": "tempo", "uid": "tempo"}, "queryType": "traceql", "metricsQueryType": "range", "query": "{span.db.system.name=\"postgresql\"} | quantile_over_time(duration, .9) by (name)"}],
-      "fieldConfig": {"defaults": {"unit": "s"}, "overrides": []},
-      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi", "sort": "desc"}}
+      "fieldConfig": {"defaults": {"unit": "s", "links": [
+        {"title": "Open in Explore (this time range)", "url": "/explore?schemaVersion=1&orgId=1&panes={\"a\":{\"datasource\":\"tempo\",\"queries\":[{\"refId\":\"A\",\"datasource\":{\"type\":\"tempo\",\"uid\":\"tempo\"},\"queryType\":\"traceqlSearch\",\"tableType\":\"spans\",\"limit\":50,\"filters\":[{\"id\":\"db\",\"tag\":\"db.system.name\",\"scope\":\"span\",\"operator\":\"=\",\"value\":\"postgresql\",\"valueType\":\"string\"},{\"id\":\"name\",\"tag\":\"name\",\"scope\":\"intrinsic\",\"operator\":\"=\",\"value\":${__field.labels.name},\"valueType\":\"string\"}]}],\"range\":{\"from\":\"${__from}\",\"to\":\"${__to}\"}}}"}
+      ]}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "single"}}
     },
     {
       "id": 7, "type": "timeseries", "title": "Database pool",
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 65},
+      "description": "The API keeps a few database connections open and lends one to each request that needs the database. in_use: lent out now; idle: open and free; max: the most it will open; waits per second: requests that found none free and had to wait. Normal: in_use mostly 0 or 1, waits near 0. Worry: in_use at max and waits climbing: requests are queueing for a connection, so everything slows. Look for a slow query in the panel above, or more load than the pool is sized for.",
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 70},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_db_pool_connections{job=\"pagerarchive\"}", "legendFormat": "{{state}}"},
-        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_db_pool_max_connections{job=\"pagerarchive\"}", "legendFormat": "max"}
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_db_pool_max_connections{job=\"pagerarchive\"}", "legendFormat": "max"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(pagerarchive_db_pool_waited_acquires_total{job=\"pagerarchive\"}[$__rate_interval])", "legendFormat": "waits per second"}
       ],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
       "id": 8, "type": "timeseries", "title": "Open live-update connections (browsers and watches)",
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 65},
+      "description": "Connections held open for live updates: one per browser tab showing a list, and one per PowerShell watch (R63b). Normal: about the number of tabs and watches open. Worry: many more than the people using it, or a count that only ever climbs: connections aren't being closed.",
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 70},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "pagerarchive_live_connections{job=\"pagerarchive\"}", "legendFormat": "connections"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -76,7 +100,8 @@
     },
     {
       "id": 9, "type": "timeseries", "title": "API memory (budget 256 MiB)",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 65},
+      "description": "resident: the memory the API's process holds, which the 256 MiB budget (section 8) counts; the red line is the budget. Go heap in use: the part taken by the API's own data. Normal: well under the line, rising during an import, a report or the nightly jobs and falling back after. Worry: a steady rise towards the line that never falls back: a leak.",
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 70},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "process_resident_memory_bytes{job=\"pagerarchive\"}", "legendFormat": "resident"},
@@ -87,7 +112,8 @@
     },
     {
       "id": 10, "type": "timeseries", "title": "API CPU (share of one core)",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 73},
+      "description": "How much of one CPU core the API uses: 100 % is a whole core. Normal: near 0 at rest, with short spikes for searches, imports and the nightly jobs. Worry: staying high when nobody's using the archive.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 78},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "rate(process_cpu_seconds_total{job=\"pagerarchive\"}[$__rate_interval])", "legendFormat": "CPU"}],
       "fieldConfig": {"defaults": {"unit": "percentunit"}, "overrides": []},
@@ -95,7 +121,8 @@
     },
     {
       "id": 11, "type": "timeseries", "title": "Goroutines",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 73},
+      "description": "Goroutines are the API's lightweight threads: each request in progress, live-update connection and background job runs in one or more. Normal: a steady few dozen, going up and down with requests and live connections. Worry: a count that keeps climbing for hours without falling back: something is stuck or leaking, and memory usually climbs with it.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 78},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "go_goroutines{job=\"pagerarchive\"}", "legendFormat": "goroutines"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},

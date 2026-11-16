@@ -13,9 +13,13 @@ datasources:
     isDefault: true
     jsonData:
       timeInterval: 15s
+      # A URL rather than a link to the Tempo data source: Grafana opens a
+      # data source link at Explore's default "Last 1 hour", and a URL can
+      # carry the dashboard's time range.
       exemplarTraceIdDestinations:
         - name: trace_id
-          datasourceUid: tempo
+          url: '/explore?schemaVersion=1&orgId=1&panes={"a":{"datasource":"tempo","queries":[{"refId":"A","datasource":{"type":"tempo","uid":"tempo"},"queryType":"traceql","query":"$${__value.raw}"}],"range":{"from":"$${__from}","to":"$${__to}"}}}'
+          urlDisplayLabel: Open the trace (this time range)
 
   - name: Tempo
     uid: tempo
@@ -33,10 +37,12 @@ datasources:
         enabled: true
       search:
         hide: false
+      # A trace opened by its ID is looked for in all of Tempo's retention,
+      # not only Explore's time range: Grafana's own trace links (a table's
+      # span ID, a TraceQL dot, a log line's trace) open Explore at "Last 1
+      # hour", and a trace older than that would otherwise not be found.
       traceQuery:
-        timeShiftEnabled: true
-        spanStartTimeShift: -1h
-        spanEndTimeShift: 1h
+        timeShiftEnabled: false
 
   - name: Loki
     uid: loki
