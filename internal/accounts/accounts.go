@@ -98,6 +98,8 @@ type Error struct {
 	Status int
 	Code   string
 	Msg    string
+	// RetryAfter, if set, is how long to wait before trying again (a 429).
+	RetryAfter time.Duration
 }
 
 func (e *Error) Error() string { return e.Msg }
@@ -121,6 +123,8 @@ type Service struct {
 	// sessions (R43b), or their role changed, so what they may see changed
 	// (ADR 0010 §4).
 	CloseLive func(userIDs []int64)
+
+	emails emailLimiter // invitation emails sent (R43e)
 }
 
 func (s *Service) now() time.Time {
@@ -156,7 +160,7 @@ func Display(name, email *string, status string) string {
 }
 
 // Invite creates an invitation from inviter to address (R41, R43, R43a) and
-// has Authentik email it.
+// has Authentik email it, within the limits on invitation emails (R43e).
 func (s *Service) Invite(ctx context.Context, inviter db.User, address string) (db.Invitation, error) {
 	e, ok := ParseEmail(address)
 	if !ok {
@@ -166,9 +170,13 @@ func (s *Service) Invite(ctx context.Context, inviter db.User, address string) (
 		return db.Invitation{}, refuse(http.StatusUnprocessableEntity, "domain_not_allowed",
 			"Invitations can only be sent to addresses at %s.", strings.Join(s.AllowedDomains, " or "))
 	}
+	release, err := s.limitEmail(inviter.ID, e.Key, e.Address)
+	if err != nil {
+		return db.Invitation{}, err
+	}
 	var inv db.Invitation
 	var stale []*string
-	err := s.Store.InTx(ctx, func(q *db.Queries) error {
+	err = s.Store.InTx(ctx, func(q *db.Queries) error {
 		var reactivates *int64
 		existing, err := q.UserByEmailKey(ctx, &e.Key)
 		switch {
@@ -215,6 +223,9 @@ func (s *Service) Invite(ctx context.Context, inviter db.User, address string) (
 		return s.createInDirectory(ctx, q, &inv, e, true)
 	})
 	s.deleteDirectoryInvitations(ctx, stale)
+	if err != nil {
+		release() // nothing was sent
+	}
 	return inv, err
 }
 

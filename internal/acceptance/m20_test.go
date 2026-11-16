@@ -1,9 +1,11 @@
 package acceptance
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -372,5 +374,60 @@ func TestUnfinishedUsersCleared(t *testing.T) {
 	}
 	if n := users("waiting@example.com"); n != 1 {
 		t.Errorf("waiting: %d users after joining", n)
+	}
+}
+
+// A106: invitation emails are capped (R43e). Three to one address in an hour,
+// an invitation and two resends; a fourth is refused with 429, the time to
+// wait and Retry-After, and nothing changes: the link is the one last sent.
+func TestA106InvitationEmailLimits(t *testing.T) {
+	e := setup(t)
+	a := e.inviteAndEnrol(e.admin, "a@example.com")
+	e.invite(a, "m@example.com")
+	m := e.invitationTo(a, "m@example.com")
+	for i := range 2 {
+		if code, p := a.call(http.MethodPost, resendPath(m.ID), nil, nil); code != http.StatusOK {
+			t.Fatalf("resend %d: %d %s", i+1, code, p.Error)
+		}
+	}
+	last, _ := e.dir.invitationFor("m@example.com")
+	resp, err := a.do(http.MethodPost, e.url+resendPath(m.ID), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	var p server.Problem
+	_ = json.NewDecoder(resp.Body).Decode(&p)
+	if resp.StatusCode != http.StatusTooManyRequests || p.Code != "too_many_emails" ||
+		!strings.Contains(p.Error, "m@example.com has been sent 3 invitation emails in the last hour") || !strings.Contains(p.Error, "Try again in") {
+		t.Errorf("the fourth email: %d %+v", resp.StatusCode, p)
+	}
+	if ra, err := strconv.Atoi(resp.Header.Get("Retry-After")); err != nil || ra < 3500 || ra > 3600 {
+		t.Errorf("Retry-After: %q", resp.Header.Get("Retry-After"))
+	}
+	if link, _ := e.dir.invitationFor("m@example.com"); link != last {
+		t.Error("a refused resend changed the link")
+	}
+	// The admin can't send it either: the cap is the address's.
+	if code, p := e.admin.call(http.MethodPost, resendPath(m.ID), nil, nil); code != http.StatusTooManyRequests {
+		t.Errorf("the admin's resend: %d %+v", code, p)
+	}
+	// Cancelled and invited again: still the same address's cap.
+	if code, _ := a.call(http.MethodDelete, fmt.Sprintf("/api/v1/invitations/%d", m.ID), nil, nil); code != http.StatusNoContent {
+		t.Fatal("cancel")
+	}
+	if code, p := e.admin.call(http.MethodPost, "/api/v1/invitations", server.InviteRequest{Email: "m@example.com"}, nil); code != http.StatusTooManyRequests {
+		t.Errorf("a new invitation to the same address: %d %+v", code, p)
+	}
+	// One sender: 20 an hour (A has sent 3).
+	for i := range 17 {
+		e.invite(a, fmt.Sprintf("n%d@example.com", i))
+	}
+	if code, p := a.call(http.MethodPost, "/api/v1/invitations", server.InviteRequest{Email: "n99@example.com"}, nil); code != http.StatusTooManyRequests ||
+		!strings.Contains(p.Error, "You've sent 20 invitation emails in the last hour") {
+		t.Errorf("A's 21st email: %d %+v", code, p)
+	}
+	if code, p := e.admin.call(http.MethodPost, "/api/v1/invitations", server.InviteRequest{Email: "n99@example.com"}, nil); code != http.StatusCreated {
+		t.Errorf("the admin invites n99: %d %+v", code, p)
 	}
 }
