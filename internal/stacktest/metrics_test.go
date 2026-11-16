@@ -41,7 +41,10 @@ func (s *stack) scrape(t *testing.T) string {
 	return string(b)
 }
 
-var lockedLine = regexp.MustCompile(`(?m)^pagerarchive_accounts_locked (\d+)$`)
+var (
+	lockedLine = regexp.MustCompile(`(?m)^pagerarchive_accounts_locked (\d+)$`)
+	failedLine = regexp.MustCompile(`(?m)^pagerarchive_authentik_events_5m\{action="login_failed",reason="password"\} (\d+)$`)
+)
 
 // R52: the metrics count the accounts the guessing protection has locked
 // (R44a), through a role that can call one function and read nothing else
@@ -65,7 +68,20 @@ func TestLockedAccountsMetric(t *testing.T) {
 		expect(t, fmt.Sprintf("wrong password %d", i), s.passwordAttempt(t, u.email, fmt.Sprintf("wrong password %d", i)), wrongAnswer)
 	}
 	n0, _ := strconv.Atoi(before)
-	m := lockedLine.FindStringSubmatch(s.scrape(t))
+	scraped := s.scrape(t)
+	// R89b: the same scrape counts them as failed sign-ins at the password,
+	// from Authentik's own event log, and names nobody.
+	if f := failedLine.FindStringSubmatch(scraped); f == nil {
+		t.Error("no failed sign-ins at the password in the metrics")
+	} else if n, _ := strconv.Atoi(f[1]); n < wrongAttempts {
+		t.Errorf("failed sign-ins at the password in the last 5 minutes: %d, want at least %d", n, wrongAttempts)
+	} else {
+		t.Logf("R89b: failed sign-ins at the password in the last 5 minutes: %d", n)
+	}
+	if strings.Contains(scraped, u.email) {
+		t.Error("the metrics name the account")
+	}
+	m := lockedLine.FindStringSubmatch(scraped)
 	if m == nil {
 		t.Fatal("no pagerarchive_accounts_locked in the metrics")
 	}

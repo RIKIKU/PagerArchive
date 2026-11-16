@@ -109,7 +109,7 @@ ALTER TABLE authentik_stages_authenticator_email_emaildevice OWNER TO authentik`
 	}
 
 	// An install from before the role existed: dropped, then one start.
-	for _, sql := range []string{`DROP FUNCTION public.pagerarchive_locked_accounts()`, `REVOKE CONNECT ON DATABASE authentik FROM pagerarchive_metrics`, `DROP ROLE pagerarchive_metrics`} {
+	for _, sql := range []string{`DROP FUNCTION public.pagerarchive_locked_accounts()`, `DROP FUNCTION public.pagerarchive_authentik_events()`, `REVOKE CONNECT ON DATABASE authentik FROM pagerarchive_metrics`, `DROP ROLE pagerarchive_metrics`} {
 		if _, err := asAdmin.Exec(ctx, sql); err != nil {
 			t.Fatal(err)
 		}

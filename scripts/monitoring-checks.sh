@@ -1,14 +1,13 @@
 #!/bin/sh
-# A65, A67, A80's alert, A90's Grafana part and A113 against the example
-# monitoring stack itself (deploy/monitoring): the API, its database and the
-# backup services from the compose file at the top (no Authentik: none of these
-# needs it), joined to the
-# stack's `monitoring` network by the override docs/monitoring.md gives (R76), as
-# a deployment runs it, and a webhook contact point that the test receives on
-# the host. A67's clients run in the client image on the API's network, with
-# a stand-in for rtl_fm (internal/radio/standin). Memory of the monitoring
-# stack's containers is sampled throughout, idle first and then during the
-# checks.
+# A65, A67, A80's alert, A90's Grafana part, A113 and A115 against the example
+# monitoring stack itself (deploy/monitoring): the API, its database, Authentik
+# and the backup services from the compose file at the top, joined to the
+# stack's `monitoring` and `monitoring-authentik` networks by the override
+# docs/monitoring.md gives (R76, R89a), as a deployment runs it, and a webhook
+# contact point that the test receives on the host. A67's clients run in the
+# client image on the API's network, with a stand-in for rtl_fm
+# (internal/radio/standin). Memory of the monitoring stack's containers is
+# sampled throughout, idle first and then during the checks.
 #
 # The monitoring stack is installed as a deployment does it (R84, A78): a folder
 # with only the release's archive, compose file and filled-in settings, and
@@ -23,9 +22,9 @@
 #                   Playwright's Chromium)
 # PA_MON_RUN, if set, runs only the checks it matches (go test -run), e.g.
 # TestA67; mutation-checks.sh uses it.
-# needs: Docker with compose, Go, curl, and no network named monitoring (the
-# stack owns that name, on the whole host). Uses 127.0.0.1:18091, :13001, :14319,
-# :55437 and 0.0.0.0:18099 (the webhook, which Grafana reaches through the
+# needs: Docker with compose, Go, curl, and no network named monitoring or
+# monitoring-authentik (the stack owns those names, on the whole host). Uses
+# 127.0.0.1:18091, :19091 (Authentik), :18026, :13001, :14319, :55437 and 0.0.0.0:18099 (the webhook, which Grafana reaches through the
 # Docker host's gateway).
 set -eu
 cd "$(dirname "$0")/.."
@@ -46,10 +45,12 @@ while IFS= read -r line; do
 	[ -n "$set_already" ] || export "$line"
 done <deploy/test/stack.vars
 
-if docker network inspect monitoring >/dev/null 2>&1; then
-	echo "a network named monitoring already exists here: the stack owns that name" >&2
-	exit 1
-fi
+for net in monitoring monitoring-authentik; do
+	if docker network inspect "$net" >/dev/null 2>&1; then
+		echo "a network named $net already exists here: the stack owns that name" >&2
+		exit 1
+	fi
+done
 
 P=pa-mon-$$
 BACKUPS=$(mktemp -d)
@@ -134,20 +135,39 @@ status=0
 # The stack first, as the docs say: PagerArchive's override needs its network.
 echo "--- PagerArchive joins the stack's network through the docs' override"
 cat "$OVERRIDE"
-app up -d db api backup backup-check >/dev/null 2>&1 || { app up -d db api backup backup-check; exit 1; }
+app up -d db api backup backup-check authentik-server authentik-worker mailpit >/dev/null 2>&1 ||
+	{ app up -d db api backup backup-check authentik-server authentik-worker mailpit; exit 1; }
 i=0
 until curl -sf http://127.0.0.1:18091/healthz >/dev/null; do
 	i=$((i + 1))
 	[ $i -gt 120 ] && { echo "API didn't start" >&2; app logs api | tail -20 >&2; exit 1; }
 	sleep 1
 done
-# There's no Authentik here, and a backup refuses a database with no tables.
-app exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres -d authentik -c 'CREATE TABLE a80_stand_in (id int)'
+# Authentik makes its tables on its first start (a backup refuses a database
+# with none).
+i=0
+until curl -sf http://127.0.0.1:19091/-/health/ready/ >/dev/null; do
+	i=$((i + 1))
+	[ $i -gt 300 ] && { echo "Authentik didn't start" >&2; app logs authentik-server | tail -20 >&2; exit 1; }
+	sleep 1
+done
 # Only Alloy: what else other apps on the network could reach (R76).
 on_network=$(docker network inspect monitoring -f '{{range .Containers}}{{.Name}} {{end}}')
 echo "--- on the monitoring network: $on_network"
 case $on_network in *tempo* | *loki* | *prometheus* | *grafana*) echo "FAIL: more than Alloy is on the monitoring network" >&2; status=1 ;; esac
 case $on_network in *-db-*) echo "FAIL: PagerArchive's database is on the monitoring network" >&2; status=1 ;; esac
+# Authentik's metrics have no credentials: only Alloy and Authentik's server
+# and worker are on their network (R89a), and nothing publishes port 9300.
+on_ak=$(docker network inspect monitoring-authentik -f '{{range .Containers}}{{.Name}} {{end}}')
+echo "--- on the monitoring-authentik network: $on_ak"
+for name in $on_ak; do
+	case $name in *-mon-alloy-* | *-authentik-server-* | *-authentik-worker-*) ;; *) echo "FAIL: $name is on the monitoring-authentik network" >&2; status=1 ;; esac
+done
+[ $(echo "$on_ak" | wc -w) -eq 3 ] || { echo "FAIL: want Alloy and Authentik's server and worker on monitoring-authentik" >&2; status=1; }
+if docker ps --filter "label=com.docker.compose.project=$P" --format '{{.Ports}}' | grep -q 9300; then
+	echo "FAIL: a container publishes port 9300" >&2
+	status=1
+fi
 if listing "$MONROOT" | diff "$MONROOT.before" - >&2; then
 	echo "--- the folder holds what it did before up -d"
 else
@@ -216,7 +236,10 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_START_DB="docker compose -p $P --project-directory $PWD $APP_FILES start db" \
 	PA_MON_BACKUP_NOW="docker compose -p $P --project-directory $PWD $APP_FILES exec -T backup pagerarchive-backup now" \
 	PA_MON_AUTO_UPGRADE_DIR="$AUTOUP" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113}" ./internal/monitortest/ || status=1
+	PA_MON_AUTHENTIK_URL=http://127.0.0.1:19091 \
+	PA_MON_STOP_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES stop authentik-server" \
+	PA_MON_START_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES start authentik-server" \
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then

@@ -1,0 +1,167 @@
+{
+  "uid": "pa-authentik",
+  "title": "Authentik",
+  "description": "Authentik, which signs everyone in (R40): whether its server and worker are up, sign-ins that worked and failed (by reason, never who), its requests, flows and worker tasks, its errors and its database connections (R89a, R89b).",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "30s",
+  "time": {"from": "now-6h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "Authentik has two parts. The **server** answers the sign-in pages and PagerArchive's questions: while it's down, nobody can sign in. The **worker** runs background tasks, such as sending emails (codes, invitations): while it's down, sign-ins work but no email goes out. **Up** is red for either one the stack can't reach (the \"Authentik down\" alert).\n\n**Sign-ins** come from Authentik's event log, counted each minute over the 5 minutes before, so one sign-in shows for 5 minutes. A failed one says only where it failed: the **password**, the **second factor** (Authentik's own admin), or **other**. Never who, or from where. A few failures are people mistyping; a burst is someone guessing (the \"Failed sign-ins\" alert), and the guessing protection locks each account after 5 (R44a). **Errors** are what Authentik recorded as going wrong: its admin interface (Events → Logs) has the detail."}
+    },
+    {
+      "id": 2, "type": "stat", "title": "Up",
+      "description": "Whether the stack can scrape Authentik's server and worker (port 9300, over the monitoring-authentik network). Normal: both up. Worry: DOWN, which fires \"Authentik down\" after a minute. \"Not watched\" when the stack doesn't scrape Authentik.",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (up{job=\"authentik\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"noValue": "Not watched", "mappings": [{"type": "value", "options": {"0": {"text": "DOWN", "color": "red"}, "1": {"text": "up", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 3, "type": "stat", "title": "Workers",
+      "description": "Worker processes the server sees. Normal: 1 or more. Worry: 0 while the worker is up: it can't reach the database, and tasks (emails) queue up.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 7},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(sum by (instance) (authentik_tasks_workers{job=\"authentik\"}))"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not watched", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4, "type": "stat", "title": "Signed in, 5 min",
+      "description": "Sign-ins that worked in the last 5 minutes, from Authentik's event log (R89b). Normal: a few when people sign in, else 0 (sessions last). Worry: a steady stream nobody explains: check Authentik's Events → Logs.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "sum(pagerarchive_authentik_events_5m{job=\"pagerarchive\", action=\"login\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "text", "value": null}]}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 5, "type": "stat", "title": "Failed sign-ins, 5 min",
+      "description": "Sign-ins that failed in the last 5 minutes, any reason. Normal: 0 to a few (mistyped passwords). Worry: orange from 5; red above 10, when \"Failed sign-ins\" fires.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "sum(pagerarchive_authentik_events_5m{job=\"pagerarchive\", action=\"login_failed\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 11}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 6, "type": "stat", "title": "Locked accounts",
+      "description": "Accounts the guessing protection has locked now (R44a): 5 wrong passwords or codes in 15 minutes lock one for 15 minutes. Normal: 0. Worry: several at once.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_accounts_locked{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Sign-ins (each minute, last 5 min)",
+      "description": "Sign-ins that worked, and failed ones by where they failed: password, second factor, or other (R89b). Counted each minute over the 5 minutes before, so a burst shows as a plateau 5 minutes wide. Normal: small bumps. Worry: failed ones climbing past 10 (\"Failed sign-ins\" fires).",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(pagerarchive_authentik_events_5m{job=\"pagerarchive\", action=\"login\"})", "legendFormat": "signed in"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (reason) (pagerarchive_authentik_events_5m{job=\"pagerarchive\", action=\"login_failed\"})", "legendFormat": "failed: {{reason}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted"}, "overrides": [{"matcher": {"id": "byName", "options": "signed in"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "green"}}]}]},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Errors recorded (each minute, last 5 min)",
+      "description": "From Authentik's event log, by kind (R89b): system_exception (Authentik itself failed), system_task_exception (a worker task failed, such as an email), configuration_error, policy_exception and property_mapping_exception. Normal: 0. Worry: anything above 0: Authentik's admin interface, Events → Logs, says what.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (action) (pagerarchive_authentik_events_5m{job=\"pagerarchive\", action!~\"login|login_failed\"})", "legendFormat": "{{action}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Requests per second, by status",
+      "description": "Requests Authentik's server answered, by HTTP status: the sign-in pages, PagerArchive's questions (tokens, users, invitations) and the admin interface. Normal: mostly 200 and 302, some 4xx (an expired session). Worry: any 5xx.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(django_http_responses_total_by_status_view_method_total{job=\"authentik\"}[$__rate_interval]))", "legendFormat": "{{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "reqps", "noValue": "Not watched"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "Server errors by view (per minute)",
+      "description": "Requests that ended with a 5xx status, per minute, by Authentik's view (its name for the page or API endpoint) and status. Normal: nothing. Worry: any line.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 24},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (view, status) (rate(django_http_responses_total_by_status_view_method_total{job=\"authentik\", status=~\"5..\"}[$__rate_interval])) * 60", "legendFormat": "{{view}} {{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}, "noValue": "None"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 11, "type": "timeseries", "title": "Slowest 10% of requests, by view",
+      "description": "How long the slowest 10 % of requests to each of Authentik's views took, for the views used. Normal: tens of milliseconds; a password check is meant to be slow (it hashes), about a quarter of a second. Worry: seconds, for minutes on end.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "histogram_quantile(0.9, sum by (le, view) (rate(django_http_requests_latency_seconds_by_view_method_bucket{job=\"authentik\"}[$__rate_interval]))) > 0", "legendFormat": "{{view}}"}],
+      "fieldConfig": {"defaults": {"unit": "s", "noValue": "Not watched"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 12, "type": "timeseries", "title": "Flows started (per minute)",
+      "description": "Flows Authentik started, by flow: pagerarchive-authentication a sign-in, pagerarchive-enrolment a new account from an invitation, pagerarchive-recovery a forgotten password. Starts, not completions: the sign-in panels say how they ended. Normal: a few when people sign in. Worry: a steady stream of sign-ins with failed sign-ins climbing.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 32},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (flow_slug) (rate(authentik_flows_plan_time_count{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "{{flow_slug}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "noValue": "None"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 13, "type": "timeseries", "title": "Worker tasks (per minute)",
+      "description": "Background tasks the worker ran, per minute, and those that failed, were retried or were given up on (rejected). Normal: a steady trickle of housekeeping, nothing failed. Worry: failed or rejected: Authentik's admin interface (System → Tasks) says why; a rejected task is lost.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 40},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(authentik_tasks_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "ran"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(authentik_tasks_errors_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "failed"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(authentik_tasks_retries_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "retried"},
+        {"refId": "D", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(authentik_tasks_rejected_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "rejected"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "noValue": "Not watched"}, "overrides": [{"matcher": {"id": "byName", "options": "failed"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "red"}}]}, {"matcher": {"id": "byName", "options": "rejected"}, "properties": [{"id": "color", "value": {"mode": "fixed", "fixedColor": "dark-red"}}]}]},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 14, "type": "table", "title": "Tasks that failed (time range)",
+      "description": "The worker's tasks that failed in the dashboard's time range, by task. Normal: empty. Worry: any row. A task's first failure after Authentik starts isn't counted here (the counter starts at it); the errors panel counts every one.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 40},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "round(sum by (actor_name) (increase(authentik_tasks_errors_total{job=\"authentik\"}[$__range]))) > 0"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"actor_name": "Task", "Value": "Failures"}}}],
+      "fieldConfig": {"defaults": {"noValue": "None"}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Tasks waiting",
+      "description": "Tasks queued for the worker and not started yet, and those running. Normal: near 0. Worry: a queue that grows and doesn't empty: the worker is down or stuck.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 48},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(sum by (instance) (authentik_tasks_queued{job=\"authentik\"}))", "legendFormat": "queued"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(authentik_tasks_in_progress{job=\"authentik\"})", "legendFormat": "running"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not watched"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "Database connections and errors (per minute)",
+      "description": "Connections Authentik's server and worker opened to the database, per minute, and database errors by kind. Normal: a steady few a minute (Authentik opens connections for its requests and tasks), more at start. Worry: database errors, or a jump in new connections while sign-ins fail: the database is restarting or unreachable (Authentik reconnects within about a minute).",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 48},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(django_db_new_connections_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "{{instance}} new connections"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, type) (rate(django_db_errors_total{job=\"authentik\"}[$__rate_interval])) * 60", "legendFormat": "{{instance}} errors: {{type}}"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "noValue": "Not watched"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    }
+  ]
+}

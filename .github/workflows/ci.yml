@@ -839,13 +839,13 @@ jobs:
           path: a15-results/
           retention-days: 30
 
-  # A78's install with no checkout, then A65 and A67, against the example
+  # A78's install with no checkout, then A65, A67, A80's and A90's alerts and A115, against the example
   # monitoring stack itself (deploy/monitoring, R76):
-  # Alloy, Tempo, Loki, Prometheus and Grafana scraping a real API, with a
+  # Alloy, Tempo, Loki, Prometheus and Grafana scraping a real API and Authentik, with a
   # webhook contact point the test receives, and (A67) clients in the client
   # image with a stand-in for rtl_fm. The stack's memory is sampled.
   monitoring:
-    name: Example monitoring stack (A78's install, A65, A67, A80's alert)
+    name: Example monitoring stack (A78's install, A65, A67, A80's alert, A115)
     needs: [stamp, changes]
     if: needs.changes.outputs.monitoring == 'true'
     runs-on: ubuntu-24.04
@@ -868,7 +868,7 @@ jobs:
           df -h /
       - name: Pull the images (retried)
         run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml deploy/monitoring/compose.yaml scripts/install-lib.sh
-      - name: The install with no checkout, A65, A67 and A80's alert on the example monitoring stack
+      - name: The install with no checkout, A65, A67, A80's alert and A115 on the example monitoring stack
         run: sh scripts/monitoring-checks.sh -o monitoring-results
       - name: Upload memory samples and the stack's logs
         if: always()

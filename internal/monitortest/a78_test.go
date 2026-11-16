@@ -48,15 +48,15 @@ func TestA78MonitoringInstalled(t *testing.T) {
 		Name  string `json:"name"`
 	}
 	get("/api/search?type=dash-db", &items)
-	if got := titles(items); len(got) != 4 {
-		t.Errorf("dashboards: %q, want the 4 from the archive", got)
+	if got := titles(items); len(got) != 6 {
+		t.Errorf("dashboards: %q, want the 6 from the archive", got)
 	} else {
 		t.Logf("A78: dashboards: %q", got)
 	}
 	items = nil
 	get("/api/v1/provisioning/alert-rules", &items)
 	got := titles(items)
-	for _, rule := range []string{"Client not receiving", "Radio stalled", "API unreachable", "Backup failing", "Upgrade failed"} {
+	for _, rule := range []string{"Client not receiving", "Radio stalled", "API unreachable", "Backup failing", "Upgrade failed", "Authentik down", "Failed sign-ins", "Authentik tasks failing"} {
 		if !slices.Contains(got, rule) {
 			t.Errorf("alert rules: %q, no %q", got, rule)
 		}

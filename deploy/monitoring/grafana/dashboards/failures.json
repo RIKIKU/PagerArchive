@@ -1,0 +1,232 @@
+{
+  "uid": "pa-failures",
+  "title": "Failures",
+  "description": "Is anything failing, and what? One place for every failure the stack can see (R89): the alerts firing now, the API's server errors, refused pages, clients that can't send, failed integration deliveries, the nightly run, backups, automatic upgrades, locked accounts, Authentik, and the errors and warnings in the logs.",
+  "tags": ["pagerarchive"],
+  "timezone": "browser",
+  "schemaVersion": 41,
+  "refresh": "1m",
+  "time": {"from": "now-24h", "to": "now"},
+  "panels": [
+    {
+      "id": 1, "type": "text", "title": "How to read this",
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 0},
+      "options": {"mode": "markdown", "content": "**Green is good.** Each square in the top rows is one kind of failure, now or in the last hour, and turns red when there is one. Below them, the graphs say when it happened and the tables say what: open the dashboard for that part (**Clients**, **A page's path**, **Backups and upgrades**, **Authentik**) for the detail. Each panel's **(i)** says what it counts.\n\n**Alerts firing now** lists the alert rules that are firing, from the same rules that notify you. **Errors and warnings in the logs** counts the API's and the clients' ERROR and WARN lines by their message, which is always a fixed text: never page text, names or addresses (R70)."}
+    },
+    {
+      "id": 2, "type": "alertlist", "title": "Alerts firing now",
+      "description": "The provisioned alert rules (Alerting → Alert rules) firing now, or about to (pending). Normal: empty. Worry: anything listed; its own dashboard says more.",
+      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 6},
+      "options": {
+        "viewMode": "list", "groupMode": "default", "groupBy": [], "maxItems": 20, "sortOrder": 1, "dashboardAlerts": false, "alertName": "", "alertInstanceLabelFilter": "",
+        "stateFilter": {"firing": true, "pending": true, "noData": false, "normal": false, "error": true},
+        "folder": {"title": "PagerArchive"}
+      }
+    },
+    {
+      "id": 3, "type": "stat", "title": "Server errors, 1 h",
+      "description": "API requests answered with a 5xx status in the last hour, every route. Normal: 0. Worry: anything above 0: a bug, or a failing dependency (usually the database). \"Server errors by route\" below says which.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_http_requests_total{job=\"pagerarchive\", status=~\"5..\"}[1h])) or vector(0))"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 4, "type": "stat", "title": "Refused pages, 1 h",
+      "description": "Pages that clients posted and the API refused in the last hour: a bad or revoked client key, or a malformed page (4xx answers to POST /api/v1/pages). A refused page isn't stored and isn't sent again. Normal: 0. Worry: any that keep coming: a client with a wrong key, or one sending what the API can't read.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\"}[1h])) or vector(0))"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 5, "type": "stat", "title": "Not receiving",
+      "description": "Receiving clients the server hasn't heard from for 30 minutes (R39), as \"Client not receiving\" alerts. Normal: 0. Worry: any: the Clients dashboard says which, and whether it's the radio or the network.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 11},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(pagerarchive_client_receiving{job=\"pagerarchive\"} == 0) or vector(0)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 6, "type": "stat", "title": "Failed sends, 1 h",
+      "description": "Times a receiving client couldn't post a page in the last hour (the server unreachable, or slow to answer), from the clients' own numbers (R74). The client keeps the page and tries again. Normal: 0, or a few during a restart or an upgrade. Worry: it keeps climbing: the network or the server.",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 15},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_client_send_failures_total[1h])) or vector(0))"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 7, "type": "stat", "title": "Failed deliveries, 1 h",
+      "description": "Integration deliveries (webhooks, MQTT, phones) that failed in the last hour, after their retries. Normal: 0. Worry: one kind failing steadily (one user's endpoint, theirs to fix) or every kind at once (this server's network). A page's path has each attempt by cause.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 15},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\", result=\"failed\"}[1h])) or vector(0))"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 8, "type": "stat", "title": "Locked accounts",
+      "description": "Accounts the guessing protection has locked now: 5 wrong passwords or codes in 15 minutes lock one for 15 minutes (R44a). Normal: 0, or 1 now and then (someone forgot their password). Worry: several at once, with failed sign-ins climbing: someone guessing.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 15},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_accounts_locked{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 9, "type": "stat", "title": "Nightly run",
+      "description": "Whether the last nightly retention and redaction run succeeded (R45). Normal: OK. Worry: FAILED: old pages weren't deleted or redacted again that night. The API's log says why (the logs table below).",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "min(pagerarchive_nightly_last_run_success{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"noValue": "Not run yet", "mappings": [{"type": "value", "options": {"0": {"text": "FAILED", "color": "red"}, "1": {"text": "OK", "color": "green"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 10, "type": "stat", "title": "Backups",
+      "description": "The last nightly backup and its check, as the \"Backup failing\" alert (R86a). Normal: OK. Worry: FAILING: the last one failed, or the last good one is more than 36 hours old. Backups and upgrades has the times; Administration → Backups says why.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_backup_failing{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"noValue": "Not set up", "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "FAILING", "color": "red"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 11, "type": "stat", "title": "Upgrades",
+      "description": "The last automatic upgrade, as the \"Upgrade failed\" alert (R84h); \"Off\" when they aren't switched on. Normal: OK or Off. Worry: FAILED: rolled back, its rollback failed too, or a run stopped part way. Administration → Upgrades says which release and why.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 19},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_auto_upgrade_failing{job=\"pagerarchive\"}) or (max(pagerarchive_auto_upgrade_enabled{job=\"pagerarchive\"}) * 0 + 2)"}],
+      "fieldConfig": {"defaults": {"noValue": "Off", "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "FAILED", "color": "red"}, "2": {"text": "Off", "color": "text"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}, {"color": "text", "value": 2}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 12, "type": "stat", "title": "Authentik down",
+      "description": "Authentik's parts (server, worker) the stack can't scrape, as the \"Authentik down\" alert (R89a). Normal: 0. Worry: 1 or 2: with the server down nobody can sign in; with the worker down no emails (codes, invitations) go out. \"Not watched\" when the stack doesn't scrape Authentik (docs/monitoring.md, \"Authentik\").",
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(up{job=\"authentik\"} == 0) or (count(up{job=\"authentik\"}) * 0)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not watched", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 13, "type": "stat", "title": "Failed sign-ins, 5 min",
+      "description": "Sign-ins that failed in the last 5 minutes, any account, any reason, from Authentik's event log (R89b). Normal: 0 to a few (mistyped passwords). Worry: red, above the \"Failed sign-ins\" alert's 10: someone guessing. The Authentik dashboard has them by reason.",
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "sum(pagerarchive_authentik_events_5m{job=\"pagerarchive\", action=\"login_failed\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "orange", "value": 5}, {"color": "red", "value": 11}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 14, "type": "stat", "title": "Authentik errors, 5 min",
+      "description": "Errors Authentik recorded in its event log in the last 5 minutes: its own exceptions, failed worker tasks (such as an email that couldn't be sent), configuration errors and failing policies or mappings (R89b). Normal: 0. Worry: any: the Authentik dashboard has them by kind, Authentik's admin interface (Events → Logs) the detail.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 23},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "sum(pagerarchive_authentik_events_5m{job=\"pagerarchive\", action!~\"login|login_failed\"})"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted", "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 15, "type": "timeseries", "title": "Server errors by route (per minute)",
+      "description": "API requests answered with a 5xx status, per minute, by route pattern and status. Normal: nothing. Worry: one route failing on its own (that feature) or every route at once (the database or the API itself). Requests and load has the slow ones and their traces.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route, status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", status=~\"5..\"}[$__rate_interval])) * 60", "legendFormat": "{{route}} {{status}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}, "noValue": "None"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 16, "type": "timeseries", "title": "Pages refused (per minute)",
+      "description": "Pages the API refused, per minute: by status for POST /api/v1/pages (401 a bad or revoked client key, 400 or 422 a malformed page) and pages whose client clock was ahead. Ignored and duplicate pages aren't failures and aren't shown. Normal: nothing. Worry: a line that keeps going.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\"}[$__rate_interval])) * 60", "legendFormat": "HTTP {{status}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(pagerarchive_pages_received_total{job=\"pagerarchive\", outcome=\"clock_ahead\"}[$__rate_interval])) * 60", "legendFormat": "clock ahead"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}, "noValue": "None"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 17, "type": "timeseries", "title": "Clients' failed sends and drops (per minute)",
+      "description": "From each receiving client's own numbers (R74), per minute. Failed sends and retries: the client couldn't reach the server, or it answered slowly; it keeps the pages and tries again. Dropped: lost, the buffer full or the page too old. Normal: nothing, or a blip during a restart. Worry: failed sends that go on, and any dropped pages.",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed sends"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_retries_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} retries"},
+        {"refId": "C", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, reason) (rate(pagerarchive_client_pages_dropped_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} dropped ({{reason}})"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "noValue": "No clients reporting"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 18, "type": "table", "title": "Clients with pages waiting",
+      "description": "Receiving clients holding pages they couldn't send yet, as they last reported (R15). They send them, oldest first, once the server answers. Normal: empty. Worry: a client that stays here: it can't reach the server.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 35},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (pagerarchive_client_pages_buffered) > 0"}],
+      "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value": "Pages waiting"}}}],
+      "fieldConfig": {"defaults": {"noValue": "None: every client has sent what it has"}, "overrides": []},
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 19, "type": "timeseries", "title": "Failed deliveries by kind (per hour)",
+      "description": "Deliveries to users' integrations that failed after their retries, by kind, per hour. Normal: 0. Worry: one kind failing steadily (a user's endpoint: they see it on their Integrations page) or every kind at once (this server's network).",
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (kind) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\", result=\"failed\"}[1h])) > 0", "legendFormat": "{{kind}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "None"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 20, "type": "timeseries", "title": "Authentik: failed sign-ins and errors",
+      "description": "From Authentik's event log, counted each minute over the 5 minutes before (R89b): failed sign-ins by where they failed (password, second factor, other) and Authentik's errors by kind. Normal: 0, with the odd failed password. Worry: a burst of failed sign-ins, or any error. The Authentik dashboard has more.",
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 43},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (action, reason) (pagerarchive_authentik_events_5m{job=\"pagerarchive\", action!=\"login\"})", "legendFormat": "{{action}} {{reason}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted"}, "overrides": []},
+      "options": {"legend": {"displayMode": "table", "placement": "bottom", "calcs": ["max"]}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 21, "type": "table", "title": "Errors and warnings in the logs, by message",
+      "description": "The API's and the clients' ERROR and WARN log lines in the dashboard's time range, counted by service, level and message. Messages are fixed texts from the code, never page text, search terms, names or addresses (R70). Normal: a few WARNs at start-up (such as the made-up example profile). Worry: an ERROR, or a WARN that keeps coming. The lines below open their traces.",
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 51},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "queryType": "instant", "instant": true, "range": false, "expr": "sum by (service_name, severity_text, message) (count_over_time({service_name=~\"pagerarchive|pagerarchive-client\"} | severity_text=~\"ERROR|WARN\" | label_format message=\"{{ __line__ }}\" [$__range]))"}],
+      "transformations": [
+        {"id": "labelsToFields", "options": {"mode": "columns"}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"service_name": 0, "severity_text": 1, "message": 2, "Value": 3, "Value #A": 3}, "renameByName": {"service_name": "Service", "severity_text": "Level", "message": "Message", "Value": "Lines", "Value #A": "Lines"}}},
+        {"id": "sortBy", "options": {"sort": [{"field": "Lines", "desc": true}]}}
+      ],
+      "fieldConfig": {"defaults": {"noValue": "No errors or warnings"}, "overrides": [{"matcher": {"id": "byName", "options": "Lines"}, "properties": [{"id": "decimals", "value": 0}, {"id": "custom.width", "value": 90}]}, {"matcher": {"id": "byName", "options": "Level"}, "properties": [{"id": "custom.width", "value": 90}]}, {"matcher": {"id": "byName", "options": "Service"}, "properties": [{"id": "custom.width", "value": 180}]}]},
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 22, "type": "table", "title": "Upgrades' failed steps",
+      "description": "The automatic upgrade script's steps that failed or warned in the dashboard's time range (check, verify, backup, upgrade, health, rollback, restore), with the reason as fixed text. Normal: empty (or upgrades are off). Worry: any row: Backups and upgrades has every step.",
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 60},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "queryType": "instant", "instant": true, "range": false, "expr": "sum by (step, reason) (count_over_time({service_name=\"pagerarchive-auto-upgrade\", level=~\"error|warn\"} | json reason [$__range]))"}],
+      "transformations": [
+        {"id": "labelsToFields", "options": {"mode": "columns"}},
+        {"id": "organize", "options": {"excludeByName": {"Time": true}, "indexByName": {"step": 0, "reason": 1, "Value": 2, "Value #A": 2}, "renameByName": {"step": "Step", "reason": "Reason", "Value": "Times", "Value #A": "Times"}}}
+      ],
+      "fieldConfig": {"defaults": {"noValue": "None"}, "overrides": [{"matcher": {"id": "byName", "options": "Times"}, "properties": [{"id": "decimals", "value": 0}, {"id": "custom.width", "value": 90}]}]},
+      "options": {"showHeader": true}
+    },
+    {
+      "id": 23, "type": "logs", "title": "The error and warning lines (click one for its trace)",
+      "description": "The lines counted above, newest first. Click one for its fields; one with a trace ID opens the request or page it belongs to in Tempo.",
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 66},
+      "datasource": {"type": "loki", "uid": "loki"},
+      "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"} | severity_text=~\"ERROR|WARN\""}],
+      "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
+    }
+  ]
+}

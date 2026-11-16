@@ -17,6 +17,7 @@
 #
 # LAN only: Grafana's port is the only one published. Of this stack, only Alloy
 # is on `monitoring`; everything else talks on its own internal network.
+# Alloy alone is also on `monitoring-authentik`, where it scrapes Authentik.
 # Receiving clients on other machines need Alloy's OTLP port too: see
 # docs/monitoring.md.
 #
@@ -33,18 +34,23 @@ services:
     restart: unless-stopped
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:
-      pagerarchive.config: "6dca6c548c41943b"
+      pagerarchive.config: "6dc2709c3af093d8"
     environment:
       # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
       PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
       # Where the API is, on the monitoring network: the alias its override gives it.
       PA_API_ADDRESS: ${PA_API_ADDRESS:-pagerarchive:8080}
+      # Authentik's server and worker, on the monitoring-authentik network: the
+      # aliases PagerArchive's override gives them (ADR 0036). Set one to "" in
+      # .env to scrape nothing there.
+      PA_AUTHENTIK_SERVER_ADDRESS: ${PA_AUTHENTIK_SERVER_ADDRESS-pagerarchive-authentik-server:9300}
+      PA_AUTHENTIK_WORKER_ADDRESS: ${PA_AUTHENTIK_WORKER_ADDRESS-pagerarchive-authentik-worker:9300}
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
       # PagerArchive's automatic upgrades' log (docs/monitoring.md), or nothing.
       - ${AUTO_UPGRADE_STATUS_DIR:-/dev/null}:/var/log/pagerarchive-auto-upgrade:ro
       - alloy:/var/lib/alloy
-    networks: [internal, monitoring]
+    networks: [internal, monitoring, monitoring-authentik]
     depends_on: [tempo, loki, prometheus]
 
   tempo:
@@ -91,7 +97,7 @@ services:
     image: grafana/grafana:13.3
     restart: unless-stopped
     labels:
-      pagerarchive.config: "8dffeb5f67e84fff"
+      pagerarchive.config: "6269e5823f6de33c"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
@@ -111,8 +117,10 @@ services:
       - ./grafana/provisioning/datasources/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml:ro
       - ./grafana/provisioning/dashboards/dashboards.yaml:/etc/grafana/provisioning/dashboards/dashboards.yaml:ro
       - ./grafana/provisioning/alerting/rules.yaml:/etc/grafana/provisioning/alerting/rules.yaml:ro
+      - ./grafana/dashboards/authentik.json:/var/lib/grafana/dashboards/authentik.json:ro
       - ./grafana/dashboards/backups.json:/var/lib/grafana/dashboards/backups.json:ro
       - ./grafana/dashboards/clients.json:/var/lib/grafana/dashboards/clients.json:ro
+      - ./grafana/dashboards/failures.json:/var/lib/grafana/dashboards/failures.json:ro
       - ./grafana/dashboards/page-path.json:/var/lib/grafana/dashboards/page-path.json:ro
       - ./grafana/dashboards/requests.json:/var/lib/grafana/dashboards/requests.json:ro
       - grafana:/var/lib/grafana
@@ -133,6 +141,12 @@ networks:
   # and be scraped, and nothing else here can be reached from them.
   monitoring:
     name: monitoring
+  # Authentik's metrics have no credentials, so they get a network of their
+  # own: only Alloy and Authentik's server and worker are on it (their
+  # override joins them), and it has no way out (R89a, ADR 0036).
+  monitoring-authentik:
+    name: monitoring-authentik
+    internal: true
 
 volumes:
   alloy:

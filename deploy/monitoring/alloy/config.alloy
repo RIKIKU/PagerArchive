@@ -28,6 +28,54 @@ prometheus.scrape "pagerarchive" {
   forward_to = [prometheus.remote_write.prometheus.receiver]
 }
 
+// ── Authentik's metrics (R89a, ADR 0036) ─────────────────────────────────
+// Authentik's server and worker each serve Prometheus metrics on port 9300,
+// with no credentials. They're reached over a network of their own,
+// `monitoring-authentik`, internal, that only Alloy and Authentik's two
+// containers are on: nothing is published on the host, other apps on
+// `monitoring` can't reach them, and the reverse proxy forwards only port
+// 9000, which serves no metrics. PagerArchive's override joins the two
+// containers to it (docs/monitoring.md). An address set to "" in .env drops
+// that target, so a stack that monitors no Authentik scrapes nothing.
+discovery.relabel "authentik" {
+  targets = [
+    {"__address__" = sys.env("PA_AUTHENTIK_SERVER_ADDRESS"), "instance" = "server"},
+    {"__address__" = sys.env("PA_AUTHENTIK_WORKER_ADDRESS"), "instance" = "worker"},
+  ]
+  rule {
+    source_labels = ["__address__"]
+    regex         = ""
+    action        = "drop"
+  }
+}
+
+prometheus.scrape "authentik" {
+  job_name        = "authentik"
+  targets         = discovery.relabel.authentik.output
+  metrics_path    = "/metrics"
+  scrape_interval = "15s"
+  scrape_timeout  = "10s"
+  forward_to      = [prometheus.relabel.authentik.receiver]
+}
+
+// Only the series the dashboard and alerts use, as the allowlist below does
+// for OTLP: Authentik's other metrics name policy bindings (which can be a
+// user's or group's name) and property mappings. None of the kept ones has
+// a username, an address or a request's path: views are Django's route
+// names, flows their slugs, tasks their code names.
+prometheus.relabel "authentik" {
+  rule {
+    source_labels = ["__name__"]
+    regex         = "up|authentik_tasks_workers|authentik_tasks_(total|errors_total|retries_total|rejected_total|queued|in_progress)|authentik_tasks_duration_milliseconds_(bucket|sum|count)|authentik_flows_plan_time_(sum|count)|django_http_responses_total_by_status_view_method_total|django_http_requests_latency_seconds_by_view_method_(bucket|sum|count)|django_db_(new_connections_total|errors_total|execute_total)"
+    action        = "keep"
+  }
+  rule {
+    regex  = "^(job|instance|__name__|le|quantile|actor_name|queue_name|flow_slug|method|status|view|alias|vendor|type|version)$"
+    action = "labelkeep"
+  }
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+
 prometheus.remote_write "prometheus" {
   endpoint {
     url            = "http://prometheus:9090/api/v1/write"

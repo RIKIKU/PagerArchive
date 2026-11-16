@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/backup"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -23,6 +24,12 @@ import (
 // LockCounter counts accounts locked by the guessing protection (R44a).
 type LockCounter interface {
 	Locked(ctx context.Context) (int, error)
+}
+
+// AuthentikEventCounter is a LockCounter that also counts Authentik's recent
+// sign-ins, failed sign-ins and errors (R89b).
+type AuthentikEventCounter interface {
+	Events(ctx context.Context) ([]authentik.AuthentikEvent, error)
 }
 
 // pageCounts counts posted pages by outcome since the API started (R52).
@@ -202,6 +209,18 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		} else {
 			m.family("pagerarchive_accounts_locked", "gauge", "Accounts locked now by the guessing protection (R44a).")
 			m.sample("pagerarchive_accounts_locked", nil, float64(locked))
+		}
+		// R89b: Authentik's sign-ins, failed sign-ins and errors, counted in
+		// its database as the locks are: Authentik's own metrics have none.
+		if ev, ok := s.Locks.(AuthentikEventCounter); ok {
+			if rows, err := ev.Events(ctx); err != nil {
+				s.Log.Warn("metrics: Authentik's events unavailable", "error", store.SafeError(err))
+			} else if len(rows) > 0 {
+				m.family("pagerarchive_authentik_events_5m", "gauge", "Authentik's events of each kind in the last 5 minutes: sign-ins, failed sign-ins by the stage they failed at, and errors (R89b).")
+				for _, r := range rows {
+					m.sample("pagerarchive_authentik_events_5m", labels{"action", r.Action, "reason", r.Reason}, float64(r.N))
+				}
+			}
 		}
 	}
 
