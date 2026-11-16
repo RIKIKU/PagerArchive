@@ -1,23 +1,30 @@
 #!/bin/sh
 # A stand-in for the GitHub CLI's `gh attestation verify`, for A90 only
 # (scripts/a90.sh), with test-releases standing in for GitHub: a locally built
-# release has no real attestation. It passes only for this repository, from
-# main, when the bundle names the subject's digest, as test-releases gives
-# for the digests the test says are attested. The real CLI's check of a real
-# release is A90's last step (auto-upgrade.sh verify).
+# release has no real attestation. It passes only for auto-upgrade.sh's whole
+# policy (this repository, signed by its ci.yml, from main, on a hosted
+# runner, and from the commit given, when one is) and when the bundle names
+# the subject's digest and that commit, as test-releases gives for the
+# digests the test says are attested. The real CLI's check of a real release
+# is A90's last step (auto-upgrade.sh verify).
 [ "$1 $2" = "attestation verify" ] || exit 4
 subject=$3
 shift 3
-repo="" bundle="" ref=""
+repo="" bundle="" ref="" signer="" commit="" hosted=""
 while [ $# -gt 0 ]; do
 	case $1 in
 	--repo) repo=$2 && shift 2 ;;
 	--bundle) bundle=$2 && shift 2 ;;
 	--source-ref) ref=$2 && shift 2 ;;
+	--signer-workflow) signer=$2 && shift 2 ;;
+	--source-digest) commit=$2 && shift 2 ;;
+	--deny-self-hosted-runners) hosted=1 && shift ;;
 	*) shift ;;
 	esac
 done
-[ "$repo" = RIKIKU/PagerArchive ] && [ "$ref" = refs/heads/main ] && [ -s "$bundle" ] || exit 1
+[ "$repo" = RIKIKU/PagerArchive ] && [ "$ref" = refs/heads/main ] && [ "$signer" = RIKIKU/PagerArchive/.github/workflows/ci.yml ] &&
+	[ -n "$hosted" ] && [ -s "$bundle" ] || exit 1
+[ -z "$commit" ] || grep -q "\"commit\":\"$commit\"" "$bundle" || exit 1
 case $subject in
 oci://*@sha256:*) digest=sha256:${subject##*@sha256:} ;;
 *) digest=sha256:$(sha256sum "$subject" | cut -d' ' -f1) ;;

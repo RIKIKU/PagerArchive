@@ -192,30 +192,53 @@ tools() {
 }
 
 # ── Versions ───────────────────────────────────────────────────────────────
-is_release() { printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; }
+# Every version and tag taken in (the running version, GitHub's answers, the
+# arguments) is checked whole, as one line, before it reaches a path or a
+# command: a release is X.Y.Z and its tag vX.Y.Z, nothing else (R84k).
+is_release() { [[ $1 =~ ^[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]]; }
+is_tag() { [[ $1 =~ ^v[0-9]{1,9}\.[0-9]{1,9}\.[0-9]{1,9}$ ]]; }
+# is_commit: a full commit ID, as GitHub gives a tag's.
+is_commit() { [[ $1 =~ ^[0-9a-f]{40}$ ]]; }
 newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -n 1)" = "$1" ]; }
 minor_of() { printf '%s' "${1%.*}"; }
 
 running_version() {
-	dc exec -T api /usr/local/bin/pagerarchive version 2>/dev/null | sed -n 's/^pagerarchive //p' | tr -d '\r'
+	dc exec -T api /usr/local/bin/pagerarchive version 2>/dev/null | sed -n 's/^pagerarchive //p' | tr -d '\r' | head -n 1
 }
 
 # latest_release: the newest full release's tag, from the list, which it keeps
-# in a file (it runs in a subshell) for release_field and asset_url.
+# in a file (it runs in a subshell) for release_field and asset_url. An answer
+# that isn't one tag, alone on its line, is refused.
 latest_release() {
+	local tag
 	curl_api "/releases?per_page=50" >"$RELEASES" || return 1
-	"$JQ" -r '[.[] | select(.draft == false and .prerelease == false)
-		| select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))]
+	tag=$("$JQ" -r '[.[] | select(.draft == false and .prerelease == false)
+		| select(.tag_name | test("\\Av[0-9]+\\.[0-9]+\\.[0-9]+\\z"))]
 		| sort_by(.tag_name | ltrimstr("v") | split(".") | map(tonumber)) | last // empty
-		| .tag_name' "$RELEASES"
+		| .tag_name' "$RELEASES") || return 1
+	[ -z "$tag" ] || is_tag "$tag" || return 1
+	printf '%s\n' "$tag"
+}
+
+# tag_commit <tag>: the commit the release's tag names, from GitHub's API
+# (which follows an annotated tag to its commit).
+tag_commit() {
+	local c
+	c=$(curl_api "/commits/$1" 2>/dev/null | "$JQ" -r '.sha // empty' 2>/dev/null)
+	is_commit "$c" || return 1
+	printf '%s' "$c"
 }
 
 release_field() { "$JQ" -r --arg t "$1" ".[] | select(.tag_name == \$t) | $2" "$RELEASES"; }
 asset_url() { release_field "$1" ".assets[] | select(.name == \"$2\") | .browser_download_url"; }
 
 # ── Verify ─────────────────────────────────────────────────────────────────
-# attested <subject> <digest>: the subject's attestations from GitHub's API,
-# verified by the pinned CLI: built by this repository's workflows on main.
+# attested <subject> <digest> <name>: the subject's attestations from GitHub's
+# API, verified by the pinned CLI (R84e): signed by this repository's
+# .github/workflows/ci.yml (which the Release workflow calls) on main, on a
+# GitHub-hosted runner and, when SOURCE_DIGEST is set, built from that commit,
+# the release's tag's: so a file or image from another release, or from any
+# other workflow or branch, doesn't pass.
 attested() {
 	local bundles
 	# gh wants the bundles file named .jsonl.
@@ -225,7 +248,9 @@ attested() {
 		REASON="no attestation for $3"
 		return 1
 	fi
-	if ! "$GH" attestation verify "$1" --repo "$PA_REPO" --source-ref refs/heads/main --bundle "$bundles" >/dev/null 2>&1; then
+	if ! "$GH" attestation verify "$1" --repo "$PA_REPO" --signer-workflow "$PA_REPO/.github/workflows/ci.yml" \
+		--source-ref refs/heads/main ${SOURCE_DIGEST:+--source-digest "$SOURCE_DIGEST"} --deny-self-hosted-runners \
+		--bundle "$bundles" >/dev/null 2>&1; then
 		rm -f "$bundles"
 		REASON="the attestation of $3 doesn't verify"
 		return 1
@@ -255,6 +280,17 @@ verify_image() {
 # names it). Sets FILES_SHA (what's installed is checked against it) and VERIFIED.
 verify() {
 	local tag=$1 v=${1#v} dir url f d id
+	SOURCE_DIGEST=""
+	is_tag "$tag" || {
+		REASON="that isn't a release's tag (vX.Y.Z)"
+		return 1
+	}
+	SOURCE_DIGEST=$(tag_commit "$tag") || {
+		SOURCE_DIGEST=""
+		REASON="couldn't find the commit $tag names"
+		NOT_READY=1
+		return 1
+	}
 	dir=$HOME_AU/releases/$v
 	rm -rf "$dir"
 	mkdir -p "$dir"
@@ -442,10 +478,18 @@ back_up() {
 		REASON="the backup failed: $(printf '%s\n' "$out" | sed -n 's/^backup: failed: //p' | tail -n 1)"
 		return 1
 	fi
-	dc exec -T backup sh -c "set -e; d=/backups/pre-upgrade/$SET; mkdir -p \$d
-		for f in pagerarchive.dump authentik.dump counts.tsv check; do ln -f /backups/$NIGHT.\$f \$d/$NIGHT.\$f; done
-		chown \${BACKUP_UID:-0}:\${BACKUP_GID:-0} /backups/pre-upgrade \$d; chmod 750 /backups/pre-upgrade \$d
-		ls -1d /backups/pre-upgrade/*/ | sort | head -n -$KEEP | xargs -r rm -rf" || {
+	# The set's name is made of checked versions; it and the others go to the
+	# container's shell as arguments, never as code (R84k). Old sets are
+	# pruned one path at a time, never through xargs.
+	[[ $SET =~ ^[0-9]{8}T[0-9]{6}Z-[0-9.]+-to-[0-9.]+$ ]] || {
+		REASON="the backup set's name isn't one this script makes"
+		return 1
+	}
+	dc exec -T backup sh -c 'set -e; d=/backups/pre-upgrade/$1; mkdir -p "$d"
+		for f in pagerarchive.dump authentik.dump counts.tsv check; do ln -f "/backups/$2.$f" "$d/$2.$f"; done
+		chown "${BACKUP_UID:-0}:${BACKUP_GID:-0}" /backups/pre-upgrade "$d"; chmod 750 /backups/pre-upgrade "$d"
+		ls -1d /backups/pre-upgrade/*/ | sort | head -n -"$3" | while IFS= read -r old; do rm -rf -- "$old"; done' \
+		sh "$SET" "$NIGHT" "$KEEP" || {
 		REASON="couldn't keep the backup aside"
 		return 1
 	}
@@ -463,7 +507,7 @@ back_up() {
 			[ ! -e "$MON_DIR/$f" ] || cp -a "$MON_DIR/$f" "$FILES_DIR/monitoring/"
 		done
 	fi
-	ls -1d "$HOME_AU"/files/*/ | sort | head -n -"$KEEP" | xargs -r rm -rf
+	ls -1d "$HOME_AU"/files/*/ | sort | head -n -"$KEEP" | while IFS= read -r old; do rm -rf -- "$old"; done
 }
 
 # images_of <compose function>: "image ID<TAB>image name" for each container,
@@ -503,14 +547,15 @@ install_files() {
 
 # our_images_verified: after the pull, the images Compose will run are the
 # verified ones; one whose tag moved since (a patch release came out) is
-# verified too, or refused.
+# verified too, or refused. That one is from a release other than the one
+# verified, so it's held to the signer, main and a hosted runner, not to a commit.
 our_images_verified() {
 	local ref id
 	for ref in $(cat "$PA_DIR/compose.yaml" "$PA_DIR/compose.override.yaml" 2>/dev/null |
 		sed -n -E "s#^ *image: *(${PREFIX//./\\.}pagerarchive(-client)?:[0-9.]+) *\$#\1#p" | sort -u); do
 		id=$(docker image inspect -f '{{.Id}}' "$ref" 2>/dev/null)
 		case " $VERIFIED " in *" $id "*) continue ;; esac
-		verify_image "$ref" || return 1
+		SOURCE_DIGEST="" verify_image "$ref" || return 1
 		id=$IMAGE_ID
 		VERIFIED="$VERIFIED $id"
 	done
@@ -662,8 +707,10 @@ run() {
 		return 0
 	fi
 	if ! is_release "$FROM"; then
-		event info check skipped "$FROM isn't a release"
-		checked skipped "$FROM isn't a release, so it isn't upgraded"
+		# Only a release's version is repeated: anything else may be any text.
+		case $FROM in *[!0-9A-Za-z.+-]* | ?????????????????????????????????*) FROM="" ;; esac
+		event info check skipped "the running version (${FROM:-not a version}) isn't a release"
+		checked skipped "the running version (${FROM:-not a version}) isn't a release, so it isn't upgraded"
 		return 0
 	fi
 	if ! latest=$(latest_release) || [ -z "$latest" ]; then
@@ -672,6 +719,11 @@ run() {
 		return 1
 	fi
 	TO=${latest#v}
+	is_release "$TO" || {
+		event warn check failed "GitHub's latest release isn't a version"
+		checked error "GitHub's latest release isn't a version"
+		return 1
+	}
 	if ! newer "$TO" "$FROM"; then
 		event info check up-to-date
 		checked up-to-date "$FROM is the latest release"
@@ -841,6 +893,21 @@ main() {
 	mkdir -p "$HOME_AU"
 	local cmd=${1:-}
 	[ $# -eq 0 ] || shift
+	# R84k: a version or tag argument is checked before anything uses it.
+	case $cmd in
+	retry)
+		is_release "${1#v}" || {
+			echo "usage: auto-upgrade.sh retry X.Y.Z" >&2
+			return 2
+		}
+		;;
+	verify)
+		[ -z "${1:-}" ] || is_tag "$1" || {
+			echo "usage: auto-upgrade.sh verify [vX.Y.Z]" >&2
+			return 2
+		}
+		;;
+	esac
 	case $cmd in
 	run | verify | retry | clear | status | enable | disable) ;;
 	*)
@@ -908,7 +975,7 @@ main() {
 		[ -n "$tag" ] || tag=$(latest_release)
 		REASON=""
 		if verify "$tag"; then
-			echo "verified: $tag's files ($FILES) and images ($IMAGES) were built by $PA_REPO's workflows on main"
+			echo "verified: $tag's files ($FILES) and images ($IMAGES) were signed by $PA_REPO's ci.yml on main, on a GitHub-hosted runner, from $tag's commit $SOURCE_DIGEST"
 		else
 			echo "NOT verified: $tag: $REASON" >&2
 			return 1
@@ -917,5 +984,8 @@ main() {
 	esac
 }
 
-main "$@"
-exit $?
+# Sourced (by the root package's tests, R84k), it only defines the functions.
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+	main "$@"
+	exit $?
+fi

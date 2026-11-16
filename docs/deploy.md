@@ -45,15 +45,22 @@ docker compose up -d
 
 ### Checking the files
 
-Each release's files and images are attested by the release's own run (GitHub artifact attestations), so you can check they were built by this repository's Release workflow and not changed since. With the [GitHub CLI](https://cli.github.com/), download the archive instead of piping it into `tar`, then:
+Each release's files and images are attested by the release's own run (GitHub artifact attestations), so you can check they were built by this repository's Release workflow, from the commit the release's tag names, and not changed since. With the [GitHub CLI](https://cli.github.com/), download the archive instead of piping it into `tar`, then, with the release's version:
 
 ```sh
-gh attestation verify compose.yaml --repo RIKIKU/PagerArchive
-gh attestation verify pagerarchive-config.tar.gz --repo RIKIKU/PagerArchive
-gh attestation verify oci://ghcr.io/rikiku/pagerarchive:<version> --repo RIKIKU/PagerArchive
+version=1.12.0
+commit=$(gh api repos/RIKIKU/PagerArchive/commits/v$version --jq .sha)
+check() {
+  gh attestation verify "$1" --repo RIKIKU/PagerArchive \
+    --signer-workflow RIKIKU/PagerArchive/.github/workflows/ci.yml \
+    --source-ref refs/heads/main --source-digest "$commit" --deny-self-hosted-runners
+}
+check compose.yaml
+check pagerarchive-config.tar.gz
+check oci://ghcr.io/rikiku/pagerarchive:$version
 ```
 
-Each succeeds (in a terminal it says `Verification succeeded!`), or fails with exit status 1 if the file was changed or wasn't built by this repository. The client's image is `oci://ghcr.io/rikiku/pagerarchive-client:<version>`. Releases from before attestations were added (November 2026) have none.
+Each succeeds (in a terminal it says `Verification succeeded!`), or fails with exit status 1 if the file was changed, or wasn't built by this repository's `ci.yml` (the workflow the Release workflow runs) on main, on GitHub's own runners, from that release's commit. The client's image is `oci://ghcr.io/rikiku/pagerarchive-client:$version`. Releases from before attestations were added (November 2026) have none.
 
 The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows `db` as healthy, and the others as running. The app's sign-in works once Authentik has finished.
 

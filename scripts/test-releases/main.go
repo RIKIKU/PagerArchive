@@ -6,8 +6,9 @@
 //	<dir>/attested        one "sha256:<hex>" per line: the digests with an attestation
 //	<dir>/files/...       served at /files/...
 //
-// An attested digest's bundle is {"test": "sha256:<hex>"}, which only the
-// stand-in GitHub CLI next to this (gh) accepts.
+// Every release's tag names the same made-up commit, testCommit, and an
+// attested digest's bundle is {"test": "sha256:<hex>", "commit": testCommit},
+// which only the stand-in GitHub CLI next to this (gh) accepts.
 //
 //	go run ./scripts/test-releases -dir DIR -addr 127.0.0.1:15080
 package main
@@ -22,6 +23,9 @@ import (
 	"path/filepath"
 	"strings"
 )
+
+// testCommit is the commit every test release's tag names.
+const testCommit = "0123456789abcdef0123456789abcdef01234567"
 
 func main() {
 	dir := flag.String("dir", ".", "the folder")
@@ -40,12 +44,17 @@ func main() {
 			for s := bufio.NewScanner(f); s.Scan(); {
 				if strings.TrimSpace(s.Text()) == digest {
 					w.Header().Set("Content-Type", "application/json")
-					_ = json.NewEncoder(w).Encode(map[string]any{"attestations": []any{map[string]any{"bundle": map[string]string{"test": digest}}}})
+					_ = json.NewEncoder(w).Encode(map[string]any{"attestations": []any{map[string]any{"bundle": map[string]string{"test": digest, "commit": testCommit}}}})
 					return
 				}
 			}
 		}
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	})
+	// The commit a tag names, as GitHub's API answers for a ref.
+	mux.HandleFunc("GET /repos/{owner}/{repo}/commits/{ref}", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"sha": testCommit})
 	})
 	mux.Handle("GET /files/", http.StripPrefix("/files/", http.FileServer(http.Dir(filepath.Join(*dir, "files")))))
 	log.Printf("test-releases: %s on %s", *dir, *addr)
