@@ -143,14 +143,14 @@ Import-Csv aliases.csv | Import-PagerArchiveAlias -AgencyProfile @{ 'Example Fir
 Get-PagerArchiveAlias | Export-Csv aliases.csv
 ```
 
-writes the import format: importing that file reports every row `Unchanged`.
+writes the import format: importing that file reports every row `Unchanged`. Alias and template names can't start with a formula character, so plain `Export-Csv` is safe here. `Export-PagerArchiveCsv` (below) writes the same file.
 
 ## Messages
 
 ```powershell
 Get-PagerArchiveMessage -Capcode 0100001 -Priority Emergency
 Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
-Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-Csv fires.csv
+Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-PagerArchiveCsv fires.csv
 Get-PagerArchiveMessage -Unaliased -After (Get-Date).AddDays(-30) | Group-Object -Property Capcode
 Get-PagerArchiveMessage -Capcode 0100001 -Skip 20 -First 20
 Get-PagerArchiveMessage -First 1 | Format-List
@@ -161,6 +161,7 @@ Messages come out newest first, with everything the detail view shows: the full 
 - **Paging:** messages are fetched a page at a time, only as the pipeline asks for more, so `-First 10` or `Select-Object -First 10` makes one request and stops. `-Skip` leaves out the newest matches first. There's no `-IncludeTotalCount`: count with `Measure-Object` or `@(...).Count`, which fetches every match.
 - **Display:** a table (sent time, priority, alias or capcode, text) by default. `Format-List` shows what the detail view shows, including each receiver's time.
 - **Times:** tables and lists show times in your time zone. The objects' `SentAt` and `ReceivedAt` are the `[datetimeoffset]` values the server sent (UTC), so `Export-Csv` and comparisons don't depend on where you are.
+- **To a spreadsheet:** use `Export-PagerArchiveCsv` (`Export-PaCsv`), not `Export-Csv`. Page text comes from the radio, and anyone with a transmitter can send a page that starts with `=`, which a spreadsheet would run as a formula. `Export-PagerArchiveCsv` works as `Export-Csv` does (`-Path`, `-LiteralPath`, `-Append`), but writes a value that starts with `=`, `+`, `-`, `@`, a tab or a carriage return with a leading `'`, as the browser's exports do. The objects themselves are unchanged.
 
 ### Watching
 
@@ -168,7 +169,7 @@ Messages come out newest first, with everything the detail view shows: the full 
 Watch-PaMessage -Capcode 0100001
 Watch-PaMessage -Priority Emergency | ForEach-Object { "$($_.Alias): $($_.Text)" }
 Get-PagerArchiveAlias -Name 'Station*' | Watch-PagerArchiveMessage
-Watch-PaMessage -JobNumber EX0000041 | Export-Csv job.csv -Append
+Watch-PaMessage -JobNumber EX0000041 | Export-PaCsv job.csv -Append
 ```
 
 `Watch-PagerArchiveMessage` (`Watch-PaMessage`) outputs each new message the moment it arrives, as the same objects `Get-PagerArchiveMessage` returns, until you press Ctrl+C. It takes the same filters, except `-After`, `-Before`, `-First` and `-Skip`.

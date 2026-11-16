@@ -65,7 +65,7 @@ area_of() {
 	scripts/a15.sh) echo job:budget ;;
 	scripts/monitoring-checks.sh | scripts/monitoring-screenshots.*) echo job:monitoring ;;
 	# Read by no check: run by hand, or by GitHub and Renovate themselves.
-	scripts/mutation-checks.sh | scripts/oauth-probe.py | scripts/example-map/*.sh | .github/release.yml | .github/renovate.json5) echo none ;;
+	scripts/mutation-checks.sh | scripts/a105.sh | scripts/oauth-probe.py | scripts/example-map/*.sh | .github/release.yml | .github/renovate.json5) echo none ;;
 	*) echo all ;;
 	esac
 }
