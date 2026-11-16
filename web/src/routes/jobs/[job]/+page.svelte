@@ -2,7 +2,7 @@
 	// R34: every message of a job, ignored aliases' too, newest first, live,
 	// within the search box's search (R33a).
 	import { page } from '$app/state';
-	import { api, areaName, type Meta } from '#lib/api.ts';
+	import { api, areaName, type AreaRef, type Meta } from '#lib/api.ts';
 	import MessageList from '#lib/MessageList.svelte';
 	import { criteria } from '#lib/search.ts';
 
@@ -14,12 +14,12 @@
 	// R88b: the areas its pages are in, at a glance, asked again as pages
 	// arrive (a new page may be in another).
 	let meta: Meta | undefined = $state();
-	let areas: string[] = $state([]);
+	let areas: AreaRef[] = $state([]);
 	api.meta().then((m) => (meta = m)).catch(() => {});
 	$effect(() => {
 		void count;
 		const asked = job;
-		if (!meta?.areas) return;
+		if (!meta?.areas?.length) return;
 		api
 			.jobAreas(asked)
 			.then((a) => {
@@ -33,9 +33,9 @@
 
 <div class="job">
 	<MessageList {query} base={{ job, ignored: 'true' }} title="Job {job}" bind:count bind:more>
-		{#if meta?.areas && areas.length}
-			<ul class="areas" aria-label="{meta.areas.label}, from where its pages were placed" data-testid="job-areas">
-				{#each areas as a (a)}<li>{areaName(meta, a)}</li>{/each}
+		{#if meta?.areas?.length && areas.length}
+			<ul class="areas" aria-label="Areas, from where its pages were placed" data-testid="job-areas">
+				{#each areas as a (a.layer + ' ' + a.name)}<li data-layer={a.layer} data-outline={meta.areas.find((l) => l.id === a.layer)?.outline}>{areaName(meta, a)}</li>{/each}
 			</ul>
 		{/if}
 		<p class="status">
@@ -71,6 +71,13 @@
 		color: var(--fg);
 		font-size: var(--text-md);
 		font-weight: var(--weight-strong);
+	}
+	/* Each layer's tags edged as the map outlines it (R88c). */
+	.areas li[data-outline='dashed'] {
+		border-style: dashed;
+	}
+	.areas li[data-outline='dotted'] {
+		border-style: dotted;
 	}
 	@media (max-width: 47.99rem) {
 		.job {

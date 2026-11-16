@@ -174,18 +174,13 @@ func setup(t *testing.T, with ...traced) *env {
 		t.Fatal(err)
 	}
 	// The example's areas (R88), as serve loads them.
-	areaFile, err := areas.ReadFile(n.Areas.Path, n.Areas.NameProperty)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := areas.Load(ctx, st, areaFile); err != nil {
-		t.Fatal(err)
+	areaSet := areas.Start(ctx, st, n.Areas, slog.New(slog.NewJSONHandler(e.logs, nil)))
+	for _, l := range areaSet {
+		if l.Error != "" {
+			t.Fatalf("areas %s: %s", l.ID, l.Error)
+		}
 	}
 	if err := areas.Backfill(ctx, st, nil, 0); err != nil {
-		t.Fatal(err)
-	}
-	areaSet, err := areas.Prepare(ctx, st, n.Areas, areaFile)
-	if err != nil {
 		t.Fatal(err)
 	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: n.GridSystem}

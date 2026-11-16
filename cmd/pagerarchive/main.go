@@ -234,13 +234,6 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("address dataset: %w", err)
 	}
-	// The areas file is checked with the profile, before anything else (R88).
-	var areaFile *areas.File
-	if net.Areas != nil {
-		if areaFile, err = areas.ReadFile(net.Areas.Path, net.Areas.NameProperty); err != nil {
-			return fmt.Errorf("areas:\n%w", err)
-		}
-	}
 
 	dbURL := os.Getenv("DATABASE_URL")
 	if dbURL == "" {
@@ -306,14 +299,13 @@ func serve(stderr io.Writer) error {
 		log.Info("address dataset loaded", "addresses", stats.Addresses, "streets", stats.Streets, "localities", stats.Localities, "seconds", int(time.Since(started).Seconds()))
 	}
 	geocoder := &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}
-	// The profile's areas (R88, ADR 0035): loaded when they change, before
-	// any page is placed, and the area of every page stored before worked out
-	// in the background. With none, any loaded before are removed.
-	areaSet, err := loadAreas(ctx, st, net, areaFile, log)
-	if err != nil {
-		return err
-	}
-	if areaSet != nil {
+	// The profile's layers of areas (R88, ADR 0035): loaded when they change,
+	// before any page is placed, layers no longer named removed, and the area
+	// of every page stored before worked out in the background. A layer whose
+	// file is missing or broken is logged and left out: it doesn't stop the API
+	// (an automatic upgrade must come up), and Administration says so.
+	areaLayers := areas.Start(ctx, st, net.Areas, log)
+	if len(areaLayers) > 0 {
 		go func() {
 			for ctx.Err() == nil {
 				err := areas.Backfill(ctx, st, log, 30*time.Second)
@@ -479,7 +471,7 @@ func serve(stderr io.Writer) error {
 		Started:               time.Now(),
 		MapTiles:              mapTiles,
 		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
-		Areas:                 areaSet,
+		Areas:                 areaLayers,
 		Integrations:          integ,
 		MetricsToken:          os.Getenv("METRICS_TOKEN"),
 		Locks:                 locks,
@@ -696,30 +688,4 @@ func expireSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 		case <-t.C:
 		}
 	}
-}
-
-// loadAreas loads the network profile's areas into the database when they've
-// changed and reads their outlines for the map (R88, ADR 0035), or, when the
-// profile names none, removes any loaded before (R88d). nil: no areas.
-func loadAreas(ctx context.Context, st *store.Store, net *profile.Network, f *areas.File, log *slog.Logger) (*areas.Areas, error) {
-	if f == nil {
-		if err := areas.Clear(ctx, st); err != nil {
-			return nil, fmt.Errorf("areas: %s", store.SafeError(err))
-		}
-		return nil, nil
-	}
-	started := time.Now()
-	stats, err := areas.Load(ctx, st, f)
-	if err != nil {
-		return nil, fmt.Errorf("areas: %s", store.SafeError(err))
-	}
-	a, err := areas.Prepare(ctx, st, net.Areas, f)
-	if err != nil {
-		return nil, fmt.Errorf("areas: %s", store.SafeError(err))
-	}
-	if !stats.Skipped {
-		log.Info("areas loaded", "areas", stats.Areas, "pieces", stats.Parts, "map_tolerance_degrees", stats.Tolerance,
-			"map_bytes", len(a.Map), "map_gzip_bytes", len(a.MapGzip), "seconds", int(time.Since(started).Seconds()))
-	}
-	return a, nil
 }

@@ -70,13 +70,14 @@ func validateProfile(args []string, stdout, stderr io.Writer) error {
 		}
 		ix = streets.NewIndex(ds.Streets, net.StreetTypes)
 		fmt.Fprintf(stdout, "network: %s; streets: %s (%d)\n", net.Name, path, len(ds.Streets))
-		if net.Areas != nil {
-			// R88: the areas file is checked as the server checks it.
-			f, err := areas.ReadFile(net.Areas.Path, net.Areas.NameProperty)
+		// R88: each layer's areas file is checked as the server checks it.
+		// The server starts without a layer whose file is wrong; this fails.
+		for _, l := range net.Areas {
+			f, err := areas.ReadFile(l.Path, l.NameProperty)
 			if err != nil {
-				return fmt.Errorf("areas:\n%w", err)
+				return fmt.Errorf("areas %q:\n%w", l.ID, err)
 			}
-			fmt.Fprintf(stdout, "areas: %s (%d, each a %q)\n", net.Areas.Path, len(f.Areas), net.Areas.Label)
+			fmt.Fprintf(stdout, "areas %s: %s (%d, each a %q, %s outline)\n", l.ID, l.Path, len(f.Areas), l.Label, l.Outline)
 		}
 	}
 

@@ -51,7 +51,9 @@ mkdir -p "$WORK/profiles"
 echo "--- making the dataset ($LOCALITIES localities)"
 go run scripts/a15/dataset.go -o "$WORK/profiles/a15-addresses.csv.gz" -sample "$WORK/sample.txt" -localities "$LOCALITIES"
 ls -l "$WORK/profiles/a15-addresses.csv.gz" | awk '{print "--- dataset file: " $5 " bytes"}'
-cp profiles/example/example-fire.json "$WORK/profiles/"
+# Every file of the example but its addresses (the agency profile, the
+# areas: R88), so nothing the network profile names is missing.
+find profiles/example -maxdepth 1 -type f ! -name example-addresses.json ! -name example-network.json -exec cp {} "$WORK/profiles/" \;
 sed 's/"path": "example-addresses.json"/"path": "a15-addresses.csv.gz"/' profiles/example/example-network.json >"$WORK/profiles/example-network.json"
 chmod -R a+rX "$WORK"
 export PROFILES_DIR="$WORK/profiles"
@@ -98,6 +100,13 @@ started=$(date +%s)
 stack_up
 echo "--- API up $(($(date +%s) - started)) s after start (dataset loaded)"
 grep -h '"address dataset loaded"' "$OUT/a15-api.log" 2>/dev/null || stack_compose logs --no-color api | grep 'address dataset loaded\|street index' || true
+# Every layer of the example's areas (R88) loads: a file left out of the
+# profiles folder would start the API without it.
+stack_compose logs --no-color api | grep '"areas loaded"' || true
+if stack_compose logs --no-color api | grep "areas didn't load"; then
+	echo "FAIL: the example's areas didn't load" >&2
+	exit 1
+fi
 
 cli() { stack_compose exec -T api /usr/local/bin/pagerarchive "$@"; }
 stack_compose exec -T db psql -q -v ON_ERROR_STOP=1 -U postgres >/dev/null <scripts/fixture.sql

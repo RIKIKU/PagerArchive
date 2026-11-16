@@ -121,9 +121,12 @@
 							<a href="/map?focus={m.id}&from={isoDate(m.sent_at, tz)}&to={isoDate(m.sent_at, tz)}">Show on map</a>
 						{:else}Not placed on the map{/if}
 					</dd>
-					<!-- R88b: the area it's in, worked out from where it was placed (not a field, P3). -->
-					{#if m.area && meta?.areas}<dt>{meta.areas.label}</dt>
-						<dd data-testid="area">{areaName(meta, m.area)}</dd>{/if}
+					<!-- R88b: the area of each layer it's in, worked out from where it was placed (not a field, P3). -->
+					{#each m.areas ?? [] as a (a.layer)}
+						{@const l = meta?.areas?.find((x) => x.id === a.layer)}
+						{#if l}<dt>{l.label}</dt>
+							<dd data-testid="area">{areaName(meta, a)}</dd>{/if}
+					{/each}
 					{#each Object.entries(m.extra) as [k, v] (k)}
 						<dt>{humanise(k)}</dt>
 						<dd>{label(k, v)}</dd>

@@ -75,10 +75,11 @@ type Message struct {
 	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
 
 	Location *Location `json:"location"` // null when not placed (R24-R25)
-	// Area is the name of the area the message is in (R88a, R88b): derived
-	// from where it's placed, not a field (P3). null: no location, in no
-	// area, or the network profile names none.
-	Area *string `json:"area"`
+	// Areas are the areas the message is in, one of each layer at most, in
+	// the profile's order (R88a, R88b): derived from where it's placed, not a
+	// field (P3). Left out when it's in none: no location, in no area, or the
+	// network profile names none.
+	Areas []AreaRef `json:"areas,omitempty"`
 
 	Flags      *Flags      `json:"flags,omitempty"`      // admins only (R35c)
 	Note       *string     `json:"note,omitempty"`       // its note in the album listed (R82f)
@@ -173,8 +174,9 @@ type Meta struct {
 	// The build's version as `pagerarchive version` reports it, such as
 	// "1.9.0" or "1.9.1-dev+abc1234" (12.1): the foot of the menu (R77, R81).
 	Version string `json:"version"`
-	// The network profile's areas (R88), left out when it names none.
-	Areas *MetaAreas `json:"areas,omitempty"`
+	// The network profile's layers of areas that have some to show (R88), in
+	// its order; left out when there are none.
+	Areas []MetaAreas `json:"areas,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {

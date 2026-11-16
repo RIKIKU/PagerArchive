@@ -82,6 +82,7 @@ type AliasRequest struct {
 }
 
 type Area struct {
+	Layer      string
 	Name       string
 	Geom       interface{}
 	Outline    interface{}
@@ -89,8 +90,9 @@ type Area struct {
 }
 
 type AreaPart struct {
-	Name string
-	Geom interface{}
+	Layer string
+	Name  string
+	Geom  interface{}
 }
 
 type Client struct {
@@ -228,6 +230,7 @@ type Message struct {
 
 type MessageArea struct {
 	MessageID int64
+	Layer     string
 	Area      string
 }
 

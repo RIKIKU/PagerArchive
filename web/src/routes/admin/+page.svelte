@@ -1,6 +1,6 @@
 <script lang="ts">
 	// R44b: the Administration start page links to every admin screen.
-	import { api, type AdminAreas, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta } from '#lib/api.ts';
+	import { api, type AdminAreaLayer, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta } from '#lib/api.ts';
 	import BackupAlert from '#lib/BackupAlert.svelte';
 	import GroupPage from '#lib/GroupPage.svelte';
 	import { groups } from '#lib/nav.ts';
@@ -39,11 +39,11 @@
 		.sharedNames()
 		.then((s) => (sharedNames = s.reduce((n, g) => n + g.aliases.length, 0)))
 		.catch(() => {});
-	// R88e: the network profile's areas, if it names some.
-	let areas: AdminAreas | undefined = $state();
+	// R88e: the network profile's layers of areas, if it names some.
+	let areas: AdminAreaLayer[] = $state([]);
 	api
 		.adminAreas()
-		.then((a) => (areas = a))
+		.then((a) => (areas = a.layers))
 		.catch(() => {});
 </script>
 
@@ -61,16 +61,29 @@
 	{/snippet}
 </GroupPage>
 
-{#if areas?.loaded}
+{#if areas.length}
 	<section class="areas" aria-labelledby="areas-h" data-testid="admin-areas">
 		<h2 id="areas-h">Areas on the map</h2>
-		<p>
-			{areas.names.length} {areas.label} outline{areas.names.length === 1 ? '' : 's'} from the network profile's <code>{areas.source}</code>{areas.pending
-				? "; stored pages' areas are still being worked out"
-				: ''}.
-		</p>
-		<p class="names">{areas.names.join(', ')}</p>
-		<p class="credit">{areas.attribution}</p>
+		{#each areas as a (a.id)}
+			<div class="layer" data-testid="admin-areas-{a.id}">
+				<h3>{a.label} <span class="outline">({a.outline} outline)</span></h3>
+				{#if a.error}
+					<p class="failed" role="status">
+						<strong>{a.label} areas didn't load</strong> from <code>{a.source}</code>{a.stale
+							? '; the ones loaded before are shown until the file is put right'
+							: ''}: {a.error}
+					</p>
+				{/if}
+				{#if a.loaded}
+					<p>
+						{a.names.length} {a.label} outline{a.names.length === 1 ? '' : 's'}{a.stale ? '' : ' from the network profile\'s'}
+						{#if !a.stale}<code>{a.source}</code>{/if}{a.pending ? "; stored pages' areas are still being worked out" : ''}.
+					</p>
+					<p class="names">{a.names.join(', ')}</p>
+				{/if}
+				<p class="credit">{a.attribution}</p>
+			</div>
+		{/each}
 	</section>
 {/if}
 
@@ -82,8 +95,24 @@
 	.areas h2 {
 		font-size: var(--text-lg);
 	}
+	.areas h3 {
+		margin: var(--space-md) 0 0;
+		font-size: var(--text-md);
+	}
 	.areas p {
 		margin: var(--space-xs) 0;
+	}
+	.outline {
+		color: var(--muted);
+		font-size: var(--text-sm);
+		font-weight: var(--weight-normal);
+	}
+	.failed {
+		padding: var(--space-xs) var(--space-sm);
+		border-radius: var(--radius);
+		background: var(--warn-bg);
+		color: var(--warn-fg);
+		overflow-wrap: anywhere;
 	}
 	.names,
 	.credit {

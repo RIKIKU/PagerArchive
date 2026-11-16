@@ -59,21 +59,29 @@ type Network struct {
 	Attribution         string
 	StreetTypes         map[string]string
 	GridSystem          string // how grid references are read (R25); "" if not given
-	// Areas are the named polygons a located page can fall in, drawn on the
-	// map (R88, ADR 0035); nil when the profile names none. They're left out
+	// Areas are the layers of named polygons a located page can fall in,
+	// drawn on the map (R88, ADR 0035), in the profile's order; none when it
+	// names none. A page can be in one area of each layer. They're left out
 	// of Hash: they don't change what a page says, so changing them
 	// re-parses nothing (R88d).
-	Areas *Areas
+	Areas []*Areas
 }
 
-// Areas is a network profile's areas (R88): a GeoJSON file of named
-// polygons, what they're called and whose data they are.
+// Areas is one layer of a network profile's areas (R88): a GeoJSON file of
+// named polygons, what one is called, whose data they are and how the map
+// outlines them.
 type Areas struct {
+	ID           string // the layer's machine name, unique in the profile, such as "districts"
 	Path         string // absolute or relative to the working directory
-	Label        string // what one is called, such as "District"
+	Label        string // shown before each name: "District" makes "District 08"
 	NameProperty string // the feature property holding each one's name
 	Attribution  string
+	Outline      string // how the map draws it: "solid", "dashed" or "dotted"
 }
+
+// Outlines are the map's outline styles (R88c), and the default of each
+// layer that names none, by its place in the list.
+var Outlines = []string{"solid", "dashed", "dotted"}
 
 // CapcodeRange is an inclusive range of capcodes.
 type CapcodeRange struct{ From, To int }
@@ -269,11 +277,13 @@ type networkJSON struct {
 		System string `json:"system"`
 	} `json:"grid_reference"`
 	StreetTypes map[string]string `json:"street_types"`
-	Areas       *struct {
+	Areas       []struct {
+		ID           string `json:"id"`
 		Path         string `json:"path"`
 		Label        string `json:"label"`
 		NameProperty string `json:"name_property"`
 		Attribution  string `json:"attribution"`
+		Outline      string `json:"outline"`
 	} `json:"areas"`
 }
 
@@ -361,11 +371,20 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 	if !filepath.IsAbs(n.DatasetPath) {
 		n.DatasetPath = filepath.Join(filepath.Dir(path), n.DatasetPath)
 	}
-	if a := j.Areas; a != nil {
-		n.Areas = &Areas{Path: a.Path, Label: a.Label, NameProperty: a.NameProperty, Attribution: a.Attribution}
-		if !filepath.IsAbs(n.Areas.Path) {
-			n.Areas.Path = filepath.Join(filepath.Dir(path), n.Areas.Path)
+	ids := map[string]bool{}
+	for i, a := range j.Areas {
+		l := &Areas{ID: a.ID, Path: a.Path, Label: a.Label, NameProperty: a.NameProperty, Attribution: a.Attribution, Outline: a.Outline}
+		if !filepath.IsAbs(l.Path) {
+			l.Path = filepath.Join(filepath.Dir(path), l.Path)
 		}
+		if l.Outline == "" {
+			l.Outline = Outlines[i%len(Outlines)]
+		}
+		if ids[l.ID] {
+			fail(fmt.Sprintf("/areas/%d/id", i), fmt.Sprintf("duplicate areas id %q", l.ID))
+		}
+		ids[l.ID] = true
+		n.Areas = append(n.Areas, l)
 	}
 	for i, s := range j.Ignored {
 		r, err := parseRange(s)

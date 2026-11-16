@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/RIKIKU/PagerArchive/internal/areas"
-	"github.com/RIKIKU/PagerArchive/internal/profile"
 )
 
 // How long working out stored pages' areas (ADR 0035) takes on an archive
@@ -25,12 +24,12 @@ func TestAreasBackfillSpeed(t *testing.T) {
 		t.Fatal(err)
 	}
 	start := time.Now()
-	stats, err := areas.Load(e.ctx, e.st, f)
+	stats, err := areas.Load(e.ctx, e.st, "speed", f)
 	if err != nil {
 		t.Fatal(err)
 	}
-	mapped, err := areas.Prepare(e.ctx, e.st, &profile.Areas{Path: f.Path, Label: "Area"}, f)
-	if err != nil {
+	mapped := &areas.Layer{ID: "speed", Label: "Area"}
+	if err := areas.Prepare(e.ctx, e.st, mapped, f.Hash); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("%d areas loaded in %s: %d pieces, outlines simplified at %g degrees: %d bytes, %d gzipped", stats.Areas, time.Since(start).Round(time.Millisecond), stats.Parts, stats.Tolerance, len(mapped.Map), len(mapped.MapGzip))
@@ -43,7 +42,7 @@ func TestAreasBackfillSpeed(t *testing.T) {
 		       CASE WHEN g % 10 <> 0 THEN ST_SetSRID(ST_MakePoint(x.min_x + random() * (x.max_x - x.min_x), x.min_y + random() * (x.max_y - x.min_y)), 4326)::geography END,
 		       CASE WHEN g % 10 <> 0 THEN 'address' END
 		FROM generate_series(1, $1::int) g,
-		     (SELECT ST_XMin(e) AS min_x, ST_XMax(e) AS max_x, ST_YMin(e) AS min_y, ST_YMax(e) AS max_y FROM (SELECT ST_Extent(geom) AS e FROM areas) s) x`, pages); err != nil {
+		     (SELECT ST_XMin(e) AS min_x, ST_XMax(e) AS max_x, ST_YMin(e) AS min_y, ST_YMax(e) AS max_y FROM (SELECT ST_Extent(geom) AS e FROM areas WHERE layer = 'speed') s) x`, pages); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := e.st.Pool.Exec(e.ctx, `ANALYZE messages`); err != nil {
@@ -57,7 +56,7 @@ func TestAreasBackfillSpeed(t *testing.T) {
 	}
 	took := time.Since(start)
 	var in, located int64
-	if err := e.st.Pool.QueryRow(e.ctx, `SELECT (SELECT count(*) FROM message_areas), (SELECT count(*) FROM messages WHERE location IS NOT NULL)`).Scan(&in, &located); err != nil {
+	if err := e.st.Pool.QueryRow(e.ctx, `SELECT (SELECT count(*) FROM message_areas WHERE layer = 'speed'), (SELECT count(*) FROM messages WHERE location IS NOT NULL)`).Scan(&in, &located); err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("backfill: %d of %d located pages in an area, %d pages read, in %s (half of it waiting between batches)", in, located, pages, took.Round(time.Second))

@@ -119,7 +119,7 @@
 					{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 					<span class="who">{m.alias ?? m.capcode}</span>
 					<span class="where">{where(m)}</span>
-					{#if m.area && meta?.areas}<span class="where" data-testid="located-area">{areaName(meta, m.area)}</span>{/if}
+					{#if meta?.areas}{#each m.areas ?? [] as a (a.layer)}<span class="where" data-testid="located-area">{areaName(meta, a)}</span>{/each}{/if}
 					<span class="text">{m.display_text}</span>
 				</a>
 			</li>

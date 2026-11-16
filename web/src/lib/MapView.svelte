@@ -161,7 +161,7 @@
 	function credits(): string[] | undefined {
 		const c: string[] = [];
 		if (meta.attribution) c.push(`Address data: ${meta.attribution}`);
-		if (variant === 'full' && meta.areas) c.push(`${meta.areas.label} outlines: ${meta.areas.attribution}`);
+		if (variant === 'full') for (const l of meta.areas ?? []) c.push(`${l.label} outlines: ${l.attribution}`);
 		return c.length ? c : undefined;
 	}
 
@@ -297,60 +297,88 @@
 		});
 	}
 
-	// R88c: the network's areas, outlined and labelled under the messages on
-	// the map page, shown or hidden by a button whose choice this browser
-	// remembers. The outlines are asked for by their version, so the browser
-	// keeps them until the areas change.
-	const withAreas = $derived(variant === 'full' && !!meta.areas);
-	const areasKey = 'pagerarchive.map.areas';
-	let showAreas = $state(true);
-	try {
-		showAreas = localStorage.getItem(areasKey) !== 'hidden';
-	} catch {
-		// No storage: shown.
+	// R88c: the network's layers of areas, each outlined and labelled under
+	// the messages on the map page in its own style (tokens), the later over
+	// the earlier, each shown or hidden by its own button whose choice this
+	// browser remembers. The outlines are asked for by their version, so the
+	// browser keeps them until the areas change.
+	const areaLayers = $derived(variant === 'full' ? (meta.areas ?? []) : []);
+	const areasKey = (id: string) => `pagerarchive.map.areas.${id}`;
+	function remembered(): Record<string, boolean> {
+		const out: Record<string, boolean> = {};
+		for (const l of meta.areas ?? []) {
+			try {
+				out[l.id] = localStorage.getItem(areasKey(l.id)) !== 'hidden';
+			} catch {
+				out[l.id] = true; // No storage: shown.
+			}
+		}
+		return out;
 	}
-	// How many outlines are drawn, kept on the map's element for a test.
-	let areasDrawn = $state(0);
+	let shownAreas: Record<string, boolean> = $state(remembered());
+	// How many outlines of each layer are drawn, kept on its button for a test.
+	let areasDrawn: Record<string, number> = $state({});
+
+	// A dash token as MapLibre's line-dasharray (in multiples of the line's
+	// width), or undefined for a solid line.
+	function dashes(name: string): number[] | undefined {
+		const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return v && v !== 'none' ? v.split(/\s+/).map(Number) : undefined;
+	}
 
 	function addAreaLayers() {
-		if (!map || !meta.areas || variant !== 'full') return;
-		const look = { line: px('--map-area-stroke'), font: font('--map-font'), label: rem('--text-sm'), halo: px('--map-stroke') };
-		const visibility = showAreas ? 'visible' : 'none';
-		map.addSource('areas', { type: 'geojson', data: `${location.origin}/api/v1/map/areas?v=${encodeURIComponent(meta.areas.version)}` });
-		// Outlines are the features without a label point's mark.
-		map.addLayer({
-			id: 'area-lines',
-			type: 'line',
-			source: 'areas',
-			filter: ['!', ['has', 'label']],
-			layout: { visibility, 'line-join': 'round' },
-			paint: { 'line-color': token('--map-area-line'), 'line-width': look.line }
-		});
-		map.addLayer({
-			id: 'area-labels',
-			type: 'symbol',
-			source: 'areas',
-			filter: ['has', 'label'],
-			layout: {
-				visibility,
-				'text-field': ['concat', `${meta.areas.label} `, ['get', 'name']],
-				'text-font': [look.font],
-				'text-size': look.label,
-				'text-allow-overlap': false
-			},
-			paint: { 'text-color': token('--map-area-label'), 'text-halo-color': token('--map-area-halo'), 'text-halo-width': look.halo }
-		});
+		if (!map) return;
+		for (const l of areaLayers) {
+			const o = l.outline;
+			const look = {
+				line: token(`--map-area-${o}-line`),
+				width: px(`--map-area-${o}-stroke`),
+				dash: dashes(`--map-area-${o}-dash`),
+				label: token(`--map-area-${o}-label`),
+				font: font('--map-font'),
+				size: rem('--text-sm'),
+				halo: px('--map-stroke')
+			};
+			const visibility = shownAreas[l.id] === false ? 'none' : 'visible';
+			const source = `areas-${l.id}`;
+			map.addSource(source, { type: 'geojson', data: `${location.origin}/api/v1/map/areas/${encodeURIComponent(l.id)}?v=${encodeURIComponent(l.version)}` });
+			// Outlines are the features without a label point's mark.
+			map.addLayer({
+				id: `area-lines-${l.id}`,
+				type: 'line',
+				source,
+				filter: ['!', ['has', 'label']],
+				layout: { visibility, 'line-join': 'round', 'line-cap': o === 'dotted' ? 'round' : 'butt' },
+				paint: { 'line-color': look.line, 'line-width': look.width, ...(look.dash ? { 'line-dasharray': look.dash } : {}) }
+			});
+			map.addLayer({
+				id: `area-labels-${l.id}`,
+				type: 'symbol',
+				source,
+				filter: ['has', 'label'],
+				layout: {
+					visibility,
+					'text-field': ['concat', `${l.label} `, ['get', 'name']],
+					'text-font': [look.font],
+					'text-size': look.size,
+					'text-allow-overlap': false
+				},
+				paint: { 'text-color': look.label, 'text-halo-color': token('--map-area-halo'), 'text-halo-width': look.halo }
+			});
+		}
 	}
 
-	function toggleAreas() {
-		showAreas = !showAreas;
+	function toggleAreas(id: string) {
+		const shown = shownAreas[id] === false;
+		shownAreas[id] = shown;
 		try {
-			localStorage.setItem(areasKey, showAreas ? 'shown' : 'hidden');
+			localStorage.setItem(areasKey(id), shown ? 'shown' : 'hidden');
 		} catch {
 			// Not remembered.
 		}
-		for (const id of ['area-lines', 'area-labels']) if (map?.getLayer(id)) map.setLayoutProperty(id, 'visibility', showAreas ? 'visible' : 'none');
+		for (const layer of [`area-lines-${id}`, `area-labels-${id}`]) if (map?.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', shown ? 'visible' : 'none');
 	}
+
 
 	function addLayers() {
 		if (variant === 'heat') addHeatLayers();
@@ -478,7 +506,10 @@
 		// more frame once everything has loaded shows them.
 		map.once('idle', () => map?.triggerRepaint());
 		map.on('idle', () => {
-			if (map?.getLayer('area-lines')) areasDrawn = showAreas ? map.queryRenderedFeatures({ layers: ['area-lines'] }).length : 0;
+			for (const l of areaLayers) {
+				const id = `area-lines-${l.id}`;
+				if (map?.getLayer(id)) areasDrawn[l.id] = shownAreas[l.id] === false ? 0 : map.queryRenderedFeatures({ layers: [id] }).length;
+			}
 		});
 		map.on('moveend', looked);
 		map.on('resize', looked);
@@ -581,8 +612,6 @@
 				data-ready={unavailable ? 'unavailable' : ready}
 				data-drawn={drawn || undefined}
 				data-view={view || undefined}
-				data-areas={withAreas ? (showAreas ? 'shown' : 'hidden') : undefined}
-				data-areas-drawn={withAreas ? areasDrawn : undefined}
 			>
 				{#if unavailable}
 					<p>
@@ -604,8 +633,19 @@
 					>
 					<span class="tooltip" aria-hidden="true">Full screen map</span>
 				</span>
-				{#if withAreas}
-					<button type="button" class="secondary areas-toggle" aria-pressed={showAreas} onclick={toggleAreas}>{meta.areas?.label} outlines</button>
+				{#if areaLayers.length}
+					<div class="areas-toggles">
+						{#each areaLayers as l (l.id)}
+							<button
+								type="button"
+								class="secondary areas-toggle"
+								aria-pressed={shownAreas[l.id] !== false}
+								data-layer={l.id}
+								data-drawn={areasDrawn[l.id] ?? 0}
+								onclick={() => toggleAreas(l.id)}><span class="swatch" data-outline={l.outline} aria-hidden="true"></span>{l.label} outlines</button
+							>
+						{/each}
+					</div>
 				{/if}
 			{/if}
 		</div>
@@ -696,17 +736,41 @@
 		left: 0;
 		transform: none;
 	}
-	/* R88c: the areas' button, under the full-screen button: in sight at the
-	   top of the map on a phone, where the bottom bar may cover its foot. */
-	.areas-toggle {
+	/* R88c: a button for each layer of areas, under the full-screen button:
+	   in sight at the top of the map on a phone, where the bottom bar may
+	   cover its foot. The column lets the map's own gestures through. */
+	.areas-toggles {
 		position: absolute;
 		left: var(--space-sm);
 		top: calc(var(--space-sm) + var(--target) + var(--space-xs));
 		z-index: var(--layer-content);
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
+		gap: var(--space-xs);
+		pointer-events: none;
+	}
+	.areas-toggle {
+		display: inline-flex;
+		align-items: center;
+		gap: var(--space-xs);
+		pointer-events: auto;
 	}
 	/* Pressed while the outlines are shown, as the List and Map buttons show the view. */
 	.areas-toggle[aria-pressed='true'] {
 		background: var(--accent-soft);
 		color: var(--accent-soft-fg);
+	}
+	/* A sample of the layer's outline, the key to which line is which. */
+	.swatch {
+		display: inline-block;
+		width: var(--space-lg);
+		border-top: var(--map-area-solid-stroke) solid var(--map-area-solid-line);
+	}
+	.swatch[data-outline='dashed'] {
+		border-top: var(--map-area-dashed-stroke) dashed var(--map-area-dashed-line);
+	}
+	.swatch[data-outline='dotted'] {
+		border-top: var(--map-area-dotted-stroke) dotted var(--map-area-dotted-line);
 	}
 </style>

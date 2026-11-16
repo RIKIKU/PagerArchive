@@ -100,6 +100,45 @@ func TestValidateProfileLargeEventFieldErrors(t *testing.T) {
 	}
 }
 
+// A113 (R88): validate-profile checks each layer's areas file, and fails on
+// one that's broken or missing, naming the layer and the file; the server
+// starts without such a layer instead (R88d).
+func TestValidateProfileAreas(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"validate-profile", "../../profiles/example"}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	for _, want := range []string{`areas zones: `, `example-areas.geojson (2, each a "Zone", solid outline)`, `areas regions: `, `example-regions.geojson (2, each a "Region", dashed outline)`} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output doesn't contain %q:\n%s", want, out.String())
+		}
+	}
+	for _, c := range []struct {
+		name, want string
+		change     func(dir string) error
+	}{
+		{"broken", `areas "zones":` + "\n" + `example-areas.geojson: at /features: has no features`, func(dir string) error {
+			return os.WriteFile(filepath.Join(dir, "example-areas.geojson"), []byte(`{"type": "FeatureCollection", "features": []}`), 0o600)
+		}},
+		{"missing", `areas "regions":`, func(dir string) error { return os.Remove(filepath.Join(dir, "example-regions.geojson")) }},
+	} {
+		dir := t.TempDir()
+		if err := os.CopyFS(dir, os.DirFS("../../profiles/example")); err != nil {
+			t.Fatal(err)
+		}
+		if err := c.change(dir); err != nil {
+			t.Fatal(err)
+		}
+		var out, errOut bytes.Buffer
+		code := run([]string{"validate-profile", dir}, &out, &errOut)
+		msg := out.String() + errOut.String()
+		if code == 0 || !strings.Contains(msg, c.want) {
+			t.Errorf("%s: exit %d, output:\n%s\nwant %q", c.name, code, msg, c.want)
+		}
+		t.Logf("%s: exit %d: %s", c.name, code, strings.TrimSpace(errOut.String()))
+	}
+}
+
 // A54 (R59): pagerarchive keeps only the server's jobs; templates and
 // aliases are the PowerShell module's.
 func TestA54HelpListsNoTemplateOrAliasCommands(t *testing.T) {

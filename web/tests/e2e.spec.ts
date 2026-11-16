@@ -4894,13 +4894,15 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect(page.getByTestId('chart')).toHaveCount(0);
 });
 
-// A111 (R88b, R88c, R88e): the example's made-up zones in the browser. A job
-// whose pages are in two zones says both on its view; one in none says
-// nothing; a message's view and the map's list say each page's zone; the map
-// outlines and labels the zones under the messages, credits them, and its
-// button hides and shows them, remembered in this browser, in light and dark,
-// at 1,280 and 375 px, with no sideways scroll; Administration lists them.
-// Headless Firefox has no WebGL, so no map to draw them on there.
+// A111 (R88b, R88c, R88e): the example's two made-up layers of areas, zones
+// and regions over them, in the browser. A job whose pages are in two zones
+// and one region says all three on its view; one in none says nothing; a
+// message's view and the map's list say each page's zone and region; the map
+// outlines and labels each layer under the messages, each in its own style,
+// credits both, and each layer's button hides and shows it alone, remembered
+// in this browser, in light and dark, at 1,280 and 375 px, with no sideways
+// scroll; Administration lists both. Headless Firefox has no WebGL, so no
+// map to draw them on there.
 for (const width of [1280, 375]) {
 	test(`A111 areas on a job, a message and the map at ${width} px`, async ({ browser, request }, info) => {
 		test.setTimeout(120_000);
@@ -4914,10 +4916,10 @@ for (const width of [1280, 375]) {
 			const page = await ctx.newPage();
 			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
 
-			// The job's view: both zones, at a glance, above its pages.
+			// The job's view: both zones and the region, at a glance, above its pages.
 			await page.goto(`/jobs/${job}`);
 			const areas = page.getByTestId('job-areas');
-			await expect(areas.getByRole('listitem')).toHaveText(['Zone A', 'Zone B']);
+			await expect(areas.getByRole('listitem')).toHaveText(['Zone A', 'Zone B', 'Region North']);
 			await noSideways();
 			expect(await axeOf(page), `${colorScheme} job view`).toEqual([]);
 			await page.screenshot({ path: info.outputPath(`a111-job-${colorScheme}-${width}.png`), fullPage: true });
@@ -4925,16 +4927,16 @@ for (const width of [1280, 375]) {
 			await expect(page.getByTestId('message-list')).toContainText(outside);
 			await expect(page.getByTestId('job-areas')).toHaveCount(0);
 
-			// A message's view says its zone beside its location; one in none doesn't.
+			// A message's view says its zone and region beside its location; one in none doesn't.
 			await page.goto(`/messages/${west}`);
-			await expect(page.getByTestId('area')).toHaveText('Zone A');
+			await expect(page.getByTestId('area')).toHaveText(['Zone A', 'Region North']);
 			await page.goto(`/messages/${far}`);
 			await expect(page.getByTestId('location')).toContainText('From the address');
 			await expect(page.getByTestId('area')).toHaveCount(0);
 
-			// The map: the list says each page's zone, and the outlines are drawn.
+			// The map: the list says each page's areas, and each layer is drawn.
 			await page.goto(`/map?job=${job}`);
-			await expect(page.getByTestId('located-area')).toHaveText(['Zone B', 'Zone A']);
+			await expect(page.getByTestId('located-area')).toHaveText(['Zone B', 'Region North', 'Zone A', 'Region North']);
 			const map = page.getByTestId('map');
 			await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
 			if ((await map.getAttribute('data-ready')) !== 'true') {
@@ -4942,33 +4944,40 @@ for (const width of [1280, 375]) {
 				await ctx.close();
 				continue;
 			}
-			await expect(map).toHaveAttribute('data-areas', 'shown');
-			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBeGreaterThan(0);
-			const toggle = page.getByRole('button', { name: 'Zone outlines' });
-			await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+			const zones = page.getByRole('button', { name: 'Zone outlines' });
+			const regions = page.getByRole('button', { name: 'Region outlines' });
+			const drawn = (b: typeof zones) => expect.poll(async () => Number(await b.getAttribute('data-drawn')), { timeout: 10_000 });
+			for (const b of [zones, regions]) {
+				await expect(b).toHaveAttribute('aria-pressed', 'true');
+				await drawn(b).toBeGreaterThan(0);
+			}
 			await expect(page.locator('.maplibregl-ctrl-attrib-inner')).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			await expect(page.locator('.maplibregl-ctrl-attrib-inner')).toContainText('Region outlines: Example regions, made up for PagerArchive');
 			await noSideways();
 			expect(await axeOf(page), `${colorScheme} map`).toEqual([]);
 			await page.screenshot({ path: info.outputPath(`a111-map-${colorScheme}-${width}.png`) });
-			// Hidden, and still hidden on the next visit; then shown again.
-			await toggle.click();
-			await expect(toggle).toHaveAttribute('aria-pressed', 'false');
-			await expect(map).toHaveAttribute('data-areas', 'hidden');
-			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBe(0);
+			// The regions hidden, the zones still shown, and still so on the next visit; then shown again.
+			await regions.click();
+			await expect(regions).toHaveAttribute('aria-pressed', 'false');
+			await drawn(regions).toBe(0);
+			await drawn(zones).toBeGreaterThan(0);
 			await page.reload();
-			await expect(page.getByRole('button', { name: 'Zone outlines' })).toHaveAttribute('aria-pressed', 'false');
-			await page.getByRole('button', { name: 'Zone outlines' }).click();
-			await expect(map).toHaveAttribute('data-areas', 'shown');
-			await expect.poll(async () => Number(await map.getAttribute('data-areas-drawn')), { timeout: 10_000 }).toBeGreaterThan(0);
+			await expect(regions).toHaveAttribute('aria-pressed', 'false');
+			await expect(zones).toHaveAttribute('aria-pressed', 'true');
+			await regions.click();
+			await expect(regions).toHaveAttribute('aria-pressed', 'true');
+			await drawn(regions).toBeGreaterThan(0);
 			await ctx.close();
 		}
 
-		// R88e: Administration lists them.
+		// R88e: Administration lists both layers.
 		const admin = await (await signedIn(browser, 'admin', { viewport: { width, height: 900 } })).newPage();
 		await admin.goto('/admin');
-		await expect(admin.getByTestId('admin-areas')).toContainText('2 Zone outlines');
-		await expect(admin.getByTestId('admin-areas')).toContainText('example-areas.geojson');
-		await expect(admin.getByTestId('admin-areas')).toContainText('Example zones, made up for PagerArchive');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('2 Zone outlines');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('example-areas.geojson');
+		await expect(admin.getByTestId('admin-areas-zones')).toContainText('Example zones, made up for PagerArchive');
+		await expect(admin.getByTestId('admin-areas-regions')).toContainText('2 Region outlines');
+		await expect(admin.getByTestId('admin-areas-regions')).toContainText('example-regions.geojson');
 		expect(await axeOf(admin), 'Administration').toEqual([]);
 		await admin.context().close();
 	});

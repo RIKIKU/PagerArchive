@@ -271,7 +271,7 @@ func TestNonProfileJSONIsSkipped(t *testing.T) {
 // the member is, so adding, changing or removing them re-parses nothing;
 // anything else changes it.
 func TestParseHashLeavesOutAreas(t *testing.T) {
-	const areas = `"areas": { "path": "zones.geojson", "label": "Zone", "name_property": "zone", "attribution": "Made up" }`
+	const areas = `"areas": [{ "id": "zones", "path": "zones.geojson", "label": "Zone", "name_property": "zone", "attribution": "Made up" }]`
 	without := "{\n  \"kind\": \"network\",\n  \"name\": \"n\",\n  \"street_types\": {}\n}\n"
 	for name, with := range map[string]string{
 		"last":   "{\n  \"kind\": \"network\",\n  \"name\": \"n\",\n  \"street_types\": {},\n  " + areas + "\n}\n",
@@ -301,16 +301,42 @@ func TestParseHashLeavesOutAreas(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := string(b)
-	i := strings.Index(s, ",\n  \"areas\": {")
+	i := strings.Index(s, ",\n  \"areas\": [")
 	if i < 0 {
 		t.Fatal("the example names no areas")
 	}
-	j := strings.Index(s[i:], "\n  }") + i + len("\n  }")
+	j := strings.Index(s[i:], "\n  ]") + i + len("\n  ]")
 	n, errs := loadNetwork("example-network.json", b)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	if n.Hash != hashOf([]byte(s[:i]+s[j:])) || n.Areas == nil || n.Areas.Label != "Zone" || filepath.Base(n.Areas.Path) != "example-areas.geojson" {
+	if n.Hash != hashOf([]byte(s[:i]+s[j:])) || len(n.Areas) != 2 || n.Areas[0].Label != "Zone" || filepath.Base(n.Areas[0].Path) != "example-areas.geojson" || n.Areas[1].ID != "regions" || n.Areas[1].Outline != "dashed" {
 		t.Errorf("the example: hash %s, areas %+v", n.Hash, n.Areas)
+	}
+}
+
+// R88: layers of areas: each one's outline defaults by its place in the
+// list, and two with one id are refused, naming where.
+func TestAreasLayers(t *testing.T) {
+	b, err := os.ReadFile("../../profiles/example/example-network.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := strings.ReplaceAll(string(b), ",\n      \"outline\": \"dashed\"", "")
+	s = strings.ReplaceAll(s, ",\n      \"outline\": \"solid\"", "")
+	n, errs := loadNetwork("example-network.json", []byte(s))
+	if len(errs) > 0 {
+		t.Fatal(errs)
+	}
+	if n.Areas[0].Outline != "solid" || n.Areas[1].Outline != "dashed" {
+		t.Errorf("default outlines: %q %q, want solid, dashed", n.Areas[0].Outline, n.Areas[1].Outline)
+	}
+	_, errs = loadNetwork("example-network.json", []byte(strings.Replace(string(b), `"id": "regions"`, `"id": "zones"`, 1)))
+	if len(errs) != 1 || !strings.Contains(errs[0].Error(), "/areas/1/id") || !strings.Contains(errs[0].Error(), `duplicate areas id "zones"`) {
+		t.Errorf("two layers named zones: %v", errs)
+	}
+	_, errs = loadNetwork("example-network.json", []byte(strings.Replace(string(b), `"outline": "dashed"`, `"outline": "wavy"`, 1)))
+	if len(errs) == 0 {
+		t.Error("an outline that isn't solid, dashed or dotted was accepted")
 	}
 }

@@ -54,11 +54,24 @@
     "PARADE": "PDE",
     "BOULEVARD": "BVD"
   },
-  "areas": {
-    "_comment": "Made-up zones the example's pages can fall in, outlined on the map (R88).",
-    "path": "example-areas.geojson",
-    "label": "Zone",
-    "name_property": "zone",
-    "attribution": "Example zones, made up for PagerArchive"
-  }
+  "areas": [
+    {
+      "_comment": "Made-up zones the example's pages can fall in, outlined on the map (R88).",
+      "id": "zones",
+      "path": "example-areas.geojson",
+      "label": "Zone",
+      "name_property": "zone",
+      "attribution": "Example zones, made up for PagerArchive",
+      "outline": "solid"
+    },
+    {
+      "_comment": "A second, made-up layer over the zones: a page is in one zone and one region (R88).",
+      "id": "regions",
+      "path": "example-regions.geojson",
+      "label": "Region",
+      "name_property": "region",
+      "attribution": "Example regions, made up for PagerArchive",
+      "outline": "dashed"
+    }
+  ]
 }
