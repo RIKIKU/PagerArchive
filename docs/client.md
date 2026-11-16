@@ -19,6 +19,7 @@ The key is printed once. `pagerarchive client revoke <id>` revokes it immediatel
 | `SERVER_URL` | (required) | Server base URL, e.g. `https://pager.example.test` |
 | `CLIENT_ID` | (required) | The ID the key was issued for |
 | `CLIENT_KEY` / `CLIENT_KEY_FILE` | (required) | The API key, or a file that holds it |
+| `ALLOW_PLAIN_HTTP` | `false` | `true` stops the start-up warning about a plain `http://` `SERVER_URL` (below) |
 | `RADIO_FREQUENCY` | empty: read stdin | e.g. `148.8125M` |
 | `RADIO_GAIN` | automatic | `rtl_fm` gain in dB |
 | `RADIO_PPM` | `0` | Frequency correction |
@@ -31,6 +32,8 @@ The key is printed once. `pagerarchive client revoke <id>` revokes it immediatel
 ## Reaching the server
 
 The client only posts to `SERVER_URL`. A receiver on the server's own network can use its LAN address. A **remote receiver** (at another site, on a mobile connection) needs to reach the server's **public URL**, through your reverse proxy with HTTPS. If the server stays LAN-only, give the remote receiver a VPN into the server's network (WireGuard, Tailscale or similar) and use the LAN address over it. The client only needs to reach the app (`/api/v1/pages`), not Authentik.
+
+Over plain `http://` the client's key crosses the network unencrypted, and anyone on the way can read it and post pages as that receiver. So a client whose `SERVER_URL` is `http://` and not this machine (`localhost`, `127.0.0.1`, `[::1]`) logs a warning at every start. Use `https://` where you can. If the way to the server is your own network or a VPN, set `ALLOW_PLAIN_HTTP=true` to say so, and the warning stops.
 
 ## The dongle: blacklist the DVB-T driver
 
@@ -76,8 +79,10 @@ sudo apt install rtl-sdr multimon-ng
 curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/pagerarchive-client-<version>-linux-arm64
 curl -fLO https://github.com/RIKIKU/PagerArchive/releases/download/<version>/SHA256SUMS
 sha256sum --ignore-missing -c SHA256SUMS
-# optional, with the GitHub CLI: it was built by this repository's release run
-gh attestation verify pagerarchive-client-<version>-linux-arm64 --repo RIKIKU/PagerArchive
+# optional, with the GitHub CLI: it was built by this repository's release run, from that release's commit
+gh attestation verify pagerarchive-client-<version>-linux-arm64 --repo RIKIKU/PagerArchive \
+  --signer-workflow RIKIKU/PagerArchive/.github/workflows/ci.yml --source-ref refs/heads/main --deny-self-hosted-runners \
+  --source-digest "$(gh api repos/RIKIKU/PagerArchive/commits/<version> --jq .sha)"
 sudo install -m 755 pagerarchive-client-<version>-linux-arm64 /usr/local/bin/pagerarchive-client
 ```
 

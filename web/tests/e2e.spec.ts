@@ -969,12 +969,14 @@ test('A30 integrations in the browser: notice, create, Send test, delivery, paus
 		await expect(card).toContainText(`http://127.0.0.1:${port}/…`);
 		await expect(page.locator('body')).not.toContainText('T0PS3CRET'); // the URL is a secret once saved
 
-		// Send test (R51c): the owner sees what the endpoint answered.
+		// Send test (R51c): the owner sees whether it was delivered and the status,
+		// never the reply's body (A107).
 		await card.getByRole('button', { name: 'Send test' }).click();
 		const answer = card.getByTestId('test-answer');
 		await expect(answer).toContainText('Delivered.');
 		await expect(answer).toContainText('HTTP 200 OK');
-		await expect(answer).toContainText('received');
+		await expect(answer).not.toContainText('received');
+		await expect(answer.locator('pre')).toHaveCount(0);
 		expect(received.at(-1)?.body.test).toBe(true);
 
 		// A real page arrives within 5 seconds, without its marker.

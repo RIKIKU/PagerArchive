@@ -105,6 +105,7 @@ func run(plain *slog.Logger) (err error) {
 		defer cancel()
 		tel.Shutdown(flush)
 	}()
+	client.WarnPlainHTTP(log, serverURL, os.Getenv("ALLOW_PLAIN_HTTP") == "true")
 	tracer := tel.Tracer("pagerarchive-client")
 	// With RADIO_FREQUENCY set the client runs the radio and measures its
 	// audio (R74a); reading stdin, it has no radio health to report.

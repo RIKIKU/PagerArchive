@@ -168,7 +168,7 @@ func TestFailureCauses(t *testing.T) {
 					if w.setup != nil {
 						ctx, cancel = w.setup(s, ctx)
 					}
-					res := s.send(ctx, l, sec, s.pageOf(row1(), false), false)
+					res := s.send(ctx, l, sec, s.pageOf(row1(), false))
 					cancel()
 
 					rec := tracetest.NewSpanRecorder()

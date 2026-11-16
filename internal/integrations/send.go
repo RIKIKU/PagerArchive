@@ -15,7 +15,6 @@ import (
 	"strings"
 	"syscall"
 	"time"
-	"unicode/utf8"
 )
 
 // AttemptTimeout bounds one delivery attempt (ADR 0006 §3).
@@ -38,11 +37,10 @@ type result struct {
 	err        string
 	cause      string // a failure's kind, for its span (R70): a code such as connection_refused, or "HTTP 503"
 	retryAfter time.Duration
-	body       []byte // the answer's first 1 KB, kept for Send test only
 }
 
 // send makes one attempt to deliver p.
-func (s *Service) send(ctx context.Context, l loaded, sec Secrets, p page, keepBody bool) result {
+func (s *Service) send(ctx context.Context, l loaded, sec Secrets, p page) result {
 	if l.kind == MQTT {
 		body, err := payload(l, p)
 		if err != nil {
@@ -55,7 +53,7 @@ func (s *Service) send(ctx context.Context, l loaded, sec Secrets, p page, keepB
 		return result{outcome: refused, cause: "bad_request", err: safeText(err)}
 	}
 	req.Header.Set("User-Agent", "PagerArchive/"+s.version())
-	return s.do(req, keepBody)
+	return s.do(req)
 }
 
 func (s *Service) version() string {
@@ -92,8 +90,9 @@ func (s *Service) httpClient() *http.Client {
 	return s.client
 }
 
-// do sends an HTTP request and classifies the answer.
-func (s *Service) do(req *http.Request, keepBody bool) result {
+// do sends an HTTP request and classifies the answer. The answer's body is
+// read only for a 429's wait, and never kept (R51c).
+func (s *Service) do(req *http.Request) result {
 	wrote := false
 	trace := &httptrace.ClientTrace{WroteRequest: func(i httptrace.WroteRequestInfo) { wrote = i.Err == nil }}
 	req = req.WithContext(httptrace.WithClientTrace(req.Context(), trace))
@@ -108,13 +107,10 @@ func (s *Service) do(req *http.Request, keepBody bool) result {
 	defer resp.Body.Close()
 	r := result{status: fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode)), cause: fmt.Sprintf("HTTP %d", resp.StatusCode)}
 	var body []byte
-	if keepBody || resp.StatusCode == http.StatusTooManyRequests {
+	if resp.StatusCode == http.StatusTooManyRequests {
 		body, _ = io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 	} else {
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
-	}
-	if keepBody {
-		r.body = body[:min(len(body), 1<<10)]
 	}
 	switch c := resp.StatusCode; {
 	case c >= 200 && c < 300:
@@ -189,12 +185,4 @@ func netError(err error) (cause, text string) {
 		return "tls_handshake_failed", "TLS handshake failed"
 	}
 	return "connection_failed", "connection failed"
-}
-
-// bodyText is an answer's body for the owner's Send test, as valid UTF-8.
-func bodyText(b []byte) string {
-	if utf8.Valid(b) {
-		return string(b)
-	}
-	return strings.ToValidUTF8(string(b), "�")
 }

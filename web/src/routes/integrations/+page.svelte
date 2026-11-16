@@ -207,7 +207,6 @@
 								<strong>{t.ok ? 'Delivered.' : 'Not delivered.'}</strong>
 								The endpoint answered {t.result}{t.error && t.error !== t.result ? `: ${t.error}` : ''} in {t.took_ms} ms.
 							</p>
-							{#if t.body}<pre>{t.body}</pre>{/if}
 						{:else}
 							<p class="error">{t.error}</p>
 						{/if}
@@ -384,15 +383,6 @@
 	}
 	.answer p {
 		margin: var(--space-2xs) 0;
-	}
-	pre {
-		font-family: var(--font-mono);
-		font-size: var(--text-sm);
-		white-space: pre-wrap;
-		overflow-wrap: anywhere;
-		margin: var(--space-2xs) 0;
-		max-height: var(--pre-height);
-		overflow-y: auto;
 	}
 	.deliveries {
 		list-style: none;

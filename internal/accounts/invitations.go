@@ -15,7 +15,8 @@ import (
 // Resend sends an invitation again (R43d): the inviter's own, or any for an
 // admin, while it's waiting or expired. It gets a new link and a new 7 days,
 // and the old link stops working. It's still the same invitation, from the
-// same inviter, and it follows a new invitation's rules (R41, R43).
+// same inviter, and it follows a new invitation's rules (R41, R43),
+// the limits on invitation emails (R43e) included.
 //
 // The links are changed first, holding the invitation's lock (which SignIn
 // takes too), and the email is sent last. If the email can't be sent, the
@@ -23,6 +24,7 @@ import (
 func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invitation, error) {
 	var inv db.Invitation
 	var address string
+	release := func() {}
 	err := s.Store.InTx(ctx, func(q *db.Queries) error {
 		var err error
 		inv, err = q.LockInvitation(ctx, id)
@@ -68,6 +70,11 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 			return refuse(http.StatusConflict, "already_joined", "%s has finished joining, so the invitation can't be resent. Their account appears when they first sign in.", e.Address)
 		}
 
+		r, err := s.limitEmail(actor.ID, e.Key, e.Address)
+		if err != nil {
+			return err
+		}
+		release = r
 		old := inv.AuthentikID
 		expires := s.now().Add(InvitationLifetime)
 		link, err := s.Dir.CreateInvitation(ctx, DirectoryInvitation{AppID: inv.ID, Address: e.Address, Key: e.Key, Expires: expires})
@@ -93,11 +100,13 @@ func (s *Service) Resend(ctx context.Context, actor db.User, id int64) (db.Invit
 		return nil
 	})
 	if err != nil {
+		release()
 		return db.Invitation{}, err
 	}
 	s.Log.Info("invitation resent", "by", actor.ID, "invitation", inv.ID)
 	if err := s.Dir.SendInvitation(ctx, *inv.AuthentikID, address); err != nil {
 		s.Log.Error("authentik", "op", "send invitation", "invitation", inv.ID, "error", err.Error())
+		release() // it wasn't sent
 		return inv, refuse(http.StatusServiceUnavailable, "not_emailed",
 			"The invitation to %s has a new link for 7 days, and the old link no longer works, but the email with the new link couldn't be sent. Resend it again shortly.", address)
 	}

@@ -410,7 +410,7 @@ func TestPresetsPassTheirStandIns(t *testing.T) {
 			for name, r := range map[string]db.SearchMessagesRow{"row 1": row1(), "long": long} {
 				l, sec := presetIntegration(kind, content, m)
 				before := len(m[kind].Requests())
-				res := s.send(context.Background(), l, sec, s.pageOf(r, false), false)
+				res := s.send(context.Background(), l, sec, s.pageOf(r, false))
 				if res.outcome != delivered {
 					t.Errorf("%s %s %s: %+v; violations %v", kind, content, name, res, m[kind].Violations())
 					continue
@@ -500,7 +500,7 @@ func TestErrorsNeverQuoteTheURL(t *testing.T) {
 	ln.Close() // nothing listens: connection refused
 	s := service(t, DefaultPresets())
 	l := integration(Webhook, Full, Config{})
-	res := s.send(context.Background(), l, Secrets{URL: "http://" + addr + "/hook/T0PS3CRET"}, s.pageOf(row1(), false), false)
+	res := s.send(context.Background(), l, Secrets{URL: "http://" + addr + "/hook/T0PS3CRET"}, s.pageOf(row1(), false))
 	if res.outcome != retryable || res.err != "connection refused" {
 		t.Errorf("refused: %+v", res)
 	}
@@ -509,7 +509,7 @@ func TestErrorsNeverQuoteTheURL(t *testing.T) {
 	}
 	// An address the rules refuse is reported by address, never by URL.
 	s.Guard.Allow = nil
-	res = s.send(context.Background(), l, Secrets{URL: "http://127.0.0.1:9/hook/T0PS3CRET"}, s.pageOf(row1(), false), false)
+	res = s.send(context.Background(), l, Secrets{URL: "http://127.0.0.1:9/hook/T0PS3CRET"}, s.pageOf(row1(), false))
 	if res.outcome != retryable || res.err != "address not allowed: 127.0.0.1 is a loopback address. Ask an admin to allow it." {
 		t.Errorf("not allowed: %+v", res)
 	}
@@ -536,7 +536,7 @@ func TestOutcomes(t *testing.T) {
 	l := integration(Webhook, Full, Config{})
 	sec := Secrets{URL: srv.URL + "/hook"}
 	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
-	res := s.send(ctx, l, sec, s.pageOf(row1(), false), false)
+	res := s.send(ctx, l, sec, s.pageOf(row1(), false))
 	cancel()
 	if res.outcome != noAnswer || res.err != "no answer within 10 s" {
 		t.Errorf("no answer: %+v", res)
@@ -544,7 +544,7 @@ func TestOutcomes(t *testing.T) {
 	for code, want := range map[int]outcome{200: delivered, 204: delivered, 301: refused, 400: refused, 401: refused, 404: refused,
 		408: retryable, 429: retryable, 500: retryable, 501: refused, 502: retryable, 503: retryable} {
 		status = code
-		res := s.send(context.Background(), l, sec, s.pageOf(row1(), false), false)
+		res := s.send(context.Background(), l, sec, s.pageOf(row1(), false))
 		if res.outcome != want {
 			t.Errorf("HTTP %d: outcome %v, want %v", code, res.outcome, want)
 		}

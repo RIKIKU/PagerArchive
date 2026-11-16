@@ -592,7 +592,6 @@ export interface TestResult {
 	ok: boolean;
 	result: string;
 	error?: string;
-	body?: string;
 	took_ms: number;
 }
 

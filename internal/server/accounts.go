@@ -19,6 +19,9 @@ import (
 func (s *Server) accountsError(w http.ResponseWriter, r *http.Request, op string, err error) {
 	var refusal *accounts.Error
 	if errors.As(err, &refusal) {
+		if refusal.RetryAfter > 0 {
+			w.Header().Set("Retry-After", strconv.Itoa(int((refusal.RetryAfter+time.Second-1)/time.Second)))
+		}
 		writeJSON(w, refusal.Status, Problem{Error: refusal.Msg, Code: refusal.Code})
 		return
 	}
