@@ -40,7 +40,10 @@ function Get-PagerArchiveMessage {
     Get-PagerArchiveAlias -Name 'Station*' | Get-PagerArchiveMessage -After (Get-Date).AddDays(-7)
 
     .EXAMPLE
-    Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-Csv -Path fires.csv
+    Get-PagerArchiveMessage -Text 'SHED FIRE' -First 20 | Export-PagerArchiveCsv -Path fires.csv
+
+    Writes them to a CSV file, with no text a spreadsheet would run as a
+    formula.
 
     .EXAMPLE
     '0100001', '0100002' | ForEach-Object -Process { [pscustomobject]@{ Capcode = $_ } } | Get-PagerArchiveMessage -First 10

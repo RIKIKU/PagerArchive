@@ -57,10 +57,10 @@ Each succeeds (in a terminal it says `Verification succeeded!`), or fails with e
 
 The first start takes a minute or two while Authentik sets up its database and applies `deploy/authentik/blueprints/pagerarchive.yaml`. That file configures sign-in, enrolment, password reset, guessing protection and the app's access to Authentik's API. `docker compose ps` shows `db` as healthy, and the others as running. The app's sign-in works once Authentik has finished.
 
-**Set up the first admin before the app is reachable from the internet.** Add both hostnames to your reverse proxy (below) with the LAN-only lines (`allow` your LAN, `deny all`) left in, so only machines on your network can reach them. Then:
+**Set up the first admin before the app is reachable from the internet.** Add both hostnames to your reverse proxy (below) with the LAN-only lines (`allow` your LAN, `deny all`) left in, so only machines on your network can reach them. If another proxy or a tunnel forwards internet traffic to yours, read [Behind another proxy or a tunnel](#behind-another-proxy-or-a-tunnel) first: without it, those lines let the internet in. Then:
 
 1. **Create the first admin** from a machine on your LAN. Open the app and choose **Set up the first admin**. Only the address in `INITIAL_ADMIN_EMAIL` can finish, by entering the code emailed to it. It doesn't have to be in `ALLOWED_EMAIL_DOMAINS`. It must differ from `AUTHENTIK_ADMIN_EMAIL`, or this is refused ([why](#two-accounts-with-one-address)). Once an admin exists, this option disappears and the setting is ignored.
-2. **Open the app to the internet**: remove the LAN-only lines from both hostnames' `location /` blocks. Leave them on Authentik's admin interface (`/if/admin/`).
+2. **Open the app to the internet**: remove the LAN-only lines from both hostnames' `location /` blocks. Leave them on Authentik's admin interface (`/if/admin/`), and check from outside (see [Checking it](#checking-it)).
 3. **Invite people** from **Account**. Invitations go to addresses in `ALLOWED_EMAIL_DOMAINS` only, and work until the person joins, for 7 days. Opening the link uses nothing up, so a mail provider's link scanner can't spoil it. Each person sets a password and confirms their address with an emailed code. One invitation sends at most 5 code emails an hour, however often its link is opened, so a leaked link can't use up the deployment's mail quota. An invitation that expired, or whose email went astray, can be **resent** by its inviter or an admin: a new link for 7 days, and the old one stops working.
 4. **Add receiving clients** with the CLI (see [the client](client.md)). `pagerarchive` on the server keeps only the jobs that need the server: `serve`, `validate-profile`, `client` and `version`. A client key can post pages, and pages can fire integrations, so creating one needs a shell on the server. Everything else an admin does from a command line goes through the [PowerShell module](powershell.md).
 
@@ -92,7 +92,7 @@ From M6 the database is the source of truth for aliases (ADR 0007).
 Authentik's own administrator (`akadmin`, signing in with `AUTHENTIK_ADMIN_EMAIL` and the password from `.env`) is for you as the operator. It isn't a PagerArchive account, and it can change everything in Authentik, so it is protected three ways:
 
 - **A second factor is required.** The first time akadmin signs in, Authentik asks you to set up an authenticator app (any TOTP app). Every later sign-in asks for its code. In Authentik's user settings you can add a passkey or recovery codes as well. PagerArchive users are never asked for this.
-- **Keep Authentik's admin interface LAN-only** in your proxy (`/if/admin/` in the example below). Sign in at `AUTHENTIK_URL/if/admin/` from your LAN.
+- **Keep Authentik's admin interface LAN-only** in your proxy (`/if/admin/` in the example below; behind another proxy or a tunnel, see [below](#behind-another-proxy-or-a-tunnel)). Sign in at `AUTHENTIK_URL/if/admin/` from your LAN.
 - **Guessing protection** applies to akadmin as to everyone (below).
 
 Don't change PagerArchive's sign-in on Authentik's admin pages, because the blueprint is re-applied on start.
@@ -134,32 +134,43 @@ Forward each hostname to its container, or to `API_BIND` and `AUTHENTIK_BIND` on
 - **The app** streams live updates with Server-Sent Events, so don't buffer them, and allow long-lived responses.
 - **Authentik** uses WebSockets.
 
-Both must receive the original `Host` header and `X-Forwarded-Proto`.
+Both must receive the original `Host` header and `X-Forwarded-Proto`. Authentik also gets `X-Forwarded-For` set to the address the request came from, never the client's own header passed on: Authentik trusts that header from private addresses, so a header passed on would let anyone choose the address Authentik records.
 
 Authentik's **Base URL** (the address it's reached at) is `AUTHENTIK_URL`, unless `.env` sets `AUTHENTIK_WEB__BASE_URL`. Authentik copies it into its settings on a start when the setting is empty, and never overwrites it: if you later move Authentik to another address, change it under **System**, **Settings** in Authentik's admin interface too.
 
-An example for nginx (for instance linuxserver/swag's `proxy-confs`), with the proxy reaching the host's ports. Behind a proxy on a Docker network, use `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000` instead. Replace `192.168.0.0/16` with your LAN:
+An example for nginx (for instance linuxserver/swag's `proxy-confs`), with the proxy reaching the host's ports. Behind a proxy on a Docker network, use `http://pagerarchive:8080` and `http://pagerarchive-authentik:9000` instead. Replace `192.168.0.0/16` with your LAN. Each block is complete, so don't also include SWAG's `proxy.conf` in these locations: it would send some headers twice. In `pager.example.org`'s server block:
 
+<!-- proxy:app -->
 ```nginx
-# pager.example.org
 location / {
     allow 192.168.0.0/16;         # LAN only until the first admin is set up;
     deny all;                     # then remove these two lines
     proxy_pass http://127.0.0.1:8080;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_http_version 1.1;
     proxy_buffering off;          # live updates (the API also sends X-Accel-Buffering: no)
     proxy_read_timeout 1h;
 }
 
-# auth.example.org
+# Metrics are scraped on the LAN at API_BIND, never through the proxy.
+location /metrics {
+    deny all;
+}
+```
+
+In `auth.example.org`'s server block:
+
+<!-- proxy:auth -->
+```nginx
 location / {
     allow 192.168.0.0/16;         # LAN only until the first admin is set up;
     deny all;                     # then remove these two lines
     proxy_pass http://127.0.0.1:9000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -172,6 +183,7 @@ location /if/admin/ {
     proxy_pass http://127.0.0.1:9000;
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
     proxy_http_version 1.1;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
@@ -181,6 +193,49 @@ location /if/admin/ {
 Blocking `/if/admin/` hides the admin pages from the internet. It isn't the only safeguard, because Authentik's API is shared with the pages users need. That's why akadmin also needs a second factor.
 
 The `api` container reaches Authentik directly on the compose network (`AUTHENTIK_INTERNAL_URL`), so it doesn't depend on the proxy for that.
+
+### Behind another proxy or a tunnel
+
+The LAN-only lines work only when the internet reaches this proxy directly (for example, a port forwarded on your router to it). If something else on your network forwards internet traffic to it, such as a proxy in a DMZ or a tunnel's connector (Cloudflare Tunnel and the like), every request seems to come from that forwarder's address. When that address is in your LAN range, **every internet request passes the LAN-only lines**, and Authentik's admin interface and the first-admin set-up are open to the internet. Do one of these two:
+
+**Block the paths where the internet comes in** (simplest). On the proxy the internet reaches first, refuse Authentik's admin interface and the metrics, before forwarding anything else as usual. In nginx:
+
+<!-- proxy:front -->
+```nginx
+# In auth.example.org's server block on the front proxy:
+location /if/admin/ {
+    deny all;
+}
+
+# In pager.example.org's server block on the front proxy:
+location /metrics {
+    deny all;
+}
+```
+
+Don't forward either hostname from the front proxy until the first admin is set up (step 2 above). A tunnel's connector does no blocking of its own: use its service's access rules for `/if/admin/` and `/metrics` instead, or the second way.
+
+**Or tell this proxy who the forwarder is**, so it uses the client's real address. The forwarder must set a header with the client's address: an nginx front proxy with `proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;`, and Cloudflare sets `CF-Connecting-IP` itself. Then, in both hostnames' server blocks on this proxy, with the forwarder's own address in place of `192.168.1.10` (its address only, never a whole range):
+
+<!-- proxy:real-ip -->
+```nginx
+set_real_ip_from 192.168.1.10;    # the forwarder, and nothing else
+real_ip_header X-Forwarded-For;   # or CF-Connecting-IP behind Cloudflare
+real_ip_recursive on;
+```
+
+and add `deny 192.168.1.10;` above each `allow` line, so a request the forwarder sends without the header is refused, not let in as the forwarder's. `$remote_addr` is then the client's address, so the LAN-only lines and Authentik's `X-Forwarded-For` above work as on a direct set-up.
+
+### Checking it
+
+From a machine outside your network (a phone off Wi-Fi will do), each of these must say `403`, and must still say it with `-H 'X-Forwarded-For: 192.168.1.20'` added:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://auth.example.org/if/admin/
+curl -s -o /dev/null -w '%{http_code}\n' https://pager.example.org/metrics
+```
+
+Before the first admin is set up, `https://pager.example.org/` must say `403` from outside too.
 
 ## Your own changes
 
@@ -264,7 +319,7 @@ Users forward new pages to their own systems from **Integrations**: a webhook, M
 
 - **Set `METRICS_TOKEN`** in `.env` (`openssl rand -base64 36 | tr -d '/+='`). Without it, `/metrics` is off. Scrapes need it as a bearer token.
 - **Locked accounts** are counted in Authentik's database, through a role, `pagerarchive_metrics`, that can call one function and read nothing else. Set `AUTHENTIK_METRICS_DB_PASSWORD` in `.env`. On a new install the database makes the role on its first start. On an install whose API still connects as the superuser, the API makes it when it starts, or changes its password. Once the API has [its own role](#the-apis-database-role), run `deploy/postgres/api-role.sh` after setting or changing the password. Without it, that one metric is left out.
-- Scrape it on your LAN, and keep `/metrics` out of your reverse proxy's public locations.
+- Scrape it on your LAN, at `API_BIND`. The [proxy example](#reverse-proxy) refuses `/metrics`, so it isn't reachable from the internet.
 
 ```yaml
 # prometheus.yml

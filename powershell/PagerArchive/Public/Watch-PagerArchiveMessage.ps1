@@ -55,7 +55,7 @@ function Watch-PagerArchiveMessage {
     Also shows each retry while the connection is lost.
 
     .EXAMPLE
-    Watch-PagerArchiveMessage -JobNumber EX0000041 | Export-Csv -Path job.csv -Append
+    Watch-PagerArchiveMessage -JobNumber EX0000041 | Export-PagerArchiveCsv -Path job.csv -Append
 
     Adds each new message about one job to a CSV file as it arrives.
 
