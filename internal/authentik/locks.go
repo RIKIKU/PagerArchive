@@ -25,6 +25,10 @@ type Locks struct {
 	mu sync.Mutex
 	n  int
 	at time.Time
+
+	ev    []AuthentikEvent
+	evErr error
+	evAt  time.Time
 }
 
 // Locked is the number of accounts locked now.
@@ -46,6 +50,49 @@ func (l *Locks) Locked(ctx context.Context) (int, error) {
 	}
 	l.n, l.at = n, time.Now()
 	return n, nil
+}
+
+// AuthentikEvent is one row of pagerarchive_authentik_events(): an event kind
+// from its fixed list, a failed sign-in's reason ("" for the others), and how
+// many there were in the last 5 minutes.
+type AuthentikEvent struct {
+	Action, Reason string
+	N              int
+}
+
+// Events counts Authentik's sign-ins, failed sign-ins (by the kind of stage
+// they failed at) and errors in the last 5 minutes, through
+// pagerarchive_authentik_events() (R52), cached as Locked is. An error is
+// cached too, so an install whose role doesn't have the function yet (an
+// install with the API's own role gets it from api-role.sh) is asked, and
+// says so, at most once a TTL.
+func (l *Locks) Events(ctx context.Context) ([]AuthentikEvent, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	ttl := l.TTL
+	if ttl == 0 {
+		ttl = time.Minute
+	}
+	if !l.evAt.IsZero() && time.Since(l.evAt) < ttl {
+		return l.ev, l.evErr
+	}
+	l.ev, l.evErr = l.events(ctx)
+	l.evAt = time.Now()
+	return l.ev, l.evErr
+}
+
+func (l *Locks) events(ctx context.Context) ([]AuthentikEvent, error) {
+	qctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	rows, err := l.Pool.Query(qctx, "SELECT action, reason, n FROM public.pagerarchive_authentik_events()")
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, func(r pgx.CollectableRow) (AuthentikEvent, error) {
+		var e AuthentikEvent
+		err := r.Scan(&e.Action, &e.Reason, &e.N)
+		return e, err
+	})
 }
 
 // lockedAccountsSQL is deploy/postgres/locked-accounts.sql, which the

@@ -209,3 +209,126 @@ groups:
           description: >-
             Alloy's scrape of /metrics is failing: the API is down, or
             unreachable from the monitoring stack, or METRICS_TOKEN changed.
+
+      # R89a: Authentik's server or worker can't be scraped: it's down, or
+      # unreachable from Alloy over the monitoring-authentik network. While
+      # the server is down nobody can sign in; while the worker is, no email
+      # goes out. One alert per part (instance: server or worker). With
+      # Authentik's addresses set to "" the stack scrapes nothing: no data, OK.
+      - uid: pa-authentik-down
+        title: Authentik down
+        condition: down
+        data:
+          - refId: up
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: up
+              instant: true
+              range: false
+              expr: max by (instance) (up{job="authentik"})
+          - refId: down
+            datasourceUid: __expr__
+            model:
+              refId: down
+              type: threshold
+              expression: up
+              conditions:
+                - evaluator: {type: lt, params: [1]}
+        noDataState: OK
+        execErrState: Error
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Authentik's {{ $labels.instance }} can't be reached"
+          description: >-
+            The monitoring stack can't scrape Authentik's {{ $labels.instance }}
+            on port 9300: it has stopped, or isn't on the monitoring-authentik
+            network (docs/monitoring.md, "Authentik"). The server down means
+            nobody can sign in; the worker down means no email goes out.
+            `docker compose ps` and `docker compose logs authentik-{{ $labels.instance }}`
+            in PagerArchive's folder.
+
+      # R89b: more failed sign-ins in 5 minutes than mistyping explains, from
+      # Authentik's event log, through the API's metrics. It clears once the
+      # 5 minutes before hold fewer.
+      - uid: pa-failed-sign-ins
+        title: Failed sign-ins
+        condition: many
+        data:
+          - refId: failed
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: failed
+              instant: true
+              range: false
+              expr: sum(pagerarchive_authentik_events_5m{job="pagerarchive", action="login_failed"})
+          - refId: many
+            datasourceUid: __expr__
+            model:
+              refId: many
+              type: threshold
+              expression: failed
+              conditions:
+                - evaluator:
+                    type: gt
+                    # THE THRESHOLD SETTING: failed sign-ins in 5 minutes
+                    # before it alerts (R89b: 10). Change it here and restart
+                    # Grafana (docs/monitoring.md).
+                    params: [10]
+        # No count: the API is down ("API unreachable"'s job), or it can't
+        # read Authentik's events yet (docs/monitoring.md, "Authentik").
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $values.failed.Value }} failed sign-ins in the last 5 minutes"
+          description: >-
+            More sign-ins failed than people mistyping explains: someone may be
+            guessing passwords. The guessing protection locks each account
+            after 5 (R44a). The "Authentik" dashboard has them by reason and
+            the accounts locked; Authentik's admin interface (Events → Logs)
+            has who and from where.
+
+      # R89a, R89b: Authentik's worker tasks are failing, such as sending an
+      # email. Each failure is a system_task_exception in Authentik's event
+      # log, counted through the API's metrics; the worker's own error counter
+      # if that count isn't there. It clears 5 minutes after the last failure.
+      - uid: pa-authentik-tasks-failing
+        title: Authentik tasks failing
+        condition: failing
+        data:
+          - refId: failures
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: failures
+              instant: true
+              range: false
+              expr: >-
+                max(pagerarchive_authentik_events_5m{job="pagerarchive", action="system_task_exception"})
+                or sum(increase(authentik_tasks_errors_total{job="authentik"}[5m]))
+          - refId: failing
+            datasourceUid: __expr__
+            model:
+              refId: failing
+              type: threshold
+              expression: failures
+              conditions:
+                - evaluator: {type: gt, params: [0]}
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Authentik's worker tasks are failing"
+          description: >-
+            One or more of Authentik's background tasks failed in the last 5
+            minutes, such as sending a sign-in code or an invitation. The
+            "Authentik" dashboard says which; Authentik's admin interface
+            (System → Tasks, and Events → Logs) says why.

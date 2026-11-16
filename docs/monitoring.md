@@ -2,7 +2,7 @@
 
 PagerArchive can send **telemetry** (traces, logs and metrics) to a monitoring stack you run next to it, for troubleshooting: following one page from the receiver to the database, finding where time goes, tying high load to what users were doing, and being told when a receiver goes quiet. It's off until you turn it on, and PagerArchive itself never sends alerts (SPEC.md section 4); the monitoring stack does.
 
-Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, four dashboards and four alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
+Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a complete example stack: Grafana Alloy, Tempo, Loki, Prometheus and Grafana, upstream's images unchanged, with data sources, six dashboards and eight alert rules already set up. You don't need a copy of the source repository. This page explains what each part does, how to start it, how to point PagerArchive at it, and how to use it when something goes wrong. It assumes you know Docker and Docker Compose, but not this stack.
 
 - [The parts](#the-parts)
 - [What telemetry contains, and what it never does](#what-telemetry-contains-and-what-it-never-does)
@@ -10,6 +10,7 @@ Every [release](https://github.com/RIKIKU/PagerArchive/releases) includes a comp
 - [Pointing the API at it](#pointing-the-api-at-it)
 - [Pointing a receiving client at it](#pointing-a-receiving-client-at-it)
 - [The dashboards](#the-dashboards)
+- [Authentik](#authentik)
 - [Radio health](#radio-health)
 - [Alerts, and where they go](#alerts-and-where-they-go)
 - [Your first incident](#your-first-incident)
@@ -100,19 +101,33 @@ You need PagerArchive's folder ([Deploying the server](deploy.md)), with `METRIC
          default:
          monitoring:
            aliases: [pagerarchive]
+     authentik-server:
+       networks:
+         default:
+         monitoring-authentik:
+           aliases: [pagerarchive-authentik-server]
+     authentik-worker:
+       networks:
+         default:
+         monitoring-authentik:
+           aliases: [pagerarchive-authentik-worker]
 
    networks:
      monitoring:
        external: true
+     monitoring-authentik:
+       external: true
    ```
 
-   and run `docker compose up -d` there. Keep `default`, or the API loses the database. The alias is what Alloy scrapes (`PA_API_ADDRESS`, default `pagerarchive:8080`): other stacks on a shared network can have a service named `api` too. From now on the stack has to be there before PagerArchive starts, or Compose says `network monitoring declared as external, but could not be found`.
+   and run `docker compose up -d` there. Keep `default`, or the API and Authentik lose the database. The aliases are what Alloy scrapes (`PA_API_ADDRESS`, default `pagerarchive:8080`, and `PA_AUTHENTIK_SERVER_ADDRESS` and `PA_AUTHENTIK_WORKER_ADDRESS`): other stacks on a shared network can have a service named `api` too. From now on the stack has to be there before PagerArchive starts, or Compose says `network monitoring declared as external, but could not be found`.
 
-5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the four dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
+   Authentik's server and worker join a network of their own, `monitoring-authentik`, because their metrics (port 9300) need no password. Only Alloy and those two containers are on it, it has no way out, and nothing is published on the host, so other apps on `monitoring`, your LAN and the internet can't read them. Your reverse proxy forwards Authentik's port 9000, which has no metrics. See [Authentik](#authentik).
+
+5. Open Grafana (`http://localhost:3000`, or the address you chose) and sign in as `admin` with your password. **Dashboards → PagerArchive** has the six dashboards. The "client" panels fill in once Alloy has scraped the API (15 s). Traces and logs appear once you point the API at Alloy (next section).
 
 Stop it with `docker compose down` (keeps the data) or `docker compose down -v` (deletes it).
 
-The stack is **LAN-only**: Grafana's port is the only one published. Tempo, Loki and Prometheus sit on an internal Docker network with no way out, and nothing in the stack calls home (usage reports, update checks and plugin downloads are switched off). Of the stack, only Alloy is on the `monitoring` network, so an app that joins it can send telemetry and be scraped, and can't reach the stores or Grafana.
+The stack is **LAN-only**: Grafana's port is the only one published. Tempo, Loki and Prometheus sit on an internal Docker network with no way out, and nothing in the stack calls home (usage reports, update checks and plugin downloads are switched off). Of the stack, only Alloy is on the `monitoring` network, so an app that joins it can send telemetry and be scraped, and can't reach the stores or Grafana. Alloy is also the stack's only part on `monitoring-authentik`, where it scrapes Authentik (see [Authentik](#authentik)).
 
 **Another app** joins the same way, with its own override and an alias of its own, and needs a scrape target in `alloy/config.alloy`, or sends OTLP to `http://alloy:4318`.
 
@@ -172,7 +187,7 @@ The client sends its traces (each page from decode to the server's answer), its 
 
 ## The dashboards
 
-All four are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
+All six are in **Dashboards → PagerArchive**. They're files (`grafana/dashboards/*.json`): edits made in Grafana don't stick, and an upgrade replaces the files, so save a copy under another name.
 
 **A page's path.** Where time goes between a receiver decoding a page and it being stored, shown live and sent on: the slowest 10 % of each step (decode, buffer, send, the API's redact, parse, dedup, locate and store, the live update, each integration delivery), pages by outcome, a table of recent pages (click a span ID to open that page's trace), integration deliveries and **failed delivery attempts by kind and cause**, and the log lines from pages and requests (click one for its trace).
 
@@ -197,6 +212,34 @@ One page's trace, opened from that table. The client's `buffer` span is long bec
 **Backups.** How long since the last good backup (orange after 26 hours, a night missed; red after 36, when **Backup failing** fires), whether the last one failed, and each good night's three numbers: the size of both dumps, how long the dumps took and how long the check took (R86d). The check restores everything, so it grows with the archive, and a check that takes more than 12 hours fails the night: this is where you see that coming. See [Backups](deploy.md#backups).
 
 The same dashboard (**PagerArchive: backups and upgrades**) shows **automatic upgrades**, when they're on (R84h; [Automatic upgrades](deploy.md#automatic-upgrades)): how long since the last check (orange after 2 hours, red after 3, when Administration says they've stopped), whether the last upgrade failed (red while it did: rolled back, or needing you, when **Upgrade failed** fires), the last successful upgrade with its versions, how many failed and were rolled back, and the version history: the version the API reported over time. The upgrade script runs on the host, so its log comes in as a file: in **Explore → Loki**, `{service_name="pagerarchive-auto-upgrade"}` has one line per step (check, verify, backup, upgrade, health, rollback, restore), labelled with `step`, `result` and `level`, with the versions and, on a failure, the reason. Only those fields are kept: Alloy rebuilds each line from them, and drops any line that isn't one of the script's. For that, the stack mounts the script's status folder read-only: set `AUTO_UPGRADE_STATUS_DIR` in this stack's `.env` to the same folder as in PagerArchive's, as an absolute path. That needs the stack on the same host as PagerArchive; on another host the metrics, the dashboard and the alert still work, through the API, and only the log lines are missing.
+
+**Failures.** One place that answers "is anything failing, and what?" (R89). At the top, the alerts firing now, then one square per kind of failure, green while there's none: the API's server errors (5xx) and pages refused in the last hour, clients not receiving, clients' failed sends, failed integration deliveries, accounts locked, the last nightly run, backups, automatic upgrades, Authentik down, failed sign-ins and Authentik's errors. Below them, graphs of when (server errors by route, refused pages by status, clients' failed sends, retries and dropped pages, failed deliveries by kind, Authentik's failed sign-ins and errors), the clients holding pages they couldn't send yet, and the API's and clients' **ERROR and WARN log lines counted by message**, with the lines themselves (click one for its trace) and the automatic upgrades' failed steps. A log line's message is always a fixed text from the code, never page text, search terms, names or addresses (R70), so counting by it is safe. Each panel's **(i)** says what it counts; the other dashboards have the detail.
+
+Geocoding has no square of its own: it runs in PagerArchive's database, so a failure there fails the page's whole ingest, and shows as a server error on `POST /api/v1/pages`. An address that isn't found isn't a failure.
+
+**Authentik.** Whether Authentik's server and worker are up, sign-ins that worked and failed (by where they failed: the password, the second factor, or other; never who or from where), accounts locked, Authentik's errors by kind, its requests by status, the 5xx by view and the slowest 10 % by view, flows started (a sign-in, an enrolment, a recovery), the worker's tasks (run, failed, retried, given up) and the tasks that failed, the queue, and its database connections and errors. See [Authentik](#authentik) for how the stack reaches it.
+
+## Authentik
+
+Authentik signs everyone in (SPEC.md R40), so the stack watches it too (R89a): a [dashboard](#the-dashboards) and three alerts, **Authentik down**, **Failed sign-ins** and **Authentik tasks failing**.
+
+**Its metrics.** Authentik's server and worker each serve Prometheus metrics on port 9300 inside their containers, with no password. So they're never published on the host: the [override](#starting-the-stack) joins the two containers to a network of their own, `monitoring-authentik`, which the stack makes. Only Alloy and those two containers are on it, and it has no way out. Other apps on `monitoring`, your LAN and the internet can't read the metrics; your reverse proxy forwards Authentik's port 9000, which has none (`/metrics` there says 404). Alloy keeps only the series the dashboard and alerts use, with only known labels: Authentik's others name policy bindings (which can be a user's or a group's name) and property mappings. Alloy finds them at `PA_AUTHENTIK_SERVER_ADDRESS` and `PA_AUTHENTIK_WORKER_ADDRESS` (`pagerarchive-authentik-server:9300` and `pagerarchive-authentik-worker:9300`, the override's aliases). Set both to nothing in the stack's `.env` (`PA_AUTHENTIK_SERVER_ADDRESS=`) to watch no Authentik: the panels say *Not watched* and the alert stays quiet.
+
+**Sign-ins and Authentik's errors** aren't in Authentik's metrics, so PagerArchive's API counts them from Authentik's event log, the way it counts locked accounts: through the role `pagerarchive_metrics`, which may call two functions and read nothing else (R89b). `pagerarchive_authentik_events_5m{action, reason}` is how many of each kind of event there were in the last 5 minutes, every kind every time (0 included): `login`, `login_failed` (with `reason` `password`, `second_factor` or `other`), `system_exception`, `system_task_exception` (a worker task failed, such as an email), `configuration_error`, `policy_exception` and `property_mapping_exception`. Only the counts leave the database: never a username, an address or an event's text. It needs `AUTHENTIK_METRICS_DB_PASSWORD`, as the locked-accounts metric does ([Metrics](deploy.md#metrics)).
+
+**Its logs aren't collected.** Alloy only receives OTLP and reads the automatic upgrades' log file; Authentik's container logs would need Docker's socket or Docker's log folder in Alloy, which is root on the host, and Authentik's lines carry usernames, email addresses and client IP addresses in their fields (P1, R70). The counts above, and the dashboard, say when to look; Authentik's own admin interface (**Events → Logs**, **System → Tasks**) says who and why, to those who may see it.
+
+**The stack on another host.** The network is on one host. To watch an Authentik on another, publish its port 9300 on a LAN address only that host can reach, in PagerArchive's `compose.override.yaml` (`ports: ["192.168.1.20:9300:9300"]` under `authentik-server`; another port for the worker), firewall it to the monitoring host, and set the two addresses. Its metrics have no password, so never publish them more widely.
+
+### An install that already runs the stack
+
+When you upgrade the stack to this release ([Upgrading the stack](#upgrading-the-stack)), it makes the `monitoring-authentik` network and starts scraping Authentik. Until PagerArchive's containers join it, **Authentik down** fires for the server and the worker. In PagerArchive's folder:
+
+1. Add the `authentik-server` and `authentik-worker` parts and the `monitoring-authentik` network to `compose.override.yaml`, as in [the override](#starting-the-stack). Merge them in by hand if your override has other changes (a client service, a proxy network).
+2. `docker compose up -d`. Compose recreates the two Authentik containers (sign-ins pause for under a minute) and nothing else. **Authentik down** resolves within a minute or two.
+3. If the API connects as its own role (`PAGERARCHIVE_DB_USER` set in `.env`, [The API's database role](deploy.md#the-apis-database-role)), run `deploy/postgres/api-role.sh` once more: it makes the sign-ins function, which the API can't make itself. It changes nothing else and doesn't recreate the API. Until then the sign-in panels say *Not counted* and the API's log says `metrics: Authentik's events unavailable` at most once a minute. An install whose API still connects as the superuser makes it on the API's next start.
+
+Or, to not watch Authentik, set `PA_AUTHENTIK_SERVER_ADDRESS=` and `PA_AUTHENTIK_WORKER_ADDRESS=` in the stack's `.env` before upgrading.
 
 ## Radio health
 
@@ -223,7 +266,7 @@ A client reading `multimon-ng` output on stdin has no radio of its own, so it re
 
 ## Alerts, and where they go
 
-Five alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
+Eight alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), in the **PagerArchive** folder of **Alerting → Alert rules**:
 
 | Rule | Fires when | Clears when |
 |---|---|---|
@@ -232,10 +275,13 @@ Five alert rules come provisioned (`grafana/provisioning/alerting/rules.yaml`), 
 | **API unreachable** | Alloy's scrape of `/metrics` has failed for 30 s: the API is down, unreachable, or `METRICS_TOKEN` changed | the scrape works again |
 | **Backup failing** | the last nightly backup failed, or the last good one is more than 36 hours old (R86a; [Backups](deploy.md#backups)). It clears after the next good backup. The API works this out, so Administration shows the same thing, and the 36 hours aren't in `rules.yaml` |
 | **Upgrade failed** | an automatic upgrade failed and was rolled back, its rollback failed too, or a run stopped part way (R84h; [Automatic upgrades](deploy.md#automatic-upgrades)). The API works this out, so Administration shows the same thing | a later release upgrades, or you run `deploy/auto-upgrade/auto-upgrade.sh clear` after looking |
+| **Authentik down** | Alloy's scrape of Authentik's server or worker has failed for a minute: it has stopped, or isn't on the `monitoring-authentik` network (R89a; [Authentik](#authentik)). One alert per part (`instance`: `server` or `worker`). The server down means nobody can sign in; the worker down, that no email goes out | the scrape works again |
+| **Failed sign-ins** | more than 10 sign-ins failed in the last 5 minutes, any account, any reason (R89b): more than mistyping explains | the 5 minutes before hold 10 or fewer |
+| **Authentik tasks failing** | one of Authentik's worker tasks failed in the last 5 minutes, such as sending a code or an invitation (R89b) | 5 minutes after the last failure |
 
 ![A firing alert](monitoring/alert-firing.png)
 
-**The thresholds** are the numbers in `params:` in `rules.yaml`, in seconds: `[1800]` for "Client not receiving", `[120]` for "Radio stalled". Change them and restart Grafana (`docker compose restart grafana`). An upgrade replaces this file, so change them again afterwards. They're in the file because Grafana doesn't fill in settings inside an alert rule's query. "Radio stalled" can take up to one client metrics interval (`OTEL_METRIC_EXPORT_INTERVAL`) plus 30 s longer than its threshold to fire.
+**The thresholds** are the numbers in `params:` in `rules.yaml`, in seconds: `[1800]` for "Client not receiving", `[120]` for "Radio stalled"; "Failed sign-ins"'s `[10]` is a count. Change them and restart Grafana (`docker compose restart grafana`). An upgrade replaces this file, so change them again afterwards. They're in the file because Grafana doesn't fill in settings inside an alert rule's query. "Radio stalled" can take up to one client metrics interval (`OTEL_METRIC_EXPORT_INTERVAL`) plus 30 s longer than its threshold to fire.
 
 **Where alerts go.** Out of the box, **nowhere**: Grafana 13 starts with no contact point, and its default notification policy sends to one named `empty` that does nothing. The rules still fire and show in **Alerting → Alert rules**, but nobody is told until you add a contact point and make it the default policy's. Credentials stay in Grafana, never in the repository. In Grafana:
 
@@ -305,6 +351,7 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 ## When something doesn't show up
 
 - **No data at all in the client panels or "up" alerts firing:** Alloy can't scrape the API. Check `PA_METRICS_TOKEN` matches the API's `METRICS_TOKEN`, and `docker compose logs alloy`. The API must be on the `monitoring` network, with the alias in `PA_API_ADDRESS` (`docker network inspect monitoring`; [the override](#starting-the-stack)).
+- **Authentik's panels say "Not watched", or "Authentik down" fires:** Alloy can't scrape Authentik. Its server and worker must be on the `monitoring-authentik` network, with the aliases in `PA_AUTHENTIK_SERVER_ADDRESS` and `PA_AUTHENTIK_WORKER_ADDRESS` ([the override](#starting-the-stack); `docker network inspect monitoring-authentik`). **"Not counted"** on the sign-in panels: the API can't read Authentik's events: `AUTHENTIK_METRICS_DB_PASSWORD` isn't set, or an API with its own role needs `deploy/postgres/api-role.sh` run once more ([Authentik](#an-install-that-already-runs-the-stack)).
 - **Metrics but no traces or logs:** `OTEL_EXPORTER_OTLP_ENDPOINT` isn't set on the API (after adding it, `docker compose up -d api` recreates the API with it). The API's log says `telemetry on` when it's set.
 - **The API's log says "dropping telemetry":** it can't reach Alloy. Is the monitoring stack running? `docker compose ps` in `deploy/monitoring`.
 - **Traces and metrics but no new log lines:** Loki stops taking logs when the disk holding its data is more than 90% full, and says `disk usage exceeded threshold, throttling writes` once, then refuses every write (`docker compose logs loki | grep -c "Ingester is shutting down"` counts them; Alloy logs `Exporting failed. Dropping data.` for `otelcol.exporter.otlphttp.loki`). Lines sent meanwhile are lost. Free space on that disk, then `docker compose restart loki`.

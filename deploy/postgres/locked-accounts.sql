@@ -2,7 +2,8 @@
 -- Q1), in Authentik's database. pagerarchive_locked_accounts() is the number
 -- of accounts the guessing protection has locked now, by the same rule as the
 -- pagerarchive-not-locked policy in deploy/authentik/blueprints. It returns
--- only that count. The role pagerarchive_metrics may call it and read nothing
+-- only that count. The role pagerarchive_metrics may call it, and
+-- pagerarchive_authentik_events() below, and read nothing
 -- else. Run by metrics-role.sql on a new install and by api-role.sh, and by
 -- the API on every start while it connects as the superuser (EnsureLocksRole).
 --
@@ -66,3 +67,35 @@ $fn$;
 ALTER FUNCTION public.pagerarchive_locked_accounts() OWNER TO authentik;
 REVOKE ALL ON FUNCTION public.pagerarchive_locked_accounts() FROM PUBLIC;
 GRANT EXECUTE ON FUNCTION public.pagerarchive_locked_accounts() TO pagerarchive_metrics;
+
+-- The "Authentik events" metric (SPEC.md R52, R89b), in the same way:
+-- pagerarchive_authentik_events() counts Authentik's events of a fixed list of
+-- kinds in the last 5 minutes, and a failed sign-in's reason as the kind of
+-- stage it failed at. It returns one row for every kind and reason, zero
+-- included, and nothing else: never a username, an address or an event's
+-- text (P1, R70). Authentik keeps no such counter itself.
+CREATE OR REPLACE FUNCTION public.pagerarchive_authentik_events() RETURNS TABLE (action text, reason text, n integer)
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = pg_catalog, public AS $fn$
+BEGIN
+	RETURN QUERY
+	WITH kinds (action, reason) AS (VALUES
+		('login', ''), ('login_failed', 'password'), ('login_failed', 'second_factor'), ('login_failed', 'other'),
+		('system_exception', ''), ('system_task_exception', ''), ('configuration_error', ''),
+		('policy_exception', ''), ('property_mapping_exception', '')),
+	recent AS (
+		SELECT e.action, CASE
+			WHEN e.action <> 'login_failed' THEN ''
+			WHEN e.context -> 'stage' ->> 'model_name' = 'passwordstage' THEN 'password'
+			WHEN e.context -> 'stage' ->> 'model_name' = 'authenticatorvalidatestage' THEN 'second_factor'
+			ELSE 'other' END AS reason
+		FROM public.authentik_events_event e
+		WHERE e.created > now() - interval '5 minutes'
+		  AND e.action IN (SELECT k.action FROM kinds k))
+	SELECT k.action, k.reason, (SELECT count(*) FROM recent r WHERE r.action = k.action AND r.reason = k.reason)::integer
+	FROM kinds k
+	ORDER BY k.action, k.reason;
+END
+$fn$;
+ALTER FUNCTION public.pagerarchive_authentik_events() OWNER TO authentik;
+REVOKE ALL ON FUNCTION public.pagerarchive_authentik_events() FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION public.pagerarchive_authentik_events() TO pagerarchive_metrics;
