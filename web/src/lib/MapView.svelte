@@ -704,4 +704,9 @@
 		top: calc(var(--space-sm) + var(--target) + var(--space-xs));
 		z-index: var(--layer-content);
 	}
+	/* Pressed while the outlines are shown, as the List and Map buttons show the view. */
+	.areas-toggle[aria-pressed='true'] {
+		background: var(--accent-soft);
+		color: var(--accent-soft-fg);
+	}
 </style>
