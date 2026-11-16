@@ -298,6 +298,10 @@
 	--map-area-halo: var(--bg);
 	--area-tag-bg: var(--surface-2);
 	--area-tag-border: var(--control-border);
+	/* R88c: the map layers panel lifted off the map. */
+	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
+	/* R35g: the map credits' line, at most this wide (it wraps). */
+	--map-credits-width: 16rem;
 }
 
 /* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
@@ -552,6 +556,10 @@
 	--map-area-halo: var(--bg);
 	--area-tag-bg: var(--surface-2);
 	--area-tag-border: var(--control-border);
+	/* R88c: the map layers panel lifted off the map. */
+	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
+	/* R35g: the map credits' line, at most this wide (it wraps). */
+	--map-credits-width: 16rem;
 }
 
 @media (pointer: coarse) {

@@ -42,7 +42,7 @@ The API loads the dataset into the database before it starts listening, but only
 
 ## Areas
 
-A network profile may name **layers** of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in, and another agency's districts over them. A page placed on the map (R24, R25) is in the area of each layer its point falls in, which its job's view, its detail view and the map's list show as the layer's label and the name (`District 08`), and the map page outlines and labels each layer in its own style, with a button for each to hide it. A page with no location shows none; nor does a point in no area of a layer, on an area's edge, or in two of a layer's areas at once (for that layer).
+A network profile may name **layers** of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in, and another agency's districts over them. A page placed on the map (R24, R25) is in the area of each layer its point falls in, which its job's view, its detail view and the map's list show as the layer's label and the name (`District 08`), and the map page outlines and labels each layer in its own style, with a checkbox for each in the map's "Map layers" panel to hide it. A page with no location shows none; nor does a point in no area of a layer, on an area's edge, or in two of a layer's areas at once (for that layer).
 
 ```json
 "areas": [
@@ -67,9 +67,9 @@ A network profile may name **layers** of **areas** (R88, ADR 0035): named polygo
 
 - `id`: the layer's machine name, unique in the profile: lower-case letters, digits and hyphens, starting with a letter. What's stored for the layer is kept under it, so changing it is removing the layer and adding a new one.
 - `path`: relative to the profile file. A GeoJSON `FeatureCollection` of `Polygon` and `MultiPolygon` features in WGS84 longitude and latitude (RFC 7946). A file whose `crs` names anything else is refused. Name it `.geojson`, so it isn't read as a profile.
-- `label`: shown before each name (`Zone A`), and on the map's button (`Zone outlines`). A short agency name works too: a label `Metro` shows `Metro Central`.
+- `label`: shown before each name (`Zone A`), and in the map's layers panel (`Zone outlines`). A short agency name works too: a label `Metro` shows `Metro Central`.
 - `name_property`: the feature property that names each area: a string (trimmed), or a number as the file writes it, at most 40 characters. Features with the same name are one area (a district's land and its water, say).
-- `attribution`: the data's credit, shown in the map's credits. Many open datasets require one.
+- `attribution`: the data's credit, shown in the map's credits while the layer is shown. Many open datasets require one.
 - `outline`: optional, `solid`, `dashed` or `dotted`: how the map draws the layer, in colours the look sets (light and dark). By default the first layer is solid, the second dashed and the third dotted.
 
 The layers are shown in the order listed. Areas of one layer shouldn't overlap each other (a point in two is in neither); layers overlap freely.

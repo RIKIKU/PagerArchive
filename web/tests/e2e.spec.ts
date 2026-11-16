@@ -4944,29 +4944,108 @@ for (const width of [1280, 375]) {
 				await ctx.close();
 				continue;
 			}
-			const zones = page.getByRole('button', { name: 'Zone outlines' });
-			const regions = page.getByRole('button', { name: 'Region outlines' });
+			// One "Map layers" control, closed at first: its panel has a checkbox for each layer.
+			const control = page.getByRole('button', { name: 'Map layers' });
+			const panel = page.getByRole('group', { name: 'Map layers' });
+			const zones = page.getByRole('checkbox', { name: 'Zone outlines' });
+			const regions = page.getByRole('checkbox', { name: 'Region outlines' });
 			const drawn = (b: typeof zones) => expect.poll(async () => Number(await b.getAttribute('data-drawn')), { timeout: 10_000 });
+			await expect(control).toHaveAttribute('aria-expanded', 'false');
+			await expect(panel).toBeHidden();
+			await expect(page.getByRole('button', { name: /outlines/ })).toHaveCount(0);
+			// R35g: the credits are open when the map opens, phones too, crediting both layers.
+			const credits = page.locator('.maplibregl-ctrl-attrib-inner');
+			const creditsButton = page.getByRole('button', { name: 'Map credits' });
+			await expect(credits).toBeVisible();
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'true');
+			await expect(credits).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			await expect(credits).toContainText('Region outlines: Example regions, made up for PagerArchive');
+			await page.screenshot({ path: info.outputPath(`a111-map-${colorScheme}-${width}.png`) });
+			// After five seconds they close to the ⓘ, a button opening and closing them from the keyboard.
+			await expect(credits).toBeHidden({ timeout: 10_000 });
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'false');
+			await expect(creditsButton).toBeVisible();
+			expect(await axeOf(page), `${colorScheme} map, credits closed`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-map-credits-closed-${colorScheme}-${width}.png`) });
+			await creditsButton.focus();
+			await page.keyboard.press('Enter');
+			await expect(credits).toBeVisible();
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'true');
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} map, credits open, layers closed`).toEqual([]);
+			await creditsButton.focus();
+			await page.keyboard.press('Enter');
+			await expect(credits).toBeHidden();
+			// Opened, focus goes to the first checkbox; both layers are shown and drawn.
+			await control.click();
+			await expect(control).toHaveAttribute('aria-expanded', 'true');
+			await expect(panel).toBeVisible();
+			await expect(control).toHaveAttribute('aria-controls', (await panel.getAttribute('id'))!);
+			await expect(zones).toBeFocused();
 			for (const b of [zones, regions]) {
-				await expect(b).toHaveAttribute('aria-pressed', 'true');
+				await expect(b).toBeChecked();
 				await drawn(b).toBeGreaterThan(0);
 			}
-			await expect(page.locator('.maplibregl-ctrl-attrib-inner')).toContainText('Zone outlines: Example zones, made up for PagerArchive');
-			await expect(page.locator('.maplibregl-ctrl-attrib-inner')).toContainText('Region outlines: Example regions, made up for PagerArchive');
+			// The panel stays inside the map, leaving most of it in sight.
+			const mapBox = (await map.boundingBox())!;
+			const panelBox = (await panel.boundingBox())!;
+			expect(panelBox.x + panelBox.width, 'panel inside the map').toBeLessThanOrEqual(mapBox.x + mapBox.width);
+			expect(panelBox.y + panelBox.height, 'panel inside the map').toBeLessThanOrEqual(mapBox.y + mapBox.height);
+			expect(panelBox.width * panelBox.height, 'panel covers under half the map').toBeLessThan((mapBox.width * mapBox.height) / 2);
 			await noSideways();
-			expect(await axeOf(page), `${colorScheme} map`).toEqual([]);
-			await page.screenshot({ path: info.outputPath(`a111-map-${colorScheme}-${width}.png`) });
-			// The regions hidden, the zones still shown, and still so on the next visit; then shown again.
-			await regions.click();
-			await expect(regions).toHaveAttribute('aria-pressed', 'false');
+			expect(await axeOf(page), `${colorScheme} map, layers open`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a111-map-layers-${colorScheme}-${width}.png`) });
+			// Escape closes it, focus back on the control (and the page stays as it was).
+			await page.keyboard.press('Escape');
+			await expect(panel).toBeHidden();
+			await expect(control).toBeFocused();
+			await expect(page.getByTestId('map-frame')).not.toHaveAttribute('data-fullscreen');
+			// From the keyboard: open, Space on a checkbox hides the regions alone.
+			await page.keyboard.press('Enter');
+			await expect(zones).toBeFocused();
+			await page.keyboard.press('Tab');
+			await expect(regions).toBeFocused();
+			await page.keyboard.press('Space');
+			await expect(regions).not.toBeChecked();
 			await drawn(regions).toBe(0);
 			await drawn(zones).toBeGreaterThan(0);
+			// R35g: the credits name the shown layers only.
+			await expect(credits).not.toContainText('Region outlines');
+			await expect(credits).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+			// A click outside closes it; the control again closes it too.
+			await page.getByRole('heading', { level: 1 }).click();
+			await expect(panel).toBeHidden();
+			await control.click();
+			await expect(panel).toBeVisible();
+			await control.click();
+			await expect(panel).toBeHidden();
+			await expect(control).toHaveAttribute('aria-expanded', 'false');
+			// Still so on the next visit, closed; then shown again.
 			await page.reload();
-			await expect(regions).toHaveAttribute('aria-pressed', 'false');
-			await expect(zones).toHaveAttribute('aria-pressed', 'true');
-			await regions.click();
-			await expect(regions).toHaveAttribute('aria-pressed', 'true');
+			await expect(panel).toBeHidden();
+			// R35g: open again on the next visit, and moving the map closes the credits at once.
+			await expect(map).toHaveAttribute('data-ready', 'true', { timeout: 15_000 });
+			await expect(credits).toBeVisible();
+			const box = (await map.boundingBox())!;
+			await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+			await page.mouse.down();
+			await page.mouse.move(box.x + box.width / 2 + 60, box.y + box.height / 2 + 30, { steps: 8 });
+			await page.mouse.up();
+			await expect(credits).toBeHidden({ timeout: 1_000 });
+			await expect(creditsButton).toHaveAttribute('aria-expanded', 'false');
+			await control.click();
+			await expect(regions).not.toBeChecked();
+			await expect(zones).toBeChecked();
+			await regions.check();
 			await drawn(regions).toBeGreaterThan(0);
+			// In full screen too.
+			await page.getByRole('button', { name: 'Full screen map' }).click();
+			await expect(page.getByTestId('map-frame')).toHaveAttribute('data-fullscreen', /overlay|native/);
+			await control.click();
+			await expect(panel).toBeVisible();
+			await regions.uncheck();
+			await drawn(regions).toBe(0);
+			await regions.check();
 			await ctx.close();
 		}
 
@@ -4982,3 +5061,19 @@ for (const width of [1280, 375]) {
 		await admin.context().close();
 	});
 }
+
+// R88c: a network with no layers of areas has no layers control on its map.
+test('A111 no layers, no layers control', async ({ browser }) => {
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	await page.route('**/api/v1/meta', async (r) => {
+		const meta = await (await r.fetch()).json();
+		delete meta.areas;
+		await r.fulfill({ json: meta });
+	});
+	await page.goto('/map');
+	await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	if ((await page.getByTestId('map').getAttribute('data-ready')) === 'true') await expect(page.getByRole('button', { name: 'Full screen map' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Map layers' })).toHaveCount(0);
+	await ctx.close();
+});

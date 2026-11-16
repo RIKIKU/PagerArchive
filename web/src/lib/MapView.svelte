@@ -23,6 +23,7 @@
 	import { page } from '$app/state';
 	import type { Message, Meta } from './api.ts';
 	import Icon from './Icon.svelte';
+	import { icons } from './icons.ts';
 	import { screen } from './screen.svelte.ts';
 
 	// variant 'single': the small map in a message's detail view (R35c), one
@@ -156,13 +157,70 @@
 		if (overlay) exit();
 	}
 
-	// The map's credits: the address data's, and on the map page the areas'
-	// (R24, R88c).
+	// The map's credits (R5, R35g): the address data's here; the background
+	// map's and each shown layer of areas' come with their sources, so a
+	// hidden layer's credit goes with it (R88c).
 	function credits(): string[] | undefined {
-		const c: string[] = [];
-		if (meta.attribution) c.push(`Address data: ${meta.attribution}`);
-		if (variant === 'full') for (const l of meta.areas ?? []) c.push(`${l.label} outlines: ${l.attribution}`);
-		return c.length ? c : undefined;
+		return meta.attribution ? [`Address data: ${meta.attribution}`] : undefined;
+	}
+
+	// R35g: the credits are MapLibre's compact attribution (it gathers each
+	// shown source's credit), its ⓘ a real button here, "Map credits" (an
+	// icon button like the map's others, tokens only), that opens and closes
+	// the credit line beside it. They're open when the map opens and close
+	// when the viewer moves, zooms or clicks the map, or after five seconds,
+	// as the OpenStreetMap Foundation's attribution guidelines allow for an
+	// interactive map; not while the pointer or focus is on them, and not
+	// once the viewer has opened or closed them. Phones too: the guidelines
+	// make no exception for small screens, so they don't start closed there.
+	const creditsFor = 5_000;
+	let creditsTimer: ReturnType<typeof setTimeout> | undefined;
+	let creditsBox: HTMLDivElement | undefined;
+	class Credits extends maplibregl.AttributionControl {
+		onAdd(m: maplibregl.Map): HTMLElement {
+			const details = super.onAdd(m);
+			// The same control, as a box and a button instead of MapLibre's
+			// details and summary (which aren't a button to assistive technology).
+			const box = document.createElement('div');
+			box.className = `${details.className} credits`;
+			const line = this._innerContainer;
+			line.id = `${uid}-credits`;
+			const button = document.createElement('button');
+			button.type = 'button';
+			button.className = 'secondary icon-button credits-button';
+			button.setAttribute('aria-label', 'Map credits');
+			button.setAttribute('aria-controls', line.id);
+			button.innerHTML = `<svg class="ui-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${icons.help}</svg>`;
+			button.addEventListener('click', () => {
+				// The viewer's own choice, which no timer undoes.
+				clearTimeout(creditsTimer);
+				showCredits(!box.classList.contains('maplibregl-compact-show'));
+			});
+			box.append(line, button);
+			details.remove();
+			this._container = box;
+			this._compactButton = button;
+			creditsBox = box;
+			// Its state, whoever changes it (MapLibre closes it on a drag too).
+			const sync = () => button.setAttribute('aria-expanded', String(box.classList.contains('maplibregl-compact-show')));
+			new MutationObserver(sync).observe(box, { attributes: true, attributeFilter: ['class'] });
+			sync();
+			return box;
+		}
+	}
+	function showCredits(shown: boolean) {
+		creditsBox?.classList.toggle('maplibregl-compact-show', shown);
+	}
+	function collapseCredits() {
+		clearTimeout(creditsTimer);
+		showCredits(false);
+	}
+	function collapseCreditsLater(after = creditsFor) {
+		clearTimeout(creditsTimer);
+		creditsTimer = setTimeout(() => {
+			if (creditsBox?.matches(':hover, :focus-within')) collapseCreditsLater(1_000);
+			else collapseCredits();
+		}, after);
 	}
 
 	maplibregl.setWorkerUrl(workerUrl);
@@ -299,9 +357,10 @@
 
 	// R88c: the network's layers of areas, each outlined and labelled under
 	// the messages on the map page in its own style (tokens), the later over
-	// the earlier, each shown or hidden by its own button whose choice this
-	// browser remembers. The outlines are asked for by their version, so the
-	// browser keeps them until the areas change.
+	// the earlier, each shown or hidden by its own checkbox in the map's
+	// layers panel, whose choice this browser remembers. The outlines are
+	// asked for by their version, so the browser keeps them until the areas
+	// change.
 	const areaLayers = $derived(variant === 'full' ? (meta.areas ?? []) : []);
 	const areasKey = (id: string) => `pagerarchive.map.areas.${id}`;
 	function remembered(): Record<string, boolean> {
@@ -316,7 +375,7 @@
 		return out;
 	}
 	let shownAreas: Record<string, boolean> = $state(remembered());
-	// How many outlines of each layer are drawn, kept on its button for a test.
+	// How many outlines of each layer are drawn, kept on its checkbox for a test.
 	let areasDrawn: Record<string, number> = $state({});
 
 	// A dash token as MapLibre's line-dasharray (in multiples of the line's
@@ -341,7 +400,12 @@
 			};
 			const visibility = shownAreas[l.id] === false ? 'none' : 'visible';
 			const source = `areas-${l.id}`;
-			map.addSource(source, { type: 'geojson', data: `${location.origin}/api/v1/map/areas/${encodeURIComponent(l.id)}?v=${encodeURIComponent(l.version)}` });
+			// Its credit is the source's: MapLibre credits only the sources of shown layers.
+			map.addSource(source, {
+				type: 'geojson',
+				data: `${location.origin}/api/v1/map/areas/${encodeURIComponent(l.id)}?v=${encodeURIComponent(l.version)}`,
+				attribution: `${l.label} outlines: ${l.attribution}`
+			});
 			// Outlines are the features without a label point's mark.
 			map.addLayer({
 				id: `area-lines-${l.id}`,
@@ -368,8 +432,7 @@
 		}
 	}
 
-	function toggleAreas(id: string) {
-		const shown = shownAreas[id] === false;
+	function showAreas(id: string, shown: boolean) {
 		shownAreas[id] = shown;
 		try {
 			localStorage.setItem(areasKey(id), shown ? 'shown' : 'hidden');
@@ -379,6 +442,33 @@
 		for (const layer of [`area-lines-${id}`, `area-labels-${id}`]) if (map?.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', shown ? 'visible' : 'none');
 	}
 
+	// The layers control (R88c): one small button in the map's corner that
+	// opens a panel with a checkbox for each layer. Closed at first; Escape,
+	// a click or focus elsewhere, or the button again closes it. Focus goes
+	// to the first checkbox on opening, and back to the button on Escape.
+	let layersBox: HTMLDivElement | undefined = $state();
+	let layersButton: HTMLButtonElement | undefined = $state();
+	let layersPanel: HTMLFieldSetElement | undefined = $state();
+	let layersOpen = $state(false);
+	let layersTipOff = $state(false);
+	function openLayers(next: boolean) {
+		layersOpen = next;
+		if (next) requestAnimationFrame(() => layersPanel?.querySelector('input')?.focus());
+	}
+	function layersOutside(ev: Event) {
+		if (layersOpen && layersBox && !layersBox.contains(ev.target as Node)) layersOpen = false;
+	}
+	function layersKey(ev: KeyboardEvent) {
+		if (ev.key !== 'Escape') return;
+		if (!layersOpen) {
+			layersTipOff = true;
+			return;
+		}
+		// Only the panel closes: not the full-screen overlay too.
+		ev.stopPropagation();
+		layersOpen = false;
+		layersButton?.focus();
+	}
 
 	function addLayers() {
 		if (variant === 'heat') addHeatLayers();
@@ -488,7 +578,7 @@
 			style: style(),
 			center: [0, 0],
 			zoom: 1,
-			attributionControl: { compact: true, customAttribution: credits() },
+			attributionControl: false,
 			cooperativeGestures: false
 			});
 		} catch {
@@ -496,10 +586,15 @@
 			return;
 		}
 		map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
+		map.addControl(new Credits({ compact: true, customAttribution: credits() }), 'bottom-right');
 		map.on('load', () => {
 			addLayers();
 			ready = true;
 			fit();
+			// R35g: the credits close after a while, once the map is drawn.
+			map?.once('idle', () => {
+				collapseCreditsLater();
+			});
 		});
 		// WebKit sometimes keeps showing a frame from before the points were
 		// drawn (seen in about 1 in 20 detail views in the A34 check); one
@@ -511,6 +606,12 @@
 				if (map?.getLayer(id)) areasDrawn[l.id] = shownAreas[l.id] === false ? 0 : map.queryRenderedFeatures({ layers: [id] }).length;
 			}
 		});
+		// R35g: the viewer moving, zooming or clicking the map closes the
+		// credits; the map's own moves (fitting the messages) don't.
+		map.on('movestart', (e) => {
+			if (e.originalEvent) collapseCredits();
+		});
+		map.on('click', collapseCredits);
 		map.on('moveend', looked);
 		map.on('resize', looked);
 		map.on('click', 'clusters', async (e) => {
@@ -560,6 +661,7 @@
 			frame.remove();
 			mq.removeEventListener('change', restyle);
 			mo.disconnect();
+			clearTimeout(creditsTimer);
 			map?.remove();
 			map = undefined;
 		};
@@ -579,6 +681,8 @@
 		fit(true);
 	}
 </script>
+
+<svelte:window onclick={layersOutside} onfocusin={layersOutside} />
 
 <!-- R35f: the slot keeps the map's room on the page while the overlay is away at the end of the body. -->
 <div class="slot" class:away={overlay} class:small={single} bind:this={slot}>
@@ -634,17 +738,40 @@
 					<span class="tooltip" aria-hidden="true">Full screen map</span>
 				</span>
 				{#if areaLayers.length}
-					<div class="areas-toggles">
-						{#each areaLayers as l (l.id)}
+					<!-- svelte-ignore a11y_no_static_element_interactions (Escape closes the panel and hides the tooltip: WCAG 1.4.13) -->
+					<div class="layers" bind:this={layersBox} onkeydown={layersKey}>
+						<span
+							class="layers-control has-tip"
+							class:tip-off={layersTipOff || layersOpen}
+							onpointerleave={() => (layersTipOff = false)}
+							onfocusout={() => (layersTipOff = false)}
+						>
 							<button
+								bind:this={layersButton}
 								type="button"
-								class="secondary areas-toggle"
-								aria-pressed={shownAreas[l.id] !== false}
-								data-layer={l.id}
-								data-drawn={areasDrawn[l.id] ?? 0}
-								onclick={() => toggleAreas(l.id)}><span class="swatch" data-outline={l.outline} aria-hidden="true"></span>{l.label} outlines</button
+								class="secondary icon-button"
+								aria-label="Map layers"
+								aria-expanded={layersOpen}
+								aria-controls="{uid}-layers"
+								data-testid="map-layers"
+								onclick={() => openLayers(!layersOpen)}><Icon name="layers" /></button
 							>
-						{/each}
+							<span class="tooltip" aria-hidden="true">Map layers</span>
+						</span>
+						<fieldset class="layers-panel" id="{uid}-layers" bind:this={layersPanel} hidden={!layersOpen} data-testid="map-layers-panel">
+							<legend>Map layers</legend>
+							{#each areaLayers as l (l.id)}
+								<label class="layer"
+									><input
+										type="checkbox"
+										checked={shownAreas[l.id] !== false}
+										data-layer={l.id}
+										data-drawn={areasDrawn[l.id] ?? 0}
+										onchange={(e) => showAreas(l.id, e.currentTarget.checked)}
+									/><span class="swatch" data-outline={l.outline} aria-hidden="true"></span>{l.label} outlines</label
+								>
+							{/each}
+						</fieldset>
 					</div>
 				{/if}
 			{/if}
@@ -736,34 +863,97 @@
 		left: 0;
 		transform: none;
 	}
-	/* R88c: a button for each layer of areas, under the full-screen button:
+	/* R88c: the layers control, one icon button under the full-screen button:
 	   in sight at the top of the map on a phone, where the bottom bar may
-	   cover its foot. The column lets the map's own gestures through. */
-	.areas-toggles {
+	   cover its foot. Its panel opens beside it, inside the map, as wide as
+	   its labels need and no wider than the map leaves, scrolling if there
+	   are more layers than fit: the rest of the map stays in sight. */
+	.layers {
+		display: contents;
+	}
+	.layers-control {
 		position: absolute;
 		left: var(--space-sm);
 		top: calc(var(--space-sm) + var(--target) + var(--space-xs));
 		z-index: var(--layer-content);
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: var(--space-xs);
-		pointer-events: none;
 	}
-	.areas-toggle {
-		display: inline-flex;
+	.layers-control > .tooltip {
+		left: 0;
+		transform: none;
+	}
+	.layers-panel {
+		position: absolute;
+		left: calc(var(--space-sm) + var(--target) + var(--space-xs));
+		top: calc(var(--space-sm) + var(--target) + var(--space-xs));
+		z-index: var(--layer-content);
+		width: max-content;
+		max-width: calc(100% - var(--target) - var(--space-xs) - 2 * var(--space-sm));
+		max-height: calc(100% - var(--target) - var(--space-xs) - 2 * var(--space-sm));
+		overflow-y: auto;
+		margin: 0;
+		padding: var(--space-xs) var(--space-sm);
+		background: var(--surface-2);
+		color: var(--fg);
+		border: var(--border-width) solid var(--control-border);
+		border-radius: var(--radius);
+		box-shadow: var(--map-layers-shadow);
+	}
+	.layers-panel[hidden] {
+		display: none;
+	}
+	.layers-panel legend {
+		float: left;
+		width: 100%;
+		padding: var(--space-2xs) 0;
+		font-size: var(--text-sm);
+		font-weight: var(--weight-strong);
+	}
+	.layer {
+		clear: both;
+		display: flex;
 		align-items: center;
 		gap: var(--space-xs);
-		pointer-events: auto;
+		min-height: var(--target);
+		font-size: var(--text-sm);
+		cursor: pointer;
 	}
-	/* Pressed while the outlines are shown, as the List and Map buttons show the view. */
-	.areas-toggle[aria-pressed='true'] {
-		background: var(--accent-soft);
-		color: var(--accent-soft-fg);
+	/* R35g: the credits, bottom right: the credit line (when open) and the
+	   "Map credits" button beside it, in the app's look, not MapLibre's. */
+	.map :global(.maplibregl-ctrl-attrib.credits) {
+		display: flex;
+		align-items: flex-end;
+		gap: var(--space-xs);
+		min-height: 0;
+		margin: 0 var(--space-sm) var(--space-sm) 0;
+		padding: 0;
+		background: transparent;
+		border-radius: 0;
+		color: var(--fg);
+		font: inherit;
+	}
+	.map :global(.credits .maplibregl-ctrl-attrib-inner) {
+		max-width: var(--map-credits-width);
+		padding: var(--space-2xs) var(--space-sm);
+		background: var(--surface-2);
+		color: var(--fg);
+		border: var(--border-width) solid var(--control-border);
+		border-radius: var(--radius-small);
+		font-family: var(--font-ui);
+		font-size: var(--text-xs);
+		line-height: var(--leading-tight);
+		box-shadow: var(--map-layers-shadow);
+	}
+	.map :global(.credits .maplibregl-ctrl-attrib-inner a) {
+		color: var(--fg);
+		text-decoration: underline;
+	}
+	.map :global(.credits .credits-button) {
+		flex: none;
 	}
 	/* A sample of the layer's outline, the key to which line is which. */
 	.swatch {
 		display: inline-block;
+		flex: none;
 		width: var(--space-lg);
 		border-top: var(--map-area-solid-stroke) solid var(--map-area-solid-line);
 	}
