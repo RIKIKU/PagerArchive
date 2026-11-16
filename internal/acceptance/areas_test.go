@@ -274,6 +274,40 @@ func TestA111Areas(t *testing.T) {
 	if err := e.st.Pool.QueryRow(e.ctx, `SELECT count(*) FROM message_areas WHERE message_id = $1`, ids["west"]).Scan(&left); err != nil || left != 0 {
 		t.Errorf("a deleted page's area: %d rows %v", left, err)
 	}
+	// Overlapping areas (a mistake in a file): a point in two at once is in
+	// none, and a point in one of them is in it.
+	overlap := strings.Replace(moved, `"features": [`, `"features": [
+    {"type": "Feature", "properties": {"zone": "C"}, "geometry": {"type": "Polygon", "coordinates": [[[-140.9, -34.84], [-140.866, -34.84], [-140.866, -34.82], [-140.9, -34.82], [-140.9, -34.84]]]}},`, 1)
+	if err := os.WriteFile(filepath.Join(dir, "example-areas.geojson"), []byte(overlap), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if f, err = areas.ReadFile(n2.Areas.Path, n2.Areas.NameProperty); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := areas.Load(e.ctx, e.st, f); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range []struct {
+		lon, lat float64
+		want     string
+	}{
+		{-140.867343, -34.831226, "none"}, // 1 FICTION ST: in A and C
+		{-140.885179, -34.823895, "none"}, // 50 SAMPLE RD: in A and C
+		{-140.93, -34.85, "A"},            // in A only
+		{-140.862041, -34.834061, "B"},    // in B only
+	} {
+		var got *string
+		if err := e.st.Pool.QueryRow(e.ctx, `SELECT area_at(ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography)`, p.lon, p.lat).Scan(&got); err != nil {
+			t.Fatal(err)
+		}
+		g := "none"
+		if got != nil {
+			g = *got
+		}
+		if g != p.want {
+			t.Errorf("overlapping areas, (%g, %g): %q, want %s", p.lon, p.lat, g, p.want)
+		}
+	}
 	// With no areas in the profile, every page's area goes.
 	if err := areas.Clear(e.ctx, e.st); err != nil {
 		t.Fatal(err)
