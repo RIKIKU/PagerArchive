@@ -18,6 +18,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file. The attribution is shown in the app (R24). See [Address dataset](#address-dataset) |
 | `street_types` | Spelling to abbreviation, e.g. `"STREET": "ST"`, used to match streets |
 | `grid_reference` | `{system}`: how grid references are read (R25). `mgrs-6-digit-in-locality-square`: 3 digits of easting then 3 of northing, in 100 m, with no zone or 100 km square. The app completes them from the UTM zone and 100 km square that the page's locality lies in, and uses the centre of the 100 m cell |
+| `areas` | Optional. `{path, label, name_property, attribution}`: a GeoJSON file of named polygons a located page can fall in, such as districts, outlined on the map (R88). See [Areas](#areas) |
 
 ## Address dataset
 
@@ -38,6 +39,28 @@ How a page is placed (ADR 0005):
 If the address and the grid reference both place a page and they're more than 1 km apart, it gets the admin-only `location_mismatch` flag (R26). For a street-only address, the distance is measured to the nearest address on that street.
 
 The API loads the dataset into the database before it starts listening, but only when the file or `street_types` have changed. A dataset of several million addresses takes a few minutes. Messages are then placed again in the background.
+
+## Areas
+
+A network profile may name a file of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in. A page placed on the map (R24, R25) is in the area its point falls in, which its job's view, its detail view and the map's list show as the label and the name (`District 08`), and the map page outlines and labels them, with a button to hide them. A page with no location shows none; nor does a point in no area, on an area's edge, or in two areas at once.
+
+```json
+"areas": {
+  "path": "example-areas.geojson",
+  "label": "Zone",
+  "name_property": "zone",
+  "attribution": "Example zones, made up for PagerArchive"
+}
+```
+
+- `path`: relative to the profile file. A GeoJSON `FeatureCollection` of `Polygon` and `MultiPolygon` features in WGS84 longitude and latitude (RFC 7946). A file whose `crs` names anything else is refused. Name it `.geojson`, so it isn't read as a profile.
+- `label`: what one area is called, shown before each name (`Zone A`) and on the map's button (`Zone outlines`).
+- `name_property`: the feature property that names each area: a string (trimmed), or a number as the file writes it, at most 40 characters. Features with the same name are one area.
+- `attribution`: the data's credit, shown in the map's credits. Many open datasets require one.
+
+The example's [`example-areas.geojson`](../profiles/example/example-areas.geojson) has two made-up zones either side of 11 FICTION ST, MADEUPTON. A real network's areas belong in its private profile repository, with their attribution.
+
+The API loads the areas into the database before it starts listening, when the file or `name_property` has changed, and then works out every located page's area again in the background, a batch at a time (pages keep the area they had until then). Changing the areas, their label or their attribution re-parses no page: the `areas` key is left out of what decides a re-parse. Removing the key removes every page's area. The map gets the outlines simplified to under 400 KB (the area a page is in is worked out from the full detail), gzipped, and the browser keeps them until they change. `validate-profile` checks the file as the server does. Administration's start page says which areas are loaded.
 
 ## Agency profile (attached to alias templates)
 
