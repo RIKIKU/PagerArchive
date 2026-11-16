@@ -331,6 +331,11 @@ func serve(stderr io.Writer) error {
 		Store: st, Dir: dir, AllowedDomains: auth.domains, InitialAdmin: auth.initialAdmin,
 		Now: time.Now, Log: log, CloseLive: hub.CloseUsers,
 	}
+	if v := os.Getenv("INVITATION_SENDER_LIMITS"); v != "" {
+		if acc.SenderLimits, err = accounts.ParseSenderLimits(v); err != nil {
+			return err
+		}
+	}
 	go expireSessions(ctx, st, log)
 	go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)
 	go acc.WatchInvitations(ctx, adminAddressCheckEvery, adminAddressCheckTries)

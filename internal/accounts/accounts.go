@@ -124,6 +124,9 @@ type Service struct {
 	// (ADR 0010 §4).
 	CloseLive func(userIDs []int64)
 
+	// SenderLimits, if set, replaces SenderLimits for this service (R43e).
+	SenderLimits []Limit
+
 	emails emailLimiter // invitation emails sent (R43e)
 }
 

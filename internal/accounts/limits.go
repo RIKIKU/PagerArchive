@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -16,6 +17,7 @@ type Limit struct {
 
 // The caps on invitation emails (R43e), counted for new invitations and
 // resends alike: per sender, admins included, and per address, whoever sends.
+// Service.SenderLimits replaces the sender's (INVITATION_SENDER_LIMITS).
 var (
 	SenderLimits  = []Limit{{20, time.Hour}, {50, 24 * time.Hour}}
 	AddressLimits = []Limit{{3, time.Hour}, {5, 24 * time.Hour}}
@@ -38,7 +40,7 @@ func (l *emailLimiter) reserve(now time.Time, keys map[string][]Limit) (release 
 	if l.sent == nil {
 		l.sent = map[string][]time.Time{}
 	}
-	l.forget(now)
+	l.forget(now, keys)
 	for k, limits := range keys {
 		for _, lim := range limits {
 			if w := waitFor(l.sent[k], now, lim); w > wait {
@@ -68,10 +70,12 @@ func (l *emailLimiter) reserve(now time.Time, keys map[string][]Limit) (release 
 }
 
 // forget drops what no limit counts any more.
-func (l *emailLimiter) forget(now time.Time) {
-	var longest time.Duration
-	for _, lim := range append(append([]Limit{}, SenderLimits...), AddressLimits...) {
-		longest = max(longest, lim.Per)
+func (l *emailLimiter) forget(now time.Time, keys map[string][]Limit) {
+	longest := 24 * time.Hour
+	for _, limits := range keys {
+		for _, lim := range limits {
+			longest = max(longest, lim.Per)
+		}
 	}
 	for k, ts := range l.sent {
 		i := 0
@@ -105,7 +109,11 @@ func waitFor(ts []time.Time, now time.Time, lim Limit) time.Duration {
 // emailKey, or refuses it with 429, saying which limit and how long to wait.
 func (s *Service) limitEmail(senderID int64, emailKey, address string) (func(), error) {
 	sender, to := "sender:"+strconv.FormatInt(senderID, 10), "address:"+emailKey
-	release, key, hit, wait := s.emails.reserve(s.now(), map[string][]Limit{sender: SenderLimits, to: AddressLimits})
+	senderLimits := SenderLimits
+	if s.SenderLimits != nil {
+		senderLimits = s.SenderLimits
+	}
+	release, key, hit, wait := s.emails.reserve(s.now(), map[string][]Limit{sender: senderLimits, to: AddressLimits})
 	if release != nil {
 		return release, nil
 	}
@@ -115,6 +123,18 @@ func (s *Service) limitEmail(senderID int64, emailKey, address string) (func(), 
 	}
 	return nil, &Error{Status: http.StatusTooManyRequests, Code: "too_many_emails", RetryAfter: wait,
 		Msg: fmt.Sprintf("You've sent %d invitation emails in the last %s, which is the most allowed. Try again in %s.", hit.N, span(hit.Per), waitText(wait))}
+}
+
+// ParseSenderLimits reads INVITATION_SENDER_LIMITS, "hourly,daily" (e.g.
+// "20,50"): one sender's invitation emails an hour and a day.
+func ParseSenderLimits(v string) ([]Limit, error) {
+	h, d, ok := strings.Cut(v, ",")
+	nh, err1 := strconv.Atoi(strings.TrimSpace(h))
+	nd, err2 := strconv.Atoi(strings.TrimSpace(d))
+	if !ok || err1 != nil || err2 != nil || nh < 1 || nd < 1 {
+		return nil, fmt.Errorf("INVITATION_SENDER_LIMITS %q: want two whole numbers above 0, an hour's and a day's, like 20,50", v)
+	}
+	return []Limit{{nh, time.Hour}, {nd, 24 * time.Hour}}, nil
 }
 
 func span(d time.Duration) string {

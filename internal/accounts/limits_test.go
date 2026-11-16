@@ -105,3 +105,34 @@ func TestWaitText(t *testing.T) {
 		}
 	}
 }
+
+// INVITATION_SENDER_LIMITS replaces the sender's two caps; the address's stay.
+func TestR43eSenderLimitsSetting(t *testing.T) {
+	lims, err := ParseSenderLimits(" 2, 4 ")
+	if err != nil || len(lims) != 2 || lims[0] != (Limit{2, time.Hour}) || lims[1] != (Limit{4, 24 * time.Hour}) {
+		t.Fatalf("ParseSenderLimits: %v, %v", lims, err)
+	}
+	for _, bad := range []string{"", "20", "20,", "0,5", "20,50,1", "a,b", "-1,5"} {
+		if _, err := ParseSenderLimits(bad); err == nil {
+			t.Errorf("ParseSenderLimits(%q) accepted", bad)
+		}
+	}
+	now := time.Date(2026, 11, 16, 9, 0, 0, 0, time.UTC)
+	s := &Service{Now: func() time.Time { return now }, SenderLimits: lims}
+	for i := range 2 {
+		if _, err := s.limitEmail(1, "a"+string(rune('0'+i))+"@example.com", "x"); err != nil {
+			t.Fatalf("email %d: %v", i+1, err)
+		}
+	}
+	if _, err := s.limitEmail(1, "c@example.com", "c@example.com"); err == nil || !strings.Contains(err.Error(), "2 invitation emails") {
+		t.Fatalf("third email from the sender: want refused, got %v", err)
+	}
+	for i := range 3 {
+		if _, err := s.limitEmail(int64(10+i), "same@example.com", "same@example.com"); err != nil {
+			t.Fatalf("address email %d: %v", i+1, err)
+		}
+	}
+	if _, err := s.limitEmail(20, "same@example.com", "same@example.com"); err == nil {
+		t.Fatal("fourth email to one address: want refused")
+	}
+}
