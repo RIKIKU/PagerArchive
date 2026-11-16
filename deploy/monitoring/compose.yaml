@@ -97,7 +97,7 @@ services:
     image: grafana/grafana:13.3
     restart: unless-stopped
     labels:
-      pagerarchive.config: "cfbe7baff5e2f166"
+      pagerarchive.config: "6269e5823f6de33c"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
