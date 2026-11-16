@@ -235,15 +235,15 @@ func TestA117FailuresAndAuthentik(t *testing.T) {
 	// The two dashboards: every query without an error, and the panels the
 	// made-up traffic feeds have values.
 	want := map[string][]string{
-		"pa-authentik": {"Up", "Workers connected", "Signed in, last 5 minutes", "Failed sign-ins, last 5 minutes", "Accounts locked",
-			"Sign-ins (each minute, over the 5 minutes before)", "Errors Authentik recorded (each minute, over the 5 minutes before)",
+		"pa-authentik": {"Up", "Workers", "Signed in, 5 min", "Failed sign-ins, 5 min", "Locked accounts",
+			"Sign-ins (each minute, last 5 min)", "Errors recorded (each minute, last 5 min)",
 			"Requests per second, by status", "Slowest 10% of requests, by view", "Flows started (per minute)", "Worker tasks (per minute)",
-			"Tasks waiting", "Database: new connections and errors (per minute)"},
-		"pa-failures": {"Server errors, last hour", "Pages refused, last hour", "Clients not receiving", "Failed sends from clients, last hour",
-			"Failed deliveries, last hour", "Accounts locked", "Nightly run", "Backups", "Automatic upgrades", "Authentik down",
-			"Failed sign-ins, last 5 minutes", "Authentik errors, last 5 minutes", "Pages refused (per minute)",
-			"Authentik: failed sign-ins and errors (last 5 minutes, each minute)", "Errors and warnings in the logs, by message (time range)",
-			"The error and warning lines (click one to open its trace)"},
+			"Tasks waiting", "Database connections and errors (per minute)"},
+		"pa-failures": {"Server errors, 1 h", "Refused pages, 1 h", "Not receiving", "Failed sends, 1 h",
+			"Failed deliveries, 1 h", "Locked accounts", "Nightly run", "Backups", "Upgrades", "Authentik down",
+			"Failed sign-ins, 5 min", "Authentik errors, 5 min", "Pages refused (per minute)",
+			"Authentik: failed sign-ins and errors", "Errors and warnings in the logs, by message",
+			"The error and warning lines (click one for its trace)"},
 	}
 	for dash, titles := range want {
 		got := map[string]panelResult{}
