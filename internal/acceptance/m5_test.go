@@ -534,13 +534,22 @@ func TestA39OnePageOneDelivery(t *testing.T) {
 		t.Errorf("second delivery row: %v, want a unique violation", err)
 	}
 
-	// Send test.
-	var res integrations.TestResult
+	// Send test: delivered or not, the status and a fixed reason, and none of
+	// the answer's body (A107).
+	var res map[string]any
 	if code, p := e.user.call(http.MethodPost, fmt.Sprintf("/api/v1/integrations/%d/test", v.ID), nil, &res); code != http.StatusOK {
 		t.Fatalf("send test: %d %s", code, p.Error)
 	}
-	if !res.OK || res.Result != "HTTP 200 OK" || res.Body != "received" {
-		t.Errorf("the owner sees %+v, want HTTP 200 OK and the body", res)
+	if res["ok"] != true || res["result"] != "HTTP 200 OK" {
+		t.Errorf("the owner sees %+v, want HTTP 200 OK", res)
+	}
+	for k, v := range res {
+		if k != "ok" && k != "result" && k != "error" && k != "took_ms" {
+			t.Errorf("Send test answers %s: %v", k, v)
+		}
+		if s, _ := v.(string); strings.Contains(s, "received") {
+			t.Errorf("Send test shows the answer's body in %s: %q", k, s)
+		}
 	}
 	t.Logf("Send test answer: %+v", res)
 	reqs = hook.Requests()

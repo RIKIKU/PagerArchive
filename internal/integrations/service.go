@@ -834,7 +834,8 @@ func (s *Service) Deliveries(ctx context.Context, owner db.User, id int64) ([]De
 	return out, nil
 }
 
-// Test sends a test delivery and returns what the endpoint answered (R51c).
+// Test sends a test delivery and returns whether it was delivered, the answer's
+// status and a fixed reason, never any of the answer's body (R51c).
 func (s *Service) Test(ctx context.Context, owner db.User, id int64) (TestResult, error) {
 	if err := s.requireKey(); err != nil {
 		return TestResult{}, err
@@ -876,8 +877,8 @@ func (s *Service) Test(ctx context.Context, owner db.User, id int64) (TestResult
 	actx, cancel := context.WithTimeout(ctx, AttemptTimeout)
 	defer cancel()
 	start := time.Now()
-	r := s.send(actx, l, sec, p, true)
-	out := TestResult{OK: r.outcome == delivered, Result: r.status, Error: r.err, Body: bodyText(r.body), TookMS: time.Since(start).Milliseconds()}
+	r := s.send(actx, l, sec, p)
+	out := TestResult{OK: r.outcome == delivered, Result: r.status, Error: r.err, TookMS: time.Since(start).Milliseconds()}
 	if out.Result == "" {
 		out.Result = "not delivered"
 	}

@@ -223,12 +223,13 @@ type Suggestion struct {
 	CoveredBy string `json:"covered_by,omitempty"`
 }
 
-// TestResult is what the endpoint answered a Send test (R51c).
+// TestResult is how a Send test went (R51c): delivered or not, the answer's
+// status and the app's own fixed reason. None of the answer's body, which
+// could be an internal service's reply.
 type TestResult struct {
 	OK     bool   `json:"ok"`
 	Result string `json:"result"`          // e.g. "HTTP 204 No Content"
-	Error  string `json:"error,omitempty"` // never page text
-	Body   string `json:"body,omitempty"`  // the first 1 KB of the answer
+	Error  string `json:"error,omitempty"` // fixed text only
 	TookMS int64  `json:"took_ms"`
 }
 

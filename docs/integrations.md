@@ -23,7 +23,7 @@ Nobody else can see your integrations. Admins can see that they exist, and pause
 
 Each integration lists its last 100 deliveries for 30 days: **Delivered**, **Retrying**, **Failed**, **Skipped: too old** or **Cancelled** (paused, or its owner was deactivated). Errors never contain page text.
 
-**Send test** sends a made-up delivery marked `"test": true` and shows what the endpoint answered: its status, how long it took, and the start of its reply.
+**Send test** sends a made-up delivery marked `"test": true` and shows whether it was delivered, the answer's status (such as `HTTP 200 OK`) or why it failed (such as `connection refused`), and how long it took. It never shows the reply itself: an allowed address can be an internal service, and every user can test against it.
 
 ## Private addresses
 

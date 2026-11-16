@@ -253,7 +253,7 @@ Each preset turns the same message into the service's documented request. Format
 - Last errors are made by the app from fixed parts only: `HTTP 503 Service Unavailable`, `no answer within 10 s`, `connection refused`, `DNS lookup failed`, `TLS: certificate not trusted`, `MQTT: not authorised`, `address not allowed: 10.0.0.5 is a private address`.
 - **Response bodies are never kept or logged** for real deliveries: an endpoint could echo the payload, which can hold page text.
 - **Go's network errors quote the URL**, and a webhook URL can hold its credentials. So errors are classified (`*url.Error` unwrapped, `net.OpError`, TLS and DNS types) and never printed as they come.
-- **Send test** shows the owner the status, the time taken and the first 1 KB of the answer's body. The test payload holds no page text. It's limited to one test every 5 seconds per integration.
+- **Send test** shows the owner whether it was delivered, the status, a fixed reason and the time taken (owner, 2026-11-16: no longer the first 1 KB of the answer's body, which could be an allowed internal service's reply; R51c). The test payload holds no page text. It's limited to one test every 5 seconds per integration.
 - Log lines name the integration ID, delivery status and error class. A test checks that the server log, the API's integration responses and the metrics contain none of the posted page texts (as the M1–M4 checks do).
 
 ### 10. API and screens

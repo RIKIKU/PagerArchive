@@ -326,7 +326,7 @@ func (s *Service) deliverOne(ctx context.Context, d db.DueDeliveriesRow) bool {
 		p = page{ID: &id, SentAt: m.SentAt.UTC(), Event: &ev}
 	}
 	actx, cancel := context.WithTimeout(ctx, AttemptTimeout)
-	res := s.send(actx, l, sec, p, false)
+	res := s.send(actx, l, sec, p)
 	cancel()
 	attempts := d.Attempts + 1
 	switch res.outcome {
