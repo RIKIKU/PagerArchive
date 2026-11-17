@@ -585,14 +585,14 @@ func TestStoredFields(t *testing.T) {
 	e := setup(t)
 	e.mustPost("a", "0100001", row1, e.now)
 	var units []string
-	var desc, addr, loc, grid, group, typ string
+	var desc, addr, loc, grid, callSign, typ string
 	var extra []byte
-	err := e.st.Pool.QueryRow(e.ctx, `SELECT units, description, address, locality, grid_ref, paging_group, event_type, extra FROM messages`).
-		Scan(&units, &desc, &addr, &loc, &grid, &group, &typ, &extra)
+	err := e.st.Pool.QueryRow(e.ctx, `SELECT units, description, address, locality, grid_ref, call_sign, event_type, extra FROM messages`).
+		Scan(&units, &desc, &addr, &loc, &grid, &callSign, &typ, &extra)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := fmt.Sprint(units, desc, "|", addr, "|", loc, "|", grid, "|", group, "|", typ, "|", string(extra))
+	got := fmt.Sprint(units, desc, "|", addr, "|", loc, "|", grid, "|", callSign, "|", typ, "|", string(extra))
 	want := "[T1 T2]SMOKE FROM ROOF|12 FICTION ST|MADEUPTON|123456|STN1|HSF1|{}"
 	if got != want {
 		t.Errorf("got %s, want %s", got, want)

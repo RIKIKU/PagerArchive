@@ -148,7 +148,7 @@ test('§11 steps 2 and 3: the first admin invites a test user, who enrols; a cli
 	] as const;
 	const lines = [
 		...golden.map(([capcode, text]) => `POCSAG512: Address:  ${capcode}  Function: 0  Alpha:   ${text}`),
-		// A1: every group's copy, one job.
+		// A1: every call sign's copy, one job.
 		...[1, 2, 3, 4].map((n) => `POCSAG512: Address:  10000${n}  Function: 0  Alpha:   @@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN${n}`)
 	];
 	execFileSync('docker', ['run', '-i', '--rm', '--network', process.env.PA_NETWORK!, '-e', 'SERVER_URL=http://api:8080',

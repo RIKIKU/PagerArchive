@@ -47,8 +47,8 @@ func s(p *string) string {
 	return *p
 }
 
-// A1. Every group's copy, one job.
-func TestA1EveryGroupsCopyOneJob(t *testing.T) {
+// A1. Every call sign's copy, one job.
+func TestA1EveryCallSignsCopyOneJob(t *testing.T) {
 	e := setup(t)
 	for n := 1; n <= 4; n++ {
 		e.mustPost("a", fmt.Sprintf("010000%d", n), fmt.Sprintf("@@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN%d", n), e.now)
@@ -57,18 +57,18 @@ func TestA1EveryGroupsCopyOneJob(t *testing.T) {
 	if len(ms) != 4 {
 		t.Fatalf("%d messages stored, want 4", len(ms))
 	}
-	groups := map[string]bool{}
+	callSigns := map[string]bool{}
 	for _, m := range ms {
-		groups[s(m.Group)] = true
+		callSigns[s(m.CallSign)] = true
 	}
-	if len(groups) != 4 || !groups["STN1"] || !groups["STN4"] {
-		t.Errorf("groups %v", groups)
+	if len(callSigns) != 4 || !callSigns["STN1"] || !callSigns["STN4"] {
+		t.Errorf("call signs %v", callSigns)
 	}
 	var job server.Job
 	if code := e.getJSON("/api/v1/jobs/EX0000004", &job); code != http.StatusOK || len(job.Messages) != 4 {
 		t.Fatalf("job view: %d, %d messages", code, len(job.Messages))
 	}
-	t.Logf("A1: 4 messages, groups %v, job EX0000004 has %d messages", groups, len(job.Messages))
+	t.Logf("A1: 4 messages, call signs %v, job EX0000004 has %d messages", callSigns, len(job.Messages))
 }
 
 // A6 (search). Unknown capcode in the "capcodes with no alias" search.
@@ -157,7 +157,11 @@ func TestSearchCriteria(t *testing.T) {
 		{"capcode=100001", 2},
 		{"alias=station+2", 1},
 		{"agency=example+fire", 3},
-		{"group=stn1", 2},
+		{"call_sign=stn1", 2},
+		{"call_sign_like=STN%25", 3},
+		{"group=stn1", 2}, // the old spelling (ADR 0040)
+		{"group_like=STN%25", 3},
+		{"call_sign=stn1&group=stn2", 3},
 		{"priority=Emergency", 2},
 		{"priority=none", 1},
 		{"category=" + url.QueryEscape("Structure fire"), 1},
@@ -227,20 +231,20 @@ func TestSearchTextTerms(t *testing.T) {
 	}
 }
 
-// R33a: the search box's suggestions for alias:, agency: and group: come
-// from every alias name, template agency and paging group, in order, asked
+// R33a: the search box's suggestions for alias:, agency: and callsign:
+// come from every alias name, template agency and call sign, in order, asked
 // for once (ADR 0023). The browser matches what's typed.
 func TestSearchValues(t *testing.T) {
 	e := setup(t)
 	var empty server.SearchValues
-	if code := e.getJSON("/api/v1/search/values", &empty); code != http.StatusOK || empty.Group == nil || len(empty.Group) != 0 {
-		t.Errorf("before any page: %d %+v, want no groups (an empty list)", code, empty)
+	if code := e.getJSON("/api/v1/search/values", &empty); code != http.StatusOK || empty.CallSign == nil || len(empty.CallSign) != 0 {
+		t.Errorf("before any page: %d %+v, want no call signs (an empty list)", code, empty)
 	}
 	for n := 1; n <= 3; n++ {
 		e.mustPost("a", fmt.Sprintf("010000%d", n), fmt.Sprintf("@@EX0000004 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN%d", n), e.now)
 	}
 	e.mustPost("a", "0100002", "@@EX0000005 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN2", e.now)
-	e.mustPost("a", "0999999", "plain text no group", e.now)
+	e.mustPost("a", "0999999", "plain text no call sign", e.now)
 	var got server.SearchValues
 	if code := e.getJSON("/api/v1/search/values", &got); code != http.StatusOK {
 		t.Fatalf("search values: %d", code)
@@ -251,7 +255,7 @@ func TestSearchValues(t *testing.T) {
 	}{
 		{"alias", got.Alias, []string{"Station 1", "Station 2", "Station 3", "Station 4"}},
 		{"agency", got.Agency, []string{"Example Fire Service"}},
-		{"group", got.Group, []string{"STN1", "STN2", "STN3"}},
+		{"call_sign", got.CallSign, []string{"STN1", "STN2", "STN3"}},
 	} {
 		if fmt.Sprint(tt.got) != fmt.Sprint(tt.want) {
 			t.Errorf("%s: %q, want %q", tt.key, tt.got, tt.want)
@@ -345,8 +349,8 @@ func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 		t.Fatalf("re-parse: %d, %v", n, err)
 	}
 	m = e.list("")[0]
-	if s(m.Alias) != "Station 7" || s(m.Format) != "emergency" || s(m.Group) != "STN7" || s(m.Address) != "3 FICTION ST" {
-		t.Fatalf("after alias: alias %s, format %s, group %s, address %s", s(m.Alias), s(m.Format), s(m.Group), s(m.Address))
+	if s(m.Alias) != "Station 7" || s(m.Format) != "emergency" || s(m.CallSign) != "STN7" || s(m.Address) != "3 FICTION ST" {
+		t.Fatalf("after alias: alias %s, format %s, call sign %s, address %s", s(m.Alias), s(m.Format), s(m.CallSign), s(m.Address))
 	}
 	// Renaming needs no re-parse: names are read through the join.
 	if err := e.catSet("0777777", "Station Seven", "Example Fire"); err != nil {
@@ -362,8 +366,8 @@ func TestReparseOnAliasAndTemplateChange(t *testing.T) {
 	if _, err := e.worker.RunOnce(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if m = e.list("")[0]; m.Format != nil || m.Group != nil || s(m.JobNumber) != "EX0000007" {
-		t.Errorf("after template: format %s, group %s, job %s", s(m.Format), s(m.Group), s(m.JobNumber))
+	if m = e.list("")[0]; m.Format != nil || m.CallSign != nil || s(m.JobNumber) != "EX0000007" {
+		t.Errorf("after template: format %s, call sign %s, job %s", s(m.Format), s(m.CallSign), s(m.JobNumber))
 	}
 	// Deleting the alias leaves the message unaliased.
 	if err := e.catDelete("0777777"); err != nil {
@@ -469,7 +473,7 @@ func (e *env) stream(query string) <-chan server.Message {
 // filter it doesn't match.
 func TestLiveUpdatesRespectFilters(t *testing.T) {
 	e := setup(t)
-	filtered := e.stream("group=STN2")
+	filtered := e.stream("call_sign=STN2")
 	before := e.srv.Hub.Len()
 	all := e.stream("")
 	for e.srv.Hub.Len() <= before {
@@ -494,8 +498,8 @@ func TestLiveUpdatesRespectFilters(t *testing.T) {
 	e.mustPost("a", "0100002", "@@EX0000002 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2", e.now)
 	select {
 	case m := <-filtered:
-		if s(m.Group) != "STN2" {
-			t.Errorf("filtered got group %s", s(m.Group))
+		if s(m.CallSign) != "STN2" {
+			t.Errorf("filtered got call sign %s", s(m.CallSign))
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("STN2 viewer didn't get the STN2 page")

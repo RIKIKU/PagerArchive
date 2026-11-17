@@ -93,6 +93,10 @@ type a77Message struct {
 	Text      string  `json:"text"`
 	Alias     *string `json:"alias"`
 	JobNumber *string `json:"job_number"`
+	// R8, ADR 0040: the call sign, which a release from before the rename
+	// calls group. a77Read keeps it as CallSign either way.
+	CallSign    *string `json:"call_sign"`
+	OldCallSign *string `json:"group,omitempty"`
 }
 
 type a77Alias struct {
@@ -110,9 +114,17 @@ type a77Template_ struct {
 }
 
 type a77Integration struct {
-	ID   int64  `json:"id"`
-	Name string `json:"name"`
-	Kind string `json:"kind"`
+	ID     int64     `json:"id"`
+	Name   string    `json:"name"`
+	Kind   string    `json:"kind"`
+	Filter a77Filter `json:"filter"`
+}
+
+// a77Filter is the part of an integration's filter the upgrade must keep:
+// the call sign, which a release from before ADR 0040 calls group.
+type a77Filter struct {
+	CallSign    string `json:"call_sign,omitempty"`
+	OldCallSign string `json:"group,omitempty"`
 }
 
 func (b *browser) a77JSON(path string, out any) {
@@ -135,6 +147,11 @@ func a77Read(t *testing.T, admin, user *browser) a77State {
 	}
 	admin.a77JSON("/api/v1/messages?limit=200", &msgs)
 	st.Messages = msgs.Messages
+	for i := range st.Messages {
+		if m := &st.Messages[i]; m.CallSign == nil {
+			m.CallSign, m.OldCallSign = m.OldCallSign, nil
+		}
+	}
 	var aliases struct {
 		Aliases []a77Alias `json:"aliases"`
 	}
@@ -159,6 +176,11 @@ func a77Read(t *testing.T, admin, user *browser) a77State {
 	}
 	user.a77JSON("/api/v1/integrations", &integ)
 	st.Integrations = integ.Integrations
+	for i := range st.Integrations {
+		if f := &st.Integrations[i].Filter; f.CallSign == "" {
+			f.CallSign, f.OldCallSign = f.OldCallSign, ""
+		}
+	}
 	var users []struct {
 		Email string `json:"email"`
 	}
@@ -245,7 +267,9 @@ func TestA77Seed(t *testing.T) {
 	}
 	if code, msg := u.api(http.MethodPost, "/api/v1/integrations", map[string]any{
 		"name": "A77 webhook", "kind": "webhook", "content": "full", "capcodes": []string{"0100077"},
-		"filter": map[string]any{}, "config": map[string]any{},
+		// Filtered by call sign, with the name every release since M5
+		// takes: group, call_sign's old spelling (ADR 0040).
+		"filter": map[string]any{"group": "STN1"}, "config": map[string]any{},
 		"secrets": map[string]any{"url": "http://" + os.Getenv("PA_A77_HOOK_HOST") + ":" + a77Hook + "/hook"},
 	}, nil); code != http.StatusCreated {
 		t.Fatalf("integration: %d %s", code, msg)
@@ -281,6 +305,9 @@ func TestA77Seed(t *testing.T) {
 	st := a77Read(t, o, u)
 	if len(st.Messages) != 5 || len(st.Aliases) == 0 || len(st.Templates) == 0 || st.IconSHA256 == "" || len(st.Integrations) != 1 || len(st.Users) != 2 {
 		t.Fatalf("the made-up data isn't all there: %+v", st)
+	}
+	if st.Integrations[0].Filter.CallSign != "STN1" || st.Messages[0].CallSign == nil || *st.Messages[0].CallSign != "STN1" {
+		t.Fatalf("the call sign isn't there before the upgrade: filter %+v, page %+v", st.Integrations[0].Filter, st.Messages[0])
 	}
 	st.CasePair = casePair
 	st.NamePair = namePair
@@ -435,6 +462,20 @@ func TestA77Check(t *testing.T) {
 		t.Errorf("searching for the new page found %+v", found.Messages)
 	} else {
 		t.Logf("A77: the new page is stored, parsed (job %s) and found by search", *found.Messages[0].JobNumber)
+	}
+	// R8, ADR 0040: the pages from before the upgrade kept their call sign
+	// (compared above), and the call sign finds them and the new page, by
+	// its name and by its old one, group.
+	for _, q := range []string{"call_sign=STN1", "group=STN1"} {
+		var byCallSign struct {
+			Messages []a77Message `json:"messages"`
+		}
+		o.a77JSON("/api/v1/messages?limit=200&"+q, &byCallSign)
+		if n := len(byCallSign.Messages); n != len(want.Messages)+1 {
+			t.Errorf("%s found %d pages, want the %d from before the upgrade and the new one", q, n, len(want.Messages))
+		} else {
+			t.Logf("A77: %s finds the %d pages from before the upgrade and the new one", q, len(want.Messages))
+		}
 	}
 	select {
 	case body := <-hook:

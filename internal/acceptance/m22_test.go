@@ -17,19 +17,19 @@ import (
 // M22: large events (R87-R87e, ADR 0027). Every page is made up, from the
 // example network: deployment codes are DG and 4 digits (SPEC.md section 10).
 
-// dgPage is an Emergency page on job with deployment code code, for group.
-func dgPage(job, code, group string) string {
-	return fmt.Sprintf("@@%s GRS3 %s GRASS FIRE @ SAMPLE RD, MADEUPTON #%s", job, code, group)
+// dgPage is an Emergency page on job with deployment code code, for callSign.
+func dgPage(job, code, callSign string) string {
+	return fmt.Sprintf("@@%s GRS3 %s GRASS FIRE @ SAMPLE RD, MADEUPTON #%s", job, code, callSign)
 }
 
-// jobPage is Emergency page n of job, for group, naming appliances (R8's
+// jobPage is Emergency page n of job, for callSign, naming appliances (R8's
 // units field) if any are given.
-func jobPage(job string, n int, group string, units ...string) string {
+func jobPage(job string, n int, callSign string, units ...string) string {
 	named := ""
 	if len(units) > 0 {
 		named = " UNITS " + strings.Join(units, " ")
 	}
-	return fmt.Sprintf("@@%s HSF1 SMOKE FROM FACTORY UPDATE %d @ 12 FICTION ST, MADEUPTON%s #%s", job, n, named, group)
+	return fmt.Sprintf("@@%s HSF1 SMOKE FROM FACTORY UPDATE %d @ 12 FICTION ST, MADEUPTON%s #%s", job, n, named, callSign)
 }
 
 // appliances is n made-up appliance names from U<from>.

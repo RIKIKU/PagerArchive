@@ -248,7 +248,7 @@ func sp(s string) *string { return &s }
 func TestFilterMatches(t *testing.T) {
 	n, _ := network(t)
 	fire := db.SearchMessagesRow{Text: "@@EX0000001 HSF1 SMOKE FROM ROOF", Priority: sp("Emergency"), EventType: sp("HSF1"),
-		PagingGroup: sp("STN1"), Agency: sp("Example Fire Service"), JobNumber: sp("EX0000001"), Extra: []byte(`{"premises":"OLD MILL"}`)}
+		CallSign: sp("STN1"), Agency: sp("Example Fire Service"), JobNumber: sp("EX0000001"), Extra: []byte(`{"premises":"OLD MILL"}`)}
 	admin := db.SearchMessagesRow{Text: "QDTraining Tuesday", Priority: sp("Admin"), Extra: []byte(`{}`), ParseFailed: true}
 	cases := []struct {
 		name  string
@@ -269,7 +269,8 @@ func TestFilterMatches(t *testing.T) {
 		{"text, any case", Filter{Text: "smoke"}, fire, false, true},
 		{"text in an extra field", Filter{Text: "mill"}, fire, false, true},
 		{"text miss", Filter{Text: "grass"}, fire, false, false},
-		{"group", Filter{Group: "stn1"}, fire, false, true},
+		{"call sign", Filter{CallSign: "stn1"}, fire, false, true},
+		{"call sign miss", Filter{CallSign: "stn2"}, fire, false, false},
 		{"agency", Filter{Agency: "fire serv"}, fire, false, true},
 		{"job", Filter{Job: "EX0000002"}, fire, false, false},
 		{"flag for an admin", Filter{ParseFailed: true}, fire, true, false},
@@ -299,7 +300,7 @@ func row1() db.SearchMessagesRow {
 	return db.SearchMessagesRow{ID: 42, Capcode: "0100001", Text: "@@EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1",
 		Priority: sp("Emergency"), SentAt: time.Date(2026, 10, 16, 3, 4, 5, 0, time.UTC), AliasName: sp("Station 1"), Agency: sp("Example Fire Service"),
 		AgencyProfile: &agency, JobNumber: sp("EX0000001"), EventType: sp("HSF1"), Description: sp("SMOKE FROM ROOF"), Address: sp("12 FICTION ST"),
-		Locality: sp("MADEUPTON"), GridRef: sp("123456"), Units: []string{"T1", "T2"}, PagingGroup: sp("STN1"), Extra: []byte(`{}`),
+		Locality: sp("MADEUPTON"), GridRef: sp("123456"), Units: []string{"T1", "T2"}, CallSign: sp("STN1"), Extra: []byte(`{}`),
 		Lon: &lon, Lat: &lat, LocationSource: &src}
 }
 
@@ -322,14 +323,14 @@ func TestPayload(t *testing.T) {
 	if f["text"] != "EX0000001 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 T2 #STN1" {
 		t.Errorf("text %v: want it without the marker", f["text"])
 	}
-	for k, want := range map[string]any{"event_type": "page", "test": false, "id": 42.0, "version": 1.0, "content": "full", "capcode": "0100001",
+	for k, want := range map[string]any{"event_type": "page", "test": false, "id": 42.0, "version": 2.0, "content": "full", "capcode": "0100001",
 		"alias": "Station 1", "priority": "Emergency", "category": "Structure fire", "event_label": "House fire", "job_number": "EX0000001",
 		"url": "https://pager.example.test/messages/42", "sent_at": "2026-10-16T03:04:05Z"} {
 		if f[k] != want {
 			t.Errorf("full %s = %v, want %v", k, f[k], want)
 		}
 	}
-	if fields := f["fields"].(map[string]any); fields["event_type"] != "HSF1" || fields["address"] != "12 FICTION ST" {
+	if fields := f["fields"].(map[string]any); fields["event_type"] != "HSF1" || fields["address"] != "12 FICTION ST" || fields["call_sign"] != "STN1" || fields["group"] != nil {
 		t.Errorf("fields %v", fields)
 	}
 	if _, ok := f["flags"]; ok {
@@ -634,5 +635,25 @@ func TestBlockedLocalNAT64AndTeredo(t *testing.T) {
 	}
 	if _, err := g.Resolve(ctx, "2001::2"); err == nil {
 		t.Error("2001::2 was allowed by 2001::1")
+	}
+}
+
+// ADR 0040: a filter from before the rename still says "group"; it's read
+// as the call sign, and stored and returned only as call_sign.
+func TestFilterOldCallSignSpelling(t *testing.T) {
+	s := service(t, DefaultPresets())
+	for _, body := range []string{`{"group":" STN1 "}`, `{"call_sign":"STN1"}`, `{"call_sign":"STN1","group":"STN9"}`} {
+		var f Filter
+		if err := json.Unmarshal([]byte(body), &f); err != nil {
+			t.Fatal(err)
+		}
+		out, err := s.validFilter(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		saved, _ := json.Marshal(out)
+		if out.CallSign != "STN1" || string(saved) != `{"call_sign":"STN1"}` {
+			t.Errorf("%s: call sign %q, saved as %s", body, out.CallSign, saved)
+		}
 	}
 }

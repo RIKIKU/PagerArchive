@@ -26,6 +26,9 @@ type Table struct {
 	File    string
 	Profile string `json:"profile"`
 	Cases   []Case `json:"cases"`
+	// Warnings don't fail the table, such as the call sign's old name
+	// (ADR 0040).
+	Warnings []string `json:"-"`
 }
 
 // Case is one golden row.
@@ -71,6 +74,20 @@ func LoadFile(path string) (*Table, error) {
 	t := &Table{File: path}
 	if err := json.Unmarshal(data, t); err != nil {
 		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	// The call sign's old name (R8, ADR 0040): a row that still expects
+	// group expects call_sign, with a warning to rename it.
+	for i, c := range t.Cases {
+		v, ok := c.Expect[profile.OldCallSign]
+		if !ok {
+			continue
+		}
+		if _, both := c.Expect[profile.StandardCallSign]; both {
+			return nil, fmt.Errorf("%s: at /cases/%d/expect: both group and call_sign: group is call_sign's old name (ADR 0040); remove one", path, i)
+		}
+		delete(c.Expect, profile.OldCallSign)
+		c.Expect[profile.StandardCallSign] = v
+		t.Warnings = append(t.Warnings, fmt.Sprintf("%s: at /cases/%d/expect/group: the call sign's field is now call_sign (ADR 0040): rename group to call_sign", path, i))
 	}
 	return t, nil
 }

@@ -223,6 +223,9 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("invalid profile:\n%w", err)
 	}
+	for _, w := range set.Warnings() {
+		log.Warn("a profile still names the call sign by its old name: rename it (ADR 0040)", "warning", w)
+	}
 	net, err := pickNetwork(set, os.Getenv("NETWORK_PROFILE"))
 	if err != nil {
 		return err

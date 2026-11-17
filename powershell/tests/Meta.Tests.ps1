@@ -227,7 +227,7 @@ Describe 'Table and list views (guidelines section 5)' {
         $list = $formats.Configuration.ViewDefinitions.View | Where-Object -FilterScript { $_.ViewSelectedBy.TypeName -eq 'PagerArchive.Message' -and $_.ListControl }
         $list | Should -HaveCount 1
         $labels = @($list.ListControl.ListEntries.ListEntry.ListItems.ListItem | ForEach-Object -Process { "$($_.Label)$($_.PropertyName)" })
-        foreach ($field in @('SentAt', 'Priority', 'Alias', 'Capcode', 'Agency', 'Text', 'Group', 'JobNumber', 'EventType', 'Category', 'Description', 'Address', 'Locality', 'GridRef', 'Appliances', 'Fields', 'Location', 'ParseFailed', 'AddressUnsplit', 'LocationMismatch', 'Receptions')) {
+        foreach ($field in @('SentAt', 'Priority', 'Alias', 'Capcode', 'Agency', 'Text', 'Call sign', 'JobNumber', 'EventType', 'Category', 'Description', 'Address', 'Locality', 'GridRef', 'Appliances', 'Fields', 'Location', 'ParseFailed', 'AddressUnsplit', 'LocationMismatch', 'Receptions')) {
             $labels | Should -Contain $field
         }
     }
@@ -259,7 +259,7 @@ Describe 'Times in a time zone that isn''t UTC (guidelines section 5)' {
             id = 1; capcode = '0999999'; text = 'x'; display_text = 'x'; priority = 'Admin'; heartbeat = $false
             sent_at = '2026-10-21T00:00:00Z'; alias = 'Station 4'; agency = 'Example Fire Service'; ignored = $false
             job_number = $null; event_type = $null; category = $null; description = $null; address = $null
-            locality = $null; grid_ref = $null; group = $null; units = $null; extra = $null; location = $null
+            locality = $null; grid_ref = $null; call_sign = $null; units = $null; extra = $null; location = $null
         }
         $message = & (Get-Module PagerArchive) { param($r) ConvertTo-PaMessage -Row $r } $row
         $lines = ($message | Format-Table | Out-String -Width 200) -split "`n" | Where-Object -FilterScript { $_.Trim() }
@@ -277,7 +277,7 @@ Describe 'Times in a time zone that isn''t UTC (guidelines section 5)' {
             id = 1; capcode = '0999999'; text = 'x'; display_text = 'x'; priority = 'Admin'; heartbeat = $false
             sent_at = '2026-10-21T00:00:00Z'; alias = 'Station 4'; agency = 'Example Fire Service'; ignored = $false
             job_number = $null; event_type = $null; category = $null; description = $null; address = $null
-            locality = $null; grid_ref = $null; group = $null; units = $null; extra = $null; location = $null
+            locality = $null; grid_ref = $null; call_sign = $null; units = $null; extra = $null; location = $null
             receptions = @(
                 [pscustomobject]@{ client = 'Receiver 1'; received_at = '2026-10-21T00:00:01Z' }
                 [pscustomobject]@{ client = 'Receiver 2'; received_at = '2026-10-21T00:00:02Z' }

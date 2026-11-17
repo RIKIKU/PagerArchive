@@ -260,10 +260,10 @@ func LikeMatch(pattern, s string) bool {
 
 // Fields maps parsed fields to columns, shared by insert and re-parse.
 type Fields struct {
-	Format, JobNumber, EventType, Description, Address, Locality, GridRef, Group *string
-	Units                                                                        []string
-	Extra                                                                        []byte
-	ParseFailed, AddressUnsplit                                                  bool
+	Format, JobNumber, EventType, Description, Address, Locality, GridRef, CallSign *string
+	Units                                                                           []string
+	Extra                                                                           []byte
+	ParseFailed, AddressUnsplit                                                     bool
 	// LargeEventField: a field holds a value its agency profile lists in
 	// large_event_fields (R87). Stored, so it is what the page was parsed
 	// with until it is re-parsed (R23a).
@@ -296,7 +296,7 @@ func FieldsOf(parsed pipeline.Parsed) (Fields, error) {
 		Address:         str("address"),
 		Locality:        str("locality"),
 		GridRef:         str("grid_ref"),
-		Group:           str("group"),
+		CallSign:        str("call_sign"),
 		Units:           units,
 		Extra:           extraJSON,
 		ParseFailed:     parsed.ParseFailed,
@@ -354,7 +354,7 @@ func messageParams(prep pipeline.Prepared, f Fields, pg Page) db.InsertMessagePa
 		Address:         f.Address,
 		Locality:        f.Locality,
 		GridRef:         f.GridRef,
-		PagingGroup:     f.Group,
+		CallSign:        f.CallSign,
 		Units:           f.Units,
 		Extra:           f.Extra,
 		ParseFailed:     f.ParseFailed,

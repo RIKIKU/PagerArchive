@@ -67,7 +67,7 @@ function Watch-PagerArchiveMessage {
     .OUTPUTS
     PagerArchive.Message. The same as Get-PagerArchiveMessage's: Id, SentAt,
     Capcode, Alias, Agency, Priority, Text (as a pager shows it, in full),
-    RawText, Group, JobNumber, EventType, Category, Description, Address,
+    RawText, CallSign, JobNumber, EventType, Category, Description, Address,
     Locality, GridRef, Units (the appliances), Fields, Location, ParseFailed,
     AddressUnsplit, LocationMismatch, Heartbeat, Ignored and Receptions.
     Receptions holds the receive times known when the message arrived,
@@ -111,11 +111,13 @@ function Watch-PagerArchiveMessage {
         [ValidateNotNullOrEmpty()]
         [string[]] $Agency,
 
-        # Paging groups. Accepts wildcards, matched case-insensitively.
-        # Default: any.
+        # Call signs: the paged unit's call sign, often a short code at the
+        # end of a page. Accepts wildcards, matched case-insensitively.
+        # Default: any. -Group is its old name, still accepted.
+        [Alias('Group')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
-        [string[]] $Group,
+        [string[]] $CallSign,
 
         # Priorities. Default: any.
         [ValidateSet('Emergency', 'Non-emergency', 'Admin', 'None')]
@@ -167,7 +169,7 @@ function Watch-PagerArchiveMessage {
             Capcode        = @($capcodes)
             Alias          = @($aliases)
             Agency         = $Agency
-            Group          = $Group
+            CallSign       = $CallSign
             Priority       = $Priority
             Category       = $Category
             JobNumber      = $JobNumber

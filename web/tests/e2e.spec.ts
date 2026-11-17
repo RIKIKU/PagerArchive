@@ -96,7 +96,7 @@ test('A3 live update reaches two viewers within 2 s', async ({ browser, request 
 test('A4 live update respects filters', async ({ browser, request }) => {
 	const a = await (await signedIn(browser)).newPage();
 	const b = await (await signedIn(browser)).newPage();
-	await Promise.all([a.goto('/?group=STN2'), b.goto('/')]);
+	await Promise.all([a.goto('/?callsign=STN2'), b.goto('/')]);
 	await Promise.all([waitLive(a), waitLive(b)]);
 
 	const job = uniqueJob();
@@ -150,7 +150,7 @@ test('R31 phone width keeps date, time and alias visible', async ({ browser, req
 	expect(overflow).toBeLessThanOrEqual(0);
 });
 
-// A1 in the browser: the job view lists every group's copy.
+// A1 in the browser: the job view lists every call sign's copy.
 test('A1 job view shows every copy', async ({ page, request }) => {
 	const job = uniqueJob();
 	for (let n = 1; n <= 4; n++) {
@@ -2703,7 +2703,7 @@ test('A82 search box', async ({ browser, request }, info) => {
 	await post(request, '0600002', `QD${marker} DRILL AT HILLSIDE SOUTH`);
 	await post(request, '0100001', `QD${marker} DRILL AT STATION ONE`);
 	const days = pickMonth();
-	const keys = ['alias:', 'agency:', 'capcode:', 'group:', 'priority:', 'category:', 'job:', 'is:', 'or:'];
+	const keys = ['alias:', 'agency:', 'capcode:', 'callsign:', 'priority:', 'category:', 'job:', 'is:', 'or:'];
 	const report: string[] = [];
 	for (const [how, colorScheme] of [
 		['mouse', 'light'],
@@ -5531,4 +5531,72 @@ test('A116 an app left open loads a new release on the next tap', async ({ brows
 	await expect(page.getByRole('heading', { level: 1, name: 'Albums' })).toBeVisible();
 	expect(await page.evaluate(() => (window as unknown as { stillHere?: boolean }).stillHere)).toBeUndefined();
 	await ctx.close();
+});
+
+// A121 (R8; owner, 2026-11-17): the call sign is shown as Call sign, in a
+// message's row and detail view and the integration form; callsign: finds
+// its pages, and so do the old spellings, a typed group: and an address
+// with group=, bookmarked before the rename (ADR 0040).
+test('A121 call sign', async ({ browser, request }, info) => {
+	const sign = `CS${projectN(info)}${uniqueJob().slice(2)}`;
+	const other = `XS${projectN(info)}${uniqueJob().slice(2)}`;
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #${sign}`);
+	await post(request, '0100002', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #${other}`);
+	const page = await (await signedIn(browser, 'user')).newPage();
+	await page.goto('/');
+	await waitLive(page);
+	const box = page.getByRole('combobox', { name: 'Search' });
+	const options = page.getByRole('listbox', { name: 'Search suggestions' }).getByRole('option');
+	const list = page.getByTestId('message-list');
+	const ids = () => list.locator('article').evaluateAll((as) => as.map((a) => a.getAttribute('data-message-id')));
+
+	// The keys say callsign:, never group:, and its values are suggested.
+	await box.click();
+	await expect(options.filter({ hasText: 'callsign:' })).toHaveText(/callsign:\s*a call sign/);
+	await expect(options.filter({ hasText: 'group:' })).toHaveCount(0);
+	await box.fill(`callsign:${sign.slice(0, -1)}`);
+	await expect(options.filter({ hasText: sign })).toHaveText(`callsign:"${sign}"`);
+
+	// callsign: finds the one page, and its row says Call sign.
+	await box.fill(`callsign:${sign}`);
+	await box.press('Enter');
+	await expect(page).toHaveURL(new RegExp(`/\\?callsign=${sign}$`));
+	await expect(list.locator('article')).toHaveCount(1);
+	const found = await ids();
+	const row = list.locator('article').first();
+	await expect(row.locator('.callsign')).toHaveText(`Call sign ${sign}`);
+	await expect(row.locator('.callsign')).toHaveAttribute('title', 'Call sign');
+
+	// A typed group: finds the same page, and the address it writes says callsign=.
+	await page.goto('/');
+	await waitLive(page);
+	await box.fill(`group:${sign}`);
+	await box.press('Enter');
+	await expect(page).toHaveURL(new RegExp(`/\\?callsign=${sign}$`));
+	await expect(list.locator('article')).toHaveCount(1);
+	expect(await ids()).toEqual(found);
+
+	// An old address with group= still filters, and the box shows callsign:.
+	await page.goto(`/?group=${sign}`);
+	await waitLive(page);
+	await expect(list.locator('article')).toHaveCount(1);
+	expect(await ids()).toEqual(found);
+	await expect(box).toHaveValue(`callsign:${sign}`);
+	await expect(list).not.toContainText(other);
+
+	// The detail view: Call sign, and no Group.
+	await list.locator('article').first().locator('a.open').click();
+	const details = page.locator('.rest dl');
+	await expect(details.locator('dt:text-is("Call sign") + dd')).toHaveText(sign);
+	await expect(details.locator('dt:text-is("Group")')).toHaveCount(0);
+
+	// The integration form's filter: Call sign, and no Group.
+	await page.goto('/integrations');
+	await page.getByRole('button', { name: 'New integration' }).click();
+	const form = page.locator('form.integration-form');
+	await expect(form.getByLabel('Call sign', { exact: true })).toBeVisible();
+	await expect(form.getByLabel('Group', { exact: true })).toHaveCount(0);
+	console.log(`A121: callsign:${sign}, group:${sign} and ?group=${sign} found the same page; the row, detail view and integration form say Call sign`);
+	await page.context().close();
 });

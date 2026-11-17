@@ -22,7 +22,7 @@ BeforeAll {
             id = $Id; capcode = $Capcode; text = 'QDtest page'; display_text = 'test page'; priority = 'Emergency'; heartbeat = $false
             sent_at = '2026-10-20T01:02:03Z'; alias_id = 1; alias = $Alias; agency = 'Example Fire Service'; icon = $null; colour = $null
             ignored = $false; category = $null; format = $null; job_number = $null; event_type = $null; description = $null; address = $null
-            locality = $null; grid_ref = $null; group = $null; units = $null; extra = [pscustomobject]@{}; labels = [pscustomobject]@{}
+            locality = $null; grid_ref = $null; call_sign = $null; units = $null; extra = [pscustomobject]@{}; labels = [pscustomobject]@{}
             location = $null; receptions = @([pscustomobject]@{ client = 'Receiver 1'; received_at = '2026-10-20T01:02:03Z' })
         }
     }
@@ -73,6 +73,25 @@ Describe 'Get-PagerArchiveMessage' {
         $null = Get-PagerArchiveMessage -Alias 'Station*', '100%_ sure?' -Agency 'Example*' -First 1
         $script:calls[0].alias_like | Should -Be @('Station%', '100\%\_ sure_')
         $script:calls[0].agency_like | Should -Be @('Example%')
+    }
+    It 'filters by call sign, with -Group as its old name (ADR 0040)' {
+        $null = Get-PagerArchiveMessage -CallSign 'STN*' -First 1
+        $script:calls[0].call_sign_like | Should -Be @('STN%')
+        $script:calls[0].Contains('group_like') | Should -BeFalse
+        $null = Get-PagerArchiveMessage -Group 'STN1' -First 1
+        $script:calls[1].call_sign_like | Should -Be @('STN1')
+        (Get-Command -Name Get-PagerArchiveMessage).Parameters['CallSign'].Aliases | Should -Be @('Group')
+        (Get-Command -Name Watch-PagerArchiveMessage).Parameters['CallSign'].Aliases | Should -Be @('Group')
+    }
+    It 'outputs the call sign as CallSign' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/messages' } -MockWith {
+            $m = New-ApiMessage -Id 1
+            $m.call_sign = 'STN1'
+            [pscustomobject]@{ messages = @($m); next = '' }
+        }
+        $out = Get-PagerArchiveMessage -First 1
+        $out.CallSign | Should -Be 'STN1'
+        $out.PSObject.Properties.Name | Should -Not -Contain 'Group'
     }
     It 'fetches pages only as the pipeline asks for more' {
         $out = @(Get-PagerArchiveMessage | Select-Object -First 250)

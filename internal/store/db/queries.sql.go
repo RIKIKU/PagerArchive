@@ -2471,7 +2471,7 @@ const insertMessage = `-- name: InsertMessage :one
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
+    call_sign, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
     location, location_source, location_mismatch
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
@@ -2497,7 +2497,7 @@ type InsertMessageParams struct {
 	Address          *string
 	Locality         *string
 	GridRef          *string
-	PagingGroup      *string
+	CallSign         *string
 	Units            []string
 	Extra            []byte
 	ParseFailed      bool
@@ -2527,7 +2527,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 		arg.Address,
 		arg.Locality,
 		arg.GridRef,
-		arg.PagingGroup,
+		arg.CallSign,
 		arg.Units,
 		arg.Extra,
 		arg.ParseFailed,
@@ -4945,10 +4945,46 @@ func (q *Queries) SearchAliases(ctx context.Context, q_ string) ([]SearchAliases
 	return items, nil
 }
 
+const searchCallSigns = `-- name: SearchCallSigns :many
+WITH RECURSIVE c AS (
+    (SELECT m.call_sign AS cs FROM messages m WHERE m.call_sign IS NOT NULL ORDER BY m.call_sign LIMIT 1)
+    UNION ALL
+    SELECT (SELECT m.call_sign FROM messages m WHERE m.call_sign > c.cs ORDER BY m.call_sign LIMIT 1)
+    FROM c WHERE c.cs IS NOT NULL
+)
+SELECT cs::text AS call_sign FROM c
+WHERE cs IS NOT NULL
+ORDER BY cs
+`
+
+// R33a: every call sign, for the search box's suggestions. The call signs
+// are few and the messages many, so each distinct one is found with one
+// step down messages_call_sign_idx (a loose index scan), not by reading
+// every message.
+func (q *Queries) SearchCallSigns(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, searchCallSigns)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var call_sign string
+		if err := rows.Scan(&call_sign); err != nil {
+			return nil, err
+		}
+		items = append(items, call_sign)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchMessages = `-- name: SearchMessages :many
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
-       m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
+       m.call_sign, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source
@@ -4997,8 +5033,8 @@ WHERE (cardinality($1::bigint[]) = 0 OR m.id = ANY($1::bigint[]))
   AND (cardinality($17::bigint[]) = 0 OR m.alias_id = ANY($17::bigint[]))
   AND (cardinality($18::text[]) = 0 OR t.agency ILIKE ANY($18::text[]))
   AND (cardinality($19::text[]) = 0 OR t.agency ILIKE ANY($19::text[]))
-  AND (cardinality($20::text[]) = 0 OR upper(m.paging_group) = ANY($20::text[]))
-  AND (cardinality($21::text[]) = 0 OR m.paging_group ILIKE ANY($21::text[]))
+  AND (cardinality($20::text[]) = 0 OR upper(m.call_sign) = ANY($20::text[]))
+  AND (cardinality($21::text[]) = 0 OR m.call_sign ILIKE ANY($21::text[]))
   AND (cardinality($22::text[]) = 0
        OR ('none' = ANY($22::text[]) AND m.priority IS NULL)
        OR m.priority = ANY($22::text[]))
@@ -5057,8 +5093,8 @@ type SearchMessagesParams struct {
 	AliasIds           []int64
 	Agencies           []string
 	AgencyLikes        []string
-	PagingGroups       []string
-	GroupLikes         []string
+	CallSigns          []string
+	CallSignLikes      []string
 	Priorities         []string
 	CatFilter          bool
 	CatCodes           []string
@@ -5100,7 +5136,7 @@ type SearchMessagesRow struct {
 	Address          *string
 	Locality         *string
 	GridRef          *string
-	PagingGroup      *string
+	CallSign         *string
 	Units            []string
 	Extra            []byte
 	ParseFailed      bool
@@ -5143,8 +5179,8 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 		arg.AliasIds,
 		arg.Agencies,
 		arg.AgencyLikes,
-		arg.PagingGroups,
-		arg.GroupLikes,
+		arg.CallSigns,
+		arg.CallSignLikes,
 		arg.Priorities,
 		arg.CatFilter,
 		arg.CatCodes,
@@ -5192,7 +5228,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			&i.Address,
 			&i.Locality,
 			&i.GridRef,
-			&i.PagingGroup,
+			&i.CallSign,
 			&i.Units,
 			&i.Extra,
 			&i.ParseFailed,
@@ -5211,41 +5247,6 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			return nil, err
 		}
 		items = append(items, i)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return items, nil
-}
-
-const searchPagingGroups = `-- name: SearchPagingGroups :many
-WITH RECURSIVE g AS (
-    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
-    UNION ALL
-    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
-    FROM g WHERE g.grp IS NOT NULL
-)
-SELECT grp::text AS paging_group FROM g
-WHERE grp IS NOT NULL
-ORDER BY grp
-`
-
-// R33a: every paging group, for the search box's suggestions. The groups are
-// few and the messages many, so each distinct group is found with one step
-// down messages_group_idx (a loose index scan), not by reading every message.
-func (q *Queries) SearchPagingGroups(ctx context.Context) ([]string, error) {
-	rows, err := q.db.Query(ctx, searchPagingGroups)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var items []string
-	for rows.Next() {
-		var paging_group string
-		if err := rows.Scan(&paging_group); err != nil {
-			return nil, err
-		}
-		items = append(items, paging_group)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -6020,7 +6021,7 @@ func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationPa
 const updateParsed = `-- name: UpdateParsed :exec
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
-    address = $7, locality = $8, grid_ref = $9, paging_group = $10, units = $11,
+    address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
 WHERE id = $1
 `
@@ -6035,7 +6036,7 @@ type UpdateParsedParams struct {
 	Address         *string
 	Locality        *string
 	GridRef         *string
-	PagingGroup     *string
+	CallSign        *string
 	Units           []string
 	Extra           []byte
 	ParseFailed     bool
@@ -6054,7 +6055,7 @@ func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) erro
 		arg.Address,
 		arg.Locality,
 		arg.GridRef,
-		arg.PagingGroup,
+		arg.CallSign,
 		arg.Units,
 		arg.Extra,
 		arg.ParseFailed,

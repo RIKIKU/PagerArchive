@@ -36,7 +36,7 @@ export interface Message {
 	address: string | null;
 	locality: string | null;
 	grid_ref: string | null;
-	group: string | null;
+	call_sign: string | null;
 	units: string[] | null;
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
@@ -545,7 +545,7 @@ export interface IntegrationFilter {
 	codes?: string[];
 	priorities?: string[];
 	text?: string;
-	group?: string;
+	call_sign?: string;
 	agency?: string;
 	job?: string;
 	parse_failed?: boolean;
@@ -796,9 +796,9 @@ export const api = {
 	/** R88e: each layer of areas, for Administration. */
 	adminAreas: () => get<{ layers: AdminAreaLayer[] }>('/api/v1/admin/areas'),
 	unaliased: () => get<UnaliasedCapcode[]>('/api/v1/capcodes/unaliased'),
-	/** R33a: every alias name, agency and paging group, which the search box
+	/** R33a: every alias name, agency and call sign, which the search box
 	 *  suggests from (asked for once: searchValues.ts). */
-	searchValues: () => get<{ alias: string[]; agency: string[]; group: string[] }>('/api/v1/search/values'),
+	searchValues: () => get<{ alias: string[]; agency: string[]; call_sign: string[] }>('/api/v1/search/values'),
 	capcode: (capcode: string) => get<CapcodeView>(`/api/v1/capcodes/${encodeURIComponent(capcode)}`),
 	alias: (id: string | number) => get<AliasView>(`/api/v1/aliases/${encodeURIComponent(id)}`),
 	clients: () => get<ClientStatus[]>('/api/v1/admin/clients'),

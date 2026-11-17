@@ -1,6 +1,7 @@
 package integrations
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"crypto/x509"
@@ -251,7 +252,7 @@ func (s *Service) validate(ctx context.Context, req Request, prev *loaded, prevS
 }
 
 func (s *Service) validFilter(f Filter) (Filter, error) {
-	out := Filter{Text: strings.TrimSpace(f.Text), Group: strings.TrimSpace(f.Group), Agency: strings.TrimSpace(f.Agency), Job: strings.TrimSpace(f.Job),
+	out := Filter{Text: strings.TrimSpace(f.Text), CallSign: cmp.Or(strings.TrimSpace(f.CallSign), strings.TrimSpace(f.OldCallSign)), Agency: strings.TrimSpace(f.Agency), Job: strings.TrimSpace(f.Job),
 		ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit, LocationMismatch: f.LocationMismatch}
 	known := []string{"Other"}
 	for _, c := range s.Network.Categories {
@@ -282,7 +283,7 @@ func (s *Service) validFilter(f Filter) (Filter, error) {
 			out.Priorities = append(out.Priorities, p)
 		}
 	}
-	for _, v := range []string{out.Text, out.Group, out.Agency, out.Job} {
+	for _, v := range []string{out.Text, out.CallSign, out.Agency, out.Job} {
 		if len(v) > 200 {
 			return out, invalid("Filter values must be at most 200 characters.")
 		}

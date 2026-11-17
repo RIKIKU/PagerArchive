@@ -11,7 +11,8 @@ import (
 )
 
 // PayloadVersion is the payload format's version (docs/integrations.md).
-const PayloadVersion = 1
+// Version 2 (ADR 0040): fields.group became fields.call_sign.
+const PayloadVersion = 2
 
 // page is a message as integrations see it, built when it's sent.
 type page struct {
@@ -46,7 +47,7 @@ type Fields struct {
 	Locality    *string  `json:"locality"`
 	GridRef     *string  `json:"grid_ref"`
 	Units       []string `json:"units"`
-	Group       *string  `json:"group"`
+	CallSign    *string  `json:"call_sign"`
 }
 
 // Location is where the message is placed (R24-R25).
@@ -72,7 +73,7 @@ func (s *Service) pageOf(m db.SearchMessagesRow, admin bool) page {
 		ID: &id, SentAt: m.SentAt.UTC(), Capcode: m.Capcode, Alias: m.AliasName, Agency: m.Agency,
 		Priority: m.Priority, Heartbeat: m.Heartbeat, JobNumber: m.JobNumber, Text: m.Text,
 		Fields: Fields{EventType: m.EventType, Description: m.Description, Address: m.Address, Locality: m.Locality,
-			GridRef: m.GridRef, Units: m.Units, Group: m.PagingGroup},
+			GridRef: m.GridRef, Units: m.Units, CallSign: m.CallSign},
 		Extra: map[string]any{}, Labels: map[string]string{},
 	}
 	if m.Priority != nil {
@@ -89,7 +90,7 @@ func (s *Service) pageOf(m db.SearchMessagesRow, admin bool) page {
 	_ = json.Unmarshal(m.Extra, &p.Extra)
 	if m.AgencyProfile != nil {
 		if a := s.Agencies[*m.AgencyProfile]; a != nil {
-			values := map[string]*string{"event_type": m.EventType, "group": m.PagingGroup, "format": m.Format}
+			values := map[string]*string{"event_type": m.EventType, "call_sign": m.CallSign, "format": m.Format}
 			for k, v := range p.Extra {
 				if str, ok := v.(string); ok {
 					values[k] = &str

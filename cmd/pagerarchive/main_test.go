@@ -189,3 +189,60 @@ func TestMountedOr(t *testing.T) {
 		}
 	}
 }
+
+// ADR 0040 (R8): a profile and golden table from before the rename, which
+// still name the call sign group, pass with a warning to rename it, and the
+// rows still check its value; a format that captures both fails.
+func TestValidateProfileOldCallSign(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../profiles/example")); err != nil {
+		t.Fatal(err)
+	}
+	fire, golden := filepath.Join(dir, "example-fire.json"), filepath.Join(dir, "golden-example-fire.json")
+	replace := func(path, from, to string) {
+		t.Helper()
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(data), from) {
+			t.Fatalf("%s: no %q", path, from)
+		}
+		if err := os.WriteFile(path, []byte(strings.ReplaceAll(string(data), from, to)), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	replace(fire, "(?P<call_sign>", "(?P<group>")
+	replace(golden, `"call_sign":`, `"group":`)
+	var out, errOut bytes.Buffer
+	if code := run([]string{"validate-profile", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	for _, want := range []string{
+		"warning: " + fire + ": at /formats/0/match: the call sign's field is now call_sign (ADR 0040): rename group to call_sign",
+		"warning: " + fire + ": at /formats/1/match: ",
+		"warning: " + golden + ": at /cases/0/expect/group: ",
+		"example-fire (agency, " + golden + "): 8 passed, 0 failed",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("output doesn't contain %q:\n%s", want, out.String())
+		}
+	}
+	t.Logf("old name: %s", strings.TrimSpace(out.String()))
+
+	// A wrong value under the old name still fails its row.
+	replace(golden, `"group": "STN2"`, `"group": "STN9"`)
+	out.Reset()
+	if code := run([]string{"validate-profile", dir}, &out, &errOut); code == 0 || !strings.Contains(out.String(), "STN9") {
+		t.Errorf("a wrong call sign under the old name: exit %d\n%s", code, out.String())
+	}
+
+	// Both names in one format: an error.
+	replace(fire, `.*#(?P<group>\\S+)$`, `.*#(?P<group>\\S+) (?P<call_sign>\\S+)$`)
+	out.Reset()
+	errOut.Reset()
+	code := run([]string{"validate-profile", dir}, &out, &errOut)
+	if msg := errOut.String(); code == 0 || !strings.Contains(msg, "at /formats/1/match: captures both group and call_sign") {
+		t.Errorf("both names: exit %d\n%s%s", code, out.String(), msg)
+	}
+}

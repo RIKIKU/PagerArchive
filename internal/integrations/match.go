@@ -39,7 +39,7 @@ func (f Filter) Matches(m db.SearchMessagesRow, n *profile.Network, admin bool) 
 	if f.Text != "" && !textContains(m, f.Text) {
 		return false
 	}
-	if f.Group != "" && (m.PagingGroup == nil || !strings.EqualFold(*m.PagingGroup, f.Group)) {
+	if f.CallSign != "" && (m.CallSign == nil || !strings.EqualFold(*m.CallSign, f.CallSign)) {
 		return false
 	}
 	if f.Agency != "" && (m.Agency == nil || !containsFold(*m.Agency, f.Agency)) {

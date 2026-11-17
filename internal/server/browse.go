@@ -69,7 +69,7 @@ type Message struct {
 	Address     *string           `json:"address"`
 	Locality    *string           `json:"locality"`
 	GridRef     *string           `json:"grid_ref"`
-	Group       *string           `json:"group"`
+	CallSign    *string           `json:"call_sign"`
 	Units       []string          `json:"units"`
 	Extra       map[string]any    `json:"extra"`
 	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
@@ -116,7 +116,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 		Heartbeat: m.Heartbeat, SentAt: m.SentAt.UTC(), AliasID: m.AliasID, Alias: m.AliasName, Agency: m.Agency,
 		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
-		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, Group: m.PagingGroup,
+		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, CallSign: m.CallSign,
 		Units: m.Units, Extra: map[string]any{}, Labels: map[string]string{},
 	}
 	if m.Priority != nil {
@@ -129,7 +129,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 	_ = json.Unmarshal(m.Extra, &out.Extra)
 	if m.AgencyProfile != nil {
 		if a := s.Ingest.Agencies[*m.AgencyProfile]; a != nil {
-			values := map[string]*string{"event_type": m.EventType, "group": m.PagingGroup, "format": m.Format}
+			values := map[string]*string{"event_type": m.EventType, "call_sign": m.CallSign, "format": m.Format}
 			for k, v := range out.Extra {
 				if str, ok := v.(string); ok {
 					values[k] = &str
@@ -553,16 +553,16 @@ func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 }
 
 // SearchValues is what the search box suggests for alias:, agency: and
-// group: (R33a): every value, in order. The other keys' values are fixed or
+// callsign: (R33a): every value, in order. The other keys' values are fixed or
 // come from meta.
 type SearchValues struct {
-	Alias  []string `json:"alias"`
-	Agency []string `json:"agency"`
-	Group  []string `json:"group"`
+	Alias    []string `json:"alias"`
+	Agency   []string `json:"agency"`
+	CallSign []string `json:"call_sign"`
 }
 
 // searchValues gives the search box every alias name, template agency and
-// paging group (R33a). The browser asks once and matches what's typed
+// call sign (R33a). The browser asks once and matches what's typed
 // itself, so suggestions cost no request per keystroke, however many
 // aliases there are (ADR 0023).
 func (s *Server) searchValues(w http.ResponseWriter, r *http.Request) {
@@ -571,7 +571,7 @@ func (s *Server) searchValues(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if out.Alias, err = s.Store.SearchAliasNames(ctx); err == nil {
 		if out.Agency, err = s.Store.SearchAgencies(ctx); err == nil {
-			out.Group, err = s.Store.SearchPagingGroups(ctx)
+			out.CallSign, err = s.Store.SearchCallSigns(ctx)
 		}
 	}
 	if err != nil {
@@ -579,7 +579,7 @@ func (s *Server) searchValues(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	for _, l := range []*[]string{&out.Alias, &out.Agency, &out.Group} {
+	for _, l := range []*[]string{&out.Alias, &out.Agency, &out.CallSign} {
 		if *l == nil {
 			*l = []string{}
 		}

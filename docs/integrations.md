@@ -5,7 +5,7 @@
 Each user can forward new pages to their own systems from **Integrations** in the app (SPEC.md R47–R51c; design in [ADR 0006](adr/0006-m5-integrations-and-metrics.md)). An integration is:
 
 - a **selection**: one or more capcodes and/or aliases, chosen in one field. Type an alias name or a capcode and choose from the suggestions. A capcode with its own alias is chosen as that alias ("Station 1 (0100001)"). A capcode that only a range alias covers stays a capcode, with the range named beside it ("0100009 in Stations block"), so typing one capcode never selects a whole range; type the range's name to choose it. The selection is required, so nobody forwards the whole network by accident. An alias selects the pages that resolved to it, as its alias view shows; or, instead, **large events**, each when it opens (see [Large events](#large-events));
-- an optional **filter**: event categories or raw event-type codes, priorities, and text, group, agency or job number (admins also have the flags). Empty means every page from the selection;
+- an optional **filter**: event categories or raw event-type codes, priorities, and text, call sign, agency or job number (admins also have the flags). Empty means every page from the selection;
 - a **destination**: a webhook, MQTT, Discord, Telegram, Pushover or ntfy;
 - its **content**: **Full** (the text and every field) or **Summary** (alias, capcode, event type and category, priority, sent time and job number; no text, address, location or extra fields). Webhooks and MQTT default to Full. Discord, Telegram, Pushover and ntfy are third parties, so they default to Summary.
 
@@ -104,11 +104,11 @@ On a public ntfy server, anyone who knows the topic can read it: pick a long ran
 
 ## Payload
 
-The same JSON goes to webhooks and MQTT. This is version 1.
+The same JSON goes to webhooks and MQTT. This is version 2: version 1, before 2026-11-17, called `fields.call_sign` `fields.group` (SPEC.md R8, ADR 0040). A receiver that reads `fields.group` should read `fields.call_sign` from version 2.
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "event_type": "page",
   "test": false,
   "id": 1234,
@@ -132,7 +132,7 @@ The same JSON goes to webhooks and MQTT. This is version 1.
     "locality": "MADEUPTON",
     "grid_ref": "123456",
     "units": ["T1", "T2"],
-    "group": "STN1"
+    "call_sign": "STN1"
   },
   "extra": {},
   "labels": { "event_type": "House fire" },
@@ -168,7 +168,7 @@ The webhook and MQTT JSON:
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "event_type": "large_event",
   "test": false,
   "id": 1240,

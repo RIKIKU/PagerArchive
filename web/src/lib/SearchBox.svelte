@@ -46,7 +46,7 @@
 	const to = $derived(query.get('to') ?? '');
 	const set = $derived(text.trim() !== '' || !!from || !!to);
 
-	let values: Values = $state({ alias: [], agency: [], group: [], category: [] });
+	let values: Values = $state({ alias: [], agency: [], callsign: [], category: [] });
 	let help = $state(false);
 	let helpTipOff = $state(false);
 	let clearTipOff = $state(false);
@@ -55,7 +55,7 @@
 	function load() {
 		searchValues()
 			.then((v) => {
-				values = { ...v, category: categories };
+				values = { alias: v.alias, agency: v.agency, callsign: v.call_sign, category: categories };
 				box.refresh(); // the word being typed, again with them
 			})
 			.catch(() => {}); // suggestions without the API's values: keys and text

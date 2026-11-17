@@ -135,8 +135,8 @@ func TestMapShowsLocatedMessagesFromTheLast24Hours(t *testing.T) {
 		t.Fatalf("map: %d messages, want the 2 located in the last 24 hours", len(page.Messages))
 	}
 	// The map follows the filters (section 14), including a date range.
-	if e.getJSON("/api/v1/map?group=STN2", &page); len(page.Messages) != 1 || page.Messages[0].ID != other {
-		t.Errorf("group filter: %d messages", len(page.Messages))
+	if e.getJSON("/api/v1/map?call_sign=STN2", &page); len(page.Messages) != 1 || page.Messages[0].ID != other {
+		t.Errorf("call sign filter: %d messages", len(page.Messages))
 	}
 	from := e.now.Add(-48 * time.Hour).Format(time.RFC3339)
 	if e.getJSON("/api/v1/map?from="+from, &page); len(page.Messages) != 3 {

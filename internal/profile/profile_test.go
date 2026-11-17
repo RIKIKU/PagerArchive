@@ -76,7 +76,7 @@ func TestProfileErrors(t *testing.T) {
 		{
 			name: "list field without split",
 			file: "fire.json",
-			doc:  strings.Replace(fire, `"units": { "split": " " }`, `"group": { "split": " " }`, 1),
+			doc:  strings.Replace(fire, `"units": { "split": " " }`, `"call_sign": { "split": " " }`, 1),
 			want: []string{"at /formats/0/fields/units", "list field"},
 		},
 		{
@@ -338,5 +338,64 @@ func TestAreasLayers(t *testing.T) {
 	_, errs = loadNetwork("example-network.json", []byte(strings.Replace(string(b), `"outline": "dashed"`, `"outline": "wavy"`, 1)))
 	if len(errs) == 0 {
 		t.Error("an outline that isn't solid, dashed or dotted was accepted")
+	}
+}
+
+// ADR 0040 (R8): the call sign's old name, group, is read as call_sign
+// wherever an agency profile names it (a capture in either spelling, its
+// fields options, labels and a large_event_fields rule), with a warning
+// for each; naming both is an error. The hash is the file's, so an
+// unchanged profile re-parses nothing.
+func TestOldCallSignName(t *testing.T) {
+	const old = `{"kind": "agency", "name": "made-up", "formats": [
+		{"name": "a", "match": "^(?P<job_number>[0-9]+) #(?P<group>\\S+)$"},
+		{"name": "b", "match": "^RE #(?<group>\\S+) \\(?P<group>$"}
+	], "labels": {"group": {"STN1": "Station 1"}},
+	"large_event_fields": [{"field": "group", "values": ["STN9"]}]}`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.json"), []byte(old), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	set, err := LoadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := set.Agencies["made-up"]
+	if got := a.Formats[0].Re.SubexpNames(); got[2] != "call_sign" {
+		t.Errorf("format a's captures: %q", got)
+	}
+	// The second capture is text, after a backslash: left as it is.
+	if got := a.Formats[1].Re.String(); got != `^RE #(?<call_sign>\S+) \(?P<group>$` {
+		t.Errorf("format b: %s", got)
+	}
+	if a.Labels["call_sign"]["STN1"] != "Station 1" || a.Labels["group"] != nil {
+		t.Errorf("labels: %v", a.Labels)
+	}
+	if len(a.LargeEventFields) != 1 || a.LargeEventFields[0].Field != "call_sign" {
+		t.Errorf("large_event_fields: %+v", a.LargeEventFields)
+	}
+	want := []string{"/formats/0/match", "/formats/1/match", "/labels/group", "/large_event_fields/0/field"}
+	if w := set.Warnings(); len(w) != len(want) {
+		t.Errorf("warnings: %q", w)
+	} else {
+		for i, p := range want {
+			if !strings.Contains(w[i], "at "+p+": the call sign's field is now call_sign (ADR 0040)") {
+				t.Errorf("warning %d: %q, want one at %s", i, w[i], p)
+			}
+		}
+	}
+	if a.Hash != hashOf([]byte(old)) {
+		t.Error("the hash isn't the file's")
+	}
+
+	for name, doc := range map[string]string{
+		"both captures": `{"kind": "agency", "name": "x", "formats": [{"name": "a", "match": "^(?P<group>\\S+) (?P<call_sign>\\S+)$"}]}`,
+		"both labels":   `{"kind": "agency", "name": "x", "formats": [{"name": "a", "match": "^(?P<call_sign>\\S+)$"}], "labels": {"group": {}, "call_sign": {}}}`,
+		"both options":  `{"kind": "agency", "name": "x", "formats": [{"name": "a", "match": "^(?P<call_sign>\\S+)$", "fields": {"group": {"split": " "}, "call_sign": {"split": " "}}}]}`,
+		"address_split": `{"kind": "agency", "name": "x", "formats": [{"name": "a", "match": "^(?P<_rest>.*)$", "fields": {"_rest": {"address_split": {"description": "group", "address": "address"}}}}]}`,
+	} {
+		if err := loadOne(t, "x.json", doc); err == nil || !strings.Contains(err.Error(), "old name (ADR 0040)") {
+			t.Errorf("%s: %v", name, err)
+		}
 	}
 }

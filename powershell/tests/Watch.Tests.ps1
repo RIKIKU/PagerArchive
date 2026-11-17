@@ -20,7 +20,7 @@ BeforeAll {
             id = $Id; capcode = $Capcode; text = "@@$Text"; display_text = $Text; priority = 'Emergency'; heartbeat = $false
             sent_at = '2026-10-22T01:02:03Z'; alias_id = 1; alias = 'Station 1'; agency = 'Example Fire Service'; icon = $null; colour = $null
             ignored = $false; category = $null; format = $null; job_number = $null; event_type = $null; description = $null
-            address = '3 FICTION ST'; locality = 'MADEUPTON'; grid_ref = $null; group = $null; units = $null; extra = @{}; labels = @{}
+            address = '3 FICTION ST'; locality = 'MADEUPTON'; grid_ref = $null; call_sign = $null; units = $null; extra = @{}; labels = @{}
             location = $null; flags = @{ parse_failed = $false; address_unsplit = $false; location_mismatch = $false }
             receptions = @(@{ client = 'Stack receiver'; received_at = '2026-10-22T01:02:03Z' })
         } | ConvertTo-Json -Compress -Depth 4

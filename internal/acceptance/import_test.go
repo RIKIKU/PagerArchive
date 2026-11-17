@@ -93,7 +93,7 @@ func TestAliasImport(t *testing.T) {
 	if _, err := e.worker.RunOnce(e.ctx); err != nil {
 		t.Fatal(err)
 	}
-	if ms := e.list("capcode=0300001"); len(ms) != 1 || s(ms[0].Alias) != "Testville Brigade" || s(ms[0].Format) != "emergency" || s(ms[0].Group) != "TV1" {
+	if ms := e.list("capcode=0300001"); len(ms) != 1 || s(ms[0].Alias) != "Testville Brigade" || s(ms[0].Format) != "emergency" || s(ms[0].CallSign) != "TV1" {
 		t.Errorf("mapped agency: %+v", ms)
 	}
 	if ms := e.list("capcode=0300004"); len(ms) != 1 || s(ms[0].Alias) != "Unknown agency pager" || ms[0].Agency != nil || ms[0].Format != nil {

@@ -42,7 +42,7 @@
 	let codes = $state((init?.filter.codes ?? []).join(', '));
 	let priorities: string[] = $state([...(init?.filter.priorities ?? [])]);
 	let text = $state(init?.filter.text ?? '');
-	let group = $state(init?.filter.group ?? '');
+	let callSign = $state(init?.filter.call_sign ?? '');
 	let agency = $state(init?.filter.agency ?? '');
 	let job = $state(init?.filter.job ?? '');
 	let parseFailed = $state(init?.filter.parse_failed ?? false);
@@ -87,7 +87,7 @@
 				codes: words(codes),
 				priorities,
 				text,
-				group,
+				call_sign: callSign,
 				agency,
 				job,
 				parse_failed: admin && parseFailed,
@@ -191,8 +191,8 @@
 					<input id="{id}-text" bind:value={text} autocomplete="off" />
 				</div>
 				<div class="field">
-					<label for="{id}-group">Group</label>
-					<input id="{id}-group" bind:value={group} autocomplete="off" autocapitalize="characters" spellcheck="false" />
+					<label for="{id}-callsign">Call sign</label>
+					<input id="{id}-callsign" bind:value={callSign} autocomplete="off" autocapitalize="characters" spellcheck="false" />
 				</div>
 				<div class="field">
 					<label for="{id}-agency">Agency</label>

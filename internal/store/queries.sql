@@ -57,7 +57,7 @@ LIMIT 1;
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    paging_group, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
+    call_sign, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
     location, location_source, location_mismatch
 ) VALUES (
     $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
@@ -169,7 +169,7 @@ LIMIT sqlc.arg(batch)::int;
 -- name: UpdateParsed :exec
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
-    address = $7, locality = $8, grid_ref = $9, paging_group = $10, units = $11,
+    address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
 WHERE id = $1;
 
@@ -261,7 +261,7 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 -- not empty, keeps just those messages (a live update, a catch-up batch).
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
-       m.paging_group, m.units, m.extra, m.parse_failed, m.address_unsplit,
+       m.call_sign, m.units, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source
@@ -310,8 +310,8 @@ WHERE (cardinality(sqlc.arg(only_ids)::bigint[]) = 0 OR m.id = ANY(sqlc.arg(only
   AND (cardinality(sqlc.arg(alias_ids)::bigint[]) = 0 OR m.alias_id = ANY(sqlc.arg(alias_ids)::bigint[]))
   AND (cardinality(sqlc.arg(agencies)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agencies)::text[]))
   AND (cardinality(sqlc.arg(agency_likes)::text[]) = 0 OR t.agency ILIKE ANY(sqlc.arg(agency_likes)::text[]))
-  AND (cardinality(sqlc.arg(paging_groups)::text[]) = 0 OR upper(m.paging_group) = ANY(sqlc.arg(paging_groups)::text[]))
-  AND (cardinality(sqlc.arg(group_likes)::text[]) = 0 OR m.paging_group ILIKE ANY(sqlc.arg(group_likes)::text[]))
+  AND (cardinality(sqlc.arg(call_signs)::text[]) = 0 OR upper(m.call_sign) = ANY(sqlc.arg(call_signs)::text[]))
+  AND (cardinality(sqlc.arg(call_sign_likes)::text[]) = 0 OR m.call_sign ILIKE ANY(sqlc.arg(call_sign_likes)::text[]))
   AND (cardinality(sqlc.arg(priorities)::text[]) = 0
        OR ('none' = ANY(sqlc.arg(priorities)::text[]) AND m.priority IS NULL)
        OR m.priority = ANY(sqlc.arg(priorities)::text[]))
@@ -871,19 +871,20 @@ SELECT DISTINCT name FROM aliases ORDER BY name;
 -- R33a: every template agency, for the search box's suggestions.
 SELECT DISTINCT agency FROM templates ORDER BY agency;
 
--- name: SearchPagingGroups :many
--- R33a: every paging group, for the search box's suggestions. The groups are
--- few and the messages many, so each distinct group is found with one step
--- down messages_group_idx (a loose index scan), not by reading every message.
-WITH RECURSIVE g AS (
-    (SELECT m.paging_group AS grp FROM messages m WHERE m.paging_group IS NOT NULL ORDER BY m.paging_group LIMIT 1)
+-- name: SearchCallSigns :many
+-- R33a: every call sign, for the search box's suggestions. The call signs
+-- are few and the messages many, so each distinct one is found with one
+-- step down messages_call_sign_idx (a loose index scan), not by reading
+-- every message.
+WITH RECURSIVE c AS (
+    (SELECT m.call_sign AS cs FROM messages m WHERE m.call_sign IS NOT NULL ORDER BY m.call_sign LIMIT 1)
     UNION ALL
-    SELECT (SELECT m.paging_group FROM messages m WHERE m.paging_group > g.grp ORDER BY m.paging_group LIMIT 1)
-    FROM g WHERE g.grp IS NOT NULL
+    SELECT (SELECT m.call_sign FROM messages m WHERE m.call_sign > c.cs ORDER BY m.call_sign LIMIT 1)
+    FROM c WHERE c.cs IS NOT NULL
 )
-SELECT grp::text AS paging_group FROM g
-WHERE grp IS NOT NULL
-ORDER BY grp;
+SELECT cs::text AS call_sign FROM c
+WHERE cs IS NOT NULL
+ORDER BY cs;
 
 -- name: ExactAliases :many
 -- R48: the aliases of exact capcodes (zero-padded), which select them.

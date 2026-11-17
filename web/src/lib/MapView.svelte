@@ -651,7 +651,7 @@
 			if (!f || !map) return;
 			const src = map.getSource('messages') as maplibregl.GeoJSONSource;
 			const zoom = await src.getClusterExpansionZoom(f.properties.cluster_id);
-			// Copies sent to several groups share one point and never separate:
+			// Copies sent to several call signs share one point and never separate:
 			// list them instead of zooming forever.
 			if (zoom > 15) {
 				const leaves = await src.getClusterLeaves(f.properties.cluster_id, 100, 0);
