@@ -191,6 +191,35 @@ func TestAllowlist(t *testing.T) {
 	t.Logf("R70: exported %d spans and %d log records; names %q; %s", len(spans), len(logs), names, result)
 }
 
+// R23b, R70: a list of codes keeps its codes, and anything else in it
+// becomes "other"; the re-parse's counts are kept.
+func TestAllowlistCodes(t *testing.T) {
+	col := telemetrytest.New()
+	defer col.Close()
+	otelEnv(t, col.URL)
+	tel := telemetry.Start(context.Background(), telemetry.Settings{ServiceName: "test", Log: quiet()})
+	log := slog.New(tel.LogHandler(slog.NewTextHandler(io.Discard, nil), "t"))
+	log.Info("re-parse started", "reasons", "alias_added,SHED FIRE,profiles_changed", "total", int64(3000), "patterns", 1)
+	log.Info("re-parse progress", "reasons", 7, "done", int64(10), "percent", int64(1), "per_minute", int64(600), "eta_seconds", int64(299))
+	flush(t, tel)
+	logs := col.Logs()
+	if len(logs) != 2 {
+		t.Fatalf("%d log records, want 2", len(logs))
+	}
+	if got := logs[0].Attr("reasons"); got != "alias_added,other,profiles_changed" {
+		t.Errorf("reasons %q", got)
+	}
+	if logs[0].Attr("total") != "3000" || logs[0].Attr("patterns") != "1" {
+		t.Errorf("start line: %v", col.Dump())
+	}
+	if logs[1].Attr("reasons") != "" || logs[1].Attr("done") != "10" || logs[1].Attr("eta_seconds") != "299" || logs[1].Attr("per_minute") != "600" {
+		t.Errorf("progress line: %v", col.Dump())
+	}
+	if strings.Contains(col.Dump(), "SHED") {
+		t.Error("exported telemetry contains SHED")
+	}
+}
+
 func TestErrorKind(t *testing.T) {
 	for in, want := range map[string]string{
 		"SQLSTATE 23505":               "SQLSTATE 23505",

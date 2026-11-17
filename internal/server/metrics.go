@@ -254,6 +254,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		m.sample("pagerarchive_backup_failing", nil, b2f(b.Failing()))
 	}
 	s.autoUpgradeMetrics(m)
+	s.reparseMetrics(m)
 
 	s.loadMetrics(m)
 
@@ -392,4 +393,27 @@ func (e *exposition) bucket(name string, l labels, le string, n uint64, ex telem
 		fmt.Fprintf(e.w, ` # {trace_id="%s"} %s %.3f`, ex.TraceID, formatValue(ex.Value), float64(ex.At.UnixMilli())/1000)
 	}
 	fmt.Fprintln(e.w)
+}
+
+// reparseMetrics are the re-parse's progress (R23b): whether one is running,
+// how many messages this run has to do and has done (the last run's while
+// idle), and a counter of every run's, for the rate. Counts only, with no
+// labels: never a capcode pattern or a reason.
+func (s *Server) reparseMetrics(m *exposition) {
+	if s.Reparse == nil {
+		return
+	}
+	p := s.Reparse.Snapshot()
+	m.family("pagerarchive_reparse_running", "gauge", "1 while stored messages are being re-parsed (R23a, R23b).")
+	m.sample("pagerarchive_reparse_running", nil, b2f(p.Running))
+	m.family("pagerarchive_reparse_run_messages", "gauge", "Messages this re-parse has to do, counted when it started; the last one's while none runs (R23b).")
+	m.sample("pagerarchive_reparse_run_messages", nil, float64(p.Total))
+	m.family("pagerarchive_reparse_run_messages_done", "gauge", "Messages this re-parse has done so far; the last one's while none runs (R23b).")
+	m.sample("pagerarchive_reparse_run_messages_done", nil, float64(p.Done))
+	if !p.Started.IsZero() {
+		m.family("pagerarchive_reparse_run_started_timestamp_seconds", "gauge", "When this re-parse, or the last one, started (R23b).")
+		m.sample("pagerarchive_reparse_run_started_timestamp_seconds", nil, float64(p.Started.Unix()))
+	}
+	m.family("pagerarchive_reparse_messages_total", "counter", "Messages re-parsed since the API started (R23b).")
+	m.sample("pagerarchive_reparse_messages_total", nil, float64(p.Reparsed))
 }

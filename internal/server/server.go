@@ -27,6 +27,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
+	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
@@ -62,6 +63,9 @@ type Server struct {
 	UI http.Handler
 	// Nightly is the retention and redaction job (R45).
 	Nightly *nightly.Job
+	// Reparse is how far the re-parse has got (R23b), for /metrics; nil
+	// shows none.
+	Reparse *reparse.Progress
 	// BackupStatusFile is where the backup service says how it went ("" for a
 	// stack without one), and Started when this API started (R86a).
 	BackupStatusFile string
