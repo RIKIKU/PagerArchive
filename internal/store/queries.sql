@@ -590,7 +590,7 @@ WHERE id = $1;
 UPDATE invitations SET email = NULL, email_key = NULL WHERE used_by = $1;
 
 -- name: CreateSession :exec
-INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3);
+INSERT INTO sessions (token_hash, user_id, expires_at, id_token) VALUES ($1, $2, $3, $4);
 
 -- name: SessionUser :one
 SELECT u.*, s.last_used_at AS session_used_at
@@ -600,8 +600,10 @@ WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active';
 -- name: TouchSession :exec
 UPDATE sessions SET last_used_at = now(), expires_at = $2 WHERE token_hash = $1;
 
--- name: DeleteSession :exec
-DELETE FROM sessions WHERE token_hash = $1;
+-- name: DeleteSession :many
+-- Signing out (R40b): the session's ID token, for Authentik's end-session
+-- endpoint. No row when the session had already gone.
+DELETE FROM sessions WHERE token_hash = $1 RETURNING id_token;
 
 -- name: DeleteUserSessions :exec
 DELETE FROM sessions WHERE user_id = ANY(sqlc.arg(ids)::bigint[]);

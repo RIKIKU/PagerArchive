@@ -195,6 +195,9 @@ tar -xzf "$WORK/assets/pagerarchive-config.tar.gz" -C "$DIR"
 chmod -R a+rX "$DIR"
 (in_folder "$DIR" pull && in_folder "$DIR" up -d) 2>&1 | tee "$OUT/a77-upgrade.txt"
 stack_wait_ready
+# A117: the new release's blueprint (its sign-out flow) applied to the
+# existing install before the checks sign out.
+stack_wait_flow pagerarchive-sign-out || status=1
 
 got=$(stack_compose exec -T api /usr/local/bin/pagerarchive version)
 echo "--- running: $got"

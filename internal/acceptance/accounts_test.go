@@ -253,7 +253,7 @@ func (e *env) signIn(c accounts.Claims) (*member, error) {
 	if err != nil {
 		return nil, err
 	}
-	token, err := e.acc.NewSession(e.ctx, u.ID)
+	token, err := e.acc.NewSession(e.ctx, u.ID, "")
 	if err != nil {
 		return nil, err
 	}
@@ -276,7 +276,7 @@ func (e *env) newMember(email, role string, inviter *member) *member {
 	e.dir.mu.Lock()
 	e.dir.users[sub] = &fakeUser{username: k.Key, email: email, active: true}
 	e.dir.mu.Unlock()
-	token, err := e.acc.NewSession(e.ctx, u.ID)
+	token, err := e.acc.NewSession(e.ctx, u.ID, "")
 	if err != nil {
 		e.t.Fatal(err)
 	}

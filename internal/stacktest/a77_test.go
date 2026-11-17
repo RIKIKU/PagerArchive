@@ -447,6 +447,10 @@ func TestA77Check(t *testing.T) {
 	}
 
 	a77CheckInvitations(t, s, u, want)
+
+	// A117: the provider kept from the previous release now has PagerArchive's
+	// sign-out flow and return address, so signing out ends both sessions.
+	u.checkSignOut("after the upgrade", "/signin?signed_out=1")
 }
 
 // a77CheckInvitations: no invitation that was waiting before the upgrade is

@@ -229,6 +229,26 @@ test('A29 signed-out visitors are sent to sign in', async ({ browser }) => {
 	await expect(page.getByRole('link', { name: 'Sign in' })).toBeVisible();
 });
 
+// A117 (R40b): no Authentik runs here, so signing out can't end its
+// session: the app's session still ends at once, and the sign-in page says
+// Authentik's sign-out couldn't be reached. A session of its own, so the
+// other tests' stay signed in.
+test("A117 signing out with Authentik unreachable still ends the app's session, and says so", async ({ browser }) => {
+	const token = `e2e-signout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+	sql(`INSERT INTO sessions (token_hash, user_id, expires_at)
+  SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';`);
+	const ctx = await browser.newContext();
+	await ctx.addCookies([{ name: 'pa_session', value: token, url: URL }]);
+	const page = await ctx.newPage();
+	await page.goto('/account/profile');
+	await page.getByRole('button', { name: 'Sign out' }).click();
+	await expect(page).toHaveURL(/\/signin\?signed_out=1&authentik=unreachable$/, { timeout: 10_000 });
+	await expect(page.getByRole('status').filter({ hasText: "You've signed out." })).toContainText("couldn't be reached");
+	expect((await ctx.request.get(`${URL}/api/v1/me`)).status(), 'signed out of the app').toBe(401);
+	expect((await ctx.cookies()).map((c) => c.name)).not.toContain('pa_session');
+	await ctx.close();
+});
+
 // R44: while the first admin can still be set up, a signed-out visitor is
 // sent to the sign-in page, which offers it, not straight to Authentik. An
 // admin exists here, so the status is answered for the test; the stack test

@@ -508,15 +508,17 @@ func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 	return u, nil
 }
 
-// NewSession signs a user in and returns the cookie's token.
-func (s *Service) NewSession(ctx context.Context, userID int64) (string, error) {
+// NewSession signs a user in and returns the cookie's token. idToken is the
+// ID token Authentik issued for this sign-in, kept for signing out (R40b);
+// "" keeps none.
+func (s *Service) NewSession(ctx context.Context, userID int64, idToken string) (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	token := base64.RawURLEncoding.EncodeToString(b)
 	if err := s.Store.CreateSession(ctx, db.CreateSessionParams{
-		TokenHash: store.HashKey(token), UserID: userID, ExpiresAt: s.now().Add(SessionLifetime),
+		TokenHash: store.HashKey(token), UserID: userID, ExpiresAt: s.now().Add(SessionLifetime), IDToken: nonEmpty(idToken),
 	}); err != nil {
 		return "", dbErr("create session", err)
 	}
@@ -546,12 +548,20 @@ func (s *Service) Session(ctx context.Context, token string) (db.User, error) {
 		Status: r.Status, InvitedBy: r.InvitedBy, CreatedAt: r.CreatedAt, Look: r.Look}, nil
 }
 
-// EndSession signs one browser out.
-func (s *Service) EndSession(ctx context.Context, token string) error {
-	if err := s.Store.DeleteSession(ctx, store.HashKey(token)); err != nil {
-		return dbErr("end session", err)
+// EndSession signs one browser out. It returns the ID token kept with the
+// session, for Authentik's end-session endpoint (R40b): "" for a session
+// from before tokens were kept, or one that had already ended.
+func (s *Service) EndSession(ctx context.Context, token string) (string, error) {
+	ids, err := s.Store.DeleteSession(ctx, store.HashKey(token))
+	if err != nil {
+		return "", dbErr("end session", err)
 	}
-	return nil
+	for _, id := range ids {
+		if id != nil {
+			return *id, nil
+		}
+	}
+	return "", nil
 }
 
 // lastAdmin reports whether removing the users in ids would leave no active
@@ -814,4 +824,12 @@ func firstOr(s []string, def string) string {
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// nonEmpty is s, or nil for "".
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }

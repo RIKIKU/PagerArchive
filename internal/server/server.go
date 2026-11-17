@@ -96,6 +96,9 @@ type Server struct {
 	// ingest stores one page at a time and announces it before the next, so
 	// message IDs reach live connections in increasing order (ADR 0010 §3).
 	ingest sync.Mutex
+	// signOuts holds a signed-out browser's ID token for its hop to
+	// Authentik (R40b).
+	signOuts signOuts
 }
 
 // Handler returns the API's routes.
@@ -224,6 +227,7 @@ func (s *Server) Handler() http.Handler {
 	handle("GET /auth/login", http.HandlerFunc(s.login))
 	handle("GET /auth/callback", http.HandlerFunc(s.callback))
 	handle("POST /auth/logout", http.HandlerFunc(s.logout))
+	handle("GET /auth/end-session", http.HandlerFunc(s.endSession))
 	handle("GET /auth/status", http.HandlerFunc(s.authStatus))
 	handle("GET /auth/powershell", http.HandlerFunc(s.powershellSettings))
 	handle("POST /auth/first-admin", http.HandlerFunc(s.firstAdmin))

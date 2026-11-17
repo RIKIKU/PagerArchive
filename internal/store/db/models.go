@@ -304,6 +304,7 @@ type Session struct {
 	CreatedAt  time.Time
 	LastUsedAt time.Time
 	ExpiresAt  time.Time
+	IDToken    *string
 }
 
 type Setting struct {

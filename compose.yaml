@@ -41,7 +41,7 @@ x-authentik: &authentik
   # so a release's new files take effect (R84a, ADR 0019). A test checks it
   # and prints the right value.
   labels:
-    pagerarchive.config: "c7ec6a6cd10e38d3"
+    pagerarchive.config: "6200480e5a507028"
   environment:
     AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in .env}
     AUTHENTIK_POSTGRESQL__HOST: db

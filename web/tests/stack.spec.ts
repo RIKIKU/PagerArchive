@@ -482,6 +482,53 @@ test('A81: invitations survive link scanners, and resending (R43a, R43d)', async
 	console.log(`A81: five runs of one invitation, a resend among them, sent five code emails; the sixth sent none and said: ${told}`);
 });
 
+/**
+ * A117 (R40b, ADR 0038): signs out from the account menu and checks it ended
+ * both sessions: the browser ends on the app's own signed-out page, the
+ * app's session is gone, and opening the app sends it to Authentik, which
+ * asks for the sign-in again. Leaves the page on Authentik's sign-in.
+ */
+async function signOutEverywhere(page: Page, request: APIRequestContext, app: string, shot: string) {
+	await page.getByRole('button', { name: /^Account menu/ }).click();
+	await page.getByRole('button', { name: 'Sign out' }).click();
+	await page.waitForURL((u) => u.origin === app && u.pathname === '/signin', { timeout: 30_000 });
+	expect(new URL(page.url()).search, 'ends on the signed-out page').toBe('?signed_out=1');
+	await expect(page.getByRole('status').filter({ hasText: "You've signed out." })).toBeVisible();
+	expect((await request.get(`${app}/api/v1/me`)).status(), 'signed out of the app').toBe(401);
+	await page.screenshot({ path: test.info().outputPath(shot) });
+	console.log(`A117: signing out ended at ${new URL(page.url()).pathname}${new URL(page.url()).search}`);
+	// Opening the app: to Authentik, which asks again rather than signing
+	// straight back in.
+	await page.goto('/');
+	await page.waitForURL((u) => u.origin !== app, { timeout: 30_000 });
+	await expect(page.locator('input[name="uidField"]'), 'Authentik asks for the sign-in again').toBeVisible({ timeout: 30_000 });
+	await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0);
+	console.log(`A117: opening the app after signing out, Authentik asked for the sign-in again at ${new URL(page.url()).pathname}`);
+}
+
+// A117 (R40b): in an ordinary browser tab, signing out ends Authentik's
+// session too and comes back to the app's signed-out page; the way back in
+// asks for the sign-in again.
+test('A117 signing out ends Authentik\'s session too', async ({ browser, baseURL }) => {
+	test.setTimeout(120_000);
+	const app = new URL(baseURL!).origin;
+	const ctx = await browser.newContext();
+	const page = await ctx.newPage();
+	await page.goto('/');
+	await page.waitForURL((u) => u.origin !== app && u.pathname.startsWith('/if/flow/'));
+	await answer(page, 'uidField', OWNER);
+	await answer(page, 'password', passwordOf('Owner Person'));
+	await page.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
+	await signOutEverywhere(page, ctx.request, app, 'a117-signed-out.png');
+	// And signing in again works.
+	await answer(page, 'uidField', OWNER);
+	await answer(page, 'password', passwordOf('Owner Person'));
+	await page.waitForURL((u) => u.origin === app && u.pathname === '/', { timeout: 30_000 });
+	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
+	await ctx.close();
+});
+
 // R90, A116 (ADR 0037): an installed app signs in and out through Authentik,
 // on its own host, with the app's service worker in control, as it is in an
 // app installed on a phone. Sign-in leaves the app's site and comes back to
@@ -517,25 +564,14 @@ test('A116 an installed app signs in and out through Authentik, its service work
 	await expect.poll(inControl).toBe(true);
 	await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 
-	// Signing out ends the app's session, and ends on Authentik's page.
-	await page.getByRole('button', { name: /^Account menu/ }).click();
-	await page.getByRole('button', { name: 'Sign out' }).click();
-	await page.waitForURL((u) => u.origin !== app, { timeout: 30_000 });
-	expect((await ctx.request.get(`${app}/api/v1/me`)).status(), 'signed out of the app').toBe(401);
-	await page.waitForTimeout(3000); // let Authentik's page finish drawing for the screenshot
-	await page.screenshot({ path: test.info().outputPath('a116-signed-out.png') });
-	console.log(`A116: signing out ends at Authentik's ${new URL(page.url()).pathname}`);
+	// Signing out ends both sessions and comes back to the app (A117).
+	await signOutEverywhere(page, ctx.request, app, 'a116-signed-out.png');
 
-	// Back to the app, the worker still in control: signed out, so through
-	// Authentik again, and signed in. Authentik's own session outlives the
-	// app's (its page offers to end it), so it may not ask again.
+	// Back to the app, the worker still in control: signed out of both, so
+	// Authentik asks again, and signed in.
 	await page.goto('/');
-	const adminLink = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' });
-	const uidField = page.locator('input[name="uidField"]');
-	await expect(adminLink.or(uidField)).toBeVisible({ timeout: 30_000 });
-	const asked = new URL(page.url()).origin !== app;
-	if (asked) await signIn();
-	console.log(`A116: back in the app after signing out, Authentik ${asked ? 'asked for the password again' : 'signed straight back in (its own session still open)'}`);
+	await signIn();
+	console.log('A116: back in the app after signing out, Authentik asked for the sign-in again');
 	await expect.poll(inControl).toBe(true);
 	const kept = await page.evaluate(async () => {
 		const out: string[] = [];

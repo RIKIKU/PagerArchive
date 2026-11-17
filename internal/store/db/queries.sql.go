@@ -1585,17 +1585,23 @@ func (q *Queries) CreateLargeEvent(ctx context.Context, at time.Time) (LargeEven
 }
 
 const createSession = `-- name: CreateSession :exec
-INSERT INTO sessions (token_hash, user_id, expires_at) VALUES ($1, $2, $3)
+INSERT INTO sessions (token_hash, user_id, expires_at, id_token) VALUES ($1, $2, $3, $4)
 `
 
 type CreateSessionParams struct {
 	TokenHash []byte
 	UserID    int64
 	ExpiresAt time.Time
+	IDToken   *string
 }
 
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) error {
-	_, err := q.db.Exec(ctx, createSession, arg.TokenHash, arg.UserID, arg.ExpiresAt)
+	_, err := q.db.Exec(ctx, createSession,
+		arg.TokenHash,
+		arg.UserID,
+		arg.ExpiresAt,
+		arg.IDToken,
+	)
 	return err
 }
 
@@ -1868,13 +1874,30 @@ func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBe
 	return column_1, err
 }
 
-const deleteSession = `-- name: DeleteSession :exec
-DELETE FROM sessions WHERE token_hash = $1
+const deleteSession = `-- name: DeleteSession :many
+DELETE FROM sessions WHERE token_hash = $1 RETURNING id_token
 `
 
-func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) error {
-	_, err := q.db.Exec(ctx, deleteSession, tokenHash)
-	return err
+// Signing out (R40b): the session's ID token, for Authentik's end-session
+// endpoint. No row when the session had already gone.
+func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) ([]*string, error) {
+	rows, err := q.db.Query(ctx, deleteSession, tokenHash)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []*string
+	for rows.Next() {
+		var id_token *string
+		if err := rows.Scan(&id_token); err != nil {
+			return nil, err
+		}
+		items = append(items, id_token)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteTemplate = `-- name: DeleteTemplate :execrows
