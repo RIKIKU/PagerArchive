@@ -255,6 +255,7 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	s.autoUpgradeMetrics(m)
 	s.reparseMetrics(m)
+	s.redactionMetrics(m)
 
 	s.loadMetrics(m)
 
@@ -418,5 +419,31 @@ func (s *Server) reparseMetrics(m *exposition) {
 		m.sample("pagerarchive_reparse_run_started_timestamp_seconds", nil, float64(p.Started.Unix()))
 	}
 	m.family("pagerarchive_reparse_messages_total", "counter", "Messages re-parsed since the API started (R23b).")
-	m.sample("pagerarchive_reparse_messages_total", nil, float64(p.Reparsed))
+	m.sample("pagerarchive_reparse_messages_total", nil, float64(p.Count))
+}
+
+// redactionMetrics are retroactive redaction's progress and state (R45a,
+// R91), as the re-parse's are: whether a run is running, its state as a
+// number, how many pages this run has to check and has checked (the last
+// run's while idle; a paused or stopped run's while it's held), and a
+// counter of every run's, for the rate. Counts only, with no labels.
+func (s *Server) redactionMetrics(m *exposition) {
+	if s.Redaction == nil {
+		return
+	}
+	p := s.Redaction.Progress.Snapshot()
+	m.family("pagerarchive_redaction_running", "gauge", "1 while stored messages are being checked against changed redaction rules (P1, R45a).")
+	m.sample("pagerarchive_redaction_running", nil, b2f(p.Running))
+	m.family("pagerarchive_redaction_state", "gauge", "Retroactive redaction's state (R45a): 0 idle, 1 running, 2 paused, 3 stopped.")
+	m.sample("pagerarchive_redaction_state", nil, float64(p.State.Code()))
+	m.family("pagerarchive_redaction_run_messages", "gauge", "Messages this retroactive redaction run has to check, counted when it started; the last one's while none runs (R45a).")
+	m.sample("pagerarchive_redaction_run_messages", nil, float64(p.Total))
+	m.family("pagerarchive_redaction_run_messages_done", "gauge", "Messages this retroactive redaction run has checked so far; the last one's while none runs (R45a).")
+	m.sample("pagerarchive_redaction_run_messages_done", nil, float64(p.Done))
+	if !p.Started.IsZero() {
+		m.family("pagerarchive_redaction_run_started_timestamp_seconds", "gauge", "When this retroactive redaction run, or the last one, started (R45a).")
+		m.sample("pagerarchive_redaction_run_started_timestamp_seconds", nil, float64(p.Started.Unix()))
+	}
+	m.family("pagerarchive_redaction_messages_total", "counter", "Messages checked by retroactive redaction since the API started (R45a).")
+	m.sample("pagerarchive_redaction_messages_total", nil, float64(p.Count))
 }

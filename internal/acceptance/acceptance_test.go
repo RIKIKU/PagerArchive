@@ -35,6 +35,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
+	"github.com/RIKIKU/PagerArchive/internal/redaction"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/server"
@@ -59,6 +60,8 @@ type env struct {
 	cat    *catalog.Catalog
 	worker *reparse.Worker
 	job    *nightly.Job
+	// redactor is retroactive redaction (R45a), which the nightly run does.
+	redactor *redaction.Worker
 
 	// Integrations (M5). Their clock is e.clock(), which tests can move
 	// (e.advance); every other part keeps the real clock.
@@ -228,7 +231,9 @@ func setup(t *testing.T, with ...traced) *env {
 	if err != nil {
 		t.Fatal(err)
 	}
-	e.job = &nightly.Job{Store: st, Network: n, Reparse: e.worker, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr, Reports: srv.Reports}
+	e.redactor = &redaction.Worker{Store: st, Network: n, Reparse: e.worker, Log: log, Poll: time.Minute, Tracer: tr}
+	srv.Redaction = e.redactor
+	e.job = &nightly.Job{Store: st, Redaction: e.redactor, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr, Reports: srv.Reports}
 	srv.Nightly = e.job
 	hs := httptest.NewServer(srv.Handler())
 	t.Cleanup(hs.Close)

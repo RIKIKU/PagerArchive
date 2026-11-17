@@ -497,23 +497,66 @@ function ConvertTo-PaReparse {
     }
 }
 
-function Invoke-PaReparseChange {
+function ConvertTo-PaRedaction {
     <#
     .SYNOPSIS
-    An admin's change to the re-parse (R23c), for the public commands.
+    A PagerArchive.Redaction from the API's retroactive redaction status (R45a).
+    #>
+    [CmdletBinding()]
+    [OutputType('PagerArchive.Redaction')]
+    param(
+        # The API's status.
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [object] $Row
+    )
+    process {
+        $time = {
+            param($Name)
+            $p = $Row.PSObject.Properties[$Name]
+            if ($p -and $p.Value) { [datetimeoffset]$p.Value } else { $null }
+        }
+        $eta = $Row.PSObject.Properties['eta_seconds']
+        [pscustomobject]@{
+            PSTypeName = 'PagerArchive.Redaction'
+            State      = [string]$Row.state
+            Done       = [long]$Row.done
+            Total      = [long]$Row.total
+            Percent    = [int]$Row.percent
+            Redacted   = [long]$Row.redacted
+            PerMinute  = [long]$Row.per_minute
+            TimeLeft   = if ($eta -and $null -ne $eta.Value) { [timespan]::FromSeconds([double]$eta.Value) } else { $null }
+            StartedAt  = & $time 'started_at'
+            ChangedAt  = & $time 'changed_at'
+            FinishedAt = & $time 'finished_at'
+            Reason     = [string]$Row.reason
+            Pending    = [bool]$Row.pending
+        }
+    }
+}
+
+function Invoke-PaJobChange {
+    <#
+    .SYNOPSIS
+    An admin's change to a long job (R91): the re-parse (R23c) or
+    retroactive redaction (R45a), for the public commands.
 
     .DESCRIPTION
     Posts the action and outputs the status. Not being signed in, or no
-    server to ask, stops the command; a refusal (the re-parse's state
-    doesn't allow it) is an ordinary error.
+    server to ask, stops the command; a refusal (the job's state doesn't
+    allow it) is an ordinary error.
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'The public commands call ShouldProcess.')]
     [CmdletBinding()]
-    [OutputType('PagerArchive.Reparse')]
+    [OutputType('PagerArchive.Reparse', 'PagerArchive.Redaction')]
     param(
         # The public command's $PSCmdlet.
         [Parameter(Mandatory)]
         [System.Management.Automation.PSCmdlet] $Cmdlet,
+
+        # reparse or redaction.
+        [Parameter(Mandatory)]
+        [ValidateSet('reparse', 'redaction')]
+        [string] $Job,
 
         # pause, resume, stop or start.
         [Parameter(Mandatory)]
@@ -524,7 +567,8 @@ function Invoke-PaReparseChange {
         [switch] $PassThru
     )
     try {
-        $status = Invoke-PaApi -Method POST -Path "/api/v1/admin/reparse/$Action" | ConvertTo-PaReparse
+        $row = Invoke-PaApi -Method POST -Path "/api/v1/admin/$Job/$Action"
+        $status = if ($Job -eq 'reparse') { $row | ConvertTo-PaReparse } else { $row | ConvertTo-PaRedaction }
     } catch {
         $record = Copy-PaErrorRecord -ErrorRecord $_
         if ($record.CategoryInfo.Category -in @('AuthenticationError', 'ConnectionError') -or $record.Exception.Data['PagerArchive.Code'] -eq 'several_servers') {

@@ -27,6 +27,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
+	"github.com/RIKIKU/PagerArchive/internal/redaction"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -66,6 +67,9 @@ type Server struct {
 	// Reparse is how far the re-parse has got and its state (R23b, R23c),
 	// for /metrics and the admin's status; nil shows none on /metrics.
 	Reparse *reparse.Progress
+	// Redaction is retroactive redaction (P1, R45a): its status and an
+	// admin's controls, and its progress on /metrics; nil has none.
+	Redaction *redaction.Worker
 	// BackupStatusFile is where the backup service says how it went ("" for a
 	// stack without one), and Started when this API started (R86a).
 	BackupStatusFile string
@@ -169,6 +173,11 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/admin/reparse/resume":        s.adminOnly(s.resumeReparse),
 		"POST /api/v1/admin/reparse/stop":          s.adminOnly(s.stopReparse),
 		"POST /api/v1/admin/reparse/start":         s.adminOnly(s.startReparse),
+		"GET /api/v1/admin/redaction":              s.adminOnly(s.getRedaction),
+		"POST /api/v1/admin/redaction/pause":       s.adminOnly(s.pauseRedaction),
+		"POST /api/v1/admin/redaction/resume":      s.adminOnly(s.resumeRedaction),
+		"POST /api/v1/admin/redaction/stop":        s.adminOnly(s.stopRedaction),
+		"POST /api/v1/admin/redaction/start":       s.adminOnly(s.startRedaction),
 		"GET /api/v1/stream":                       s.stream,
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,

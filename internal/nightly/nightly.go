@@ -5,8 +5,6 @@ package nightly
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,9 +17,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
-	"github.com/RIKIKU/PagerArchive/internal/pipeline"
-	"github.com/RIKIKU/PagerArchive/internal/profile"
-	"github.com/RIKIKU/PagerArchive/internal/reparse"
+	"github.com/RIKIKU/PagerArchive/internal/redaction"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
@@ -37,7 +33,6 @@ const (
 const (
 	daysKey      = "retention_days"
 	lastRunKey   = "nightly_last_run"
-	redactionKey = "redaction_hash"
 	batch        = 1000
 	deliveryDays = 30
 	advisoryLock = 4242_0045 // one nightly run at a time
@@ -46,13 +41,14 @@ const (
 // Job runs the nightly work. At is the local time of day it runs (default
 // 03:00, setting NIGHTLY_AT) in Location, the deployment time zone (R35a).
 type Job struct {
-	Store    *store.Store
-	Network  *profile.Network
-	Reparse  *reparse.Worker
-	Location *time.Location
-	At       time.Duration // since local midnight
-	Now      func() time.Time
-	Log      *slog.Logger
+	Store *store.Store
+	// Redaction is retroactive redaction (P1, R45a), a long job the nightly
+	// run starts and does; nil does none.
+	Redaction *redaction.Worker
+	Location  *time.Location
+	At        time.Duration // since local midnight
+	Now       func() time.Time
+	Log       *slog.Logger
 	// Tracer traces each run and its steps (R72); nil traces nothing.
 	Tracer trace.Tracer
 	// Reports, if set, counts again the jobs the run changed, in the same
@@ -271,25 +267,19 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		return fmt.Errorf("delivery records: %s", store.SafeError(err))
 	}
 	span.End()
-	// 2. Retroactive redaction (P1), when the rules changed since the last
-	// time they were applied to every stored message.
-	hash := RedactionHash(j.Network)
-	if old, err := j.Store.GetSetting(ctx, redactionKey); err != nil || old != hash {
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("redaction setting: %s", store.SafeError(err))
-		}
+	// 2. Retroactive redaction (P1, R45a): when the rules changed since they
+	// were last applied to every stored page, a run starts (a stopped one
+	// starts again from the beginning), and a running one is done here,
+	// until it finishes or an admin pauses or stops it. A paused one stays
+	// paused. It's a long job (R91): its place is kept with each batch, so a
+	// run cut short carries on from there.
+	if j.Redaction != nil {
 		rctx, rspan := tr.Start(ctx, "nightly.redaction")
-		n, err := j.redactAll(rctx)
+		n, err := j.Redaction.Nightly(rctx)
 		rspan.End()
 		res.Redacted = n
 		if err != nil {
-			return err
-		}
-		if err := j.forgetSourceIDs(ctx); err != nil {
-			return err
-		}
-		if err := j.Store.SetSetting(ctx, db.SetSettingParams{Key: redactionKey, Value: hash}); err != nil {
-			return fmt.Errorf("redaction setting: %s", store.SafeError(err))
+			return fmt.Errorf("redaction: %s", store.SafeError(err))
 		}
 	}
 	if j.Reports != nil {
@@ -311,73 +301,4 @@ func (j *Job) run(ctx context.Context, now time.Time, res *Result) error {
 		}
 	}
 	return nil
-}
-
-// redactAll applies the current rules to every stored message, then
-// re-parses the ones that changed so their parsed fields, job and location
-// follow (P1, section 14).
-func (j *Job) redactAll(ctx context.Context) (int64, error) {
-	var after, changed int64
-	for {
-		rows, err := j.Store.MessagesForRedaction(ctx, db.MessagesForRedactionParams{AfterID: after, Batch: batch})
-		if err != nil {
-			return changed, fmt.Errorf("redaction: %s", store.SafeError(err))
-		}
-		var ids []int64
-		for _, m := range rows {
-			after = m.ID
-			text := pipeline.Redact(j.Network, m.Text)
-			if text == m.Text {
-				continue
-			}
-			key := pipeline.DedupKey(pipeline.Prepared{Capcode: m.Capcode, Text: text})
-			if err := j.Store.UpdateRedactedText(ctx, db.UpdateRedactedTextParams{ID: m.ID, Text: text, DedupKey: key}); err != nil {
-				return changed, fmt.Errorf("redaction: %s", store.SafeError(err))
-			}
-			ids = append(ids, m.ID)
-		}
-		if j.Reparse != nil {
-			if err := j.Reparse.ReparseIDs(ctx, ids); err != nil {
-				return changed, fmt.Errorf("re-parse after redaction: %s", store.SafeError(err))
-			}
-		}
-		changed += int64(len(ids))
-		if len(rows) < batch {
-			return changed, nil
-		}
-	}
-}
-
-// forgetSourceIDs drops the imported source IDs the rules now match (P1). The
-// copy stays, and is known by its message's dedup key and its receive time, as
-// one imported with no ID (ADR 0018).
-func (j *Job) forgetSourceIDs(ctx context.Context) error {
-	after := ""
-	for {
-		ids, err := j.Store.ImportSourceIDsAfter(ctx, db.ImportSourceIDsAfterParams{After: &after, Batch: batch})
-		if err != nil {
-			return fmt.Errorf("redaction: %s", store.SafeError(err))
-		}
-		for _, id := range ids {
-			after = id
-			if pipeline.Redact(j.Network, id) == id {
-				continue
-			}
-			if err := j.Store.ForgetImportSourceID(ctx, id); err != nil {
-				return fmt.Errorf("redaction: %s", store.SafeError(err))
-			}
-		}
-		if len(ids) < batch {
-			return nil
-		}
-	}
-}
-
-// RedactionHash identifies the network's redaction rules.
-func RedactionHash(n *profile.Network) string {
-	h := sha256.New()
-	for _, r := range n.Redactions {
-		fmt.Fprintf(h, "%s\x00%s\x00%d\n", r.Name, r.Re.String(), r.Group)
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }

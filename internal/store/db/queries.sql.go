@@ -92,6 +92,29 @@ func (q *Queries) AddLargeEventPage(ctx context.Context, arg AddLargeEventPagePa
 	return err
 }
 
+const addRedactionRunDay = `-- name: AddRedactionRunDay :exec
+INSERT INTO redaction_run_days (run_id, day, from_at, to_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (run_id, day) DO UPDATE SET from_at = LEAST(redaction_run_days.from_at, EXCLUDED.from_at),
+    to_at = GREATEST(redaction_run_days.to_at, EXCLUDED.to_at)
+`
+
+type AddRedactionRunDayParams struct {
+	RunID  int64
+	Day    int64
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+func (q *Queries) AddRedactionRunDay(ctx context.Context, arg AddRedactionRunDayParams) error {
+	_, err := q.db.Exec(ctx, addRedactionRunDay,
+		arg.RunID,
+		arg.Day,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	return err
+}
+
 const addReparseRunDay = `-- name: AddReparseRunDay :exec
 INSERT INTO reparse_run_days (run_id, day, from_at, to_at) VALUES ($1, $2, $3, $4)
 ON CONFLICT (run_id, day) DO UPDATE SET from_at = LEAST(reparse_run_days.from_at, EXCLUDED.from_at),
@@ -313,6 +336,49 @@ func (q *Queries) AdminIntegrationsOfUser(ctx context.Context, ownerID int64) ([
 		return nil, err
 	}
 	return items, nil
+}
+
+const advanceRedactionRun = `-- name: AdvanceRedactionRun :exec
+UPDATE redaction_runs SET after_id = $1::bigint, done = done + $2::bigint,
+    redacted = redacted + $3::bigint, pages_done = $4::bool
+WHERE id = $5::bigint
+`
+
+type AdvanceRedactionRunParams struct {
+	AfterID   int64
+	Checked   int64
+	Changed   int64
+	PagesDone bool
+	ID        int64
+}
+
+// Where the walk over the pages has got: written with the batch it ends.
+func (q *Queries) AdvanceRedactionRun(ctx context.Context, arg AdvanceRedactionRunParams) error {
+	_, err := q.db.Exec(ctx, advanceRedactionRun,
+		arg.AfterID,
+		arg.Checked,
+		arg.Changed,
+		arg.PagesDone,
+		arg.ID,
+	)
+	return err
+}
+
+const advanceRedactionRunSources = `-- name: AdvanceRedactionRunSources :exec
+UPDATE redaction_runs SET source_after = $1::text, sources_done = $2::bool
+WHERE id = $3::bigint
+`
+
+type AdvanceRedactionRunSourcesParams struct {
+	SourceAfter string
+	SourcesDone bool
+	ID          int64
+}
+
+// Where the walk over the imported source IDs has got: written with the batch it ends.
+func (q *Queries) AdvanceRedactionRunSources(ctx context.Context, arg AdvanceRedactionRunSourcesParams) error {
+	_, err := q.db.Exec(ctx, advanceRedactionRunSources, arg.SourceAfter, arg.SourcesDone, arg.ID)
+	return err
 }
 
 const albumNotes = `-- name: AlbumNotes :many
@@ -1380,6 +1446,18 @@ func (q *Queries) CountLiveInvitationsBy(ctx context.Context, arg CountLiveInvit
 	return count, err
 }
 
+const countMessagesToRedact = `-- name: CountMessagesToRedact :one
+SELECT count(*) FROM messages
+`
+
+// R45a: the pages a retroactive redaction run checks, counted when it starts.
+func (q *Queries) CountMessagesToRedact(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessagesToRedact)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countMessagesToReparse = `-- name: CountMessagesToReparse :one
 SELECT count(*) FROM messages WHERE capcode LIKE $1::text
 `
@@ -1658,6 +1736,23 @@ func (q *Queries) CreateLargeEvent(ctx context.Context, at time.Time) (LargeEven
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createRedactionRun = `-- name: CreateRedactionRun :one
+INSERT INTO redaction_runs (state, reason, rules_hash, total) VALUES ('running', $1, $2, $3) RETURNING id
+`
+
+type CreateRedactionRunParams struct {
+	Reason    string
+	RulesHash string
+	Total     int64
+}
+
+func (q *Queries) CreateRedactionRun(ctx context.Context, arg CreateRedactionRunParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createRedactionRun, arg.Reason, arg.RulesHash, arg.Total)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createReparseRun = `-- name: CreateReparseRun :one
@@ -1965,6 +2060,25 @@ func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBe
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteRedactionRunDays = `-- name: DeleteRedactionRunDays :exec
+DELETE FROM redaction_run_days WHERE run_id = $1
+`
+
+func (q *Queries) DeleteRedactionRunDays(ctx context.Context, runID int64) error {
+	_, err := q.db.Exec(ctx, deleteRedactionRunDays, runID)
+	return err
+}
+
+const deleteRedactionRuns = `-- name: DeleteRedactionRuns :exec
+DELETE FROM redaction_runs
+`
+
+// Before a new run: the last one, with its days, goes.
+func (q *Queries) DeleteRedactionRuns(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteRedactionRuns)
+	return err
 }
 
 const deleteReparseRunDays = `-- name: DeleteReparseRunDays :exec
@@ -2347,6 +2461,18 @@ func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) 
 	return err
 }
 
+const finishRedactionRun = `-- name: FinishRedactionRun :exec
+UPDATE redaction_runs SET state = 'finished', changed_at = now(), finished_at = now(), total = GREATEST(total, done)
+WHERE id = $1
+`
+
+// Pages stored while it ran are checked by it too, so its total is then
+// what it did.
+func (q *Queries) FinishRedactionRun(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, finishRedactionRun, id)
+	return err
+}
+
 const finishReparseRun = `-- name: FinishReparseRun :exec
 UPDATE reparse_runs SET state = 'finished', changed_at = now(), finished_at = now(), total = GREATEST(total, done)
 WHERE id = $1
@@ -2392,6 +2518,35 @@ ON CONFLICT DO NOTHING
 func (q *Queries) ForgetImportSourceID(ctx context.Context, sourceID string) error {
 	_, err := q.db.Exec(ctx, forgetImportSourceID, sourceID)
 	return err
+}
+
+const getRedactionRun = `-- name: GetRedactionRun :one
+SELECT id, state, reason, rules_hash, total, done, redacted, after_id, pages_done, source_after, sources_done, epoch,
+       started_at, changed_at, finished_at FROM redaction_runs
+`
+
+// R45a (ADR 0044): retroactive redaction's run, the latest; there's at most one.
+func (q *Queries) GetRedactionRun(ctx context.Context) (RedactionRun, error) {
+	row := q.db.QueryRow(ctx, getRedactionRun)
+	var i RedactionRun
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.Reason,
+		&i.RulesHash,
+		&i.Total,
+		&i.Done,
+		&i.Redacted,
+		&i.AfterID,
+		&i.PagesDone,
+		&i.SourceAfter,
+		&i.SourcesDone,
+		&i.Epoch,
+		&i.StartedAt,
+		&i.ChangedAt,
+		&i.FinishedAt,
+	)
+	return i, err
 }
 
 const getReparseRun = `-- name: GetReparseRun :one
@@ -3914,6 +4069,36 @@ func (q *Queries) LockLargeEvents(ctx context.Context) error {
 	return err
 }
 
+const lockRedactionRun = `-- name: LockRedactionRun :one
+SELECT id, state, reason, rules_hash, total, done, redacted, after_id, pages_done, source_after, sources_done, epoch,
+       started_at, changed_at, finished_at FROM redaction_runs FOR UPDATE
+`
+
+// As GetRedactionRun, locked until the transaction ends: a batch's end, an
+// admin's change or the nightly run's start, one at a time.
+func (q *Queries) LockRedactionRun(ctx context.Context) (RedactionRun, error) {
+	row := q.db.QueryRow(ctx, lockRedactionRun)
+	var i RedactionRun
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.Reason,
+		&i.RulesHash,
+		&i.Total,
+		&i.Done,
+		&i.Redacted,
+		&i.AfterID,
+		&i.PagesDone,
+		&i.SourceAfter,
+		&i.SourcesDone,
+		&i.Epoch,
+		&i.StartedAt,
+		&i.ChangedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const lockReparseRun = `-- name: LockReparseRun :one
 SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs FOR UPDATE
 `
@@ -4182,7 +4367,7 @@ type MessagesByIDsRow struct {
 	Live      bool
 }
 
-// As MessagesToReparse, for the messages retroactive redaction changed.
+// As MessagesToReparse, for the given messages: one whose text changed while it was re-parsed.
 func (q *Queries) MessagesByIDs(ctx context.Context, ids []int64) ([]MessagesByIDsRow, error) {
 	rows, err := q.db.Query(ctx, messagesByIDs, ids)
 	if err != nil {
@@ -4240,6 +4425,58 @@ func (q *Queries) MessagesForRedaction(ctx context.Context, arg MessagesForRedac
 	for rows.Next() {
 		var i MessagesForRedactionRow
 		if err := rows.Scan(&i.ID, &i.Capcode, &i.Text); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const messagesToRedactLocked = `-- name: MessagesToRedactLocked :many
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.id = ANY($1::bigint[])
+ORDER BY m.id
+FOR NO KEY UPDATE OF m
+`
+
+type MessagesToRedactLockedRow struct {
+	ID        int64
+	Capcode   string
+	Text      string
+	Priority  *string
+	Heartbeat bool
+	SentAt    time.Time
+	InEvent   bool
+	Live      bool
+}
+
+// P1, R45a: the pages of a batch whose text the rules change, locked until
+// the batch commits, with what their re-parse needs (as MessagesByIDs).
+func (q *Queries) MessagesToRedactLocked(ctx context.Context, ids []int64) ([]MessagesToRedactLockedRow, error) {
+	rows, err := q.db.Query(ctx, messagesToRedactLocked, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []MessagesToRedactLockedRow
+	for rows.Next() {
+		var i MessagesToRedactLockedRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Capcode,
+			&i.Text,
+			&i.Priority,
+			&i.Heartbeat,
+			&i.SentAt,
+			&i.InEvent,
+			&i.Live,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -4442,6 +4679,16 @@ func (q *Queries) NextDeliveryDue(ctx context.Context) (time.Time, error) {
 	var column_1 time.Time
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const notifyRedaction = `-- name: NotifyRedaction :exec
+SELECT pg_notify('pagerarchive_redaction', '')
+`
+
+// Wakes the API's retroactive redaction worker (R45a).
+func (q *Queries) NotifyRedaction(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, notifyRedaction)
+	return err
 }
 
 const notifyReparse = `-- name: NotifyReparse :exec
@@ -4677,6 +4924,35 @@ func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]Rec
 			&i.ClientName,
 			&i.ReceivedAt,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const redactionRunDays = `-- name: RedactionRunDays :many
+SELECT from_at, to_at FROM redaction_run_days WHERE run_id = $1 ORDER BY day
+`
+
+type RedactionRunDaysRow struct {
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+func (q *Queries) RedactionRunDays(ctx context.Context, runID int64) ([]RedactionRunDaysRow, error) {
+	rows, err := q.db.Query(ctx, redactionRunDays, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RedactionRunDaysRow
+	for rows.Next() {
+		var i RedactionRunDaysRow
+		if err := rows.Scan(&i.FromAt, &i.ToAt); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -5042,6 +5318,34 @@ type ResendInvitationParams struct {
 // R43d: the same invitation, with a new link and a new 7 days.
 func (q *Queries) ResendInvitation(ctx context.Context, arg ResendInvitationParams) error {
 	_, err := q.db.Exec(ctx, resendInvitation, arg.ID, arg.AuthentikID, arg.ExpiresAt)
+	return err
+}
+
+const restartRedactionRun = `-- name: RestartRedactionRun :exec
+UPDATE redaction_runs SET state = $1::text, reason = $2::text, rules_hash = $3::text,
+    total = $4::bigint, done = 0, redacted = 0, after_id = 0, pages_done = false, source_after = '', sources_done = false,
+    epoch = epoch + 1, started_at = now(), changed_at = now(), finished_at = NULL
+WHERE id = $5::bigint
+`
+
+type RestartRedactionRunParams struct {
+	State     string
+	Reason    string
+	RulesHash string
+	Total     int64
+	ID        int64
+}
+
+// From the beginning again (Start again, the rules changed, or the nightly
+// run starting a stopped one): its days go with it.
+func (q *Queries) RestartRedactionRun(ctx context.Context, arg RestartRedactionRunParams) error {
+	_, err := q.db.Exec(ctx, restartRedactionRun,
+		arg.State,
+		arg.Reason,
+		arg.RulesHash,
+		arg.Total,
+		arg.ID,
+	)
 	return err
 }
 
@@ -5768,6 +6072,20 @@ func (q *Queries) SetMessageLocality(ctx context.Context, arg SetMessageLocality
 	return err
 }
 
+const setRedactionRunState = `-- name: SetRedactionRunState :exec
+UPDATE redaction_runs SET state = $1::text, changed_at = now() WHERE id = $2::bigint
+`
+
+type SetRedactionRunStateParams struct {
+	State string
+	ID    int64
+}
+
+func (q *Queries) SetRedactionRunState(ctx context.Context, arg SetRedactionRunStateParams) error {
+	_, err := q.db.Exec(ctx, setRedactionRunState, arg.State, arg.ID)
+	return err
+}
+
 const setReparseRunPattern = `-- name: SetReparseRunPattern :exec
 UPDATE reparse_run_patterns SET after_id = $1::bigint, done = $2::bool
 WHERE run_id = $3::bigint AND capcode_pattern = $4::text
@@ -6331,12 +6649,12 @@ func (q *Queries) UpdateIntegration(ctx context.Context, arg UpdateIntegrationPa
 	return err
 }
 
-const updateParsed = `-- name: UpdateParsed :exec
+const updateParsed = `-- name: UpdateParsed :execrows
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
-WHERE id = $1
+WHERE id = $1 AND text = $16
 `
 
 type UpdateParsedParams struct {
@@ -6355,10 +6673,14 @@ type UpdateParsedParams struct {
 	ParseFailed     bool
 	AddressUnsplit  bool
 	LargeEventField bool
+	Text            string
 }
 
-func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) error {
-	_, err := q.db.Exec(ctx, updateParsed,
+// A page's parsed fields, written only beside the text they were parsed
+// from (P1): 0 rows when its text changed meanwhile (retroactive redaction,
+// in its own transaction), and the caller parses it again.
+func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) (int64, error) {
+	result, err := q.db.Exec(ctx, updateParsed,
 		arg.ID,
 		arg.AliasID,
 		arg.Format,
@@ -6374,8 +6696,12 @@ func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) erro
 		arg.ParseFailed,
 		arg.AddressUnsplit,
 		arg.LargeEventField,
+		arg.Text,
 	)
-	return err
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const updateRedactedText = `-- name: UpdateRedactedText :exec
@@ -6388,8 +6714,8 @@ type UpdateRedactedTextParams struct {
 	DedupKey []byte
 }
 
-// P1: retroactive redaction replaces the text and its dedup hash; the
-// caller then re-parses the message so parsed fields follow.
+// P1: retroactive redaction replaces the text and its dedup hash, and
+// re-parses the message in the same transaction, so parsed fields follow (R45a).
 func (q *Queries) UpdateRedactedText(ctx context.Context, arg UpdateRedactedTextParams) error {
 	_, err := q.db.Exec(ctx, updateRedactedText, arg.ID, arg.Text, arg.DedupKey)
 	return err

@@ -120,6 +120,27 @@ export interface ReparseStatus {
 	waiting: number;
 }
 
+/** R45a: retroactive redaction, its state and how far it has got (counts and codes only). */
+export interface RedactionStatus {
+	state: 'idle' | 'running' | 'paused' | 'stopped';
+	/** Messages to check, and checked so far (the last run's while idle). */
+	total: number;
+	done: number;
+	percent: number;
+	/** Messages whose text the run changed. */
+	redacted: number;
+	/** While it runs: messages checked a minute, and the seconds left at that rate (null until some are done). */
+	per_minute: number;
+	eta_seconds: number | null;
+	started_at: string | null;
+	changed_at: string | null;
+	finished_at: string | null;
+	/** Why it started: rules_changed or started_again ('' before any run). */
+	reason: string;
+	/** The rules in use aren't yet applied to every stored message. */
+	pending: boolean;
+}
+
 export interface Upgrade {
 	at: string;
 	from: string;
@@ -835,6 +856,9 @@ export const api = {
 	/** R23c: the re-parse, and an admin's pause, resume, stop and start again. */
 	reparse: () => get<ReparseStatus>('/api/v1/admin/reparse'),
 	reparseAction: (action: 'pause' | 'resume' | 'stop' | 'start') => request<ReparseStatus>('POST', `/api/v1/admin/reparse/${action}`),
+	/** R45a: retroactive redaction, and an admin's pause, resume, stop and start again. */
+	redaction: () => get<RedactionStatus>('/api/v1/admin/redaction'),
+	redactionAction: (action: 'pause' | 'resume' | 'stop' | 'start') => request<RedactionStatus>('POST', `/api/v1/admin/redaction/${action}`),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
 	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
 	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {

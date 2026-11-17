@@ -53,6 +53,7 @@ var SpanKeys = map[string]kind{
 	"pagerarchive.nightly.deleted":  intKind,
 	"pagerarchive.nightly.redacted": intKind,
 	"pagerarchive.reparse.messages": intKind,
+	"pagerarchive.redaction.pages":  intKind, // pages whose text retroactive redaction changed (R45a)
 }
 
 // LogKeys are the attribute keys log records may carry, as the code's
@@ -139,7 +140,7 @@ var spanNames = struct {
 	"ingest.events": true, // large events (R87, ADR 0027)
 	"live.publish":  true, "integration.deliver": true,
 	// Background work (R72).
-	"nightly": true, "nightly.retention": true, "nightly.redaction": true, "nightly.vacuum": true, "reparse": true,
+	"nightly": true, "nightly.retention": true, "nightly.redaction": true, "nightly.vacuum": true, "reparse": true, "redaction": true,
 }}
 
 // Unnamed replaces a span name that isn't allowed.

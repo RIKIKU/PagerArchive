@@ -45,6 +45,6 @@ function Start-PagerArchiveReparse {
         [switch] $PassThru
     )
     if ($PSCmdlet.ShouldProcess('the re-parse of stored messages', 'Start again from the beginning')) {
-        Invoke-PaReparseChange -Cmdlet $PSCmdlet -Action start -PassThru:$PassThru
+        Invoke-PaJobChange -Cmdlet $PSCmdlet -Job reparse -Action start -PassThru:$PassThru
     }
 }

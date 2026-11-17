@@ -92,7 +92,9 @@ const icons = {
 	exitfullscreen: 'arrows-minimize',
 	// The map's layers control (R88c): a stack of sheets, the familiar sign.
 	layers: 'stack-2',
-	reparse: 'refresh'
+	reparse: 'refresh',
+	// Retroactive redaction (R45a): rubbing out what the rules remove.
+	redaction: 'eraser'
 };
 
 const version = JSON.parse(readFileSync(`${pkg}package.json`, 'utf8')).version;

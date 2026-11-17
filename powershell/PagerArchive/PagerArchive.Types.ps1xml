@@ -143,4 +143,27 @@
       </MemberSet>
     </Members>
   </Type>
+  <Type>
+    <Name>PagerArchive.Redaction</Name>
+    <Members>
+      <MemberSet>
+        <Name>PSStandardMembers</Name>
+        <Members>
+          <PropertySet>
+            <Name>DefaultDisplayPropertySet</Name>
+            <ReferencedProperties>
+              <Name>State</Name>
+              <Name>Done</Name>
+              <Name>Total</Name>
+              <Name>Percent</Name>
+              <Name>Redacted</Name>
+              <Name>PerMinute</Name>
+              <Name>TimeLeft</Name>
+              <Name>StartedAt</Name>
+            </ReferencedProperties>
+          </PropertySet>
+        </Members>
+      </MemberSet>
+    </Members>
+  </Type>
 </Types>
