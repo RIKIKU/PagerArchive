@@ -25,6 +25,7 @@
 	import Icon from './Icon.svelte';
 	import { icons } from './icons.ts';
 	import { screen } from './screen.svelte.ts';
+	import { areaOutlines, areaShown, showArea } from './areaLayers.svelte.ts';
 
 	// variant 'single': the small map in a message's detail view (R35c), one
 	// point and no clusters, below the text on phones (P2). variant 'heat':
@@ -355,26 +356,14 @@
 		});
 	}
 
-	// R88c: the network's layers of areas, each outlined and labelled under
-	// the messages on the map page in its own style (tokens), the later over
-	// the earlier, each shown or hidden by its own checkbox in the map's
-	// layers panel, whose choice this browser remembers. The outlines are
-	// asked for by their version, so the browser keeps them until the areas
-	// change.
-	const areaLayers = $derived(variant === 'full' ? (meta.areas ?? []) : []);
-	const areasKey = (id: string) => `pagerarchive.map.areas.${id}`;
-	function remembered(): Record<string, boolean> {
-		const out: Record<string, boolean> = {};
-		for (const l of meta.areas ?? []) {
-			try {
-				out[l.id] = localStorage.getItem(areasKey(l.id)) !== 'hidden';
-			} catch {
-				out[l.id] = true; // No storage: shown.
-			}
-		}
-		return out;
-	}
-	let shownAreas: Record<string, boolean> = $state(remembered());
+	// R88c: the network's layers of areas, on every map, each outlined and
+	// labelled in its own style (tokens) under what the map shows (the
+	// messages, the page's marker, the heat), the later over the earlier,
+	// each shown or hidden by its own checkbox in the map's layers panel:
+	// one choice for every map in this browser (areaLayers.svelte.ts). The
+	// outlines are asked for by their version, once for every map the page
+	// opens, and the browser keeps them until the areas change.
+	const areaLayers = $derived(meta.areas ?? []);
 	// How many outlines of each layer are drawn, kept on its checkbox for a test.
 	let areasDrawn: Record<string, number> = $state({});
 
@@ -398,14 +387,20 @@
 				size: rem('--text-sm'),
 				halo: px('--map-stroke')
 			};
-			const visibility = shownAreas[l.id] === false ? 'none' : 'visible';
+			const visibility = areaShown(l.id) ? 'visible' : 'none';
 			const source = `areas-${l.id}`;
 			// Its credit is the source's: MapLibre credits only the sources of shown layers.
 			map.addSource(source, {
 				type: 'geojson',
-				data: `${location.origin}/api/v1/map/areas/${encodeURIComponent(l.id)}?v=${encodeURIComponent(l.version)}`,
+				data: { type: 'FeatureCollection', features: [] },
 				attribution: `${l.label} outlines: ${l.attribution}`
 			});
+			const drawnOn = map;
+			areaOutlines(l.id, l.version)
+				.then((data) => (drawnOn.getSource(source) as maplibregl.GeoJSONSource | undefined)?.setData(data))
+				.catch(() => {
+					// Not drawn: the map works without them.
+				});
 			// Outlines are the features without a label point's mark.
 			map.addLayer({
 				id: `area-lines-${l.id}`,
@@ -432,15 +427,16 @@
 		}
 	}
 
-	function showAreas(id: string, shown: boolean) {
-		shownAreas[id] = shown;
-		try {
-			localStorage.setItem(areasKey(id), shown ? 'shown' : 'hidden');
-		} catch {
-			// Not remembered.
+	// The choice, made on this map, another one or in another tab, drawn.
+	$effect(() => {
+		const shown = areaLayers.map((l) => [l.id, areaShown(l.id)] as const);
+		if (!ready || !map) return;
+		for (const [id, on] of shown) {
+			for (const layer of [`area-lines-${id}`, `area-labels-${id}`]) {
+				if (map.getLayer(layer) && map.getLayoutProperty(layer, 'visibility') !== (on ? 'visible' : 'none')) map.setLayoutProperty(layer, 'visibility', on ? 'visible' : 'none');
+			}
 		}
-		for (const layer of [`area-lines-${id}`, `area-labels-${id}`]) if (map?.getLayer(layer)) map.setLayoutProperty(layer, 'visibility', shown ? 'visible' : 'none');
-	}
+	});
 
 	// The layers control (R88c): one small button in the map's corner that
 	// opens a panel with a checkbox for each layer. Closed at first; Escape,
@@ -453,7 +449,32 @@
 	let layersTipOff = $state(false);
 	function openLayers(next: boolean) {
 		layersOpen = next;
-		if (next) requestAnimationFrame(() => layersPanel?.querySelector('input')?.focus());
+		if (next)
+			requestAnimationFrame(() => {
+				layersPanel?.querySelector('input')?.focus();
+				markerInSight();
+			});
+	}
+	// R88c: on a message's small map the open panel would cover the page's
+	// marker, in the middle: the marker moves beside it (or below, if there's
+	// no room beside), where it stays.
+	function markerInSight() {
+		const m = single ? messages.find((x) => x.location) : undefined;
+		if (!m || !map || !layersPanel) return;
+		const point: [number, number] = [m.location!.lon, m.location!.lat];
+		const at = map.project(point);
+		const box = container.getBoundingClientRect();
+		const panel = layersPanel.getBoundingClientRect();
+		const room = px('--map-point-radius') + px('--map-ring-stroke') + px('--space-sm');
+		const right = panel.right - box.left + room;
+		const bottom = panel.bottom - box.top + room;
+		const under = at.x > panel.left - box.left - room && at.x < right && at.y > panel.top - box.top - room && at.y < bottom;
+		if (!under) return;
+		const padding = { top: 0, right: 0, bottom: 0, left: 0 };
+		if (box.width - right >= 2 * room) padding.left = right;
+		else if (box.height - bottom >= 2 * room) padding.top = bottom;
+		else return;
+		map.easeTo({ center: point, padding, duration: 0 });
 	}
 	function layersOutside(ev: Event) {
 		if (layersOpen && layersBox && !layersBox.contains(ev.target as Node)) layersOpen = false;
@@ -470,12 +491,22 @@
 		layersButton?.focus();
 	}
 
+	// The areas first: what the map shows is drawn over them.
 	function addLayers() {
+		addAreaLayers();
 		if (variant === 'heat') addHeatLayers();
-		else {
-			addAreaLayers();
-			addMessageLayers();
-		}
+		else addMessageLayers();
+		// The app's own layers, bottom first, kept on the map's element for a test.
+		stacked = map?.getLayersOrder().filter((id) => /^(area-|heat|clusters$|cluster-count$|points$)/.test(id)).join(' ') ?? '';
+	}
+	let stacked = $state('');
+	// Where the page's marker is on a message's map, in the map's pixels, for a test.
+	let marker = $state('');
+	function markerAt() {
+		const m = single ? messages.find((x) => x.location) : undefined;
+		if (!m || !map) return;
+		const at = map.project([m.location!.lon, m.location!.lat]);
+		marker = `${Math.round(at.x)},${Math.round(at.y)}`;
 	}
 
 	function addMessageLayers() {
@@ -601,9 +632,10 @@
 		// more frame once everything has loaded shows them.
 		map.once('idle', () => map?.triggerRepaint());
 		map.on('idle', () => {
+			markerAt();
 			for (const l of areaLayers) {
 				const id = `area-lines-${l.id}`;
-				if (map?.getLayer(id)) areasDrawn[l.id] = shownAreas[l.id] === false ? 0 : map.queryRenderedFeatures({ layers: [id] }).length;
+				if (map?.getLayer(id)) areasDrawn[l.id] = map.getLayoutProperty(id, 'visibility') === 'none' ? 0 : map.queryRenderedFeatures({ layers: [id] }).length;
 			}
 		});
 		// R35g: the viewer moving, zooming or clicking the map closes the
@@ -716,6 +748,8 @@
 				data-ready={unavailable ? 'unavailable' : ready}
 				data-drawn={drawn || undefined}
 				data-view={view || undefined}
+				data-layers={stacked || undefined}
+				data-marker={marker || undefined}
 			>
 				{#if unavailable}
 					<p>
@@ -764,10 +798,10 @@
 								<label class="layer"
 									><input
 										type="checkbox"
-										checked={shownAreas[l.id] !== false}
+										checked={areaShown(l.id)}
 										data-layer={l.id}
 										data-drawn={areasDrawn[l.id] ?? 0}
-										onchange={(e) => showAreas(l.id, e.currentTarget.checked)}
+										onchange={(e) => showArea(l.id, e.currentTarget.checked)}
 									/><span class="swatch" data-outline={l.outline} aria-hidden="true"></span>{l.label} outlines</label
 								>
 							{/each}
