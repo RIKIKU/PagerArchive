@@ -82,3 +82,8 @@ cld01, from the branch's files (`PA_MON_WEBHOOK_PORT=18199 PA_MON_RUN="TestA78|T
   - `"Pages decoded: the last 30 minutes against the usual" for dec-a-163544: last 30 minutes 12, usual 180, alert line 45; for dec-b-163544 180 against 180`
   - `with a third of the usual decoded, still firing 90 s later`; `it resolved 28s after decoding came back to two thirds of the usual`
   - `fired for dec-a-163544 only; not for dec-b-163544 (as usual), dec-c-163544 (radio stalled: "Radio stalled" did), dec-d-163544 (no history) or dec-e-163544 (too quiet to tell); no "Client not receiving"`
+- **Mutations** (cld01, `PA_MON_WEBHOOK_PORT=18199 PA_MUT_ONLY="radio not decoding" sh scripts/mutation-checks.sh`), each caught by A118:
+  - the rule's query broken (`pagerarchive_client_pages_decode_total`): `a118_test.go:275: no "Radio not decoding" alert for dec-a-165322 within 13 minutes; got 1 notifications`
+  - without its audio check (`>= 0` for `> 40000`): `a118_test.go:302: "Radio not decoding" fired for dec-c-171127 too`
+  - without its floor (`>= 0` for `>= 20`): `a118_test.go:302: "Radio not decoding" fired for dec-e-172625 too`
+- **CI** (run 44026897102, the first commit): every check passed. The monitoring job took 40 minutes against its 60, its tests 1,951 s against `go test`'s 45 minutes, A118 604 s: `"Radio not decoding" fired for dec-a-165805 7m37s after the test started`, `it resolved 29s after decoding came back to two thirds of the usual`; A65, A67, A80, A90, A113 and A115 (with the two new Failures squares in its list) passed after it.
