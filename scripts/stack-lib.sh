@@ -67,6 +67,19 @@ stack_wait_ready() {
 	echo "--- stack ready after $(($(date +%s) - start)) s"
 }
 
+# stack_wait_flow <slug>: Authentik has the flow, so it has applied the
+# blueprint that brought it: a blueprint is applied in one transaction, and
+# an upgrade's is applied again a little after Authentik starts.
+stack_wait_flow() {
+	_start=$(date +%s)
+	until curl -sf -H "Authorization: Bearer $AUTHENTIK_API_TOKEN" \
+		"http://127.0.0.1:9000/api/v3/flows/instances/?slug=$1" 2>/dev/null | grep -q '"count":1'; do
+		[ $(($(date +%s) - _start)) -gt 300 ] && { echo "Authentik had no $1 flow after 300 s" >&2; return 1; }
+		sleep 3
+	done
+	echo "--- Authentik has the $1 flow"
+}
+
 # R44c. stack_api_says <text> <seconds>: the API's current container logs it.
 stack_api_says() {
 	_end=$(($(date +%s) + $2))

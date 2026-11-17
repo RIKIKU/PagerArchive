@@ -17,7 +17,7 @@ PagerArchive can go on your phone's home screen and open like an app, full scree
 ## Good to know
 
 - **Signing in** takes you to the sign-in page on its own address and back. On Android it opens over the app with a bar showing its address; on iPhone, inside the app.
-- **Signing out** signs you out of PagerArchive and ends on the sign-in service's page. The sign-in service itself keeps you signed in until you log out of it on that page too, so opening the app again may sign you straight back in. On a phone you share, log out of the sign-in service as well.
+- **Signing out** signs you out of PagerArchive and of the sign-in service on that phone, and comes back to PagerArchive's sign-in page, so opening the app again asks you to sign in. Anything else on that phone's browser that signs in through the same sign-in service asks again too. If the sign-in service can't be reached just then, the page says so: you're signed out of PagerArchive, but the next sign-in may not ask for your password.
 - **Updates** come by themselves: when your server is upgraded, the app loads the new version the next time you open a page in it.
 - **Offline**, the app says "You're offline" and shows nothing else. PagerArchive keeps nothing from the archive on your phone: only the app itself (its code and icons).
 - **No notifications.** The app never sends notifications or asks to. PagerArchive isn't an alerting service and doesn't replace an issued pager. To have pages sent somewhere, use [integrations](integrations.md).

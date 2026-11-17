@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"path"
@@ -24,6 +25,8 @@ import (
 const (
 	sessionCookie = "pa_session"
 	loginCookie   = "pa_login"
+	// logoutCookie carries a sign-out's one-time handle to endSession.
+	logoutCookie = "pa_logout"
 )
 
 // OIDC signs users in with Authentik (R40). The provider is discovered on
@@ -67,6 +70,41 @@ func (o *OIDC) setup() (*oauth2.Config, *oidc.IDTokenVerifier, error) {
 		Endpoint: p.Endpoint(), Scopes: []string{oidc.ScopeOpenID, "email", "profile", "pagerarchive"},
 	}
 	return o.config, o.verifier, nil
+}
+
+// reachable reports whether Authentik answers, within authentikWait, with
+// the provider's discovery document: what signing out goes by to tell the
+// person Authentik's sign-out couldn't be reached (R40b).
+func (o *OIDC) reachable(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, authentikWait)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(o.Issuer, "/")+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := o.HTTP.Do(req)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("discovery answered %d", resp.StatusCode)
+	}
+	return nil
+}
+
+// endSessionURL is the provider's end-session endpoint, a fresh copy.
+func (o *OIDC) endSessionURL() (*url.URL, error) {
+	if _, _, err := o.setup(); err != nil {
+		return nil, err
+	}
+	o.mu.Lock()
+	end := o.endSession
+	o.mu.Unlock()
+	if end == "" {
+		return nil, errors.New("Authentik named no end-session endpoint")
+	}
+	return url.Parse(end)
 }
 
 type userKey struct{}
@@ -135,8 +173,14 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 func (s *Server) secureCookies() bool { return s.AppURL != nil && s.AppURL.Scheme == "https" }
 
 func (s *Server) setCookie(w http.ResponseWriter, name, value, path string, maxAge time.Duration) {
+	// A negative maxAge deletes the cookie (Max-Age=0): as a Duration, -1 is
+	// a nanosecond, which would round to no Max-Age at all.
+	age := int(maxAge.Seconds())
+	if maxAge < 0 {
+		age = -1
+	}
 	http.SetCookie(w, &http.Cookie{
-		Name: name, Value: value, Path: path, MaxAge: int(maxAge.Seconds()),
+		Name: name, Value: value, Path: path, MaxAge: age,
 		HttpOnly: true, Secure: s.secureCookies(), SameSite: http.SameSiteLaxMode,
 	})
 }
@@ -280,7 +324,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		signInFailed(w, r, "error")
 		return
 	}
-	token, err := s.Accounts.NewSession(r.Context(), u.ID)
+	// The ID token is kept with the session for signing out (R40b), never
+	// sent to the browser's pages or logged.
+	token, err := s.Accounts.NewSession(r.Context(), u.ID, raw)
 	if err != nil {
 		s.Log.Error("sign-in", "error", err.Error())
 		signInFailed(w, r, "error")
@@ -301,24 +347,141 @@ func errString(err error) string {
 	return err.Error()
 }
 
-// Next is where the browser app should go next: after signing out (to end
-// the Authentik session too), or to start the first admin's enrolment.
+// signedOutPage is where signing out ends (R40b).
+const signedOutPage = "/signin?signed_out=1"
+
+// signedOutUnreachable is where it ends when Authentik couldn't be reached
+// to end its session too.
+const signedOutUnreachable = signedOutPage + "&authentik=unreachable"
+
+// authentikWait bounds how long signing out waits to hear from Authentik.
+const authentikWait = 3 * time.Second
+
+// endSessionPath is the hop from the app to Authentik's end-session
+// endpoint, which adds the ID token where the app's pages can't read it.
+const endSessionPath = "/auth/end-session"
+
+// Next is where the browser app should go next: after signing out, or to
+// start the first admin's enrolment.
 type Next struct {
 	Redirect string `json:"redirect"`
 }
 
+// logout signs one browser out of the app and sends it on to end its
+// Authentik session too (R40b, ADR 0038). The app's session ends here
+// whatever Authentik does. The session's ID token, which Authentik needs to
+// send the browser back to the app's sign-in page, is held for a moment
+// under a one-time handle in an HttpOnly cookie, and added to the URL by
+// endSession: this answer, which the app's script reads, never has it.
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
+	idToken := ""
 	if c, err := r.Cookie(sessionCookie); err == nil {
-		if err := s.Accounts.EndSession(r.Context(), c.Value); err != nil {
+		if idToken, err = s.Accounts.EndSession(r.Context(), c.Value); err != nil {
 			s.Log.Error("sign-out", "error", err.Error())
 		}
 	}
 	s.setCookie(w, sessionCookie, "", "/", -1)
-	out := Next{Redirect: "/signin?signed_out=1"}
-	if _, _, err := s.OIDC.setup(); err == nil && s.OIDC.endSession != "" {
-		out.Redirect = s.OIDC.endSession
+	out := Next{Redirect: signedOutPage}
+	if s.OIDC != nil {
+		if err := s.OIDC.reachable(r.Context()); err != nil {
+			s.Log.Warn("sign-out: Authentik couldn't be reached, so its session wasn't ended", "error", err.Error())
+			out.Redirect = signedOutUnreachable
+		} else {
+			handle := randomString()
+			s.signOuts.put(handle, idToken, s.Now())
+			s.setCookie(w, logoutCookie, handle, endSessionPath, signOutHold)
+			out.Redirect = endSessionPath
+		}
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// endSession sends a browser that has just signed out to Authentik's
+// end-session endpoint (OIDC RP-initiated logout), whose invalidation flow
+// ends the browser's Authentik session and returns it to the app's
+// sign-in page, the post_logout_redirect_uri registered on the provider.
+// That return needs the id_token_hint; a session from before ID tokens were
+// kept has none, so it's sent without either, which still ends Authentik's
+// session and stops on Authentik's sign-in page. With no sign-out to finish
+// (no handle, or one used or expired) it goes to the sign-in page.
+func (s *Server) endSession(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	var (
+		idToken string
+		ok      bool
+	)
+	if c, err := r.Cookie(logoutCookie); err == nil {
+		idToken, ok = s.signOuts.take(c.Value, s.Now())
+		s.setCookie(w, logoutCookie, "", endSessionPath, -1)
+	}
+	if !ok || s.OIDC == nil {
+		http.Redirect(w, r, signedOutPage, http.StatusSeeOther)
+		return
+	}
+	end, err := s.OIDC.endSessionURL()
+	if err != nil {
+		s.Log.Warn("sign-out: Authentik couldn't be reached, so its session wasn't ended", "error", err.Error())
+		http.Redirect(w, r, signedOutUnreachable, http.StatusSeeOther)
+		return
+	}
+	if idToken != "" && s.AppURL != nil {
+		q := end.Query()
+		q.Set("id_token_hint", idToken)
+		q.Set("post_logout_redirect_uri", s.signedOutURL())
+		end.RawQuery = q.Encode()
+	}
+	http.Redirect(w, r, end.String(), http.StatusSeeOther)
+}
+
+// signedOutURL is the sign-in page's full address, as the blueprint
+// registers it on the provider for its return after signing out: Authentik
+// compares the two exactly.
+func (s *Server) signedOutURL() string {
+	return s.AppURL.JoinPath("/signin").String() + "?signed_out=1"
+}
+
+// signOutHold is how long a sign-out's ID token is held for its hop to
+// Authentik: the browser makes it at once.
+const signOutHold = 2 * time.Minute
+
+// signOuts holds the ID tokens of browsers that have just signed out, each
+// under a one-time handle, until endSession takes it. In memory: a restart
+// in between sends that browser to Authentik without the token.
+type signOuts struct {
+	mu sync.Mutex
+	m  map[string]heldToken
+}
+
+type heldToken struct {
+	idToken string
+	until   time.Time
+}
+
+func (h *signOuts) put(handle, idToken string, now time.Time) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.m == nil {
+		h.m = map[string]heldToken{}
+	}
+	for k, v := range h.m {
+		if !now.Before(v.until) {
+			delete(h.m, k)
+		}
+	}
+	h.m[handle] = heldToken{idToken: idToken, until: now.Add(signOutHold)}
+}
+
+// take returns the token held under handle, once, and ok false when there
+// is none or it expired.
+func (h *signOuts) take(handle string, now time.Time) (string, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	v, ok := h.m[handle]
+	delete(h.m, handle)
+	if !ok || !now.Before(v.until) {
+		return "", false
+	}
+	return v.idToken, true
 }
 
 // AuthStatus tells the sign-in page what it can offer. It's outside

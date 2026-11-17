@@ -20,6 +20,9 @@
 	};
 	const error = $derived(page.url.searchParams.get('error'));
 	const signedOut = $derived(page.url.searchParams.has('signed_out'));
+	// Signed out of PagerArchive, but Authentik couldn't be reached to end its
+	// session too (R40b).
+	const authentikMissed = $derived(page.url.searchParams.get('authentik') === 'unreachable');
 	let firstAdminOffered = $state(false);
 	api
 		.authStatus()
@@ -33,7 +36,11 @@
 {#if error}
 	<p class="error" role="alert">{reasons[error] ?? reasons.error}</p>
 {:else if signedOut}
-	<p class="status" role="status">You've signed out.</p>
+	<p class="status" role="status">
+		You've signed out.{#if authentikMissed}
+			The sign-in service couldn't be reached to sign you out there too, so the next sign-in on this device may not ask
+			for your password.{/if}
+	</p>
 {/if}
 <div class="box">
 	<p>PagerArchive is invite-only. Sign in with the email address your invitation was sent to.</p>
