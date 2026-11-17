@@ -152,19 +152,33 @@ type Cell struct {
 	Jobs          int64
 }
 
+// weekdayOf is the day of the week a report_days, report_job_whos or
+// report_jobs row's day is (as d): 1 Monday to 7 Sunday. R38d's grid and the
+// jobs behind its cells both read it.
+const weekdayOf = "extract(isodow FROM d.day)::int"
+
+// ofWhos is the filter for the jobs that paged one of the whos given (R38d's
+// alias or capcode), or the filter as it is for none: an alias's agency is
+// its own, so the agency filter is dropped.
+func (f Filter) ofWhos(whos []string) Filter {
+	if len(whos) > 0 {
+		f.Templates = nil
+	}
+	return f
+}
+
 // Hours is the jobs by weekday and hour they started (R38d), of the whos
 // given (aliases or capcodes: a job that paged several counts once), or of
 // the filter's jobs when none are given.
 func (s *Service) Hours(ctx context.Context, f Filter, whos []string) ([]Cell, error) {
 	args := []any{}
 	var sql string
+	g := f.ofWhos(whos)
 	if len(whos) == 0 {
-		sql = `SELECT extract(isodow FROM d.day)::int, d.key::int, sum(d.jobs)::bigint FROM report_days d WHERE d.kind = 'h' AND ` + f.where(&args, false) + ` GROUP BY 1, 2`
+		sql = `SELECT ` + weekdayOf + `, d.key::int, sum(d.jobs)::bigint FROM report_days d WHERE d.kind = 'h' AND ` + g.where(&args, false) + ` GROUP BY 1, 2`
 	} else {
-		g := f
-		g.Templates = nil // the alias's agency is its own
 		args = append(args, whos)
-		sql = `SELECT extract(isodow FROM d.day)::int, d.hour::int, count(DISTINCT d.job_key)::bigint FROM report_job_whos d WHERE d.who = ANY($1::text[]) AND ` + g.where(&args, false) + ` GROUP BY 1, 2`
+		sql = `SELECT ` + weekdayOf + `, d.hour::int, count(DISTINCT d.job_key)::bigint FROM report_job_whos d WHERE d.who = ANY($1::text[]) AND ` + g.where(&args, false) + ` GROUP BY 1, 2`
 	}
 	rows, err := s.Pool.Query(ctx, sql, args...)
 	if err != nil {
@@ -254,6 +268,83 @@ func (s *Service) LongJobs(ctx context.Context, f Filter, n int) ([]Job, error) 
 		return nil, err
 	}
 	return pgx.CollectRows(rows, pgx.RowToStructByPos[Job])
+}
+
+// Cut is what one number of a report is of (R38a's jobs behind a number):
+// with the report's filter, it picks exactly the jobs that number counts.
+// The zero Cut picks every job the filter holds.
+type Cut struct {
+	// Whos are R38d's alias or capcode ('a' || id, 'c' || capcode): the jobs
+	// that paged any of them, the alias's agency its own (ofWhos).
+	Whos []string
+	// Weekday is the day of the week the jobs started, 1 Monday to 7 Sunday
+	// (0: any day); Hour, the hour (nil: any).
+	Weekday int
+	Hour    *int
+	// Appliance is an appliance the jobs name ("": any).
+	Appliance string
+}
+
+// keyIs is the condition that one of a report_jobs row's (d's) keys of a
+// kind (dayKeys, as countDays counts it) is v.
+func keyIs(args *[]any, kind, v string) string {
+	k := keyOf(kind)
+	*args = append(*args, v)
+	return "EXISTS (SELECT FROM (VALUES (1)) AS one" + k.from + " WHERE " + k.key + " = $" + strconv.Itoa(len(*args)) + "::text)"
+}
+
+// jobsWhere is the condition on report_jobs (as d) for the jobs the filter
+// and the cut pick: the same filter (where) and keys (dayKeys, weekdayOf)
+// that the report's numbers are counted by.
+func (f Filter) jobsWhere(args *[]any, c Cut) string {
+	w := []string{f.ofWhos(c.Whos).where(args, false)}
+	if len(c.Whos) > 0 {
+		*args = append(*args, c.Whos)
+		w = append(w, "EXISTS (SELECT FROM report_job_whos x WHERE x.job_key = d.job_key AND x.who = ANY($"+strconv.Itoa(len(*args))+"::text[]))")
+	}
+	if c.Weekday != 0 {
+		*args = append(*args, c.Weekday)
+		w = append(w, weekdayOf+" = $"+strconv.Itoa(len(*args))+"::int")
+	}
+	if c.Hour != nil {
+		w = append(w, keyIs(args, "h", strconv.Itoa(*c.Hour)))
+	}
+	if c.Appliance != "" {
+		w = append(w, keyIs(args, "a", c.Appliance))
+	}
+	return strings.Join(w, " AND ")
+}
+
+// Listed is one job behind a report's number.
+type Listed struct {
+	JobNumber string
+	First     time.Time
+	Pages     int64
+	EventType string
+	Locality  string
+}
+
+// JobsPage is how many jobs one page of the list holds (R38a).
+const JobsPage = 50
+
+// Jobs is the jobs the filter and cut pick: how many, and the page'th
+// JobsPage of them (from 1), newest first, then by job number.
+func (s *Service) Jobs(ctx context.Context, f Filter, c Cut, page int) (int64, []Listed, error) {
+	args := []any{}
+	w := f.jobsWhere(&args, c)
+	var n int64
+	if err := s.Pool.QueryRow(ctx, `SELECT count(*) FROM report_jobs d WHERE `+w, args...).Scan(&n); err != nil {
+		return 0, nil, err
+	}
+	args = append(args, JobsPage, (page-1)*JobsPage)
+	rows, err := s.Pool.Query(ctx, `SELECT COALESCE(d.job_number, ''), d.first_at, d.pages::bigint, d.event_type, d.locality
+		FROM report_jobs d WHERE `+w+`
+		ORDER BY d.first_at DESC, d.job_number, d.job_key LIMIT $`+strconv.Itoa(len(args)-1)+` OFFSET $`+strconv.Itoa(len(args)), args...)
+	if err != nil {
+		return 0, nil, err
+	}
+	jobs, err := pgx.CollectRows(rows, pgx.RowToStructByPos[Listed])
+	return n, jobs, err
 }
 
 // Event is one large event (R87c), for R38i.

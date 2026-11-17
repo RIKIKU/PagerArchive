@@ -365,43 +365,65 @@ type BusyTimesReport struct {
 
 var capcodeDigits = regexp.MustCompile(`^[0-9]{1,7}$`)
 
+// reportWho is R38d's alias or capcode, from alias= or capcode=: the whos it
+// counts ('a' || id for each alias of that name, 'c' || capcode with its own
+// alias if it has one), or none when neither is given.
+type reportWho struct {
+	Alias   string
+	Capcode string
+	Aliases []ReportAlias
+	Whos    []string
+}
+
+// reportWhoOf reads R38d's alias or capcode, refusing an alias that isn't
+// there (404) or a capcode that isn't one (400).
+func (s *Server) reportWhoOf(w http.ResponseWriter, r *http.Request) (reportWho, bool) {
+	ctx := r.Context()
+	var out reportWho
+	q := r.URL.Query()
+	if a := strings.TrimSpace(q.Get("alias")); a != "" {
+		named, err := s.Store.AliasesNamed(ctx, a)
+		if err != nil {
+			s.reportFailed(w, err)
+			return out, false
+		}
+		if len(named) == 0 {
+			problem(w, http.StatusNotFound, "there's no alias with that name")
+			return out, false
+		}
+		out.Alias = named[0].Name
+		for _, n := range named {
+			out.Whos = append(out.Whos, "a"+strconv.FormatInt(n.ID, 10))
+			out.Aliases = append(out.Aliases, ReportAlias{ID: n.ID, Pattern: n.Pattern})
+		}
+	} else if c := strings.TrimSpace(q.Get("capcode")); c != "" {
+		if !capcodeDigits.MatchString(c) {
+			problem(w, http.StatusBadRequest, "capcode must be 1 to 7 digits")
+			return out, false
+		}
+		out.Capcode = decoder.PadCapcode(c)
+		out.Whos = []string{"c" + out.Capcode}
+		// A capcode with its own alias is counted as that alias.
+		var id int64
+		if err := s.Store.Pool.QueryRow(ctx, `SELECT id FROM aliases WHERE pattern_key = $1`, out.Capcode).Scan(&id); err == nil {
+			out.Whos = append(out.Whos, "a"+strconv.FormatInt(id, 10))
+		}
+	}
+	return out, true
+}
+
 func (s *Server) busyTimesReport(w http.ResponseWriter, r *http.Request) {
 	f, base, ok := s.reportFilter(w, r)
 	if !ok {
 		return
 	}
 	ctx := r.Context()
-	out := BusyTimesReport{}
-	var whos []string
-	q := r.URL.Query()
-	if a := strings.TrimSpace(q.Get("alias")); a != "" {
-		named, err := s.Store.AliasesNamed(ctx, a)
-		if err != nil {
-			s.reportFailed(w, err)
-			return
-		}
-		if len(named) == 0 {
-			problem(w, http.StatusNotFound, "there's no alias with that name")
-			return
-		}
-		out.Alias = named[0].Name
-		for _, n := range named {
-			whos = append(whos, "a"+strconv.FormatInt(n.ID, 10))
-			out.Aliases = append(out.Aliases, ReportAlias{ID: n.ID, Pattern: n.Pattern})
-		}
-	} else if c := strings.TrimSpace(q.Get("capcode")); c != "" {
-		if !capcodeDigits.MatchString(c) {
-			problem(w, http.StatusBadRequest, "capcode must be 1 to 7 digits")
-			return
-		}
-		out.Capcode = decoder.PadCapcode(c)
-		whos = []string{"c" + out.Capcode}
-		// A capcode with its own alias is counted as that alias.
-		var id int64
-		if err := s.Store.Pool.QueryRow(ctx, `SELECT id FROM aliases WHERE pattern_key = $1`, out.Capcode).Scan(&id); err == nil {
-			whos = append(whos, "a"+strconv.FormatInt(id, 10))
-		}
+	who, ok := s.reportWhoOf(w, r)
+	if !ok {
+		return
 	}
+	out := BusyTimesReport{Alias: who.Alias, Capcode: who.Capcode, Aliases: who.Aliases}
+	whos := who.Whos
 	if err := s.reportReady(r, &base); err != nil {
 		s.reportFailed(w, err)
 		return
@@ -714,6 +736,100 @@ func (s *Server) appliancesReport(w http.ResponseWriter, r *http.Request) {
 	for _, c := range counts {
 		out.Rows = append(out.Rows, ApplianceRow{Appliance: c.Key, Jobs: c.Jobs, Share: share(c.Jobs, base.Jobs)})
 	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ReportJob is one job behind a report's number (R38a): counts only.
+type ReportJob struct {
+	JobNumber string    `json:"job_number"`
+	First     string    `json:"first"` // RFC 3339
+	Pages     int64     `json:"pages"`
+	EventType EventType `json:"event_type"`
+	Locality  *string   `json:"locality"`
+}
+
+// JobsReport is the jobs behind a report's number (R38a): the report's
+// filters, what the number is of, how many jobs (Jobs) and one page of them.
+type JobsReport struct {
+	ReportBase
+	Alias     string        `json:"alias,omitempty"`
+	Capcode   string        `json:"capcode,omitempty"`
+	Aliases   []ReportAlias `json:"aliases,omitempty"`
+	Weekday   *int          `json:"weekday,omitempty"` // 1 Monday to 7 Sunday
+	Hour      *int          `json:"hour,omitempty"`
+	Appliance string        `json:"appliance,omitempty"`
+	Page      int           `json:"page"`
+	PageSize  int           `json:"page_size"`
+	Rows      []ReportJob   `json:"rows"`
+}
+
+// whole reads a whole number from lo to hi, or nil when it isn't given.
+func whole(r *http.Request, name string, lo, hi int) (*int, bool) {
+	v := strings.TrimSpace(r.URL.Query().Get(name))
+	if v == "" {
+		return nil, true
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n < lo || n > hi {
+		return nil, false
+	}
+	return &n, true
+}
+
+func (s *Server) jobsReport(w http.ResponseWriter, r *http.Request) {
+	f, base, ok := s.reportFilter(w, r)
+	if !ok {
+		return
+	}
+	weekday, ok := whole(r, "weekday", 1, 7)
+	if !ok {
+		problem(w, http.StatusBadRequest, "weekday must be 1 (Monday) to 7 (Sunday)")
+		return
+	}
+	hour, ok := whole(r, "hour", 0, 23)
+	if !ok {
+		problem(w, http.StatusBadRequest, "hour must be 0 to 23")
+		return
+	}
+	page, ok := whole(r, "page", 1, 1_000_000)
+	if !ok {
+		problem(w, http.StatusBadRequest, "page must be a whole number from 1")
+		return
+	}
+	who, ok := s.reportWhoOf(w, r)
+	if !ok {
+		return
+	}
+	cut := reports.Cut{Whos: who.Whos, Hour: hour, Appliance: strings.TrimSpace(r.URL.Query().Get("appliance"))}
+	if weekday != nil {
+		cut.Weekday = *weekday
+	}
+	out := JobsReport{Alias: who.Alias, Capcode: who.Capcode, Aliases: who.Aliases, Weekday: weekday, Hour: hour, Appliance: cut.Appliance, Page: 1, PageSize: reports.JobsPage, Rows: []ReportJob{}}
+	if page != nil {
+		out.Page = *page
+	}
+	if err := s.reportReady(r, &base); err != nil {
+		s.reportFailed(w, err)
+		return
+	}
+	n, jobs, err := s.Reports.Jobs(r.Context(), f, cut, out.Page)
+	if err != nil {
+		s.reportFailed(w, err)
+		return
+	}
+	if len(cut.Whos) > 0 {
+		base.Agency = "" // an alias's agency is its own
+	}
+	base.Jobs = n
+	for _, j := range jobs {
+		rj := ReportJob{JobNumber: j.JobNumber, First: j.First.UTC().Format(time.RFC3339), Pages: j.Pages, EventType: s.eventType(j.EventType)}
+		if j.Locality != "" {
+			l := j.Locality
+			rj.Locality = &l
+		}
+		out.Rows = append(out.Rows, rj)
+	}
+	out.ReportBase = base
 	writeJSON(w, http.StatusOK, out)
 }
 
