@@ -1,4 +1,4 @@
-# Tests only (A118): prometheus/prometheus.yml, plus samples up to 9 days
+# Tests only (A119): prometheus/prometheus.yml, plus samples up to 9 days
 # old, so the test can give its made-up clients the days of history "Radio
 # not decoding" compares with. A deployment's Prometheus takes only samples
 # as they come.

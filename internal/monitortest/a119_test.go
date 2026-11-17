@@ -139,7 +139,7 @@ func remoteWrite(prometheus, instance string, series map[string][][2]float64) er
 	return nil
 }
 
-// A118. Told when a radio stops decoding (owner, 2026-11-17): made-up
+// A119. Told when a radio stops decoding (owner, 2026-11-17): made-up
 // clients whose radio gives audio, with two days' history at this time of
 // day. One stopped decoding 20 minutes before the test looks: "Radio not
 // decoding" fires for it, and for no other client: not one decoding as
@@ -154,7 +154,7 @@ func remoteWrite(prometheus, instance string, series map[string][][2]float64) er
 // old), so a client can have days of history, and have stopped decoding
 // before the test starts, rather than the test waiting a day and half an
 // hour. The rule only reads what's in Prometheus.
-func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
+func TestA119ToldWhenARadioStopsDecoding(t *testing.T) {
 	s := newStack(t)
 	prom := os.Getenv("PA_MON_PROMETHEUS_URL")
 	if prom == "" {
@@ -173,11 +173,11 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 	// The server has heard from each of them (a garbled page now and then
 	// does that), so "Client not receiving" has nothing to say.
 	for _, id := range []string{a, b, c, d, e} {
-		key, err := s.st.AddClient(context.Background(), id, "A118 "+id)
+		key, err := s.st.AddClient(context.Background(), id, "A119 "+id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		s.post(t, id, key, "QDA118 "+id+" is receiving")
+		s.post(t, id, key, "QDA119 "+id+" is receiving")
 	}
 	defer func() {
 		for _, id := range []string{a, b, c, d, e} {
@@ -241,7 +241,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	t.Logf("A118: wrote two days' history at this time of day for %s, %s, %s and %s, none for %s (new); %s and %s stopped decoding at %s, %s's radio stalled then",
+	t.Logf("A119: wrote two days' history at this time of day for %s, %s, %s and %s, none for %s (new); %s and %s stopped decoding at %s, %s's radio stalled then",
 		a, b, c, e, d, a, d, stoppedAt.Format("15:04:05"), c)
 
 	// From now on, a sample every 15 s, as the clients report.
@@ -277,7 +277,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 	if since := firedAt.Sub(t0); since < 6*time.Minute+30*time.Second {
 		t.Errorf("\"Radio not decoding\" fired for %s %v after the test started: before its 30 minutes fell below a quarter of the usual and stayed there for 5 minutes", a, since.Round(time.Second))
 	}
-	t.Logf("A118: \"Radio not decoding\" fired for %s %v after the test started (%v after it stopped decoding)", a,
+	t.Logf("A119: \"Radio not decoding\" fired for %s %v after the test started (%v after it stopped decoding)", a,
 		firedAt.Sub(t0).Round(time.Second), firedAt.Sub(stoppedAt).Round(time.Second))
 
 	// The Clients dashboard shows it: the last 30 minutes far under the usual.
@@ -287,7 +287,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 		t.Errorf("%q for %s: last 30 minutes %.0f, usual %.0f, alert line %.0f; want the usual near 180 and the last 30 minutes under the line",
 			panel, a, got["A"][a], got["B"][a], got["C"][a])
 	} else {
-		t.Logf("A118: %q for %s: last 30 minutes %.0f, usual %.0f, alert line %.0f; for %s %.0f against %.0f", panel, a,
+		t.Logf("A119: %q for %s: last 30 minutes %.0f, usual %.0f, alert line %.0f; for %s %.0f against %.0f", panel, a,
 			got["A"][a], got["B"][a], got["C"][a], b, got["A"][b], got["B"][b])
 	}
 
@@ -316,7 +316,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 		t.Errorf("\"Radio not decoding\" for %s resolved %v after its 30 minutes came back to a third of the usual: want it firing until over half",
 			a, at.Sub(third).Round(time.Second))
 	} else {
-		t.Logf("A118: with a third of the usual decoded, still firing 90 s later")
+		t.Logf("A119: with a third of the usual decoded, still firing 90 s later")
 	}
 	// Then to two thirds: it clears.
 	resumed := time.Now()
@@ -328,7 +328,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 	}) {
 		t.Errorf("\"Radio not decoding\" for %s didn't resolve within 3 minutes of its decoding coming back to two thirds of the usual", a)
 	} else {
-		t.Logf("A118: it resolved %v after decoding came back to two thirds of the usual", resolvedAt.Sub(resumed).Round(time.Second))
+		t.Logf("A119: it resolved %v after decoding came back to two thirds of the usual", resolvedAt.Sub(resumed).Round(time.Second))
 	}
 
 	// One more look, then C's audio comes back, so nothing is left firing
@@ -346,7 +346,7 @@ func TestA118ToldWhenARadioStopsDecoding(t *testing.T) {
 		t.Errorf("\"Radio stalled\" for %s didn't resolve within 3 minutes of its audio coming back", c)
 	}
 	if !t.Failed() {
-		t.Logf("A118: fired for %s only; not for %s (as usual), %s (radio stalled: \"Radio stalled\" did), %s (no history) or %s (too quiet to tell); no \"Client not receiving\"",
+		t.Logf("A119: fired for %s only; not for %s (as usual), %s (radio stalled: \"Radio stalled\" did), %s (no history) or %s (too quiet to tell); no \"Client not receiving\"",
 			a, b, c, d, e)
 	}
 }

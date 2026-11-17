@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-17). The owner: "add that alert ... let's start doing that now". SPEC.md R74b, with A118. On the branch `decode-alert` from main; the pull request is labelled `feature`. It adds to the telemetry decisions of ADR 0013 (R74a's "Radio stalled").
+Proposed (2026-11-17). The owner: "add that alert ... let's start doing that now". SPEC.md R74b, with A119. On the branch `decode-alert` from main; the pull request is labelled `feature`. It adds to the telemetry decisions of ADR 0013 (R74a's "Radio stalled").
 
 ## Context
 
@@ -68,10 +68,12 @@ Every number below is from the production Prometheus (read-only queries of the r
 - A client that is new, or on a network with fewer than about 40 pages an hour, isn't watched by this rule (docs/monitoring.md says how to lengthen the window for a quiet network). "Client not receiving" still catches silence.
 - It fires about 30 minutes after decoding collapses, the same order as "Client not receiving" for silence; a shorter window fires sooner and more often.
 - A change of daylight-saving time shifts the usual by an hour for a week; a network's traffic changing for good (a new pager group) moves the usual with it within a week.
-- The test stack's Prometheus takes samples up to 9 days old (`deploy/monitoring/test/prometheus-test.yml`, `out_of_order_time_window`), and publishes its port on 127.0.0.1, both for A118 only: a deployment's doesn't. A118 writes its made-up clients' numbers straight into Prometheus with remote write (protobuf and snappy, built in the test with `protowire` and snappy's literal-only form, so no new module), because Alloy's OTLP path takes only current samples: a test client can then have days of history, and have stopped decoding before the test starts. The rule reads only Prometheus, so it's the rule that's tested.
+- The test stack's Prometheus takes samples up to 9 days old (`deploy/monitoring/test/prometheus-test.yml`, `out_of_order_time_window`), and publishes its port on 127.0.0.1, both for A119 only: a deployment's doesn't. A119 writes its made-up clients' numbers straight into Prometheus with remote write (protobuf and snappy, built in the test with `protowire` and snappy's literal-only form, so no new module), because Alloy's OTLP path takes only current samples: a test client can then have days of history, and have stopped decoding before the test starts. The rule reads only Prometheus, so it's the rule that's tested.
 - `scripts/monitoring-checks.sh` takes `PA_MON_WEBHOOK_PORT` for a host where 18099 is taken.
 
 ## Evidence
+
+The runs below were made while this check was numbered A118 (main gave that number to map layers the same day, so it is A119 now); their lines are quoted as they were printed.
 
 cld01, from the branch's files (`PA_MON_WEBHOOK_PORT=18199 PA_MON_RUN="TestA78|TestA118" sh scripts/monitoring-checks.sh`; 18099 is taken there):
 
@@ -87,3 +89,4 @@ cld01, from the branch's files (`PA_MON_WEBHOOK_PORT=18199 PA_MON_RUN="TestA78|T
   - without its audio check (`>= 0` for `> 40000`): `a118_test.go:302: "Radio not decoding" fired for dec-c-171127 too`
   - without its floor (`>= 0` for `>= 20`): `a118_test.go:302: "Radio not decoding" fired for dec-e-172625 too`
 - **CI** (run 44026897102, the first commit): every check passed. The monitoring job took 40 minutes against its 60, its tests 1,951 s against `go test`'s 45 minutes, A118 604 s: `"Radio not decoding" fired for dec-a-165805 7m37s after the test started`, `it resolved 29s after decoding came back to two thirds of the usual`; A65, A67, A80, A90, A113 and A115 (with the two new Failures squares in its list) passed after it.
+- **CI** (run 44032941573, the second commit): every check passed but **A76's speed**, `FAIL: 455 pages a second, under 500 (R83f)`, and on its automatic re-run `467`. This branch changes nothing A76 runs (no import, API or database code); main's own run after #72's merge (44036302861) failed the same way the same hour, `451 pages a second`, and the first run on this branch passed it.

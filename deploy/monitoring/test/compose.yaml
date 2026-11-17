@@ -3,7 +3,7 @@
 #   - a webhook contact point that receives every alert (PA_ALERT_WEBHOOK_URL,
 #     a receiver the test runs on the host), and a fast notification policy;
 #   - Alloy's OTLP port on 127.0.0.1, for a client run on the host;
-#   - Prometheus on 127.0.0.1, taking samples up to 9 days old, so A118 can
+#   - Prometheus on 127.0.0.1, taking samples up to 9 days old, so A119 can
 #     write made-up clients' history straight into it (remote write).
 services:
   grafana:

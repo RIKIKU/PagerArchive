@@ -1,5 +1,5 @@
 #!/bin/sh
-# A65, A67, A80's alert, A90's Grafana part, A113, A115 and A118 against the example
+# A65, A67, A80's alert, A90's Grafana part, A113, A115 and A119 against the example
 # monitoring stack itself (deploy/monitoring): the API, its database, Authentik
 # and the backup services from the compose file at the top, joined to the
 # stack's `monitoring` and `monitoring-authentik` networks by the override
@@ -24,7 +24,7 @@
 # TestA67; mutation-checks.sh uses it.
 # needs: Docker with compose, Go, curl, and no network named monitoring or
 # monitoring-authentik (the stack owns those names, on the whole host). Uses
-# 127.0.0.1:18091, :19091 (Authentik), :18026, :13001, :14319, :19090 (Prometheus, for A118), :55437 and
+# 127.0.0.1:18091, :19091 (Authentik), :18026, :13001, :14319, :19090 (Prometheus, for A119), :55437 and
 # 0.0.0.0:18099 (the webhook, which Grafana reaches through the Docker host's gateway;
 # PA_MON_WEBHOOK_PORT another port, on a host where 18099 is taken).
 set -eu
@@ -242,7 +242,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_AUTHENTIK_URL=http://127.0.0.1:19091 \
 	PA_MON_STOP_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES stop authentik-server" \
 	PA_MON_START_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES start authentik-server" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115|TestA118}" ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115|TestA119}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then
