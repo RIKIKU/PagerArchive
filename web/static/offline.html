@@ -1,0 +1,94 @@
+<!doctype html>
+<!-- Written by scripts/pwa.mjs from src/app.css: do not edit by hand (R90). -->
+<html lang="en-AU">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<meta name="color-scheme" content="light dark" />
+		<meta name="referrer" content="no-referrer" />
+		<title>You're offline · PagerArchive</title>
+		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+		<style>
+			:root {
+				color-scheme: light dark;
+				--bg: light-dark(#f6f8f7, #0f1614);
+				--fg: light-dark(#13201b, #e4ece8);
+				--muted: light-dark(#4b5c55, #a3b4ad);
+				--accent: light-dark(#1b6a46, #74d4a3);
+				--accent-fg: light-dark(#ffffff, #062619);
+				--accent-hover: light-dark(#155839, #8fdeb6);
+				--focus: light-dark(#1b6a46, #74d4a3);
+				--font-ui: 'Avenir Next', Avenir, Montserrat, Corbel, 'URW Gothic', source-sans-pro, sans-serif;
+				--text-base: 1rem;
+				--text-2xl: 1.375rem;
+				--weight-strong: 600;
+				--leading: 1.45;
+				--leading-tight: 1.2;
+				--space-sm: 0.5rem;
+				--space-lg: 1rem;
+				--space-3xl: 2rem;
+				--page-pad-phone: 1rem;
+				--measure-narrow: 32rem;
+				--icon-size-large: 1.5rem;
+				--radius-button: 0.625rem;
+				--target-min: 2.75rem;
+				--button-pad-x: 1.25rem;
+				--focus-width: 3px;
+				--focus-offset: 2px;
+			}
+			body {
+				margin: 0;
+				background: var(--bg);
+				color: var(--fg);
+				font-family: var(--font-ui);
+				font-size: var(--text-base);
+				line-height: var(--leading);
+			}
+			main {
+				max-width: var(--measure-narrow);
+				margin: 0 auto;
+				padding: var(--space-3xl) var(--page-pad-phone);
+			}
+			img {
+				width: var(--icon-size-large);
+				height: var(--icon-size-large);
+			}
+			h1 {
+				font-size: var(--text-2xl);
+				font-weight: var(--weight-strong);
+				line-height: var(--leading-tight);
+				margin: var(--space-lg) 0 var(--space-sm);
+			}
+			p {
+				color: var(--muted);
+				margin: 0 0 var(--space-lg);
+			}
+			a {
+				display: inline-flex;
+				align-items: center;
+				min-height: var(--target-min);
+				padding: 0 var(--button-pad-x);
+				border-radius: var(--radius-button);
+				background: var(--accent);
+				color: var(--accent-fg);
+				font-weight: var(--weight-strong);
+				text-decoration: none;
+			}
+			a:hover {
+				background: var(--accent-hover);
+			}
+			a:focus-visible {
+				outline: var(--focus-width) solid var(--focus);
+				outline-offset: var(--focus-offset);
+			}
+		</style>
+	</head>
+	<body>
+		<main>
+			<img src="/favicon.svg" alt="" />
+			<h1>You're offline</h1>
+			<p>PagerArchive needs a connection to show pages. Nothing from the archive is kept on this device.</p>
+			<a href="">Try again</a>
+		</main>
+	</body>
+</html>

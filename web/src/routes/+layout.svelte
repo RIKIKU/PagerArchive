@@ -4,7 +4,8 @@
 	// and on phones a bottom bar instead of the side menu. The page itself
 	// uses the full width (R80).
 	import '../app.css';
-	import { page } from '$app/state';
+	import { beforeNavigate } from '$app/navigation';
+	import { page, updated } from '$app/state';
 	import { onMount } from 'svelte';
 	import { api, type Look, type Me, type Meta } from '#lib/api.ts';
 	import AccountMenu from '#lib/AccountMenu.svelte';
@@ -20,6 +21,7 @@
 	import { criteria } from '#lib/search.ts';
 	import { scrubberHere } from '#lib/scrubberHere.svelte.ts';
 	import { loadSheet, sheet } from '#lib/sheet.svelte.ts';
+	import { followTopBar } from '#lib/statusBar.ts';
 	import { refreshWaiting, waiting } from '#lib/waiting.svelte.ts';
 
 	let { children } = $props();
@@ -63,10 +65,22 @@
 		} catch {
 			// storage unavailable: follow the system
 		}
+		// R90: an installed app's title and status bars follow the look and theme.
+		const unfollowTopBar = followTopBar();
 		return () => {
 			window.removeEventListener('pagerarchive:meta', update);
 			unfollow();
+			unfollowTopBar();
 		};
+	});
+
+	// R90 (ADR 0037): a release that came out while the app was open, found
+	// when it's brought back to the front (or within the hour), is loaded
+	// whole on the next tap, with the new release's service worker, rather
+	// than going on with the old one's code. An installed app is often kept
+	// open for days.
+	beforeNavigate(({ willUnload, to }) => {
+		if (updated.current && !willUnload && to?.url) location.href = to.url.href;
 	});
 
 	$effect(() => {

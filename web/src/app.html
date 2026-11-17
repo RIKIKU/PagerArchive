@@ -9,6 +9,16 @@
 		<link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32" />
 		<link rel="icon" href="/favicon.svg" type="image/svg+xml" />
 		<link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+		<!-- R90: installable on a phone (ADR 0037). -->
+		<link rel="manifest" href="/manifest.webmanifest" />
+		<meta name="mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-capable" content="yes" />
+		<meta name="apple-mobile-web-app-title" content="PagerArchive" />
+		<meta name="apple-mobile-web-app-status-bar-style" content="default" />
+		<!-- pwa: written by scripts/pwa.mjs from app.css -->
+		<meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
+		<meta name="theme-color" content="#151f1c" media="(prefers-color-scheme: dark)" />
+		<!-- /pwa -->
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

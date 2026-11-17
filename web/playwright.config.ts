@@ -15,7 +15,11 @@ export default defineConfig({
 	retries: process.env.CI ? 1 : 0,
 	// The HTML report is uploaded by CI when a browser test fails.
 	reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./tests/flaky-reporter.ts']],
-	use: { baseURL, trace: 'retain-on-failure', screenshot: 'only-on-failure' },
+	// The app's service worker (R90) is blocked unless a test allows it: it
+	// passes every request but the app shell's straight to the network, but a
+	// page it controls is one whose requests page.route can't always see.
+	// A116's tests allow it, and browse the app with it.
+	use: { baseURL, trace: 'retain-on-failure', screenshot: 'only-on-failure', serviceWorkers: 'block' },
 	// R36: Chrome/Brave (Chromium), Firefox and Safari (WebKit).
 	projects: [
 		{ name: 'chromium', use: { ...devices['Desktop Chrome'] } },

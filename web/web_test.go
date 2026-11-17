@@ -58,3 +58,41 @@ func TestPageIsSentWithTheLook(t *testing.T) {
 		t.Errorf("nil look: %q", b)
 	}
 }
+
+// R90 (ADR 0037): the installed app's files. The manifest goes out as a
+// manifest; the service worker is checked for a new release on every
+// navigation (no-cache, never immutable) and carries the page's policy,
+// which limits what it may fetch to this origin; the offline page carries
+// it too. Built files keep their year-long cache.
+func TestInstalledAppFiles(t *testing.T) {
+	root := fstest.MapFS{
+		"index.html":            {Data: []byte(page)},
+		"manifest.webmanifest":  {Data: []byte(`{"name":"PagerArchive"}`)},
+		"service-worker.js":     {Data: []byte("self.addEventListener('fetch', () => {});")},
+		"offline.html":          {Data: []byte("<!doctype html><title>You're offline</title>")},
+		"_app/immutable/app.js": {Data: []byte("export {};")},
+	}
+	h := Serve(root, nil)
+	for _, c := range []struct{ path, typ, cache, csp string }{
+		{"/manifest.webmanifest", "application/manifest+json", "no-cache", ""},
+		{"/service-worker.js", "text/javascript; charset=utf-8", "no-cache", csp},
+		{"/offline.html", "text/html; charset=utf-8", "no-cache", csp},
+		{"/_app/immutable/app.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", ""},
+	} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, c.path, nil))
+		res := w.Result()
+		if res.StatusCode != http.StatusOK {
+			t.Errorf("%s: %d", c.path, res.StatusCode)
+		}
+		if got := res.Header.Get("Content-Type"); got != c.typ {
+			t.Errorf("%s: Content-Type %q, want %q", c.path, got, c.typ)
+		}
+		if got := res.Header.Get("Cache-Control"); got != c.cache {
+			t.Errorf("%s: Cache-Control %q, want %q", c.path, got, c.cache)
+		}
+		if got := res.Header.Get("Content-Security-Policy"); got != c.csp {
+			t.Errorf("%s: Content-Security-Policy %q, want %q", c.path, got, c.csp)
+		}
+	}
+}

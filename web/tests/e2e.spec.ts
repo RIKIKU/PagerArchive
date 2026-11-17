@@ -5077,3 +5077,217 @@ test('A111 no layers, no layers control', async ({ browser }) => {
 	await expect(page.getByRole('button', { name: 'Map layers' })).toHaveCount(0);
 	await ctx.close();
 });
+
+// R90, A116 (ADR 0037): installable on a phone. The service worker keeps
+// the app shell and nothing else, pages always come from the network, and a
+// new release takes over.
+
+/** The paths the service worker may keep: the build's files, the icons, the manifest and the offline page. */
+const shellPath = /^\/(_app\/immutable\/[\w./-]+|icons\/[a-z0-9-]+\.png|favicon(-32)?\.(svg|png)|apple-touch-icon\.png|manifest\.webmanifest|offline\.html)$/;
+
+/** Every URL in every cache the page's origin has, by cache. */
+async function cached(page: Page): Promise<Record<string, string[]>> {
+	return page.evaluate(async () => {
+		const out: Record<string, string[]> = {};
+		for (const name of await caches.keys()) out[name] = (await (await caches.open(name)).keys()).map((r) => r.url);
+		return out;
+	});
+}
+
+/** Opens path and waits until the service worker controls the page (reloading once if it took over after the page loaded). */
+async function controlled(page: Page, path = '/') {
+	await page.goto(path);
+	await page.evaluate(async () => {
+		await navigator.serviceWorker.ready;
+	});
+	if (!(await page.evaluate(() => !!navigator.serviceWorker.controller))) await page.reload();
+	await expect.poll(() => page.evaluate(() => !!navigator.serviceWorker.controller)).toBe(true);
+}
+
+test('A116 installable: the manifest, its icons and theme from the tokens, before sign-in', async ({ browser, browserName }) => {
+	const ctx = await browser.newContext({ colorScheme: 'light', serviceWorkers: 'allow' });
+	const page = await ctx.newPage();
+	await page.goto('/');
+	await expect(page).toHaveURL(/\/signin/);
+	const href = await page.locator('head link[rel="manifest"]').evaluate((l) => (l as HTMLLinkElement).href);
+	expect(new globalThis.URL(href).pathname).toBe('/manifest.webmanifest');
+	// Loading it needs no session, as the favicon (R82e).
+	const res = await ctx.request.get(href);
+	expect(res.status()).toBe(200);
+	expect(res.headers()['content-type']).toBe('application/manifest+json');
+	const m = await res.json();
+	expect(m).toMatchObject({ id: '/', name: 'PagerArchive', short_name: 'PagerArchive', start_url: '/', scope: '/', display: 'standalone' });
+	// Its colours are the light theme's top bar (--surface) and page (--bg).
+	const colour = (name: string) =>
+		page.evaluate((n) => {
+			const probe = document.createElement('span');
+			probe.style.color = `var(${n})`;
+			document.body.append(probe);
+			const c = getComputedStyle(probe).color;
+			probe.remove();
+			return c;
+		}, name);
+	const rgb = (hex: string) => `rgb(${[1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16)).join(', ')})`;
+	expect(rgb(m.theme_color)).toBe(await colour('--surface'));
+	expect(rgb(m.background_color)).toBe(await colour('--bg'));
+	// 192 and 512, as plain and as maskable icons, each the size it says.
+	const icons = m.icons as { src: string; sizes: string; type: string; purpose: string }[];
+	for (const purpose of ['any', 'maskable'])
+		for (const size of [192, 512]) expect(icons.some((i) => i.purpose === purpose && i.sizes === `${size}x${size}`), `${purpose} ${size}`).toBe(true);
+	for (const icon of icons) {
+		const png = await ctx.request.get(new globalThis.URL(icon.src, href).href);
+		expect(png.status(), icon.src).toBe(200);
+		expect(png.headers()['content-type']).toBe('image/png');
+		const body = await png.body();
+		const size = Number(icon.sizes.split('x')[0]);
+		expect([body.readUInt32BE(16), body.readUInt32BE(20)], icon.src).toEqual([size, size]);
+	}
+	// iPhone: shown full screen from the home screen, with its own name.
+	await expect(page.locator('head meta[name="apple-mobile-web-app-capable"]')).toHaveAttribute('content', 'yes');
+	await expect(page.locator('head meta[name="apple-mobile-web-app-title"]')).toHaveAttribute('content', 'PagerArchive');
+	// The status bar: the top bar's colour in each theme as sent (written from
+	// the tokens), then the colour the top bar is drawn in.
+	const served = await (await ctx.request.get(`${URL}/signin`)).text();
+	expect(served).toContain(`<meta name="theme-color" content="${m.theme_color}" media="(prefers-color-scheme: light)" />`);
+	expect(served).toMatch(/<meta name="theme-color" content="#[0-9a-f]{6}" media="\(prefers-color-scheme: dark\)" \/>/);
+	const themeColours = page.locator('head meta[name="theme-color"]');
+	await expect(themeColours).toHaveCount(2);
+	for (const meta of await themeColours.all()) await expect(meta).toHaveAttribute('content', await colour('--surface'));
+	await page.emulateMedia({ colorScheme: 'dark' });
+	const dark = await colour('--surface');
+	expect(dark).not.toBe(rgb(m.theme_color));
+	for (const meta of await themeColours.all()) await expect(meta).toHaveAttribute('content', dark);
+
+	// Chrome's own installability check: a valid manifest, its icons, and a
+	// service worker that handles fetches (the "Install app" menu item).
+	if (browserName === 'chromium') {
+		await controlled(page, '/signin');
+		const cdp = await ctx.newCDPSession(page);
+		const manifest = (await cdp.send('Page.getAppManifest')) as { url: string; errors: { message: string }[] };
+		expect(manifest.url).toBe(href);
+		expect(manifest.errors).toEqual([]);
+		await expect.poll(async () => ((await cdp.send('Page.getInstallabilityErrors')) as { installabilityErrors: unknown[] }).installabilityErrors).toEqual([]);
+	}
+	await ctx.close();
+});
+
+test('A116 the service worker keeps the app shell and nothing else', async ({ browser, browserName, request }) => {
+	const ctx = await signedIn(browser, 'user', { serviceWorkers: 'allow' });
+	const page = await ctx.newPage();
+	const fromWorker: string[] = [];
+	const notFromWorker: string[] = [];
+	page.on('response', (r) => {
+		const path = new globalThis.URL(r.url()).pathname;
+		// Pages come through it too, from the network (never kept: below).
+		if (r.request().isNavigationRequest()) return;
+		(r.fromServiceWorker() ? fromWorker : notFromWorker).push(path);
+	});
+	await controlled(page);
+	// Pages, a message, a job, a search, the map with its tiles, albums,
+	// capcodes, integrations, an account page and reports: what a person sees.
+	await waitLive(page);
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON #STN1`);
+	await page.getByTestId('message-list').locator('article').filter({ hasText: job }).locator('a.open').click();
+	await expect(page.locator('dl').first()).toContainText(job);
+	await page.goto(`/jobs/${job}`);
+	await expect(page.locator('main article')).toHaveCount(1);
+	await page.goto('/?q=SMOKE');
+	await waitLive(page);
+	await page.goto('/map');
+	await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	for (const path of ['/albums', '/capcodes', '/integrations', '/account/profile', '/reports']) {
+		await page.goto(path);
+		await expect(page.locator('main h1').first()).toBeVisible();
+	}
+
+	const all = await cached(page);
+	const names = Object.keys(all);
+	expect(names, "one cache, this build's shell").toHaveLength(1);
+	expect(names[0]).toMatch(/^shell-/);
+	const paths = all[names[0]].map((u) => new globalThis.URL(u).pathname);
+	expect(
+		paths.filter((p) => !shellPath.test(p)),
+		'only shell files are kept'
+	).toEqual([]);
+	expect(paths.filter((p) => p.startsWith('/api/') || p.startsWith('/auth/') || p.startsWith('/map/') || p === '/')).toEqual([]);
+	expect(paths).toContain('/offline.html');
+	expect(paths).toContain('/manifest.webmanifest');
+	// Every build file the pages loaded is in it: the shell is the build's.
+	const loaded = await page.evaluate(() => performance.getEntriesByType('resource').map((e) => new globalThis.URL(e.name).pathname));
+	for (const p of loaded.filter((p) => p.startsWith('/_app/immutable/'))) expect(paths, p).toContain(p);
+	// Answers from the API never came through it, in any page; shell files did.
+	if (browserName === 'chromium') {
+		expect(
+			fromWorker.filter((p) => !shellPath.test(p)),
+			'nothing but shell files from the service worker'
+		).toEqual([]);
+		expect(fromWorker.some((p) => p.startsWith('/_app/immutable/'))).toBe(true);
+		expect(notFromWorker.filter((p) => p.startsWith('/api/')).length).toBeGreaterThan(0);
+	}
+	console.log(`A116: ${paths.length} shell files kept in ${names[0]}; none from /api/, /auth/ or /map/, and no page`);
+	await ctx.close();
+});
+
+test('A116 offline, a page says so, and shows nothing from the archive', async ({ browser, browserName }) => {
+	test.skip(browserName === 'firefox', "Playwright's offline mode in Firefox doesn't reach a service worker's own requests");
+	const ctx = await signedIn(browser, 'user', { serviceWorkers: 'allow' });
+	const page = await ctx.newPage();
+	await controlled(page);
+	await waitLive(page);
+	await ctx.setOffline(true);
+	await page.goto('/albums');
+	await expect(page.getByRole('heading', { level: 1, name: "You're offline" })).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Try again' })).toBeVisible();
+	expect(await page.locator('body').innerText()).not.toMatch(/SMOKE|EX000/);
+	expect(await axeOf(page), 'the offline page').toEqual([]);
+	await ctx.setOffline(false);
+	await page.getByRole('link', { name: 'Try again' }).click();
+	await expect(page).toHaveURL(/\/albums$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Albums' })).toBeVisible();
+	await ctx.close();
+});
+
+test('A116 a new release takes over an installed app', async ({ browser }) => {
+	const ctx = await signedIn(browser, 'user', { serviceWorkers: 'allow' });
+	const page = await ctx.newPage();
+	await controlled(page);
+	await waitLive(page);
+	const before = Object.keys(await cached(page));
+	// An earlier release's cache, as an app installed before would have.
+	await page.evaluate(async () => (await caches.open('shell-earlier')).put('/_app/immutable/earlier.js', new Response('export {};')));
+	// A new release's service worker: the browser finds it as it checks for
+	// one, and it takes over at once and clears the earlier caches.
+	const scriptURL = await page.evaluate(async () => {
+		const changed = new Promise<void>((resolve) => navigator.serviceWorker.addEventListener('controllerchange', () => resolve()));
+		const reg = await navigator.serviceWorker.register('/service-worker.js?next', { type: 'module' });
+		await changed;
+		return reg.active?.scriptURL ?? '';
+	});
+	expect(scriptURL).toMatch(/\?next$/);
+	await expect.poll(async () => Object.keys(await cached(page))).toEqual(before);
+	await page.goto('/');
+	await waitLive(page);
+	await ctx.close();
+});
+
+// R90: a release that came out while the app was open is found when the app
+// is brought back to the front, and the next tap loads that page whole, with
+// the new release's code. (The release's version is answered for the test,
+// so the service worker, which page.route can't always see past, is blocked.)
+test('A116 an app left open loads a new release on the next tap', async ({ browser }) => {
+	const ctx = await signedIn(browser);
+	const page = await ctx.newPage();
+	await page.goto('/');
+	await waitLive(page);
+	await page.route('**/_app/version.json', (r) => r.fulfill({ json: { version: 'next' } }));
+	await page.evaluate(() => ((window as unknown as { stillHere: boolean }).stillHere = true));
+	const asked = page.waitForResponse('**/_app/version.json');
+	await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+	await asked;
+	await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Albums', exact: true }).click();
+	await expect(page).toHaveURL(/\/albums$/);
+	await expect(page.getByRole('heading', { level: 1, name: 'Albums' })).toBeVisible();
+	expect(await page.evaluate(() => (window as unknown as { stillHere?: boolean }).stillHere)).toBeUndefined();
+	await ctx.close();
+});
