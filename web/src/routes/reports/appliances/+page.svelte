@@ -1,9 +1,10 @@
 <script lang="ts">
 	// R38h: how often each appliance (R8's units, shown as Appliances) is
 	// named: the jobs naming it, each job once however many pages name it.
+	// Each appliance links to the jobs naming it (R38a).
 	import BarChart from '#lib/BarChart.svelte';
 	import ReportPage from '#lib/ReportPage.svelte';
-	import { longDay, percent, type AppliancesReport } from '#lib/reports.ts';
+	import { jobsHref, longDay, percent, type AppliancesReport } from '#lib/reports.ts';
 </script>
 
 <ReportPage
@@ -26,7 +27,7 @@
 				<thead><tr><th scope="col">Appliance</th><th scope="col" class="num">Jobs</th><th scope="col" class="num">Share of jobs</th></tr></thead>
 				<tbody>
 					{#each d.rows as a (a.appliance)}
-						<tr><th scope="row">{a.appliance}</th><td class="num">{a.jobs}</td><td class="num">{percent(a.share)}</td></tr>
+						<tr><th scope="row"><a href={jobsHref('appliances', d, { appliance: a.appliance })}>{a.appliance}</a></th><td class="num">{a.jobs}</td><td class="num">{percent(a.share)}</td></tr>
 					{/each}
 				</tbody>
 			</table>

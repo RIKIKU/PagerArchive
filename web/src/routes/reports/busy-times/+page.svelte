@@ -6,7 +6,7 @@
 	import { page } from '$app/state';
 	import ReportPage from '#lib/ReportPage.svelte';
 	import Suggest from '#lib/Suggest.svelte';
-	import { longDay, type BusyTimesReport } from '#lib/reports.ts';
+	import { jobsHref, longDay, type BusyTimesReport } from '#lib/reports.ts';
 	import { reportBox, reportPick, reportSuggestions } from '#lib/search.ts';
 	import { searchValues } from '#lib/searchValues.ts';
 
@@ -98,7 +98,10 @@
 							<tr>
 								<th scope="row">{hour(h)}</th>
 								{#each d.cells as row, day (day)}
-									<td class="num l{level(row[h], most(d))}">{row[h]}</td>
+									<td class="num l{level(row[h], most(d))}">
+										<!-- R38a: a cell with jobs links to the jobs behind it. -->
+										{#if row[h] > 0}<a class="cell" href={jobsHref('busy-times', d, { weekday: day + 1, hour: h })} aria-label="{row[h]} {row[h] === 1 ? 'job' : 'jobs'}, {days[day]} {hour(h)}">{row[h]}</a>{:else}0{/if}
+									</td>
 								{/each}
 							</tr>
 						{/each}
@@ -142,6 +145,24 @@
 	}
 	.grid abbr {
 		text-decoration: none;
+	}
+	/* A cell with jobs is a link to them (R38a), the whole cell its target, in
+	   the cell's own colours (so its shade keeps its contrast), the focus ring
+	   inside the cell so the scrolling box doesn't clip it. */
+	.grid td:has(.cell) {
+		padding: 0;
+	}
+	.cell {
+		display: block;
+		padding: var(--space-3xs) var(--space-xs);
+		color: inherit;
+		text-decoration: underline;
+		outline-offset: calc(-1 * var(--focus-width));
+	}
+	/* The ring, then a band of the surface inside it: the ring stands out on
+	   every shade. */
+	.cell:focus-visible {
+		box-shadow: inset 0 0 0 calc(2 * var(--focus-width)) var(--surface);
 	}
 	.l0 {
 		background: var(--heat-0);

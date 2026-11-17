@@ -4914,6 +4914,102 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect(page.getByTestId('chart')).toHaveCount(0);
 });
 
+// A119 (R38a, R38d, R38h): the jobs behind a report's number, on the
+// project's week (Report agency n: Monday 14:10, Tuesday 09:05 and Saturday
+// 14:30), at 1,280 and 375 px, light and dark; the counts themselves are
+// checked in Go (A119).
+for (const width of [1280, 375]) {
+	test(`A119 the jobs behind a number at ${width} px`, async ({ browser, browserName, request }, info) => {
+		test.setTimeout(120_000);
+		const n = projectN(info);
+		await reportWeek(request, n);
+		// WebKit's Tab skips links unless Alt is held.
+		const tab = browserName === 'webkit' ? 'Alt+Tab' : 'Tab';
+		const noText = /SMOKE|GRASS FIRE|FICTION ST|SAMPLE RD|OTHER RD|CREWS RETURNING|Training/;
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { colorScheme, viewport: { width, height: 900 } });
+			const page = await ctx.newPage();
+			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(0);
+
+			// When it's busy: the cells with jobs are links, named by count, day and hour; 0's aren't.
+			await page.goto(`/reports/busy-times?${reportRange(n)}`);
+			const grid = page.getByTestId('report-table');
+			await expect(grid).toBeVisible();
+			const links = grid.getByRole('link');
+			await expect(links).toHaveCount(3);
+			expect(await links.evaluateAll((as) => as.map((a) => a.getAttribute('aria-label')))).toEqual(['1 job, Tuesday 09:00', '1 job, Monday 14:00', '1 job, Saturday 14:00']);
+			await expect(grid.locator('td')).toHaveCount(168);
+			await expect(grid.locator('td:not(:has(a))')).toHaveCount(165);
+			// From the keyboard: Tab from the grid's box reaches each, with its focus ring.
+			await page.getByRole('region', { name: 'Jobs by hour and day, as a table' }).focus();
+			for (const name of ['1 job, Tuesday 09:00', '1 job, Monday 14:00', '1 job, Saturday 14:00']) {
+				await page.keyboard.press(tab);
+				await expect(grid.getByRole('link', { name })).toBeFocused();
+			}
+			const ring = await page.evaluate(() => {
+				const s = getComputedStyle(document.activeElement!);
+				return { style: s.outlineStyle, width: parseFloat(s.outlineWidth) };
+			});
+			expect(ring.style).toBe('solid');
+			expect(ring.width).toBeGreaterThan(0);
+			await grid.screenshot({ path: info.outputPath(`a119-grid-focus-${colorScheme}-${width}.png`) });
+			await page.keyboard.press('Enter');
+
+			// Jobs: what it is, the cell's job, and the address holding it all.
+			await expect(page).toHaveURL(/\/reports\/jobs\?/);
+			const url = new globalThis.URL(page.url());
+			const want = new URLSearchParams(reportRange(n));
+			for (const k of ['from', 'to', 'agency']) expect(url.searchParams.get(k), k).toBe(want.get(k));
+			expect(url.searchParams.get('weekday')).toBe('6');
+			expect(url.searchParams.get('hour')).toBe('14');
+			const title = page.getByTestId('jobs-title');
+			await expect(title).toHaveText(new RegExp(String.raw`^Jobs on Saturdays 14:00–14:59, \d+ to \d+ \S+ 2026, Report agency ${n}$`));
+			await expect(page.getByRole('heading', { level: 1 })).toHaveText(await title.innerText());
+			const rows = () =>
+				page
+					.getByTestId('jobs-table')
+					.locator('tbody tr')
+					.evaluateAll((rs) => rs.map((r) => [...r.children].map((c) => (c as HTMLElement).innerText.replace(/\s+/g, ' ').trim()).join(' | ')));
+			const listed = await rows();
+			expect(listed).toHaveLength(1);
+			expect(listed[0]).toMatch(/^EX\d{7} HSF1 House fire, SAMPLEBURY \| .+ \| 2$/);
+			const job = listed[0].split(' ')[0];
+			await expect(page.getByTestId('jobs-table').getByRole('link', { name: job })).toHaveAttribute('href', `/jobs/${job}`);
+			await expect(page.getByTestId('report-caveat')).toBeVisible();
+			await expect(page.locator('main')).not.toContainText(noText);
+			await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Reports');
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} jobs of a cell`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a119-cell-${colorScheme}-${width}.png`), fullPage: true });
+			// Opened again from its address, the list is the same.
+			await page.goto(url.toString());
+			await expect.poll(rows).toEqual(listed);
+			// The way back: the report, with its filters.
+			await page.getByRole('link', { name: "Back to When it's busy" }).click();
+			await expect(page).toHaveURL(/\/reports\/busy-times\?/);
+			const backTo = new globalThis.URL(page.url()).searchParams;
+			for (const k of ['from', 'to', 'agency']) expect(backTo.get(k), k).toBe(want.get(k));
+			await expect(grid.getByRole('link')).toHaveCount(3);
+
+			// Appliance activity: P1 opens its 2 jobs.
+			await page.goto(`/reports/appliances?${reportRange(n)}`);
+			await page.getByTestId('report-table').getByRole('link', { name: 'P1', exact: true }).click();
+			await expect(page).toHaveURL(/\/reports\/jobs\?.*appliance=P1/);
+			await expect(page.getByTestId('jobs-title')).toHaveText(new RegExp(String.raw`^Jobs naming P1, \d+ to \d+ \S+ 2026, Report agency ${n}$`));
+			await expect.poll(async () => (await rows()).length).toBe(2);
+			expect((await rows()).map((r) => r.replace(/^EX\d{7} /, '').replace(/ \| .+ \| /, ' | '))).toEqual(['HSF1 House fire, SAMPLEBURY | 2', 'HSF1 House fire, MADEUPTON | 4']);
+			await expect(page.locator('main')).not.toContainText(noText);
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} jobs of an appliance`).toEqual([]);
+			await page.screenshot({ path: info.outputPath(`a119-appliance-${colorScheme}-${width}.png`), fullPage: true });
+			await page.getByRole('link', { name: 'Back to Appliance activity' }).click();
+			await expect(page).toHaveURL(/\/reports\/appliances\?/);
+			await ctx.close();
+		}
+	});
+}
+
+
 // A111 (R88b, R88c, R88e): the example's two made-up layers of areas, zones
 // and regions over them, in the browser. A job whose pages are in two zones
 // and one region says all three on its view; one in none says nothing; a

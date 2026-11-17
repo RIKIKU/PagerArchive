@@ -152,6 +152,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/reports/long-jobs":            s.longJobsReport,
 		"GET /api/v1/reports/appliances":           s.appliancesReport,
 		"GET /api/v1/reports/large-events":         s.largeEventsReport,
+		"GET /api/v1/reports/jobs":                 s.jobsReport,
 		"GET /api/v1/admin/retention":              s.adminOnly(s.getRetention),
 		"GET /api/v1/admin/areas":                  s.adminOnly(s.adminAreas),
 		"PUT /api/v1/admin/retention":              s.adminOnly(s.putRetention),
