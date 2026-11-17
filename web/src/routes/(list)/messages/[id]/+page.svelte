@@ -41,7 +41,7 @@
 		['grid_ref', 'Grid reference'],
 		// R8: the units field, shown as Appliances (owner, 2026-11-13).
 		['units', 'Appliances'],
-		['group', 'Group']
+		['call_sign', 'Call sign']
 	];
 
 	function show(v: unknown): string {

@@ -31,7 +31,8 @@
               "address": { "$ref": "#/$defs/text" },
               "locality": { "$ref": "#/$defs/text" },
               "grid_ref": { "$ref": "#/$defs/text" },
-              "group": { "$ref": "#/$defs/text" },
+              "call_sign": { "$ref": "#/$defs/text" },
+              "group": { "description": "The old name of call_sign (ADR 0040): read as call_sign, with a warning to rename it.", "$ref": "#/$defs/text" },
               "units": { "$ref": "#/$defs/list" },
               "extra": {
                 "type": "object",

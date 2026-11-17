@@ -39,7 +39,7 @@
 
 <!-- R35d: the whole row opens the detail view (the text's link stretches over
      it); the alias and job links sit above it. R31: priority, date and time,
-     the template's icon and the alias (R66), group and job, then the text. -->
+     the template's icon and the alias (R66), call sign and job, then the text. -->
 <article class="row {priority}" class:fresh class:selected aria-labelledby="m{m.id}-who" data-message-id={m.id}>
 	<header>
 		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
@@ -55,7 +55,7 @@
 				style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a
 			></span
 		>
-		{#if m.group}<span class="group">{m.group}</span>{/if}
+		{#if m.call_sign}<span class="callsign" title="Call sign"><span class="visually-hidden">Call sign&nbsp;</span>{m.call_sign}</span>{/if}
 		{#if m.job_number}<a class="job" href="/jobs/{encodeURIComponent(m.job_number)}">Job {m.job_number}</a>{/if}
 		{#if pick}<PrintTick id={m.id} />{/if}
 	</header>
@@ -161,7 +161,7 @@
 	.who:focus-visible {
 		text-decoration: underline;
 	}
-	.group {
+	.callsign {
 		color: var(--muted);
 		font-family: var(--font-mono);
 	}

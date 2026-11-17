@@ -16,7 +16,7 @@
         "locality": "MADEUPTON",
         "grid_ref": "123456",
         "units": ["T1", "T2"],
-        "group": "STN1"
+        "call_sign": "STN1"
       }
     },
     {
@@ -31,7 +31,7 @@
         "description": "GRASS FIRE",
         "address": "SAMPLE RD",
         "locality": "MADEUPTON",
-        "group": "STN2"
+        "call_sign": "STN2"
       }
     },
     {
@@ -42,7 +42,7 @@
         "priority": "Non-emergency",
         "format": "follow-up",
         "job_number": "EX0000001",
-        "group": "STN1"
+        "call_sign": "STN1"
       }
     },
     {
@@ -67,7 +67,7 @@
         "address": "12 FICTION ST",
         "locality": "MADEUPTON",
         "grid_ref": "123456",
-        "group": "STN1",
+        "call_sign": "STN1",
         "extra": { "alarm_level": "3" },
         "opens_large_event": true
       }
@@ -85,7 +85,7 @@
         "address": "SAMPLE RD",
         "locality": "MADEUPTON",
         "units": ["T1"],
-        "group": "STN2",
+        "call_sign": "STN2",
         "extra": { "alarm_level": "2" },
         "opens_large_event": false
       }
@@ -98,7 +98,7 @@
         "priority": "Non-emergency",
         "format": "follow-up",
         "job_number": "EX0000003",
-        "group": "STN1",
+        "call_sign": "STN1",
         "opens_large_event": false
       }
     },
@@ -114,7 +114,7 @@
         "description": "DG0801 GRASS FIRE",
         "address": "SAMPLE RD",
         "locality": "MADEUPTON",
-        "group": "STN2",
+        "call_sign": "STN2",
         "opens_large_event": true
       }
     }

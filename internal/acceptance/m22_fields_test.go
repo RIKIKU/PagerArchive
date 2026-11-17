@@ -18,12 +18,12 @@ import (
 // section 10).
 
 // alarmPage is an Emergency page of job at alarm level (none for "").
-func alarmPage(job, level, group string) string {
+func alarmPage(job, level, callSign string) string {
 	alarm := ""
 	if level != "" {
 		alarm = " ALARM " + level
 	}
-	return fmt.Sprintf("@@%s HSF1 FACTORY FIRE @ 12 FICTION ST, MADEUPTON%s #%s", job, alarm, group)
+	return fmt.Sprintf("@@%s HSF1 FACTORY FIRE @ 12 FICTION ST, MADEUPTON%s #%s", job, alarm, callSign)
 }
 
 // largeEventField is the stored flag (migration 00021) of message id.

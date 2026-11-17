@@ -23,22 +23,22 @@ import (
 // several values matches any of them; different fields must all match
 // (R63a, ADR 0009 §8).
 type Filter struct {
-	Text       string   // text terms (ParseText), each a case-insensitive substring of the text or an extra field
-	Capcode    []string // zero-padded capcodes
-	Alias      []string // substrings of the alias name
-	AliasLike  []string // case-insensitive LIKE patterns for the alias name
-	AliasID    []int64  // messages that resolved to these aliases (R35e)
-	Agency     []string // substrings of the template's agency
-	AgencyLike []string
-	Group      []string // exact, case-insensitive
-	GroupLike  []string
-	Priority   []string // Emergency, Non-emergency, Admin, or none
-	Category   []string // network event categories, or Other
-	Job        []string
-	From, To   *time.Time // sent time, From inclusive, To exclusive
-	Unaliased  bool       // "capcodes with no alias"
-	Ignored    bool       // include pages to ignored aliases (R27)
-	Located    bool       // only messages placed on the map (R35)
+	Text         string   // text terms (ParseText), each a case-insensitive substring of the text or an extra field
+	Capcode      []string // zero-padded capcodes
+	Alias        []string // substrings of the alias name
+	AliasLike    []string // case-insensitive LIKE patterns for the alias name
+	AliasID      []int64  // messages that resolved to these aliases (R35e)
+	Agency       []string // substrings of the template's agency
+	AgencyLike   []string
+	CallSign     []string // exact, case-insensitive
+	CallSignLike []string
+	Priority     []string // Emergency, Non-emergency, Admin, or none
+	Category     []string // network event categories, or Other
+	Job          []string
+	From, To     *time.Time // sent time, From inclusive, To exclusive
+	Unaliased    bool       // "capcodes with no alias"
+	Ignored      bool       // include pages to ignored aliases (R27)
+	Located      bool       // only messages placed on the map (R35)
 	// Album keeps one album's messages (R82). The server sets it, for the
 	// album's owner only; it never comes from the address alone (ADR 0026).
 	Album *int64
@@ -62,7 +62,7 @@ const MaxValues = 500
 func (f *Filter) listParams() map[string]*[]string {
 	return map[string]*[]string{
 		"capcode": &f.Capcode, "alias": &f.Alias, "alias_like": &f.AliasLike, "agency": &f.Agency, "agency_like": &f.AgencyLike,
-		"group": &f.Group, "group_like": &f.GroupLike, "priority": &f.Priority, "category": &f.Category, "job": &f.Job, "flag": &f.Flags,
+		"call_sign": &f.CallSign, "call_sign_like": &f.CallSignLike, "priority": &f.Priority, "category": &f.Category, "job": &f.Job, "flag": &f.Flags,
 	}
 }
 
@@ -94,6 +94,18 @@ func Parse(v url.Values, admin bool, loc *time.Location) (Filter, error) {
 			return f, err
 		}
 		*dst = vs
+	}
+	// The call sign's old spellings, from before it was renamed (ADR 0040):
+	// addresses, bookmarks and scripts that still say group= keep working.
+	for old, dst := range map[string]*[]string{"group": &f.CallSign, "group_like": &f.CallSignLike} {
+		vs, err := values(v, old)
+		if err != nil {
+			return f, err
+		}
+		*dst = append(*dst, vs...)
+		if len(*dst) > MaxValues {
+			return f, fmt.Errorf("call_sign: at most %d values", MaxValues)
+		}
 	}
 	ids, err := values(v, "alias_id")
 	if err != nil {
@@ -318,8 +330,8 @@ func (f Filter) Params(n *profile.Network, before *Cursor, limit int) (db.Search
 		AliasNameIds:     []int64{},
 		Agencies:         likeContains(f.Agency),
 		AgencyLikes:      orEmpty(f.AgencyLike),
-		PagingGroups:     upper(f.Group),
-		GroupLikes:       orEmpty(f.GroupLike),
+		CallSigns:        upper(f.CallSign),
+		CallSignLikes:    orEmpty(f.CallSignLike),
 		Priorities:       orEmpty(f.Priority),
 		JobNumbers:       orEmpty(f.Job),
 		SentFrom:         f.From,

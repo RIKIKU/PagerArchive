@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -32,7 +33,15 @@ const (
 )
 
 // StandardFields are the fields core features rely on (R8).
-var StandardFields = []string{"job_number", "event_type", "description", "address", "locality", "grid_ref", "units", "group"}
+var StandardFields = []string{"job_number", "event_type", "description", "address", "locality", "grid_ref", "units", StandardCallSign}
+
+// OldCallSign is the call sign's name before ADR 0040: a profile or golden
+// table that still says it is read as call_sign, with a warning to rename it.
+const OldCallSign = "group"
+
+// StandardCallSign is the call sign's field (R8): the paged unit's call sign,
+// often a short code at the end of a page.
+const StandardCallSign = "call_sign"
 
 // ListFields are standard fields that hold a list.
 var ListFields = map[string]bool{"units": true}
@@ -133,6 +142,9 @@ type Agency struct {
 	// page whose field holds a listed value opens one, as a page with a code
 	// does. Empty: the agency's fields open none.
 	LargeEventFields []LargeEventField
+	// Warnings are problems that don't stop the profile loading, such as the
+	// call sign's old name (ADR 0040), each as "file: at path: message".
+	Warnings []string
 }
 
 // LargeEventField is one large_event_fields rule: the values of one text
@@ -175,6 +187,17 @@ type AddressSplit struct{ Description, Address string }
 type Set struct {
 	Networks map[string]*Network
 	Agencies map[string]*Agency
+}
+
+// Warnings are every agency profile's warnings, in order: problems that
+// don't stop the profiles loading (ADR 0040).
+func (s *Set) Warnings() []string {
+	var out []string
+	for _, a := range s.Agencies {
+		out = append(out, a.Warnings...)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // Error is a problem in one profile file, at a JSON Pointer path.
@@ -513,7 +536,11 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 	var errs []error
 	fail := func(p, msg string) { errs = append(errs, &Error{File: path, Path: p, Msg: msg}) }
 
-	a := &Agency{Name: j.Name, File: path, Hash: hashOf(data), Labels: j.Labels}
+	var warnings []string
+	warn := func(p, msg string) { warnings = append(warnings, (&Error{File: path, Path: p, Msg: msg}).Error()) }
+	renameOldCallSign(&j, warn, fail)
+
+	a := &Agency{Name: j.Name, File: path, Hash: hashOf(data), Labels: j.Labels, Warnings: warnings}
 	names := map[string]bool{}
 	// What the formats extract, for large_event_fields: text fields, and
 	// fields a format splits into a list.
@@ -618,6 +645,61 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 		return nil, errs
 	}
 	return a, nil
+}
+
+// oldCapture finds a capture named with the call sign's old name, in either
+// of RE2's spellings, not after a backslash.
+var oldCapture = regexp.MustCompile(`(^|[^\\])\(\?(P?)<` + OldCallSign + `>`)
+
+// renameOldCallSign reads the call sign's old name, group, as call_sign
+// (R8, ADR 0040), so a profile from before the rename keeps working: a
+// capture, its fields options, its labels and a large_event_fields rule
+// that name it. Each is a warning saying to rename it; a format or a part of
+// the profile that names both is an error.
+func renameOldCallSign(j *agencyJSON, warn, fail func(p, msg string)) {
+	const rename = "the call sign's field is now call_sign (ADR 0040): rename group to call_sign"
+	for i := range j.Formats {
+		f := &j.Formats[i]
+		p := fmt.Sprintf("/formats/%d", i)
+		if oldCapture.MatchString(f.Match) {
+			re, err := regexp.Compile(f.Match)
+			if err == nil && slices.Contains(re.SubexpNames(), StandardCallSign) {
+				fail(p+"/match", "captures both group and call_sign: group is call_sign's old name (ADR 0040); remove one")
+			} else {
+				f.Match = oldCapture.ReplaceAllString(f.Match, "${1}(?${2}<"+StandardCallSign+">")
+				warn(p+"/match", rename)
+			}
+		}
+		if opt, ok := f.Fields[OldCallSign]; ok {
+			if _, both := f.Fields[StandardCallSign]; both {
+				fail(p+"/fields/"+OldCallSign, "fields has both group and call_sign: group is call_sign's old name (ADR 0040); remove one")
+			} else {
+				delete(f.Fields, OldCallSign)
+				f.Fields[StandardCallSign] = opt
+				warn(p+"/fields/"+OldCallSign, rename)
+			}
+		}
+		for name, opt := range f.Fields {
+			if as := opt.AddressSplit; as != nil && (as.Description == OldCallSign || as.Address == OldCallSign) {
+				fail(p+"/fields/"+name+"/address_split", "group is call_sign's old name (ADR 0040): write call_sign")
+			}
+		}
+	}
+	if table, ok := j.Labels[OldCallSign]; ok {
+		if _, both := j.Labels[StandardCallSign]; both {
+			fail("/labels/"+OldCallSign, "labels has both group and call_sign: group is call_sign's old name (ADR 0040); remove one")
+		} else {
+			delete(j.Labels, OldCallSign)
+			j.Labels[StandardCallSign] = table
+			warn("/labels/"+OldCallSign, rename)
+		}
+	}
+	for i := range j.LargeEventFields {
+		if r := &j.LargeEventFields[i]; r.Field == OldCallSign {
+			r.Field = StandardCallSign
+			warn(fmt.Sprintf("/large_event_fields/%d/field", i), rename)
+		}
+	}
 }
 
 // largeEventFields compiles an agency's large_event_fields (R87). The schema

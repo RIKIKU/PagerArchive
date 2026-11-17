@@ -298,7 +298,7 @@ func TestM16SamePathAsALivePage(t *testing.T) {
 		t.Errorf("stored %d, ignored %d, parse failures %d: want 6, 1, 1", r.Stored, r.Ignored, r.ParseFailed)
 	}
 	const columns = `capcode, text, priority, heartbeat, format, job_number, event_type, description, address, locality, grid_ref,
-		paging_group, units::text, extra::text, parse_failed, address_unsplit, alias_id, ST_AsText(location::geometry), location_source, location_mismatch, sent_at`
+		call_sign, units::text, extra::text, parse_failed, address_unsplit, alias_id, ST_AsText(location::geometry), location_source, location_mismatch, sent_at`
 	imported := e.rows(`SELECT ` + columns + ` FROM messages ORDER BY sent_at`)
 	if strings.Contains(fmt.Sprint(imported), "0412") || strings.Contains(fmt.Sprint(imported), "AGE:") || strings.Contains(fmt.Sprint(imported), "SEX:") {
 		t.Errorf("a redacted detail was stored: %v", imported)

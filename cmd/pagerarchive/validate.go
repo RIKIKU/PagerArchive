@@ -53,6 +53,10 @@ func validateProfile(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "profiles: %d network, %d agency: schemas and patterns OK\n", len(set.Networks), len(set.Agencies))
+	// Warnings don't fail the run (ADR 0040: the call sign's old name).
+	for _, w := range set.Warnings() {
+		fmt.Fprintln(stdout, "warning: "+w)
+	}
 
 	net, err := pickNetwork(set, *network)
 	if err != nil {
@@ -86,6 +90,11 @@ func validateProfile(args []string, stdout, stderr io.Writer) error {
 		return err
 	}
 	sort.Slice(tables, func(i, j int) bool { return tables[i].File < tables[j].File })
+	for _, t := range tables {
+		for _, w := range t.Warnings {
+			fmt.Fprintln(stdout, "warning: "+w)
+		}
+	}
 	runner := golden.Runner{Set: set, Network: net, Streets: ix}
 	failed := false
 	for _, t := range tables {

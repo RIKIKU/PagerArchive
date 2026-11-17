@@ -118,9 +118,13 @@ type Filter struct {
 	Codes      []string `json:"codes,omitempty"`      // raw event-type codes
 	Priorities []string `json:"priorities,omitempty"` // Emergency, Non-emergency, Admin, none
 	Text       string   `json:"text,omitempty"`
-	Group      string   `json:"group,omitempty"`
-	Agency     string   `json:"agency,omitempty"`
-	Job        string   `json:"job,omitempty"`
+	CallSign   string   `json:"call_sign,omitempty"`
+	// OldCallSign is call_sign's old spelling, "group", which requests from
+	// before the rename may still send (ADR 0040). validFilter moves it to
+	// CallSign, so it's never stored or returned.
+	OldCallSign string `json:"group,omitempty"`
+	Agency      string `json:"agency,omitempty"`
+	Job         string `json:"job,omitempty"`
 	// Admin only (R33, R49): ignored while the owner isn't an admin.
 	ParseFailed      bool `json:"parse_failed,omitempty"`
 	AddressUnsplit   bool `json:"address_unsplit,omitempty"`

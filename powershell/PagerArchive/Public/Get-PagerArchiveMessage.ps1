@@ -5,7 +5,7 @@ function Get-PagerArchiveMessage {
 
     .DESCRIPTION
     Returns messages with what the detail view shows (R63a): the full text,
-    priority, sent time, capcode, alias, agency, group, job number, event
+    priority, sent time, capcode, alias, agency, call sign, job number, event
     category, parsed fields, location, flags and each client's receive time.
 
     Filters combine (R33): a message must match every filter given, and a
@@ -73,7 +73,7 @@ function Get-PagerArchiveMessage {
     .OUTPUTS
     PagerArchive.Message. Id, SentAt, Capcode, Alias, Agency, Priority
     (Emergency, Non-emergency, Admin or None), Text (as a pager shows it,
-    in full), RawText (as received, with the priority marker), Group,
+    in full), RawText (as received, with the priority marker), CallSign,
     JobNumber, EventType, Category, Description, Address, Locality, GridRef,
     Units (the appliances named, shown as Appliances), Fields (other parsed
     fields), Location (Longitude, Latitude, Approximate, Source),
@@ -114,11 +114,13 @@ function Get-PagerArchiveMessage {
         [ValidateNotNullOrEmpty()]
         [string[]] $Agency,
 
-        # Paging groups. Accepts wildcards, matched case-insensitively.
-        # Default: any.
+        # Call signs: the paged unit's call sign, often a short code at the
+        # end of a page. Accepts wildcards, matched case-insensitively.
+        # Default: any. -Group is its old name, still accepted.
+        [Alias('Group')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
-        [string[]] $Group,
+        [string[]] $CallSign,
 
         # Priorities. Default: any.
         [ValidateSet('Emergency', 'Non-emergency', 'Admin', 'None')]
@@ -185,7 +187,7 @@ function Get-PagerArchiveMessage {
             Capcode        = @($capcodes)
             Alias          = @($aliases)
             Agency         = $Agency
-            Group          = $Group
+            CallSign       = $CallSign
             Priority       = $Priority
             Category       = $Category
             JobNumber      = $JobNumber

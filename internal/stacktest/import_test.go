@@ -283,7 +283,7 @@ func (s *a76Stack) result() string {
 	if err := s.db.QueryRow(s.ctx, `
 		SELECT md5(string_agg(row::text, E'\n' ORDER BY row::text)) FROM (
 			SELECT m.capcode, m.text, m.priority, m.heartbeat, m.sent_at, m.dedup_key, m.format, m.job_number, m.event_type,
-			       m.description, m.address, m.locality, m.grid_ref, m.paging_group, m.units, m.extra, m.parse_failed,
+			       m.description, m.address, m.locality, m.grid_ref, m.call_sign, m.units, m.extra, m.parse_failed,
 			       m.address_unsplit, m.alias_id, m.location, m.location_source, m.location_mismatch,
 			       (SELECT string_agg(i.received_at::text || ' ' || COALESCE(i.source_id, '-'), ',' ORDER BY i.received_at, i.source_id)
 			        FROM import_receptions i WHERE i.message_id = m.id) AS copies

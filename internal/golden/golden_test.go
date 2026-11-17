@@ -60,15 +60,15 @@ func TestExampleGoldenTables(t *testing.T) {
 func TestRunnerDetectsMismatches(t *testing.T) {
 	r := exampleRunner(t)
 	raw := "POCSAG512: Address:  100002  Function: 0  Alpha:   @@EX0000002 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN2"
-	full := `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS FIRE","address":"SAMPLE RD","locality":"MADEUPTON","group":"STN2"}`
+	full := `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS FIRE","address":"SAMPLE RD","locality":"MADEUPTON","call_sign":"STN2"}`
 	tests := []struct {
 		name   string
 		expect string
 		diffs  int
 	}{
 		{"all correct, format unlisted", full, 0},
-		{"wrong value", `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS","address":"SAMPLE RD","locality":"MADEUPTON","group":"STN2"}`, 1},
-		{"unlisted field means null", `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS FIRE","address":"SAMPLE RD","group":"STN2"}`, 1},
+		{"wrong value", `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS","address":"SAMPLE RD","locality":"MADEUPTON","call_sign":"STN2"}`, 1},
+		{"unlisted field means null", `{"capcode":"0100002","priority":"Emergency","job_number":"EX0000002","event_type":"GRS3","description":"GRASS FIRE","address":"SAMPLE RD","call_sign":"STN2"}`, 1},
 		{"wrong format when listed", full[:len(full)-1] + `,"format":"follow-up"}`, 1},
 		{"flag expected", full[:len(full)-1] + `,"parse_failed":true}`, 1},
 		{"extra field expected", full[:len(full)-1] + `,"extra":{"area":"X"}}`, 1},

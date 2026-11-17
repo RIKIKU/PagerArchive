@@ -11,7 +11,7 @@ BeforeAll {
             id = 1; capcode = '0100001'; text = $Text; display_text = $Text; priority = 'Emergency'; heartbeat = $false
             sent_at = '2026-10-20T01:02:03Z'; alias_id = 1; alias = 'Station 1'; agency = 'Example Fire Service'; icon = $null; colour = $null
             ignored = $false; category = $null; format = $null; job_number = $null; event_type = $null; description = $null; address = $null
-            locality = $null; grid_ref = $null; group = $null; units = $null; extra = [pscustomobject]@{}; labels = [pscustomobject]@{}
+            locality = $null; grid_ref = $null; call_sign = $null; units = $null; extra = [pscustomobject]@{}; labels = [pscustomobject]@{}
             location = $null; receptions = @([pscustomobject]@{ client = 'Receiver 1'; received_at = '2026-10-20T01:02:03Z' })
         }
         & (Get-Module -Name PagerArchive) { param($r) ConvertTo-PaMessage -Row $r } $row

@@ -28,8 +28,8 @@ function New-PaMessageFilter {
         # Agency names, with wildcards.
         [string[]] $Agency,
 
-        # Paging groups, with wildcards.
-        [string[]] $Group,
+        # Call signs, with wildcards.
+        [string[]] $CallSign,
 
         # Priorities: Emergency, Non-emergency, Admin or None.
         [string[]] $Priority,
@@ -50,22 +50,22 @@ function New-PaMessageFilter {
         [string[]] $Flag
     )
     $query = [ordered]@{
-        q           = $Text
-        capcode     = @($Capcode)
-        alias_like  = @()
-        agency_like = @()
-        group_like  = @()
-        priority    = @(foreach ($p in $Priority) { if ($p -eq 'None') { 'none' } else { $p } })
-        category    = @($Category)
-        job         = @($JobNumber)
-        unaliased   = if ($Unaliased) { 'true' } else { $null }
-        ignored     = if ($IncludeIgnored) { 'true' } else { $null }
-        flag        = @(foreach ($f in $Flag) { @{ ParseFailed = 'parse_failed'; AddressUnsplit = 'address_unsplit'; LocationMismatch = 'location_mismatch' }[$f] })
+        q              = $Text
+        capcode        = @($Capcode)
+        alias_like     = @()
+        agency_like    = @()
+        call_sign_like = @()
+        priority       = @(foreach ($p in $Priority) { if ($p -eq 'None') { 'none' } else { $p } })
+        category       = @($Category)
+        job            = @($JobNumber)
+        unaliased      = if ($Unaliased) { 'true' } else { $null }
+        ignored        = if ($IncludeIgnored) { 'true' } else { $null }
+        flag           = @(foreach ($f in $Flag) { @{ ParseFailed = 'parse_failed'; AddressUnsplit = 'address_unsplit'; LocationMismatch = 'location_mismatch' }[$f] })
     }
     # Wildcards become LIKE patterns; a [set], which LIKE can't express, is
     # checked on each message as well.
     $check = @{}
-    foreach ($pair in @(@('alias_like', @($Alias), 'Alias'), @('agency_like', @($Agency), 'Agency'), @('group_like', @($Group), 'Group'))) {
+    foreach ($pair in @(@('alias_like', @($Alias), 'Alias'), @('agency_like', @($Agency), 'Agency'), @('call_sign_like', @($CallSign), 'CallSign'))) {
         $likes = foreach ($w in $pair[1]) {
             if (-not $w) { continue }
             $converted = ConvertTo-PaLikePattern -Wildcard $w

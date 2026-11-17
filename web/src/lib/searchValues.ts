@@ -1,5 +1,5 @@
 // R33a, M21: the values the search box suggests for alias:, agency: and
-// group:, asked for once and matched in the browser, so typing makes no
+// callsign:, asked for once and matched in the browser, so typing makes no
 // requests however many aliases there are (ADR 0023). They're asked for
 // again when the box is used after a minute, to pick up new aliases.
 import { api } from './api.ts';

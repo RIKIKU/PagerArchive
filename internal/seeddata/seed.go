@@ -32,7 +32,7 @@ const A75Pages = 4_562_500
 // production's busiest alias (58,000 of 3.1 million; owner, 2026-11-08). Its
 // pages take the six phrasings in turn too, so a third of them hold "FIRE".
 // One page in 10 is one of 2,000 units' (Unit 0001 to Unit 2000), about 230
-// each, in its station's group: with 2,005 aliases the planner expects an alias
+// each, with its station's call sign: with 2,005 aliases the planner expects an alias
 // to hold few pages, as on an archive with many (ADR 0017).
 //
 // One page in 9, all Emergency, has a map reference at the end of its
@@ -50,7 +50,7 @@ const A75Pages = 4_562_500
 // pages have an event type by their phrasing, one of 41 localities and two
 // appliances of 42.
 const a75Seed = `
-INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, paging_group, alias_id, extra,
+INSERT INTO messages (capcode, text, priority, sent_at, dedup_key, call_sign, alias_id, extra,
                       job_number, event_type, locality, units)
 SELECT a.pattern_key,
        CASE WHEN g % 4228 = 2000

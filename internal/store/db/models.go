@@ -211,7 +211,7 @@ type Message struct {
 	Address          *string
 	Locality         *string
 	GridRef          *string
-	PagingGroup      *string
+	CallSign         *string
 	Units            []string
 	Extra            []byte
 	ParseFailed      bool

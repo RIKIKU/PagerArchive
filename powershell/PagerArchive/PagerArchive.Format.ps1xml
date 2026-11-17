@@ -147,7 +147,7 @@
               <ListItem><PropertyName>Capcode</PropertyName></ListItem>
               <ListItem><PropertyName>Agency</PropertyName></ListItem>
               <ListItem><PropertyName>Text</PropertyName></ListItem>
-              <ListItem><PropertyName>Group</PropertyName></ListItem>
+              <ListItem><Label>Call sign</Label><ScriptBlock>$_.CallSign</ScriptBlock></ListItem>
               <ListItem><PropertyName>JobNumber</PropertyName></ListItem>
               <ListItem><PropertyName>EventType</PropertyName></ListItem>
               <ListItem><PropertyName>Category</PropertyName></ListItem>

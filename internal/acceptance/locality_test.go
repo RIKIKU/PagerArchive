@@ -37,12 +37,12 @@ const noLocalityAgency = `{
     {
       "name": "emergency",
       "priorities": ["Emergency"],
-      "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>[^@#]+?) @ (?P<address>[^#]+?) #(?P<group>\\S+)$"
+      "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>[^@#]+?) @ (?P<address>[^#]+?) #(?P<call_sign>\\S+)$"
     },
     {
       "name": "no-address",
       "priorities": ["Emergency"],
-      "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>[^@#]+?) #(?P<group>\\S+)$"
+      "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>[^@#]+?) #(?P<call_sign>\\S+)$"
     }
   ]
 }`

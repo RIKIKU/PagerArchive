@@ -95,7 +95,7 @@ function ConvertTo-PaMessage {
             Priority         = if ($Row.priority) { $Row.priority } else { 'None' }
             Text             = $Row.display_text
             RawText          = $Row.text
-            Group            = $Row.group
+            CallSign         = $Row.call_sign
             JobNumber        = $Row.job_number
             EventType        = $Row.event_type
             Category         = $Row.category
