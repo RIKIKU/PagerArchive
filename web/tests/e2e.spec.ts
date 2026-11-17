@@ -5098,6 +5098,227 @@ test('A111 no layers, no layers control', async ({ browser }) => {
 	await ctx.close();
 });
 
+// A118 (R88c, R35c, R38c): every map has the layers and their control, and
+// one choice per browser covers them all: hidden on the map page, hidden on a
+// message's map and the localities map; shown there, shown on the map page;
+// changed in one tab, followed in another already open. A message's small
+// map keeps its marker in sight beside the open panel, and the outlines are
+// fetched once for every map the page opens. Headless Firefox has no WebGL.
+
+/** A page's map, its layers control, panel and checkboxes, once the map is drawn; undefined with no map (headless Firefox only). */
+async function layersOf(page: Page, info: TestInfo) {
+	const map = page.getByTestId('map');
+	await expect(map).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+	if ((await map.getAttribute('data-ready')) !== 'true') {
+		expect(info.project.name, 'only headless Firefox has no map').toBe('firefox');
+		return undefined;
+	}
+	const zones = page.getByRole('checkbox', { name: 'Zone outlines' });
+	const regions = page.getByRole('checkbox', { name: 'Region outlines' });
+	return {
+		map,
+		control: page.getByRole('button', { name: 'Map layers' }),
+		panel: page.getByRole('group', { name: 'Map layers' }),
+		zones,
+		regions,
+		credits: page.locator('.maplibregl-ctrl-attrib-inner'),
+		drawn: (b: typeof zones) => expect.poll(async () => Number(await b.getAttribute('data-drawn')), { timeout: 10_000 }),
+		/** The control is there, under the full-screen button, its panel closed, and the outlines under what the map shows. */
+		async present() {
+			await expect(this.control).toHaveCount(1);
+			await expect(this.control).toHaveAttribute('aria-expanded', 'false');
+			await expect(this.panel).toBeHidden();
+			const fs = (await page.getByRole('button', { name: 'Full screen map' }).boundingBox())!;
+			const c = (await this.control.boundingBox())!;
+			expect(Math.abs(c.x - fs.x), 'under the full-screen button').toBeLessThanOrEqual(1);
+			expect(c.y, 'under the full-screen button').toBeGreaterThanOrEqual(fs.y + fs.height);
+			const order = (await map.getAttribute('data-layers'))!.split(' ');
+			const lastArea = Math.max(...order.map((id, i) => (id.startsWith('area-') ? i : -1)));
+			expect(lastArea, `outlines drawn: ${order}`).toBeGreaterThanOrEqual(0);
+			expect(order.slice(lastArea + 1).length, `something over the outlines: ${order}`).toBeGreaterThan(0);
+			expect(order.slice(0, lastArea).every((id) => id.startsWith('area-')), `the outlines under the rest: ${order}`).toBe(true);
+		},
+		/** A message's map opens at zoom 16, where an area's edge may be out of sight: zoomed out to 14, both layers' are in it. */
+		async zoomOut() {
+			const out = page.getByRole('button', { name: 'Zoom out' });
+			await out.click();
+			await expect(map).toHaveAttribute('data-view', /,15\.00$/);
+			await out.click();
+			await expect(map).toHaveAttribute('data-view', /,14\.00$/);
+		},
+		async open() {
+			await this.control.click();
+			await expect(this.panel).toBeVisible();
+			await expect(this.zones).toBeFocused();
+		},
+		/** Esc closes the panel, focus back on the control. */
+		async close() {
+			await page.keyboard.press('Escape');
+			await expect(this.panel).toBeHidden();
+			await expect(this.control).toBeFocused();
+		},
+		async regionsShown(shown: boolean) {
+			if (shown) await expect(this.regions).toBeChecked();
+			else await expect(this.regions).not.toBeChecked();
+			await expect(this.zones).toBeChecked();
+			if (shown) await this.drawn(regions).toBeGreaterThan(0);
+			else await this.drawn(regions).toBe(0);
+			await this.drawn(zones).toBeGreaterThan(0);
+			if (shown) await expect(this.credits).toContainText('Region outlines: Example regions, made up for PagerArchive');
+			else await expect(this.credits).not.toContainText('Region outlines');
+			await expect(this.credits).toContainText('Zone outlines: Example zones, made up for PagerArchive');
+		}
+	};
+}
+
+test('A118 one layers choice for every map, other tabs too', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	const n = projectN(info);
+	await reportWeek(request, n);
+	const job = uniqueJob();
+	const west = await postId(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1`);
+	const east = await postId(request, '0100002', `@@${job} HSF1 SMOKE FROM ROOF @ 5 EXAMPLE ST, MADEUPTON #STN2`);
+	const ctx = await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } });
+	const page = await ctx.newPage();
+
+	// The map page: both layers shown; the regions hidden here.
+	await page.goto(`/map?job=${job}`);
+	const onMap = await layersOf(page, info);
+	if (!onMap) return ctx.close();
+	await onMap.present();
+	await onMap.open();
+	await onMap.regionsShown(true);
+	await onMap.regions.uncheck();
+	await onMap.regionsShown(false);
+	await onMap.close();
+
+	// A message's detail view: the control, and the regions hidden there too.
+	await page.goto(`/messages/${west}`);
+	const onMessage = (await layersOf(page, info))!;
+	await onMessage.present();
+	await onMessage.zoomOut();
+	await onMessage.open();
+	await onMessage.regionsShown(false);
+	await onMessage.close();
+
+	// The busiest localities' map: hidden there too; shown again here.
+	await page.goto(`/reports/localities?${reportRange(n)}`);
+	await expect(page.getByTestId('report')).toBeVisible();
+	const onReport = (await layersOf(page, info))!;
+	await onReport.present();
+	await onReport.open();
+	await onReport.regionsShown(false);
+	await onReport.regions.check();
+	await onReport.regionsShown(true);
+	await onReport.close();
+
+	// Back on the map page, they're shown.
+	await page.goto(`/map?job=${job}`);
+	const back = (await layersOf(page, info))!;
+	await back.open();
+	await back.regionsShown(true);
+
+	// Another tab, already open on the map page, follows a change made on a message's map.
+	const other = await ctx.newPage();
+	await other.goto(`/map?job=${job}`);
+	const onOther = (await layersOf(other, info))!;
+	await onOther.open();
+	await onOther.regionsShown(true);
+	await page.bringToFront();
+	await page.goto(`/messages/${west}`);
+	const again = (await layersOf(page, info))!;
+	await again.zoomOut();
+	await again.open();
+	await again.regions.uncheck();
+	await again.regionsShown(false);
+	await other.bringToFront();
+	await onOther.regionsShown(false);
+	await other.close();
+
+	// Another message's view, opened in the app, fetches no outlines again.
+	await page.bringToFront();
+	const fetched: string[] = [];
+	page.on('request', (r) => {
+		if (r.url().includes('/api/v1/map/areas/')) fetched.push(r.url());
+	});
+	// The list beside the detail view (R80), the newest first.
+	await page.locator(`a.open[href="/messages/${east}"]`).first().click();
+	await expect(page).toHaveURL(new RegExp(`/messages/${east}$`));
+	await expect(page.getByTestId('area')).toHaveText(['Zone B', 'Region North']);
+	const second = (await layersOf(page, info))!;
+	await second.zoomOut();
+	await second.open();
+	await second.drawn(second.zones).toBeGreaterThan(0);
+	expect(fetched, 'outlines fetched again').toEqual([]);
+	await second.regions.check();
+	await ctx.close();
+});
+
+// A118: a message's small map, the panel open, keeps its marker in sight
+// beside it; the localities map's heat and outlines, light and dark.
+for (const width of [1280, 375]) {
+	test(`A118 the small map and the heat map with the layers open at ${width} px`, async ({ browser, request }, info) => {
+		test.setTimeout(120_000);
+		const n = projectN(info);
+		await reportWeek(request, n);
+		const west = await postId(request, '0100001', `@@${uniqueJob()} HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1`);
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { colorScheme, viewport: { width, height: width === 375 ? 812 : 900 } });
+			const page = await ctx.newPage();
+			const noSideways = async () => expect(await page.evaluate(() => document.documentElement.scrollWidth - innerWidth)).toBeLessThanOrEqual(0);
+
+			await page.goto(`/messages/${west}`);
+			const l = await layersOf(page, info);
+			if (!l) return ctx.close();
+			await l.present();
+			// The marker, inside the map and not under the open panel: at the zoom it opens at, and zoomed out.
+			const inSight = async () => {
+				await l.open();
+				const mapBox = (await l.map.boundingBox())!;
+				const panelBox = (await l.panel.boundingBox())!;
+				const room = 12; // the marker's radius and its stroke, and some
+				await expect
+					.poll(
+						async () => {
+							const [x, y] = (await l.map.getAttribute('data-marker'))!.split(',').map(Number);
+							const [px, py] = [mapBox.x + x, mapBox.y + y];
+							const inMap = px > mapBox.x + room && px < mapBox.x + mapBox.width - room && py > mapBox.y + room && py < mapBox.y + mapBox.height - room;
+							const underPanel = px > panelBox.x - room && px < panelBox.x + panelBox.width + room && py > panelBox.y - room && py < panelBox.y + panelBox.height + room;
+							return inMap && !underPanel;
+						},
+						{ message: 'the marker in sight beside the panel', timeout: 5_000 }
+					)
+					.toBe(true);
+			};
+			await inSight();
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} message's map, layers open`).toEqual([]);
+			await l.map.scrollIntoViewIfNeeded();
+			await page.screenshot({ path: info.outputPath(`a118-message-${colorScheme}-${width}.png`) });
+			await l.close();
+			await l.zoomOut();
+			await inSight();
+			await l.regionsShown(true);
+			await page.screenshot({ path: info.outputPath(`a118-message-zoomed-out-${colorScheme}-${width}.png`) });
+			await l.close();
+
+			await page.goto(`/reports/localities?${reportRange(n)}`);
+			await expect(page.getByTestId('report')).toBeVisible();
+			const h = (await layersOf(page, info))!;
+			await h.present();
+			await h.open();
+			await h.regionsShown(true);
+			await noSideways();
+			expect(await axeOf(page), `${colorScheme} localities map, layers open`).toEqual([]);
+			// The heat and the outlines, the credits folded (after five seconds), to look at (R36).
+			await expect(h.credits).toBeHidden({ timeout: 10_000 });
+			await h.map.screenshot({ path: info.outputPath(`a118-heat-${colorScheme}-${width}.png`) });
+			await h.close();
+			await ctx.close();
+		}
+	});
+}
+
 // R90, A116 (ADR 0037): installable on a phone. The service worker keeps
 // the app shell and nothing else, pages always come from the network, and a
 // new release takes over.

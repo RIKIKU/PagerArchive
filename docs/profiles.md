@@ -42,7 +42,7 @@ The API loads the dataset into the database before it starts listening, but only
 
 ## Areas
 
-A network profile may name **layers** of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in, and another agency's districts over them. A page placed on the map (R24, R25) is in the area of each layer its point falls in, which its job's view, its detail view and the map's list show as the layer's label and the name (`District 08`), and the map page outlines and labels each layer in its own style, with a checkbox for each in the map's "Map layers" panel to hide it. A page with no location shows none; nor does a point in no area of a layer, on an area's edge, or in two of a layer's areas at once (for that layer).
+A network profile may name **layers** of **areas** (R88, ADR 0035): named polygons, such as the districts a network's agencies are organised in, and another agency's districts over them. A page placed on the map (R24, R25) is in the area of each layer its point falls in, which its job's view, its detail view and the map's list show as the layer's label and the name (`District 08`), and every map (the map page, a message's and a report's) outlines and labels each layer in its own style, with a checkbox for each in the map's "Map layers" panel to hide it, one choice for every map in that browser. A page with no location shows none; nor does a point in no area of a layer, on an area's edge, or in two of a layer's areas at once (for that layer).
 
 ```json
 "areas": [
