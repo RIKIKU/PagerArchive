@@ -1,8 +1,8 @@
-# ADR 0042: Re-parse: resumable, pauseable, stoppable and restartable
+# ADR 0043: Re-parse: resumable, pauseable, stoppable and restartable
 
 ## Status
 
-Proposed (2026-11-18). The owner's rule: "for any process, data migrations, reparsing, etc that can take more than 30 minutes, the process should be observable (in Grafana stack), restartable, resumable pauseable and stoppable." Its terms, as the owner approved them: **restartable**, an admin can run it again from the beginning on demand; **resumable**, after a crash, app restart or upgrade it carries on from where it got to (progress kept in the database), not from the start; **pauseable**, an admin can pause it and later carry on without losing progress; **stoppable**, an admin can cancel it, and the data stays consistent (each unit of work done or not, never half done). The rule itself is being written into SPEC.md, CLAUDE.md and an ADR of its own on another branch; this ADR applies it to the re-parse. SPEC.md R23c, with A123. Observable is ADR 0041 (R23b, A122). On the branch `reparse-control` from main; the pull request is labelled `feature`.
+Proposed (2026-11-18). The owner's rule for long jobs, SPEC.md R91 (ADR 0042): "for any process, data migrations, reparsing, etc that can take more than 30 minutes, the process should be observable (in Grafana stack), restartable, resumable pauseable and stoppable", with the five meanings the owner approved. ADR 0042's audit found the re-parse observable (R23b, ADR 0041) and none of the other four. This ADR brings it up to R91: SPEC.md R23c, with A123, and R91b now says re-parsing meets the rule. On the branch `reparse-control` from main; the pull request is labelled `feature`.
 
 ## Context
 
@@ -15,7 +15,9 @@ What a restart part way through a re-parse did before this change, read from the
 - **The large events weren't rebuilt** around the pages a lost run did: they're rebuilt once, from a list kept in memory, at the end of the run (R87f).
 - **Only a database error** part way (not a stop) put the requests back, as "retry", and that started the pattern again from the beginning.
 
-ADR 0041 §5 sketched the fix: keep the claimed requests, write each pattern's last ID per batch, and start from it.
+This agrees with ADR 0042's note 1 and 2, which were from reading the code; the test confirms them. ADR 0041 §5 sketched the fix: keep the claimed requests, write each pattern's last ID per batch, and start from it.
+
+ADR 0042 leaves to the first job built to R91 whether jobs share one table of state and progress. This one keeps its own (`reparse_runs`), because its progress is per capcode pattern and it rebuilds large events after, which no other job has. What the next long job can copy is the shape: a row with a state, an epoch and its place, written in the same transaction as each unit of work; control functions that lock that row; an API under `/api/v1/admin/…`, a page in Administration and PowerShell commands; and a state gauge beside R23b's.
 
 ## Decisions
 

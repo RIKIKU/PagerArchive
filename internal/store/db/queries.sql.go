@@ -2398,7 +2398,7 @@ const getReparseRun = `-- name: GetReparseRun :one
 SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs
 `
 
-// R23c (ADR 0042): the re-parse's run, the latest; there's at most one.
+// R23c (ADR 0043): the re-parse's run, the latest; there's at most one.
 func (q *Queries) GetReparseRun(ctx context.Context) (ReparseRun, error) {
 	row := q.db.QueryRow(ctx, getReparseRun)
 	var i ReparseRun

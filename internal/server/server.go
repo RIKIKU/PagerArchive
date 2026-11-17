@@ -163,7 +163,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/admin/backup":         s.adminOnly(s.getBackup),
 		"POST /api/v1/admin/backup":        s.adminOnly(s.postBackup),
 		"GET /api/v1/admin/auto-upgrade":   s.adminOnly(s.getAutoUpgrade),
-		// The re-parse's state and an admin's controls (R23c, ADR 0042).
+		// The re-parse's state and an admin's controls (R23c, ADR 0043).
 		"GET /api/v1/admin/reparse":                s.adminOnly(s.getReparse),
 		"POST /api/v1/admin/reparse/pause":         s.adminOnly(s.pauseReparse),
 		"POST /api/v1/admin/reparse/resume":        s.adminOnly(s.resumeReparse),

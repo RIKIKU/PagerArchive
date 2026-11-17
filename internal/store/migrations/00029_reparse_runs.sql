@@ -1,5 +1,5 @@
 -- +goose Up
--- R23c (ADR 0042): the re-parse's run is kept in the database, so a crash,
+-- R23c (ADR 0043): the re-parse's run is kept in the database, so a crash,
 -- restart or upgrade carries on from the last batch it finished, and an
 -- admin can pause, carry on, stop or start it again. One run at a time:
 -- the latest, kept after it finishes so its numbers can still be shown.

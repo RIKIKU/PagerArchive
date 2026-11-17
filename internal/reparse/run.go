@@ -13,7 +13,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
-// A run (R23c, ADR 0042) is what one re-parse has to do: its capcode
+// A run (R23c, ADR 0043) is what one re-parse has to do: its capcode
 // patterns, each walked by message ID, and how far each has got, kept in
 // the database (reparse_runs and the tables beside it) in the same
 // transaction as each batch of pages. So a crash, restart or upgrade carries
