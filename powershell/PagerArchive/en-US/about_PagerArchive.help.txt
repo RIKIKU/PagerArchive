@@ -65,6 +65,8 @@ LONG DESCRIPTION
     PagerArchive.Connection   Uri, Name, Email, Role, SavedIn, ExpiresAt
     PagerArchive.Backup       State, Run, LastGoodAt, LastRunAt, Nights,
                               Error, and the last good backup's size and times
+    PagerArchive.Reparse      State, Done, Total, Percent, PerMinute,
+                              TimeLeft, StartedAt, and its reasons as codes
 
     An alias's properties are the import's parameters, so
 
@@ -148,6 +150,21 @@ LONG DESCRIPTION
     it's going. One at a time: while one is asked for or running, another
     is refused (backup_queued, backup_running).
 
+  RE-PARSING
+    After an alias, template or profile change, the server re-parses the
+    stored messages it affects in the background; a profile change
+    re-parses the whole archive. A restart or upgrade carries it on from
+    where it got to. To see how it is going:
+
+        Get-PagerArchiveReparse
+
+    Suspend-PagerArchiveReparse pauses it after the message in hand, even
+    across a restart, and Resume-PagerArchiveReparse carries it on.
+    Stop-PagerArchiveReparse cancels it: the messages it did stay re-parsed,
+    the rest stay as they were. Start-PagerArchiveReparse runs it again from
+    the beginning. A change its state doesn't allow is refused
+    (reparse_not_running, reparse_not_paused, reparse_stopped, reparse_none).
+
   ERRORS
     A refusal from PagerArchive is an error whose ErrorId is the API's
     code (e.g. duplicate_alias, template_in_use, powershell_admins_only)
@@ -162,7 +179,8 @@ SEE ALSO
     Get-PagerArchiveMessage
     Watch-PagerArchiveMessage
     Start-PagerArchiveBackup
+    Get-PagerArchiveReparse
     https://github.com/RIKIKU/PagerArchive/blob/main/docs/powershell.md
 
 KEYWORDS
-    PagerArchive POCSAG pager alias template backup
+    PagerArchive POCSAG pager alias template backup reparse

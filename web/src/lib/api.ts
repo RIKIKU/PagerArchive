@@ -100,6 +100,26 @@ export interface BackupStatus {
 	running_since: string | null;
 }
 
+/** R23c: the re-parse, its state and how far it has got (counts and codes only). */
+export interface ReparseStatus {
+	state: 'idle' | 'running' | 'paused' | 'stopped';
+	total: number;
+	done: number;
+	percent: number;
+	/** While it runs: messages a minute, and the seconds left at that rate (null until some are done). */
+	per_minute: number;
+	eta_seconds: number | null;
+	started_at: string | null;
+	changed_at: string | null;
+	finished_at: string | null;
+	/** R23b's reason codes, such as profiles_changed. */
+	reasons: string[];
+	requests: number;
+	patterns: number;
+	/** Requests waiting for the next run. */
+	waiting: number;
+}
+
 export interface Upgrade {
 	at: string;
 	from: string;
@@ -812,6 +832,9 @@ export const api = {
 	backUpNow: () => request<BackupStatus>('POST', '/api/v1/admin/backup'),
 	/** R84h: what the host's automatic upgrades last did. */
 	autoUpgrade: () => get<AutoUpgradeStatus>('/api/v1/admin/auto-upgrade'),
+	/** R23c: the re-parse, and an admin's pause, resume, stop and start again. */
+	reparse: () => get<ReparseStatus>('/api/v1/admin/reparse'),
+	reparseAction: (action: 'pause' | 'resume' | 'stop' | 'start') => request<ReparseStatus>('POST', `/api/v1/admin/reparse/${action}`),
 	/** Saves a retention period; a shorter one needs the shown cut-off date
 	 * confirmed, else the reply is the RetentionConfirm to show (R46). */
 	setRetention: async (days: number, confirm_cutoff?: string): Promise<Retention | RetentionConfirm> => {

@@ -459,3 +459,81 @@ function ConvertTo-PaBackup {
         }
     }
 }
+function ConvertTo-PaReparse {
+    <#
+    .SYNOPSIS
+    A PagerArchive.Reparse from the API's re-parse status (R23c).
+    #>
+    [CmdletBinding()]
+    [OutputType('PagerArchive.Reparse')]
+    param(
+        # The API's status.
+        [Parameter(Mandatory, ValueFromPipeline)]
+        [object] $Row
+    )
+    process {
+        $time = {
+            param($Name)
+            $p = $Row.PSObject.Properties[$Name]
+            if ($p -and $p.Value) { [datetimeoffset]$p.Value } else { $null }
+        }
+        $eta = $Row.PSObject.Properties['eta_seconds']
+        [pscustomobject]@{
+            PSTypeName = 'PagerArchive.Reparse'
+            State      = [string]$Row.state
+            Done       = [long]$Row.done
+            Total      = [long]$Row.total
+            Percent    = [int]$Row.percent
+            PerMinute  = [long]$Row.per_minute
+            TimeLeft   = if ($eta -and $null -ne $eta.Value) { [timespan]::FromSeconds([double]$eta.Value) } else { $null }
+            StartedAt  = & $time 'started_at'
+            ChangedAt  = & $time 'changed_at'
+            FinishedAt = & $time 'finished_at'
+            Reasons    = [string[]]@($Row.reasons)
+            Requests   = [int]$Row.requests
+            Patterns   = [int]$Row.patterns
+            Waiting    = [long]$Row.waiting
+        }
+    }
+}
+
+function Invoke-PaReparseChange {
+    <#
+    .SYNOPSIS
+    An admin's change to the re-parse (R23c), for the public commands.
+
+    .DESCRIPTION
+    Posts the action and outputs the status. Not being signed in, or no
+    server to ask, stops the command; a refusal (the re-parse's state
+    doesn't allow it) is an ordinary error.
+    #>
+    [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseShouldProcessForStateChangingFunctions', '', Justification = 'The public commands call ShouldProcess.')]
+    [CmdletBinding()]
+    [OutputType('PagerArchive.Reparse')]
+    param(
+        # The public command's $PSCmdlet.
+        [Parameter(Mandatory)]
+        [System.Management.Automation.PSCmdlet] $Cmdlet,
+
+        # pause, resume, stop or start.
+        [Parameter(Mandatory)]
+        [ValidateSet('pause', 'resume', 'stop', 'start')]
+        [string] $Action,
+
+        # Output the status.
+        [switch] $PassThru
+    )
+    try {
+        $status = Invoke-PaApi -Method POST -Path "/api/v1/admin/reparse/$Action" | ConvertTo-PaReparse
+    } catch {
+        $record = Copy-PaErrorRecord -ErrorRecord $_
+        if ($record.CategoryInfo.Category -in @('AuthenticationError', 'ConnectionError') -or $record.Exception.Data['PagerArchive.Code'] -eq 'several_servers') {
+            $Cmdlet.ThrowTerminatingError($record)
+        }
+        $Cmdlet.WriteError($record)
+        return
+    }
+    if ($PassThru) {
+        $status
+    }
+}

@@ -58,10 +58,10 @@ Describe '<Name> (guidelines sections 2 to 8)' -ForEach $commands {
         $verb, $noun = $Name -split '-', 2
         $help = Get-Help -Name $Name -Full
         $source = $command.ScriptBlock.ToString()
-        $changes = $verb -in @('New', 'Set', 'Remove', 'Rename', 'Import', 'Start')
-        # Commands about the server's backups, not items, take nothing from
-        # the pipeline (guidelines section 3).
-        $noItems = $noun -eq 'PagerArchiveBackup'
+        $changes = $verb -in @('New', 'Set', 'Remove', 'Rename', 'Import', 'Start', 'Suspend', 'Resume', 'Stop')
+        # Commands about the server's backups and re-parse, not items, take
+        # nothing from the pipeline (guidelines section 3).
+        $noItems = $noun -in @('PagerArchiveBackup', 'PagerArchiveReparse')
     }
 
     It 'uses an approved verb' {

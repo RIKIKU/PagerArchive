@@ -1,14 +1,18 @@
 // Package reparse re-parses stored messages when an alias, template or
 // profile changes (R23a). Requests come from the reparse_requests table,
 // written by any tool; the worker wakes on a PostgreSQL notification and
-// also polls, so a change is never missed.
+// also polls, so a change is never missed. Each re-parse is a run kept in
+// the database (run.go, R23c), so it carries on after a restart, and an
+// admin can pause, carry on, stop or start it again.
 package reparse
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 
@@ -45,25 +49,45 @@ type Worker struct {
 	// Regroup rebuilds the large events around the re-parsed pages after
 	// each re-parse (R87; owner, 2026-11-14; ADR 0027 §9); nil rebuilds none.
 	Regroup *events.Regrouper
-	// Progress is how far the re-parse has got, for /metrics (R23b).
+	// Progress is how far the re-parse has got, and its state, for /metrics
+	// and the admin's status (R23b, R23c).
 	Progress Progress
 	// ProgressEvery is how often a run logs its progress: 30 s if 0.
 	ProgressEvery time.Duration
 }
 
 // CheckProfiles queues a full re-parse if the profiles or address dataset
-// changed since the last start (section 14: compared by file hashes).
+// changed since the last start (section 14: compared by file hashes). The
+// new hash is saved in the same transaction. A run that hadn't finished
+// (running, paused or stopped: interrupted by the restart, or held by an
+// admin) has parsed its pages with the old profiles, so it starts again
+// from the beginning, over every message, in the state it was in (R23c).
 func (w *Worker) CheckProfiles(ctx context.Context) error {
 	old, err := w.Store.GetSetting(ctx, hashKey)
 	if err == nil && old == w.ProfileHash {
 		return nil
 	}
-	return w.Store.InTx(ctx, func(q *db.Queries) error {
+	var again *db.ReparseRun
+	err = w.Store.InTx(ctx, func(q *db.Queries) error {
 		if err := q.RequestReparse(ctx, db.RequestReparseParams{CapcodePattern: everything, Reason: "profiles changed"}); err != nil {
+			return err
+		}
+		r, err := q.LockReparseRun(ctx)
+		switch {
+		case err == nil && r.State != finished:
+			if r, err = restart(ctx, q, r, stateOf(r.State)); err != nil {
+				return err
+			}
+			again = &r
+		case err != nil && !errors.Is(err, pgx.ErrNoRows):
 			return err
 		}
 		return q.SetSetting(ctx, db.SetSettingParams{Key: hashKey, Value: w.ProfileHash})
 	})
+	if err == nil && again != nil {
+		w.Log.InfoContext(ctx, "re-parse starts again from the beginning: the profiles changed", "state", again.State, "reasons", again.Reasons, "total", again.Total)
+	}
+	return err
 }
 
 // Run processes requests until ctx ends.
@@ -104,81 +128,211 @@ func (w *Worker) listen(ctx context.Context) error {
 	}
 }
 
-// RunOnce claims the queued requests and re-parses the matching messages.
-// It returns how many messages it re-parsed.
+// RunOnce does what the re-parse has to do now (R23c): it carries on the
+// run that's running, from the last batch done, or starts one from the
+// queued requests, until that run finishes or an admin pauses, stops or
+// starts it again. A paused or stopped run does nothing more (a stopped one
+// first rebuilds the large events around the pages it did), and the
+// requests wait. It returns how many messages it re-parsed.
 func (w *Worker) RunOnce(ctx context.Context) (int, error) {
-	reqs, err := w.Store.ClaimReparseRequests(ctx)
-	if err != nil || len(reqs) == 0 {
-		return 0, err
+	n := 0
+	for {
+		r, err := w.Store.GetReparseRun(ctx)
+		switch {
+		case errors.Is(err, pgx.ErrNoRows):
+			r = db.ReparseRun{State: finished}
+		case err != nil:
+			return n, err
+		}
+		created := false
+		if r.State == finished {
+			if r.ID != 0 && w.Progress.Snapshot().Run == 0 {
+				w.Progress.hold(Idle, r.ID, r.Total, r.Done, r.StartedAt) // the last run's, after a restart
+			}
+			var ok bool
+			if r, ok, err = claim(ctx, w.Store); err != nil || !ok {
+				return n, err
+			}
+			created = true
+		}
+		if st := stateOf(r.State); st != Running {
+			if st == Stopped {
+				if err := w.rebuildEvents(ctx, r.ID); err != nil {
+					return n, err
+				}
+			}
+			w.Progress.hold(st, r.ID, r.Total, r.Done, r.StartedAt)
+			return n, nil
+		}
+		k, again, err := w.walk(ctx, r, created)
+		n += k
+		if err != nil || !again {
+			return n, err
+		}
 	}
+}
+
+// walk re-parses run r's messages from where each pattern got to, a batch
+// at a time, and finishes the run once they're all done. again is true when
+// it stopped because the run changed (paused, stopped or started again).
+func (w *Worker) walk(ctx context.Context, r db.ReparseRun, created bool) (n int, again bool, err error) {
 	// Traced only when there's work, so the minute's poll makes no spans (R72).
 	ctx, span := telemetry.Or(w.Tracer).Start(ctx, "reparse", trace.WithNewRoot())
 	defer span.End()
-	patterns := map[string]bool{}
-	for _, r := range reqs {
-		patterns[r.CapcodePattern] = true
-	}
-	if patterns[everything] {
-		patterns = map[string]bool{everything: true}
-	}
 	cands, err := w.candidates(ctx)
 	if err != nil {
-		w.requeue(ctx, patterns)
-		return 0, err
+		return 0, false, err
 	}
-	// R23b: what this run has to do, counted once, for its progress.
-	var total int64
-	for pattern := range patterns {
-		c, err := w.Store.CountMessagesToReparse(ctx, pattern)
-		if err != nil {
-			w.requeue(ctx, patterns)
-			return 0, err
-		}
-		total += c
+	pats, err := w.Store.ReparseRunPatterns(ctx, r.ID)
+	if err != nil {
+		return 0, false, err
 	}
-	reasons := make([]string, len(reqs))
-	for i, r := range reqs {
-		reasons[i] = r.Reason
+	w.Progress.begin(r.ID, r.Total, r.Done, r.StartedAt, time.Now())
+	if created {
+		w.Log.InfoContext(ctx, "re-parse started", "reasons", r.Reasons, "requests", r.Requests, "patterns", len(pats), "total", r.Total)
+	} else {
+		w.Log.InfoContext(ctx, "re-parse carried on", "state", string(Running), "reasons", r.Reasons, "done", r.Done, "total", r.Total)
 	}
-	started := time.Now()
-	w.Progress.start(total, started)
-	defer w.Progress.finish()
-	w.Log.InfoContext(ctx, "re-parse started", "reasons", reasonCodes(reasons), "requests", len(reqs), "patterns", len(patterns), "total", total)
 	stopLog := w.logProgress(ctx)
 	defer stopLog()
-	n := 0
-	var aff events.Affected
-	for pattern := range patterns {
-		var after int64
+	for _, p := range pats {
+		if p.Done {
+			continue
+		}
+		after := p.AfterID
 		for {
-			rows, err := w.Store.MessagesToReparse(ctx, db.MessagesToReparseParams{Pattern: pattern, AfterID: after, Batch: batchSize})
+			if w.Progress.interrupted() {
+				return n, true, nil
+			}
+			rows, err := w.Store.MessagesToReparse(ctx, db.MessagesToReparseParams{Pattern: p.CapcodePattern, AfterID: after, Batch: batchSize})
 			if err != nil {
-				w.requeue(ctx, patterns)
-				return n, err
+				return n, false, err
 			}
-			for _, m := range rows {
-				if err := w.reparse(ctx, cands, m, &aff); err != nil {
-					w.requeue(ctx, patterns)
-					return n, err
-				}
-				after = m.ID
-				n++
-				w.Progress.add()
+			b, err := w.batch(ctx, r, cands, p.CapcodePattern, after, rows, len(rows) < batchSize)
+			n += b.n
+			if err != nil {
+				return n, false, err
 			}
+			if b.changed || b.cut {
+				return n, true, nil
+			}
+			after = b.last
 			if len(rows) < batchSize {
 				break
 			}
 		}
 	}
 	stopLog()
+	// Every pattern is done: the large events around its pages are rebuilt,
+	// and it's finished. Until then it's running (R87f).
+	if err := w.rebuildEvents(ctx, r.ID); err != nil {
+		return n, false, err
+	}
+	changed := false
+	err = w.Store.InTx(ctx, func(q *db.Queries) error {
+		cur, err := q.LockReparseRun(ctx)
+		if err != nil {
+			return err
+		}
+		if cur.ID != r.ID || cur.Epoch != r.Epoch {
+			changed = true
+			return nil
+		}
+		return q.FinishReparseRun(ctx, r.ID)
+	})
+	if err != nil || changed {
+		return n, changed, err
+	}
+	w.Progress.finish()
 	span.SetAttributes(attribute.Int("pagerarchive.reparse.messages", n))
 	perMin, _ := w.Progress.Snapshot().Rate(time.Now())
-	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", len(reqs), "seconds", int64(time.Since(started).Seconds()), "per_minute", int64(perMin))
-	if err := w.regroup(ctx, &aff); err != nil {
-		w.requeue(ctx, patterns)
-		return n, err
+	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", r.Requests, "seconds", int64(time.Since(r.StartedAt).Seconds()), "per_minute", int64(perMin))
+	return n, false, nil
+}
+
+// batchResult is how a batch went: n pages done and the last one's ID;
+// changed when the run was started again meanwhile (the pages are done, its
+// place isn't written), cut when an admin's change stopped it part way or it
+// was paused or stopped meanwhile (the pages done so far are kept, with
+// their place).
+type batchResult struct {
+	n            int
+	last         int64
+	changed, cut bool
+}
+
+// batch re-parses one batch of a pattern's messages, and writes where the
+// pattern got to, its run's done and the days its pages were sent, in one
+// transaction (R23c): each page is done or not, never half done, and what
+// the run says is done is.
+func (w *Worker) batch(ctx context.Context, r db.ReparseRun, cands []ingest.Candidate, pattern string, after int64, rows []db.MessagesToReparseRow, last bool) (batchResult, error) {
+	var b batchResult
+	err := w.Store.InTx(ctx, func(q *db.Queries) error {
+		b = batchResult{last: after}
+		var days events.Affected
+		for _, m := range rows {
+			if w.Progress.interrupted() {
+				b.cut = true
+				break
+			}
+			if err := w.reparse(ctx, q, cands, m, &days); err != nil {
+				return err
+			}
+			b.n++
+			b.last = m.ID
+			w.Progress.add()
+		}
+		cur, err := q.LockReparseRun(ctx)
+		if errors.Is(err, pgx.ErrNoRows) {
+			b.changed = true
+			return nil
+		} else if err != nil {
+			return err
+		}
+		if cur.ID != r.ID || cur.Epoch != r.Epoch {
+			b.changed = true
+			return nil
+		}
+		for _, s := range days.Spans() {
+			if err := q.AddReparseRunDay(ctx, db.AddReparseRunDayParams{RunID: r.ID, Day: s.From.UTC().Unix() / 86400, FromAt: s.From, ToAt: s.To}); err != nil {
+				return err
+			}
+		}
+		if err := q.SetReparseRunPattern(ctx, db.SetReparseRunPatternParams{AfterID: b.last, Done: last && !b.cut, RunID: r.ID, Pattern: pattern}); err != nil {
+			return err
+		}
+		if err := q.AddReparseRunDone(ctx, db.AddReparseRunDoneParams{N: int64(b.n), ID: r.ID}); err != nil {
+			return err
+		}
+		if stateOf(cur.State) != Running {
+			b.cut = true
+		}
+		return nil
+	})
+	if err != nil {
+		w.Progress.undo(b.n)
+		b.n = 0
 	}
-	return n, nil
+	return b, err
+}
+
+// rebuildEvents rebuilds the large events around the pages run id has done
+// (R87f), from the days its batches kept, then forgets the days: done again
+// after a crash part way, it gives the same events.
+func (w *Worker) rebuildEvents(ctx context.Context, id int64) error {
+	days, err := w.Store.ReparseRunDays(ctx, id)
+	if err != nil || len(days) == 0 {
+		return err
+	}
+	var aff events.Affected
+	for _, d := range days {
+		aff.Add(d.FromAt)
+		aff.Add(d.ToAt)
+	}
+	if err := w.regroup(ctx, &aff); err != nil {
+		return err
+	}
+	return w.Store.DeleteReparseRunDays(ctx, id)
 }
 
 // candidates are every alias, for picking each message's best one.
@@ -210,7 +364,7 @@ func (w *Worker) ReparseIDs(ctx context.Context, ids []int64) error {
 	}
 	var aff events.Affected
 	for _, m := range rows {
-		if err := w.reparse(ctx, cands, db.MessagesToReparseRow(m), &aff); err != nil {
+		if err := w.reparse(ctx, w.Store.Queries, cands, db.MessagesToReparseRow(m), &aff); err != nil {
 			return err
 		}
 	}
@@ -239,7 +393,7 @@ func (w *Worker) regroup(ctx context.Context, aff *events.Affected) error {
 // reparse re-parses one message. A page in a large event, or a live page
 // that now counts and has a job or a code, is added to aff: the events around
 // it are rebuilt afterwards (Worker.regroup).
-func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) error {
+func (w *Worker) reparse(ctx context.Context, q *db.Queries, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) error {
 	var matching []ingest.Candidate
 	for _, c := range cands {
 		if ingest.LikeMatch(c.Pattern, m.Capcode) {
@@ -264,7 +418,7 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 	if err != nil {
 		return err
 	}
-	if err := w.Store.UpdateParsed(ctx, db.UpdateParsedParams{
+	if err := q.UpdateParsed(ctx, db.UpdateParsedParams{
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		CallSign: f.CallSign, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
@@ -276,14 +430,5 @@ func (w *Worker) reparse(ctx context.Context, cands []ingest.Candidate, m db.Mes
 	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || f.LargeEventField || events.HasCode(w.Network, m.Text))) {
 		aff.Add(m.SentAt)
 	}
-	return ingest.Locate(ctx, w.Geo, w.Store.Queries, m.ID, f)
-}
-
-// requeue puts claimed requests back after a failure, so none are lost.
-func (w *Worker) requeue(ctx context.Context, patterns map[string]bool) {
-	for p := range patterns {
-		if err := w.Store.RequestReparse(ctx, db.RequestReparseParams{CapcodePattern: p, Reason: "retry"}); err != nil {
-			w.Log.Error("re-queue re-parse", "error", store.SafeError(err))
-		}
-	}
+	return ingest.Locate(ctx, w.Geo, q, m.ID, f)
 }

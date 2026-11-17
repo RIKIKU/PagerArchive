@@ -5,7 +5,7 @@
     Author               = 'PagerArchive contributors'
     CompanyName          = 'PagerArchive'
     Copyright            = '(c) PagerArchive contributors. MIT licence.'
-    Description          = 'Manage a PagerArchive server from PowerShell: sign in with your PagerArchive account, manage templates and aliases, import aliases through the pipeline, search, watch and export messages, and back up the server now.'
+    Description          = 'Manage a PagerArchive server from PowerShell: sign in with your PagerArchive account, manage templates and aliases, import aliases through the pipeline, search, watch and export messages, back up the server now, and see, pause, resume, stop or start again its re-parse of stored messages.'
     CompatiblePSEditions = @('Core')
     PowerShellVersion    = '7.6'
     FormatsToProcess     = @('PagerArchive.Format.ps1xml')
@@ -17,6 +17,7 @@
         'Get-PagerArchiveAlias'
         'Get-PagerArchiveBackup'
         'Get-PagerArchiveMessage'
+        'Get-PagerArchiveReparse'
         'Get-PagerArchiveTemplate'
         'Import-PagerArchiveAlias'
         'New-PagerArchiveAlias'
@@ -25,9 +26,13 @@
         'Remove-PagerArchiveTemplate'
         'Rename-PagerArchiveAlias'
         'Rename-PagerArchiveTemplate'
+        'Resume-PagerArchiveReparse'
         'Set-PagerArchiveAlias'
         'Set-PagerArchiveTemplate'
         'Start-PagerArchiveBackup'
+        'Start-PagerArchiveReparse'
+        'Stop-PagerArchiveReparse'
+        'Suspend-PagerArchiveReparse'
         'Watch-PagerArchiveMessage'
     )
     AliasesToExport      = @(
@@ -37,6 +42,7 @@
         'Get-PaAlias'
         'Get-PaBackup'
         'Get-PaMessage'
+        'Get-PaReparse'
         'Get-PaTemplate'
         'Import-PaAlias'
         'New-PaAlias'
@@ -45,9 +51,13 @@
         'Remove-PaTemplate'
         'Rename-PaAlias'
         'Rename-PaTemplate'
+        'Resume-PaReparse'
         'Set-PaAlias'
         'Set-PaTemplate'
         'Start-PaBackup'
+        'Start-PaReparse'
+        'Stop-PaReparse'
+        'Suspend-PaReparse'
         'Watch-PaMessage'
     )
     CmdletsToExport      = @()

@@ -171,6 +171,74 @@ WHERE m.capcode LIKE sqlc.arg(pattern)::text AND m.id > sqlc.arg(after_id)::bigi
 ORDER BY m.id
 LIMIT sqlc.arg(batch)::int;
 
+-- name: GetReparseRun :one
+-- R23c (ADR 0042): the re-parse's run, the latest; there's at most one.
+SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs;
+
+-- name: LockReparseRun :one
+-- As GetReparseRun, locked until the transaction ends: a batch's end, an
+-- admin's change or the start-up check, one at a time.
+SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs FOR UPDATE;
+
+-- name: DeleteReparseRuns :exec
+-- Before a new run: the last one, with its patterns and days, goes.
+DELETE FROM reparse_runs;
+
+-- name: CreateReparseRun :one
+INSERT INTO reparse_runs (state, reasons, requests, total) VALUES ('running', $1, $2, $3) RETURNING id;
+
+-- name: RestartReparseRun :exec
+-- From the beginning again (Start again, or the profiles changed): its
+-- patterns are put back by the caller, and its days go.
+UPDATE reparse_runs SET state = sqlc.arg(state)::text, reasons = sqlc.arg(reasons)::text, requests = sqlc.arg(requests)::int,
+    total = sqlc.arg(total)::bigint, done = 0, epoch = epoch + 1, started_at = now(), changed_at = now(), finished_at = NULL
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: SetReparseRunState :exec
+UPDATE reparse_runs SET state = sqlc.arg(state)::text, changed_at = now() WHERE id = sqlc.arg(id)::bigint;
+
+-- name: FinishReparseRun :exec
+-- Pages stored while it ran are re-parsed by it too, so its total is then
+-- what it did (R23b).
+UPDATE reparse_runs SET state = 'finished', changed_at = now(), finished_at = now(), total = GREATEST(total, done)
+WHERE id = $1;
+
+-- name: AddReparseRunDone :exec
+UPDATE reparse_runs SET done = done + sqlc.arg(n)::bigint WHERE id = sqlc.arg(id)::bigint;
+
+-- name: DeleteReparseRunPatterns :exec
+DELETE FROM reparse_run_patterns WHERE run_id = $1;
+
+-- name: AddReparseRunPattern :exec
+INSERT INTO reparse_run_patterns (run_id, capcode_pattern) VALUES ($1, $2) ON CONFLICT DO NOTHING;
+
+-- name: ReparseRunPatterns :many
+SELECT capcode_pattern, after_id, done FROM reparse_run_patterns WHERE run_id = $1 ORDER BY capcode_pattern;
+
+-- name: SetReparseRunPattern :exec
+-- Where a pattern's walk has got: written with the batch it ends.
+UPDATE reparse_run_patterns SET after_id = sqlc.arg(after_id)::bigint, done = sqlc.arg(done)::bool
+WHERE run_id = sqlc.arg(run_id)::bigint AND capcode_pattern = sqlc.arg(pattern)::text;
+
+-- name: AddReparseRunDay :exec
+INSERT INTO reparse_run_days (run_id, day, from_at, to_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (run_id, day) DO UPDATE SET from_at = LEAST(reparse_run_days.from_at, EXCLUDED.from_at),
+    to_at = GREATEST(reparse_run_days.to_at, EXCLUDED.to_at);
+
+-- name: ReparseRunDays :many
+SELECT from_at, to_at FROM reparse_run_days WHERE run_id = $1 ORDER BY day;
+
+-- name: DeleteReparseRunDays :exec
+DELETE FROM reparse_run_days WHERE run_id = $1;
+
+-- name: CountReparseRequests :one
+-- Requests waiting for the next run (R23c).
+SELECT count(*) FROM reparse_requests;
+
+-- name: NotifyReparse :exec
+-- Wakes the API's re-parse worker (R23a).
+SELECT pg_notify('pagerarchive_reparse', '');
+
 -- name: UpdateParsed :exec
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,

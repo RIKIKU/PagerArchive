@@ -11,7 +11,7 @@
     {
       "id": 12, "type": "text", "title": "How to read this",
       "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "**Prometheus** counts every request the API answers, by route and status (never the real path). **Tempo** keeps each request's trace, with the signed-in user's numeric ID and role, nothing else about them (R70). Each panel's **i** says what normal looks like. In short, worry when **errors** appear, when the **slowest 10 %** stays up, when the **database pool** runs out (in use at max, waits climbing), or when **memory** or **goroutines** keep rising without falling back. At the bottom, **Re-parse** says Idle, or, after an alias, template or profile change, how far re-parsing the stored messages has got, how fast it goes and about how long it has left.\n\nThe graphs from traces: click a line to pin its tooltip, then **Open in Explore (this time range)** lists that user's requests or that query's runs, in this dashboard's time range. A dot is a sample request: click it for its trace. A trace opens whatever time range Explore shows."}
+      "options": {"mode": "markdown", "content": "**Prometheus** counts every request the API answers, by route and status (never the real path). **Tempo** keeps each request's trace, with the signed-in user's numeric ID and role, nothing else about them (R70). Each panel's **i** says what normal looks like. In short, worry when **errors** appear, when the **slowest 10 %** stays up, when the **database pool** runs out (in use at max, waits climbing), or when **memory** or **goroutines** keep rising without falling back. At the bottom, **Re-parse** says Idle, or, after an alias, template or profile change, how far re-parsing the stored messages has got, how fast it goes and about how long it has left, or that an admin paused or stopped it.\n\nThe graphs from traces: click a line to pin its tooltip, then **Open in Explore (this time range)** lists that user's requests or that query's runs, in this dashboard's time range. A dot is a sample request: click it for its trace. A trace opens whatever time range Explore shows."}
     },
     {
       "id": 1, "type": "timeseries", "title": "Requests per second, by route and status",
@@ -130,19 +130,19 @@
     },
     {
       "id": 13, "type": "stat", "title": "Re-parse",
-      "description": "Whether stored messages are being re-parsed now (R23a, R23b): after an alias, template or profile changes, the API re-parses and re-places the affected messages in the background. A profile change re-parses the whole archive, which takes hours on a large one. Normal: Idle, or Running for a while after a change. Worry: Running with no change made, or Running again and again (each failed batch is queued again as \"retry\").",
+      "description": "The re-parse's state (R23a-R23c): after an alias, template or profile changes, the API re-parses and re-places the affected messages in the background. A profile change re-parses the whole archive, which takes hours on a large one. Running; Paused or Stopped when an admin paused or stopped it (Administration, Re-parse, or the PowerShell module). A restart or upgrade carries a running one on from where it got to. Normal: Idle, or Running for a while after a change. Worry: Running with no change made, or Paused or Stopped and forgotten: changes made meanwhile wait for it.",
       "gridPos": {"h": 5, "w": 6, "x": 0, "y": 86},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_reparse_running{job=\"pagerarchive\"})"}],
-      "fieldConfig": {"defaults": {"noValue": "The API isn't scraped", "mappings": [{"type": "value", "options": {"0": {"text": "Idle", "color": "green"}, "1": {"text": "Running", "color": "blue"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "blue", "value": 1}]}}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_reparse_state{job=\"pagerarchive\"}) or max(pagerarchive_reparse_running{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"noValue": "The API isn't scraped", "mappings": [{"type": "value", "options": {"0": {"text": "Idle", "color": "green"}, "1": {"text": "Running", "color": "blue"}, "2": {"text": "Paused", "color": "yellow"}, "3": {"text": "Stopped", "color": "orange"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "blue", "value": 1}, {"color": "yellow", "value": 2}, {"color": "orange", "value": 3}]}}, "overrides": []},
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {
       "id": 14, "type": "stat", "title": "Re-parse progress",
-      "description": "How much of this re-parse is done: messages re-parsed so far against the number it had to do, counted when it started. Pages that arrive meanwhile are re-parsed too, so it can sit at 100 % for a moment. At 100 % it's rebuilding the large events around the pages it touched (R87f), until \"Re-parse\" says Idle. Normal: climbing steadily. Worry: stuck at the same number for many minutes: the API's log has \"re-parse progress\" every 30 s (done, total, percent, per_minute, eta_seconds).",
+      "description": "How much of this re-parse is done: messages re-parsed so far against the number it had to do, counted when it started. Pages that arrive meanwhile are re-parsed too, so it can sit at 100 % for a moment. At 100 % it's rebuilding the large events around the pages it touched (R87f), until \"Re-parse\" says Idle. Paused or stopped, it stays where it got to. Normal: climbing steadily. Worry: stuck at the same number for many minutes: the API's log has \"re-parse progress\" every 30 s (done, total, percent, per_minute, eta_seconds).",
       "gridPos": {"h": 5, "w": 6, "x": 6, "y": 86},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "clamp_max(100 * max(pagerarchive_reparse_run_messages_done{job=\"pagerarchive\"}) / max(pagerarchive_reparse_run_messages{job=\"pagerarchive\"} > 0), 100) and on() (max(pagerarchive_reparse_running{job=\"pagerarchive\"}) == 1)"}],
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "clamp_max(100 * max(pagerarchive_reparse_run_messages_done{job=\"pagerarchive\"}) / max(pagerarchive_reparse_run_messages{job=\"pagerarchive\"} > 0), 100) and on() ((max(pagerarchive_reparse_state{job=\"pagerarchive\"}) or max(pagerarchive_reparse_running{job=\"pagerarchive\"})) > 0)"}],
       "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1, "min": 0, "max": 100, "noValue": "Idle", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
       "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
@@ -152,7 +152,7 @@
       "gridPos": {"h": 5, "w": 6, "x": 12, "y": 86},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "60 * sum(rate(pagerarchive_reparse_messages_total{job=\"pagerarchive\"}[5m])) and on() (max(pagerarchive_reparse_running{job=\"pagerarchive\"}) == 1)"}],
-      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Idle", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not running", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
       "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {
@@ -161,12 +161,12 @@
       "gridPos": {"h": 5, "w": 6, "x": 18, "y": 86},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "clamp_min(max(pagerarchive_reparse_run_messages{job=\"pagerarchive\"}) - max(pagerarchive_reparse_run_messages_done{job=\"pagerarchive\"}), 0) / (sum(rate(pagerarchive_reparse_messages_total{job=\"pagerarchive\"}[5m])) > 0) and on() (max(pagerarchive_reparse_running{job=\"pagerarchive\"}) == 1)"}],
-      "fieldConfig": {"defaults": {"unit": "dtdurations", "noValue": "Idle", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+      "fieldConfig": {"defaults": {"unit": "dtdurations", "noValue": "Not running", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
       "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {
       "id": 17, "type": "timeseries", "title": "Re-parse: messages to do and done",
-      "description": "Each re-parse's messages to do (counted when it started) and done so far, over the dashboard's time range. While none runs, both stay at the last run's numbers, done equal to to do. Normal: done climbing in a straight line up to to do. Worry: done flat while Re-parse says Running, or a run that starts again from 0 without finishing (the API restarted: a run starts again from the beginning).",
+      "description": "Each re-parse's messages to do (counted when it started) and done so far, over the dashboard's time range. While none runs, both stay at the last run's numbers, done equal to to do. Normal: done climbing in a straight line up to to do. Worry: done flat while Re-parse says Running, or a run that starts again from 0 without finishing that no one started again (an admin's Start again, or a changed profile at start-up, do). A restart carries a run on from where it got to, so done doesn't drop then; while Paused or Stopped, done stays flat.",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 91},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [

@@ -252,6 +252,33 @@ type ReparseRequest struct {
 	RequestedAt    time.Time
 }
 
+type ReparseRun struct {
+	ID         int64
+	State      string
+	Reasons    string
+	Requests   int32
+	Total      int64
+	Done       int64
+	Epoch      int32
+	StartedAt  time.Time
+	ChangedAt  time.Time
+	FinishedAt *time.Time
+}
+
+type ReparseRunDay struct {
+	RunID  int64
+	Day    int64
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+type ReparseRunPattern struct {
+	RunID          int64
+	CapcodePattern string
+	AfterID        int64
+	Done           bool
+}
+
 type ReportDay struct {
 	Kind       string
 	Day        pgtype.Date

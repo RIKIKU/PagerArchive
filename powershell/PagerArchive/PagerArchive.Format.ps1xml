@@ -198,5 +198,35 @@
         </TableRowEntries>
       </TableControl>
     </View>
+    <View>
+      <Name>PagerArchive.Reparse</Name>
+      <ViewSelectedBy>
+        <TypeName>PagerArchive.Reparse</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader />
+          <TableColumnHeader><Label>StartedAt</Label></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>State</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Done</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Total</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Percent</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>PerMinute</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>TimeLeft</PropertyName></TableColumnItem>
+              <TableColumnItem><ScriptBlock>$_.StartedAt.LocalDateTime</ScriptBlock></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
   </ViewDefinitions>
 </Configuration>
