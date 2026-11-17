@@ -102,6 +102,20 @@ export interface LargeEventsReport {
 
 export type ReportName = 'busiest' | 'localities' | 'busy-times' | 'event-types' | 'job-size' | 'long-jobs' | 'appliances' | 'large-events';
 
+/** The jobs behind a report's number (R38a): its filters, what the number
+ * is of, how many jobs (jobs) and one page of them, newest first. */
+export interface JobsReport extends ReportBase {
+	alias?: string;
+	capcode?: string;
+	/** 1 Monday to 7 Sunday. */
+	weekday?: number;
+	hour?: number;
+	appliance?: string;
+	page: number;
+	page_size: number;
+	rows: { job_number: string; first: string; pages: number; event_type: EventType; locality: string | null }[];
+}
+
 async function get<T>(path: string): Promise<T> {
 	const res = await fetch(path, { headers: { Accept: 'application/json' } });
 	if (!res.ok) {
@@ -125,7 +139,7 @@ export const reportsApi = {
 		optionsPromise = undefined;
 		throw e;
 	})),
-	report: <T>(name: ReportName, query: URLSearchParams) => get<T>(`/api/v1/reports/${name}?${query}`)
+	report: <T>(name: ReportName | 'jobs', query: URLSearchParams) => get<T>(`/api/v1/reports/${name}?${query}`)
 };
 
 /** The filters a report's address may hold (R38a), in the order they're written. */
@@ -223,4 +237,72 @@ export function save(name: string, blob: Blob) {
 /** pagerarchive-busiest-capcodes-2026-10-05-to-2026-10-11 */
 export function fileName(slug: string, from: string, to: string): string {
 	return `pagerarchive-${slug}-${from}-to-${to}`;
+}
+
+/** The filters a report's number keeps when it links to the jobs behind it (R38a). */
+const jobFilterKeys = ['from', 'to', 'agency', 'event_type', 'alias', 'capcode'] as const;
+
+/** What a report's number is of, for the jobs behind it: a weekday (1
+ * Monday to 7 Sunday) and hour, or an appliance. */
+export interface JobsCut {
+	weekday?: number;
+	hour?: number;
+	appliance?: string;
+}
+
+/** The address of the jobs behind a report's number (R38a): the report's
+ * filters, as it was answered, what the number is of, and the report to go
+ * back to. */
+export function jobsHref(report: ReportName, d: ReportBase & { alias?: string; capcode?: string }, cut: JobsCut): string {
+	const q = new URLSearchParams();
+	for (const k of jobFilterKeys) {
+		const v = d[k];
+		if (v) q.set(k, v);
+	}
+	if (cut.weekday !== undefined) q.set('weekday', String(cut.weekday));
+	if (cut.hour !== undefined) q.set('hour', String(cut.hour));
+	if (cut.appliance) q.set('appliance', cut.appliance);
+	q.set('report', report);
+	return `/reports/jobs?${q}`;
+}
+
+/** The report's address, with the filters the jobs behind its number were
+ * listed with (R38a: the way back). */
+export function reportHref(report: string, search: { get(name: string): string | null }): string {
+	const q = new URLSearchParams();
+	for (const k of jobFilterKeys) {
+		const v = search.get(k);
+		if (v) q.set(k, v);
+	}
+	return `/reports/${report}?${q}`;
+}
+
+export const weekdays = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+
+/** 14:00: an hour of the day. */
+export const hourName = (h: number) => `${String(h).padStart(2, '0')}:00`;
+
+/** 5 to 11 Oct 2026, 28 Sep to 4 Oct 2026, 29 Dec 2025 to 4 Jan 2026, or
+ * 5 Oct 2026: a range of YYYY-MM-DD days. */
+export function rangeName(from: string, to: string): string {
+	if (from === to) return shortDay(from);
+	const [a, b] = [shortDay(from), shortDay(to)];
+	if (from.slice(0, 4) !== to.slice(0, 4)) return `${a} to ${b}`;
+	if (from.slice(0, 7) !== to.slice(0, 7)) return `${a.replace(/ \d{4}$/, '')} to ${b}`;
+	return `${a.replace(/ \S+ \d{4}$/, '')} to ${b}`;
+}
+
+/** What the jobs behind a number are, with the range and filters: "Jobs on
+ * Saturdays 14:00–14:59, 5 to 11 Oct 2026, Example Fire Service". */
+export function jobsTitle(d: JobsReport, eventTypes: EventType[]): string {
+	let s = 'Jobs';
+	if (d.alias) s += ` to ${d.alias}`;
+	else if (d.capcode) s += ` to capcode ${d.capcode}`;
+	if (d.weekday) s += ` on ${weekdays[d.weekday - 1]}s`;
+	if (d.hour !== undefined) s += `${d.weekday ? '' : ' at'} ${hourName(d.hour)}–${String(d.hour).padStart(2, '0')}:59`;
+	if (d.appliance) s += ` naming ${d.appliance}`;
+	s += `, ${rangeName(d.from, d.to)}`;
+	if (d.agency) s += `, ${d.agency}`;
+	if (d.event_type) s += `, ${eventTypeName(eventTypes.find((e) => e.code === d.event_type) ?? { code: d.event_type })}`;
+	return s;
 }

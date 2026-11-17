@@ -158,6 +158,8 @@ export function crumbs(route: string, params: Record<string, string>, title: str
 			return under([top], `Capcode ${params.capcode}`);
 		case '/large-events/[id]':
 			return under([group('tools'), { label: 'Large events', href: '/large-events' }], title || 'Large event');
+		case '/reports/jobs':
+			return under([group('reports')], 'Jobs');
 		case '/albums/[id]':
 			return under([group('albums')], title || 'Album');
 		case '/admin/users/[id]':

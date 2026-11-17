@@ -117,25 +117,46 @@ FROM (SELECT job_key, CASE WHEN alias_id IS NULL THEN 'c' || capcode ELSE 'a' ||
       FROM base GROUP BY 1, 2) w
 JOIN ins i USING (job_key)`
 
+// dayKey is one kind of report_days row counted from report_jobs (as d):
+// the key, or keys, a job is counted under. Most give one key a job; 'a'
+// gives one for each appliance the job names, from its from part.
+type dayKey struct{ kind, from, key string }
+
+// dayKeys is every kind of report_days row counted from report_jobs. It
+// writes them (countDays) and it picks the jobs behind one of their numbers
+// (Cut, R38a's jobs behind a number), so a report's number and the jobs
+// listed behind it are decided by the same rule.
+var dayKeys = []dayKey{
+	{kind: "t", key: "''"},
+	{kind: "h", key: "d.hour::text"},
+	{kind: "l", key: "d.locality"},
+	{kind: "p", key: "d.pages::text"},
+	{kind: "c", key: "d.capcodes::text"},
+	{kind: "n", key: "cardinality(d.appliances)::text"},
+	{kind: "a", from: ", unnest(d.appliances) AS u", key: "u"},
+}
+
+// keyOf is the dayKey of a kind.
+func keyOf(kind string) dayKey {
+	for _, k := range dayKeys {
+		if k.kind == kind {
+			return k
+		}
+	}
+	panic("reports: no day key " + kind)
+}
+
 // countDays writes report_days for the days the condition picks (on a
-// table's day column, d.day).
-const countDays = `
-INSERT INTO report_days (kind, day, template_id, event_type, priority, key, jobs)
-SELECT 't', d.day, d.template_id, d.event_type, d.priority, '', count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'h', d.day, d.template_id, d.event_type, d.priority, d.hour::text, count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'l', d.day, d.template_id, d.event_type, d.priority, d.locality, count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'p', d.day, d.template_id, d.event_type, d.priority, d.pages::text, count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'c', d.day, d.template_id, d.event_type, d.priority, d.capcodes::text, count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'n', d.day, d.template_id, d.event_type, d.priority, cardinality(d.appliances)::text, count(*) FROM report_jobs d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'a', d.day, d.template_id, d.event_type, d.priority, u, count(*) FROM report_jobs d, unnest(d.appliances) AS u WHERE %[1]s GROUP BY 2, 3, 4, 5, 6
-UNION ALL
-SELECT 'w', d.day, d.template_id, d.event_type, d.priority, d.who, count(*) FROM report_job_whos d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6`
+// table's day column, d.day): dayKeys' rows, and 'w', each alias or capcode
+// a job paged, from report_job_whos.
+var countDays = func() string {
+	var parts []string
+	for _, k := range dayKeys {
+		parts = append(parts, "SELECT '"+k.kind+"', d.day, d.template_id, d.event_type, d.priority, "+k.key+", count(*) FROM report_jobs d"+k.from+" WHERE %[1]s GROUP BY 2, 3, 4, 5, 6")
+	}
+	parts = append(parts, "SELECT 'w', d.day, d.template_id, d.event_type, d.priority, d.who, count(*) FROM report_job_whos d WHERE %[1]s GROUP BY 2, 3, 4, 5, 6")
+	return "\nINSERT INTO report_days (kind, day, template_id, event_type, priority, key, jobs)\n" + strings.Join(parts, "\nUNION ALL\n")
+}()
 
 // Rebuild counts every job and day again from the pages, in one
 // transaction: readers see the old counts until it commits. It leaves the
