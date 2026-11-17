@@ -1,8 +1,4 @@
-		t.Errorf("while it runs, the dashboard's re-parse panels say %v, and the graph to do and done %v (want %d and %d)",
-			pick(got, wantRunning), got["Re-parse: messages to do and done"], pages, held-1)
-	} else {
-		t.Logf("A122: while it runs: %v; the graph: to do and done %v", pick(got, wantRunning), got["Re-parse: messages to do and done"])
-	}package monitortest
+package monitortest
 
 import (
 	"context"
