@@ -4914,12 +4914,12 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect(page.getByTestId('chart')).toHaveCount(0);
 });
 
-// A119 (R38a, R38d, R38h): the jobs behind a report's number, on the
+// A120 (R38a, R38d, R38h): the jobs behind a report's number, on the
 // project's week (Report agency n: Monday 14:10, Tuesday 09:05 and Saturday
 // 14:30), at 1,280 and 375 px, light and dark; the counts themselves are
-// checked in Go (A119).
+// checked in Go (A120).
 for (const width of [1280, 375]) {
-	test(`A119 the jobs behind a number at ${width} px`, async ({ browser, browserName, request }, info) => {
+	test(`A120 the jobs behind a number at ${width} px`, async ({ browser, browserName, request }, info) => {
 		test.setTimeout(120_000);
 		const n = projectN(info);
 		await reportWeek(request, n);
@@ -4952,7 +4952,7 @@ for (const width of [1280, 375]) {
 			});
 			expect(ring.style).toBe('solid');
 			expect(ring.width).toBeGreaterThan(0);
-			await grid.screenshot({ path: info.outputPath(`a119-grid-focus-${colorScheme}-${width}.png`) });
+			await grid.screenshot({ path: info.outputPath(`a120-grid-focus-${colorScheme}-${width}.png`) });
 			await page.keyboard.press('Enter');
 
 			// Jobs: what it is, the cell's job, and the address holding it all.
@@ -4980,7 +4980,7 @@ for (const width of [1280, 375]) {
 			await expect(page.getByRole('navigation', { name: 'Breadcrumb' })).toContainText('Reports');
 			await noSideways();
 			expect(await axeOf(page), `${colorScheme} jobs of a cell`).toEqual([]);
-			await page.screenshot({ path: info.outputPath(`a119-cell-${colorScheme}-${width}.png`), fullPage: true });
+			await page.screenshot({ path: info.outputPath(`a120-cell-${colorScheme}-${width}.png`), fullPage: true });
 			// Opened again from its address, the list is the same.
 			await page.goto(url.toString());
 			await expect.poll(rows).toEqual(listed);
@@ -5001,7 +5001,7 @@ for (const width of [1280, 375]) {
 			await expect(page.locator('main')).not.toContainText(noText);
 			await noSideways();
 			expect(await axeOf(page), `${colorScheme} jobs of an appliance`).toEqual([]);
-			await page.screenshot({ path: info.outputPath(`a119-appliance-${colorScheme}-${width}.png`), fullPage: true });
+			await page.screenshot({ path: info.outputPath(`a120-appliance-${colorScheme}-${width}.png`), fullPage: true });
 			await page.getByRole('link', { name: 'Back to Appliance activity' }).click();
 			await expect(page).toHaveURL(/\/reports\/appliances\?/);
 			await ctx.close();

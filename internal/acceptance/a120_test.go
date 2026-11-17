@@ -11,7 +11,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
-// A119 (R38a, R38d, R38h): the jobs behind a report's number, on SPEC.md's
+// A120 (R38a, R38d, R38h): the jobs behind a report's number, on SPEC.md's
 // report fixture. Each list holds as many jobs as the number it's behind.
 
 // listed is a list's jobs, newest first, as "job first pages event-type
@@ -37,8 +37,8 @@ func numbers(r server.JobsReport) string {
 	return strings.Join(out, ", ")
 }
 
-// A119. The jobs behind a number.
-func TestA119JobsBehindANumber(t *testing.T) {
+// A120. The jobs behind a number.
+func TestA120JobsBehindANumber(t *testing.T) {
 	e := setup(t)
 	reportFixture(t, e)
 	everyListed := map[string]bool{}
@@ -152,8 +152,8 @@ func TestA119JobsBehindANumber(t *testing.T) {
 	}
 }
 
-// A119: 51 jobs in one hour are listed 50 to a page, newest first.
-func TestA119JobsPaged(t *testing.T) {
+// A120: 51 jobs in one hour are listed 50 to a page, newest first.
+func TestA120JobsPaged(t *testing.T) {
 	e := setup(t)
 	for i := range 51 {
 		at := time.Date(2026, time.October, 1, 8, i, 0, 0, time.UTC) // a Thursday

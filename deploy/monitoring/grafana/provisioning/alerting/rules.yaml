@@ -177,6 +177,109 @@ groups:
             running. The "Clients" dashboard (in the PagerArchive folder) shows the
             client's radio health and rtl_fm's errors by kind.
 
+      # R74b: a client's radio gives audio, but it decodes far fewer pages
+      # than it usually does at this time of day: a weak or detuned signal,
+      # a gain that's wrong, or a decoder that has lost the plot. "Radio
+      # stalled" can't see it (audio flows) and "Client not receiving" can't
+      # either while a page, garbled or not, still gets through every half
+      # hour. "Usually" is the client's own count for the same half hour on
+      # each of the 7 days before (the days it has), so it follows a
+      # network's quiet nights and busy days with no number about the
+      # network in it. Pages are counted as the client decoded them, garbled
+      # ones too (ADR 0039). One alert per client; it clears when decoding
+      # is back above half the usual.
+      - uid: pa-radio-not-decoding
+        title: Radio not decoding
+        condition: down
+        data:
+          # The pages the client decoded in the last 30 minutes, for clients
+          # whose radio gives audio: about 44,100 bytes a second (rtl_fm's
+          # 22,050 samples), so not "Radio stalled"'s case.
+          - refId: decoded
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: decoded
+              instant: true
+              range: false
+              # THE THRESHOLD SETTING (1 of 3): the window, 30m here and in
+              # each of usual's 7 lines; change them together.
+              expr: >-
+                sum by (client) (label_replace(increase(pagerarchive_client_pages_decoded_total[30m]), "client", "$1", "instance", "(.*)"))
+                and on (client)
+                (sum by (client) (label_replace(rate(pagerarchive_client_radio_audio_bytes_total[5m]), "client", "$1", "instance", "(.*)")) > 40000)
+          # What the client usually decodes in those 30 minutes: its average
+          # for the same 30 minutes on each of the 7 days before. A day it
+          # has no numbers for (it's new) isn't counted; with none at all
+          # there's no usual, and no alert.
+          - refId: usual
+            relativeTimeRange: {from: 1800, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: usual
+              instant: true
+              range: false
+              # THE THRESHOLD SETTING (2 of 3): the floor. Below 20 usual
+              # pages in the window, a quarter of it is too few pages to
+              # tell a fault from a quiet spell, so there's no alert: a
+              # quiet network, or a quiet hour, is left to "Client not
+              # receiving".
+              expr: >-
+                avg by (client) (label_replace(
+                  label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), "day", "1", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), "day", "2", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), "day", "3", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), "day", "4", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), "day", "5", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), "day", "6", "", "")
+                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), "day", "7", "", ""),
+                  "client", "$1", "instance", "(.*)"))
+                >= 20
+          - refId: share
+            datasourceUid: __expr__
+            model:
+              refId: share
+              type: math
+              expression: $decoded / $usual
+          - refId: down
+            datasourceUid: __expr__
+            model:
+              refId: down
+              type: threshold
+              expression: share
+              conditions:
+                - evaluator:
+                    type: lt
+                    # THE THRESHOLD SETTING (3 of 3): it fires below a
+                    # quarter of the usual (0.25) and clears above half
+                    # (0.5), so a client hovering near one line doesn't
+                    # fire and clear over and over. Change them here and
+                    # restart Grafana (docs/monitoring.md).
+                    params: [0.25]
+                  unloadEvaluator:
+                    type: gt
+                    params: [0.5]
+        # No share: no client gives audio with a usual worth comparing (a new
+        # client, a quiet network, a stalled radio, or a client that's off):
+        # each is another rule's job, or nobody's.
+        noDataState: OK
+        execErrState: Error
+        # 5 minutes below the line before it fires: a short lull isn't a fault.
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client {{ $labels.client }} decoded {{ printf \"%.0f\" $values.decoded.Value }} pages in the last 30 minutes; it usually decodes {{ printf \"%.0f\" $values.usual.Value }} then"
+          description: >-
+            The radio gives audio, so the dongle works, but far fewer pages
+            come out of it than usual for this time of day. Look at the
+            "Clients" dashboard (in the PagerArchive folder): its audio level
+            and "Pages decoded: the last 30 minutes against the usual".
+            Usually the signal: the antenna and its cable, RADIO_GAIN (a
+            fixed gain set too low or too high) and RADIO_PPM. A restart of
+            the client (docker restart) is worth a try. If another receiver
+            hears the network as quiet too, it's the network.
+
       # R76: the API can't be scraped: it's down, or unreachable from Alloy.
       - uid: pa-api-unreachable
         title: API unreachable
