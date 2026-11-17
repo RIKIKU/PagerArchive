@@ -1,5 +1,5 @@
 #!/bin/sh
-# A65, A67, A80's alert, A90's Grafana part, A113, A115, A119 and A122's Grafana part against the example
+# A65, A67, A80's alert, A90's Grafana part, A113, A115, A119, A122's Grafana part and A123's stack part against the example
 # monitoring stack itself (deploy/monitoring): the API, its database, Authentik
 # and the backup services from the compose file at the top, joined to the
 # stack's `monitoring` and `monitoring-authentik` networks by the override
@@ -233,6 +233,7 @@ echo checks >"$PHASE_FILE"
 PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 \
 	PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" PA_MON_WEBHOOK_ADDR=0.0.0.0:$WEBHOOK_PORT PA_MON_PROMETHEUS_URL=http://127.0.0.1:19090 \
 	PA_MON_DB_URL="postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:55437/postgres?sslmode=disable" \
+	PA_MON_KILL_API="docker compose -p $P --project-directory $PWD $APP_FILES kill api" \
 	PA_MON_STOP_API="docker compose -p $P --project-directory $PWD $APP_FILES stop api" \
 	PA_MON_START_API="docker compose -p $P --project-directory $PWD $APP_FILES start api" \
 	PA_MON_STOP_DB="docker compose -p $P --project-directory $PWD $APP_FILES stop db" \
@@ -242,7 +243,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_AUTHENTIK_URL=http://127.0.0.1:19091 \
 	PA_MON_STOP_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES stop authentik-server" \
 	PA_MON_START_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES start authentik-server" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115|TestA119|TestA122}" ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115|TestA119|TestA122|TestA123}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then

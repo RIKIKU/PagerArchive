@@ -192,6 +192,25 @@ Start-PagerArchiveBackup -Wait -Timeout (New-TimeSpan -Hours 2) -ErrorAction Sto
 
 `Start-PagerArchiveBackup` (`Start-PaBackup`) backs up now, as the browser's **Back up now** does: the same backup and check as the nightly one, kept with the nightly backups and replacing any made earlier that day. Use it before a change you might want to undo, such as an upgrade. It returns once the server has the request; `-Wait` waits until the backup and its check are done, with progress, and writes an error if it failed (`backup_failed`) or isn't done within `-Timeout` (default 30 minutes; `backup_timeout`, and the backup carries on). `-PassThru` outputs the state, and `-WhatIf` asks for nothing. One at a time: while a backup is asked for or running, from here or the browser, another is refused (`backup_queued`, `backup_running`), with since when.
 
+## Re-parsing
+
+```powershell
+Get-PagerArchiveReparse
+Suspend-PagerArchiveReparse
+Resume-PagerArchiveReparse
+Stop-PagerArchiveReparse
+Start-PagerArchiveReparse
+```
+
+After an alias, template or profile change, the server re-parses the stored messages it affects in the background; a changed profile re-parses the whole archive, which takes hours on a large one (SPEC.md R23a-R23c). A restart or an upgrade carries it on from where it got to. These commands do what **Administration → Re-parse** does:
+
+- `Get-PagerArchiveReparse` (`Get-PaReparse`) says how it's going: `State` is `idle` (`Done` and `Total` are then the last run's), `running`, `paused` or `stopped`; `Done` of `Total` and `Percent`; while it runs, `PerMinute` and `TimeLeft`; `StartedAt`, `ChangedAt` and `FinishedAt`; `Reasons` as codes (`profiles_changed`, `alias_added`, …); and `Waiting`, the changes waiting for the next one. Counts and codes only, never a page or a capcode.
+- `Suspend-PagerArchiveReparse` (`Suspend-PaReparse`) pauses it after the message in hand. It stays paused across a restart, until `Resume-PagerArchiveReparse` (`Resume-PaReparse`) carries it on from there.
+- `Stop-PagerArchiveReparse` (`Stop-PaReparse`) cancels it: the messages it did stay re-parsed, the rest stay as they were parsed before (each is done or not, never half done), and it shows as stopped until it's started again.
+- `Start-PagerArchiveReparse` (`Start-PaReparse`) runs it (the last one, while idle) again from the beginning, taking in the changes waiting.
+
+Each asks with `-Confirm` and does nothing with `-WhatIf`; `-PassThru` outputs the state after. A change its state doesn't allow is refused: `reparse_not_running` (nothing to pause or stop), `reparse_not_paused`, `reparse_stopped` (a stopped one only starts again) and `reparse_none` (there has never been one). Changes made while one runs, is paused or is stopped wait for the next.
+
 ## Errors
 
 A refusal from PagerArchive is an error whose `ErrorId` is the API's code (e.g. `duplicate_alias`, `template_in_use`, `powershell_admins_only`) and whose message is the API's. A failure on one item doesn't stop the rest of the pipeline; not being signed in, or the server being unreachable, does.

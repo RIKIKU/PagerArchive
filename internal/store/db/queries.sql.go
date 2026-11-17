@@ -92,6 +92,57 @@ func (q *Queries) AddLargeEventPage(ctx context.Context, arg AddLargeEventPagePa
 	return err
 }
 
+const addReparseRunDay = `-- name: AddReparseRunDay :exec
+INSERT INTO reparse_run_days (run_id, day, from_at, to_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (run_id, day) DO UPDATE SET from_at = LEAST(reparse_run_days.from_at, EXCLUDED.from_at),
+    to_at = GREATEST(reparse_run_days.to_at, EXCLUDED.to_at)
+`
+
+type AddReparseRunDayParams struct {
+	RunID  int64
+	Day    int64
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+func (q *Queries) AddReparseRunDay(ctx context.Context, arg AddReparseRunDayParams) error {
+	_, err := q.db.Exec(ctx, addReparseRunDay,
+		arg.RunID,
+		arg.Day,
+		arg.FromAt,
+		arg.ToAt,
+	)
+	return err
+}
+
+const addReparseRunDone = `-- name: AddReparseRunDone :exec
+UPDATE reparse_runs SET done = done + $1::bigint WHERE id = $2::bigint
+`
+
+type AddReparseRunDoneParams struct {
+	N  int64
+	ID int64
+}
+
+func (q *Queries) AddReparseRunDone(ctx context.Context, arg AddReparseRunDoneParams) error {
+	_, err := q.db.Exec(ctx, addReparseRunDone, arg.N, arg.ID)
+	return err
+}
+
+const addReparseRunPattern = `-- name: AddReparseRunPattern :exec
+INSERT INTO reparse_run_patterns (run_id, capcode_pattern) VALUES ($1, $2) ON CONFLICT DO NOTHING
+`
+
+type AddReparseRunPatternParams struct {
+	RunID          int64
+	CapcodePattern string
+}
+
+func (q *Queries) AddReparseRunPattern(ctx context.Context, arg AddReparseRunPatternParams) error {
+	_, err := q.db.Exec(ctx, addReparseRunPattern, arg.RunID, arg.CapcodePattern)
+	return err
+}
+
 const addToAlbum = `-- name: AddToAlbum :execrows
 WITH album AS (
     UPDATE albums al SET emptied_at = NULL, updated_at = now()
@@ -1342,6 +1393,18 @@ func (q *Queries) CountMessagesToReparse(ctx context.Context, pattern string) (i
 	return count, err
 }
 
+const countReparseRequests = `-- name: CountReparseRequests :one
+SELECT count(*) FROM reparse_requests
+`
+
+// Requests waiting for the next run (R23c).
+func (q *Queries) CountReparseRequests(ctx context.Context) (int64, error) {
+	row := q.db.QueryRow(ctx, countReparseRequests)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countWaitingRequests = `-- name: CountWaitingRequests :one
 SELECT count(*) FROM alias_requests WHERE status = 'waiting'
 `
@@ -1595,6 +1658,23 @@ func (q *Queries) CreateLargeEvent(ctx context.Context, at time.Time) (LargeEven
 		&i.CreatedAt,
 	)
 	return i, err
+}
+
+const createReparseRun = `-- name: CreateReparseRun :one
+INSERT INTO reparse_runs (state, reasons, requests, total) VALUES ('running', $1, $2, $3) RETURNING id
+`
+
+type CreateReparseRunParams struct {
+	Reasons  string
+	Requests int32
+	Total    int64
+}
+
+func (q *Queries) CreateReparseRun(ctx context.Context, arg CreateReparseRunParams) (int64, error) {
+	row := q.db.QueryRow(ctx, createReparseRun, arg.Reasons, arg.Requests, arg.Total)
+	var id int64
+	err := row.Scan(&id)
+	return id, err
 }
 
 const createSession = `-- name: CreateSession :exec
@@ -1885,6 +1965,34 @@ func (q *Queries) DeleteMessagesBefore(ctx context.Context, arg DeleteMessagesBe
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const deleteReparseRunDays = `-- name: DeleteReparseRunDays :exec
+DELETE FROM reparse_run_days WHERE run_id = $1
+`
+
+func (q *Queries) DeleteReparseRunDays(ctx context.Context, runID int64) error {
+	_, err := q.db.Exec(ctx, deleteReparseRunDays, runID)
+	return err
+}
+
+const deleteReparseRunPatterns = `-- name: DeleteReparseRunPatterns :exec
+DELETE FROM reparse_run_patterns WHERE run_id = $1
+`
+
+func (q *Queries) DeleteReparseRunPatterns(ctx context.Context, runID int64) error {
+	_, err := q.db.Exec(ctx, deleteReparseRunPatterns, runID)
+	return err
+}
+
+const deleteReparseRuns = `-- name: DeleteReparseRuns :exec
+DELETE FROM reparse_runs
+`
+
+// Before a new run: the last one, with its patterns and days, goes.
+func (q *Queries) DeleteReparseRuns(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, deleteReparseRuns)
+	return err
 }
 
 const deleteSession = `-- name: DeleteSession :many
@@ -2239,6 +2347,18 @@ func (q *Queries) FinishDelivery(ctx context.Context, arg FinishDeliveryParams) 
 	return err
 }
 
+const finishReparseRun = `-- name: FinishReparseRun :exec
+UPDATE reparse_runs SET state = 'finished', changed_at = now(), finished_at = now(), total = GREATEST(total, done)
+WHERE id = $1
+`
+
+// Pages stored while it ran are re-parsed by it too, so its total is then
+// what it did (R23b).
+func (q *Queries) FinishReparseRun(ctx context.Context, id int64) error {
+	_, err := q.db.Exec(ctx, finishReparseRun, id)
+	return err
+}
+
 const finishRetentionAlbums = `-- name: FinishRetentionAlbums :one
 WITH done AS (
     UPDATE albums a SET retention_touched = false,
@@ -2272,6 +2392,29 @@ ON CONFLICT DO NOTHING
 func (q *Queries) ForgetImportSourceID(ctx context.Context, sourceID string) error {
 	_, err := q.db.Exec(ctx, forgetImportSourceID, sourceID)
 	return err
+}
+
+const getReparseRun = `-- name: GetReparseRun :one
+SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs
+`
+
+// R23c (ADR 0043): the re-parse's run, the latest; there's at most one.
+func (q *Queries) GetReparseRun(ctx context.Context) (ReparseRun, error) {
+	row := q.db.QueryRow(ctx, getReparseRun)
+	var i ReparseRun
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.Reasons,
+		&i.Requests,
+		&i.Total,
+		&i.Done,
+		&i.Epoch,
+		&i.StartedAt,
+		&i.ChangedAt,
+		&i.FinishedAt,
+	)
+	return i, err
 }
 
 const getSetting = `-- name: GetSetting :one
@@ -3771,6 +3914,30 @@ func (q *Queries) LockLargeEvents(ctx context.Context) error {
 	return err
 }
 
+const lockReparseRun = `-- name: LockReparseRun :one
+SELECT id, state, reasons, requests, total, done, epoch, started_at, changed_at, finished_at FROM reparse_runs FOR UPDATE
+`
+
+// As GetReparseRun, locked until the transaction ends: a batch's end, an
+// admin's change or the start-up check, one at a time.
+func (q *Queries) LockReparseRun(ctx context.Context) (ReparseRun, error) {
+	row := q.db.QueryRow(ctx, lockReparseRun)
+	var i ReparseRun
+	err := row.Scan(
+		&i.ID,
+		&i.State,
+		&i.Reasons,
+		&i.Requests,
+		&i.Total,
+		&i.Done,
+		&i.Epoch,
+		&i.StartedAt,
+		&i.ChangedAt,
+		&i.FinishedAt,
+	)
+	return i, err
+}
+
 const lockUsers = `-- name: LockUsers :exec
 SELECT id FROM users WHERE id = ANY($1::bigint[]) ORDER BY id FOR UPDATE
 `
@@ -4277,6 +4444,16 @@ func (q *Queries) NextDeliveryDue(ctx context.Context) (time.Time, error) {
 	return column_1, err
 }
 
+const notifyReparse = `-- name: NotifyReparse :exec
+SELECT pg_notify('pagerarchive_reparse', '')
+`
+
+// Wakes the API's re-parse worker (R23a).
+func (q *Queries) NotifyReparse(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, notifyReparse)
+	return err
+}
+
 const pauseIntegration = `-- name: PauseIntegration :execrows
 UPDATE integrations SET status = 'paused', paused_by = $1::text, paused_at = $2::timestamptz
 WHERE id = $3 AND status = 'active'
@@ -4774,6 +4951,65 @@ func (q *Queries) RemoveLargeEventPages(ctx context.Context, messageIds []int64)
 	return err
 }
 
+const reparseRunDays = `-- name: ReparseRunDays :many
+SELECT from_at, to_at FROM reparse_run_days WHERE run_id = $1 ORDER BY day
+`
+
+type ReparseRunDaysRow struct {
+	FromAt time.Time
+	ToAt   time.Time
+}
+
+func (q *Queries) ReparseRunDays(ctx context.Context, runID int64) ([]ReparseRunDaysRow, error) {
+	rows, err := q.db.Query(ctx, reparseRunDays, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReparseRunDaysRow
+	for rows.Next() {
+		var i ReparseRunDaysRow
+		if err := rows.Scan(&i.FromAt, &i.ToAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const reparseRunPatterns = `-- name: ReparseRunPatterns :many
+SELECT capcode_pattern, after_id, done FROM reparse_run_patterns WHERE run_id = $1 ORDER BY capcode_pattern
+`
+
+type ReparseRunPatternsRow struct {
+	CapcodePattern string
+	AfterID        int64
+	Done           bool
+}
+
+func (q *Queries) ReparseRunPatterns(ctx context.Context, runID int64) ([]ReparseRunPatternsRow, error) {
+	rows, err := q.db.Query(ctx, reparseRunPatterns, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReparseRunPatternsRow
+	for rows.Next() {
+		var i ReparseRunPatternsRow
+		if err := rows.Scan(&i.CapcodePattern, &i.AfterID, &i.Done); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const requestReparse = `-- name: RequestReparse :exec
 WITH r AS (
     INSERT INTO reparse_requests (capcode_pattern, reason) VALUES ($1, $2)
@@ -4806,6 +5042,33 @@ type ResendInvitationParams struct {
 // R43d: the same invitation, with a new link and a new 7 days.
 func (q *Queries) ResendInvitation(ctx context.Context, arg ResendInvitationParams) error {
 	_, err := q.db.Exec(ctx, resendInvitation, arg.ID, arg.AuthentikID, arg.ExpiresAt)
+	return err
+}
+
+const restartReparseRun = `-- name: RestartReparseRun :exec
+UPDATE reparse_runs SET state = $1::text, reasons = $2::text, requests = $3::int,
+    total = $4::bigint, done = 0, epoch = epoch + 1, started_at = now(), changed_at = now(), finished_at = NULL
+WHERE id = $5::bigint
+`
+
+type RestartReparseRunParams struct {
+	State    string
+	Reasons  string
+	Requests int32
+	Total    int64
+	ID       int64
+}
+
+// From the beginning again (Start again, or the profiles changed): its
+// patterns are put back by the caller, and its days go.
+func (q *Queries) RestartReparseRun(ctx context.Context, arg RestartReparseRunParams) error {
+	_, err := q.db.Exec(ctx, restartReparseRun,
+		arg.State,
+		arg.Reasons,
+		arg.Requests,
+		arg.Total,
+		arg.ID,
+	)
 	return err
 }
 
@@ -5502,6 +5765,43 @@ type SetMessageLocalityParams struct {
 // none. Unchanged rows aren't written, so its job isn't counted again.
 func (q *Queries) SetMessageLocality(ctx context.Context, arg SetMessageLocalityParams) error {
 	_, err := q.db.Exec(ctx, setMessageLocality, arg.ID, arg.Locality)
+	return err
+}
+
+const setReparseRunPattern = `-- name: SetReparseRunPattern :exec
+UPDATE reparse_run_patterns SET after_id = $1::bigint, done = $2::bool
+WHERE run_id = $3::bigint AND capcode_pattern = $4::text
+`
+
+type SetReparseRunPatternParams struct {
+	AfterID int64
+	Done    bool
+	RunID   int64
+	Pattern string
+}
+
+// Where a pattern's walk has got: written with the batch it ends.
+func (q *Queries) SetReparseRunPattern(ctx context.Context, arg SetReparseRunPatternParams) error {
+	_, err := q.db.Exec(ctx, setReparseRunPattern,
+		arg.AfterID,
+		arg.Done,
+		arg.RunID,
+		arg.Pattern,
+	)
+	return err
+}
+
+const setReparseRunState = `-- name: SetReparseRunState :exec
+UPDATE reparse_runs SET state = $1::text, changed_at = now() WHERE id = $2::bigint
+`
+
+type SetReparseRunStateParams struct {
+	State string
+	ID    int64
+}
+
+func (q *Queries) SetReparseRunState(ctx context.Context, arg SetReparseRunStateParams) error {
+	_, err := q.db.Exec(ctx, setReparseRunState, arg.State, arg.ID)
 	return err
 }
 

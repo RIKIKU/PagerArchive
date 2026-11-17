@@ -1,6 +1,6 @@
 <script lang="ts">
 	// R44b: the Administration start page links to every admin screen.
-	import { api, type AdminAreaLayer, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta } from '#lib/api.ts';
+	import { api, type AdminAreaLayer, type AutoUpgradeStatus, type BackupStatus, type ClientStatus, type Meta, type ReparseStatus } from '#lib/api.ts';
 	import BackupAlert from '#lib/BackupAlert.svelte';
 	import GroupPage from '#lib/GroupPage.svelte';
 	import { groups } from '#lib/nav.ts';
@@ -27,6 +27,12 @@
 		.then((u) => (upgrade = u))
 		.catch(() => {});
 	const upgradeTag: Record<AutoUpgradeStatus['state'], string> = { off: 'off', ok: '', failed: 'failed', stale: 'not checking', stopped: 'needs you' };
+	// R23c: the re-parse, while one runs or is held.
+	let reparse: ReparseStatus | undefined = $state();
+	api
+		.reparse()
+		.then((r) => (reparse = r))
+		.catch(() => {});
 	// R64: templates whose names differ from another's only in letter case.
 	let sameName = $state(0);
 	api
@@ -57,6 +63,9 @@
 		{#if e.href === '/admin/clients' && quiet > 0}<span class="tag">{quiet} not receiving</span>{/if}
 		{#if e.href === '/admin/backups' && (backup?.state === 'failed' || backup?.state === 'overdue')}<span class="tag">{backup.state}</span>{/if}
 		{#if e.href === '/admin/upgrades' && upgrade && upgrade.state !== 'ok'}<span class="tag" class:off={upgrade.state === 'off'} data-testid="upgrade-tag">{upgradeTag[upgrade.state]}</span>{/if}
+		{#if e.href === '/admin/reparse' && reparse && reparse.state !== 'idle'}<span class="tag" class:off={reparse.state === 'running'} data-testid="reparse-tag"
+				>{reparse.state === 'running' ? `running, ${reparse.percent} %` : reparse.state}</span
+			>{/if}
 		{#if e.href === '/admin/requests' && waiting.count > 0}<span class="tag" data-testid="waiting-tag">{waiting.count} waiting</span>{/if}
 	{/snippet}
 </GroupPage>

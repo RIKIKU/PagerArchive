@@ -110,6 +110,8 @@ var LogKeys = map[string]kind{
 	"percent":     intKind,
 	"per_minute":  intKind,
 	"eta_seconds": intKind,
+	// The re-parse's state (R23c): idle, running, paused or stopped.
+	"state": codeKind,
 }
 
 // ResourceKeys are the resource attributes kept from the program and

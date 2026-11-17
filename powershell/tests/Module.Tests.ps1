@@ -729,3 +729,66 @@ Describe 'Alias names are unique ignoring case (R27b)' {
         Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases/import' } -Times 1 -Exactly
     }
 }
+
+Describe 'Re-parse: Get-, Suspend-, Resume-, Stop- and Start-PagerArchiveReparse (R23c)' {
+    BeforeAll {
+        # The API's status, as GET /api/v1/admin/reparse and its actions send it.
+        function New-ApiReparse([string] $State = 'running', [object] $Eta = 3600) {
+            [pscustomobject]@{
+                state = $State; total = 3000; done = 1499; percent = 49; per_minute = 25; eta_seconds = $Eta
+                started_at = '2026-11-18T00:00:00Z'; changed_at = '2026-11-18T00:00:00Z'; finished_at = $null
+                reasons = @('alias_added', 'profiles_changed'); requests = 2; patterns = 1; waiting = 0
+            }
+        }
+    }
+    BeforeEach {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' -and $Path -eq '/api/v1/admin/reparse' } -MockWith { New-ApiReparse }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/reparse/pause' } -MockWith { New-ApiReparse -State paused -Eta $null }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/reparse/resume' } -MockWith { New-ApiReparse }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/reparse/stop' } -MockWith { New-ApiReparse -State stopped -Eta $null }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/reparse/start' } -MockWith { New-ApiReparse }
+    }
+
+    It 'Get-PagerArchiveReparse outputs the state, counts, time left as [timespan] and times as [datetimeoffset]' {
+        $r = Get-PagerArchiveReparse
+        $r.PSObject.TypeNames[0] | Should -Be 'PagerArchive.Reparse'
+        $r.State | Should -Be 'running'
+        $r.Done | Should -Be 1499
+        $r.Total | Should -Be 3000
+        $r.Percent | Should -Be 49
+        $r.TimeLeft | Should -Be ([timespan]::FromHours(1))
+        $r.StartedAt | Should -BeOfType [datetimeoffset]
+        $r.FinishedAt | Should -BeNullOrEmpty
+        $r.Reasons | Should -Be @('alias_added', 'profiles_changed')
+        ($r | Format-Table | Out-String) | Should -Match 'State\s+Done\s+Total\s+Percent\s+PerMinute\s+TimeLeft\s+StartedAt'
+    }
+    It '<Command> posts <Action>, outputs nothing unless -PassThru, and nothing at all with -WhatIf' -ForEach @(
+        @{ Command = 'Suspend-PagerArchiveReparse'; Action = 'pause'; State = 'paused' }
+        @{ Command = 'Resume-PagerArchiveReparse'; Action = 'resume'; State = 'running' }
+        @{ Command = 'Stop-PagerArchiveReparse'; Action = 'stop'; State = 'stopped' }
+        @{ Command = 'Start-PagerArchiveReparse'; Action = 'start'; State = 'running' }
+    ) {
+        @(& $Command -WhatIf -PassThru) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -Times 0 -Exactly
+        @(& $Command -Confirm:$false) | Should -BeNullOrEmpty
+        $r = & $Command -PassThru -Confirm:$false
+        $r.State | Should -Be $State
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq "/api/v1/admin/reparse/$Action" } -Times 2 -Exactly
+    }
+    It 'refused when its state doesn''t allow it: an error with the API''s code, and nothing output' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'reparse_stopped' -Status 409 -Message 'The re-parse was stopped, so it can''t carry on: Start again runs it from the beginning.' })
+        }
+        $r = Split-Output @(Resume-PagerArchiveReparse -PassThru -Confirm:$false 2>&1)
+        $r.Out | Should -BeNullOrEmpty
+        $r.Errors | Should -HaveCount 1
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'reparse_stopped,Resume-PagerArchiveReparse'
+        $r.Errors[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+    }
+    It 'stops when not signed in' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'not_connected' -Category AuthenticationError -Message 'Not signed in to PagerArchive.' })
+        }
+        { Stop-PagerArchiveReparse -Confirm:$false -ErrorAction Continue } | Should -Throw -ErrorId 'not_connected,Stop-PagerArchiveReparse'
+    }
+}

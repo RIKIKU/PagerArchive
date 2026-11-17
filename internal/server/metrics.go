@@ -395,10 +395,11 @@ func (e *exposition) bucket(name string, l labels, le string, n uint64, ex telem
 	fmt.Fprintln(e.w)
 }
 
-// reparseMetrics are the re-parse's progress (R23b): whether one is running,
-// how many messages this run has to do and has done (the last run's while
-// idle), and a counter of every run's, for the rate. Counts only, with no
-// labels: never a capcode pattern or a reason.
+// reparseMetrics are the re-parse's progress (R23b) and state (R23c):
+// whether one is running, its state as a number, how many messages this run
+// has to do and has done (the last run's while idle; a paused or stopped
+// run's while it's held), and a counter of every run's, for the rate. Counts
+// only, with no labels: never a capcode pattern or a reason.
 func (s *Server) reparseMetrics(m *exposition) {
 	if s.Reparse == nil {
 		return
@@ -406,6 +407,8 @@ func (s *Server) reparseMetrics(m *exposition) {
 	p := s.Reparse.Snapshot()
 	m.family("pagerarchive_reparse_running", "gauge", "1 while stored messages are being re-parsed (R23a, R23b).")
 	m.sample("pagerarchive_reparse_running", nil, b2f(p.Running))
+	m.family("pagerarchive_reparse_state", "gauge", "The re-parse's state (R23c): 0 idle, 1 running, 2 paused, 3 stopped.")
+	m.sample("pagerarchive_reparse_state", nil, float64(p.State.Code()))
 	m.family("pagerarchive_reparse_run_messages", "gauge", "Messages this re-parse has to do, counted when it started; the last one's while none runs (R23b).")
 	m.sample("pagerarchive_reparse_run_messages", nil, float64(p.Total))
 	m.family("pagerarchive_reparse_run_messages_done", "gauge", "Messages this re-parse has done so far; the last one's while none runs (R23b).")

@@ -4,7 +4,7 @@
 // signed-in user and admin (their session tokens).
 import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext, type TestInfo } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -393,7 +393,7 @@ test('A22 tap targets at 375 px', async ({ browser, request }) => {
 
 // WCAG 2.1 AA: axe-core on every view, light and dark, phone and desktop.
 // The alias view (R35e) is checked for an alias and for a capcode with none.
-const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
+const views = ['/', '/?q=SMOKE', '/capcodes', '/jobs/EX0000001', 'detail', 'alias', 'alias-request', '/capcodes/0999999', '/map', '/reports/capcode?capcode=0100001&from=2026-01-01&to=2026-12-31', '/admin', '/admin/clients', '/admin/users', 'admin-user', 'admin-tree-preview', '/admin/aliases', 'admin-alias', '/admin/templates', 'admin-template', '/admin/requests', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/integration-hosts', '/integrations', 'integration-form', 'selection', '/requests', '/sheet', '/account/profile', '/account/invite', '/tools', '/reports', '/account', '/albums', 'album', '/large-events', 'large-event', '/admin/large-events', '/signin', '/signin?error=deactivated'];
 for (const look of ['harbour', 'console'] as const) {
 	for (const scheme of ['light', 'dark'] as const) {
 		for (const width of [375, 1280]) {
@@ -1118,7 +1118,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -1133,7 +1133,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Integration addresses', 'Large event settings']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Re-parse', 'Integration addresses', 'Large event settings']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -1143,6 +1143,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Retention', 'Retention'],
 			['Backups', 'Backups'],
 			['Upgrades', 'Upgrades'],
+			['Re-parse', 'Re-parse'],
 			['Integration addresses', 'Integration addresses'],
 			['Large event settings', 'Large event settings']
 		]) {
@@ -5697,4 +5698,135 @@ test('A121 call sign', async ({ browser, request }, info) => {
 	await expect(form.getByLabel('Group', { exact: true })).toHaveCount(0);
 	console.log(`A121: callsign:${sign}, group:${sign} and ?group=${sign} found the same page; the row, detail view and integration form say Call sign`);
 	await page.context().close();
+});
+
+/** Runs SQL on the test database, as sql() does, and returns psql's unaligned output. */
+function sqlOut(input: string): string {
+	const url = process.env.PA_E2E_DATABASE_URL;
+	const args = ['-q', '-At', '-v', 'ON_ERROR_STOP=1'];
+	if (url) return execFileSync('psql', [url, ...args], { input }).toString().trim();
+	return execFileSync('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', ...args, '-U', 'postgres'], { input }).toString().trim();
+}
+
+/** Locks one message's row in a psql session that stays open, so a re-parse
+ * stops there until it's let go (as A122 and A123 hold theirs). */
+async function holdMessage(id: number): Promise<() => Promise<void>> {
+	const url = process.env.PA_E2E_DATABASE_URL;
+	const p = url
+		? spawn('psql', [url, '-q', '-At'])
+		: spawn('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-At', '-U', 'postgres']);
+	let out = '';
+	let closed = false;
+	p.stdout.on('data', (d) => (out += d.toString()));
+	p.on('close', () => (closed = true));
+	p.stdin.write(`BEGIN; SELECT 'held' FROM messages WHERE id = ${id} FOR UPDATE;\n`);
+	for (const until = Date.now() + 30_000; !out.includes('held'); await new Promise((r) => setTimeout(r, 100))) {
+		if (Date.now() > until || closed) throw new Error('the lock on the held page was not taken');
+	}
+	return async () => {
+		if (closed) return;
+		p.stdin.end('ROLLBACK;\n');
+		await new Promise((r) => p.on('close', r));
+	};
+}
+
+// A123 (R23c): an admin's re-parse controls in Administration, desktop and
+// phone. A re-parse of 3,000 made-up pages, held at the 1,500th by a lock,
+// shows Running with done of total, its rate and time left, and a tag on the
+// start page; Pause holds it (Resume, not Pause, then), Resume carries it on
+// to the end (Idle, the last run's numbers); Stop shows Stopped, with no
+// Resume, and Start again runs it from the beginning. Axe on each state.
+test('A123 re-parse controls in Administration', async ({ browser }, info) => {
+	test.setTimeout(240_000);
+	const n = projectN(info);
+	const capcode = `091230${n}`;
+	sqlOut(`INSERT INTO messages (capcode, text, sent_at, dedup_key)
+		SELECT '${capcode}', 'MADE-UP A123 E2E PAGE ' || g, now() - interval '400 days' + g * interval '1 second', sha256(('a123 e2e ${n} ' || g)::bytea)
+		FROM generate_series(1, 3000) g`);
+	const held = Number(sqlOut(`SELECT id FROM messages WHERE capcode = '${capcode}' ORDER BY id OFFSET 1499 LIMIT 1`));
+	const queue = (reason: string) =>
+		sqlOut(`INSERT INTO reparse_requests (capcode_pattern, reason) VALUES ('${capcode}', '${reason}'); SELECT pg_notify('pagerarchive_reparse', '')`);
+	const page = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	page.on('dialog', (d) => d.accept());
+	const noSideways = async (where: string) =>
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no sideways scroll, ${where}`).toBe(true);
+	const reparseState = async () => (await (await page.request.get('/api/v1/admin/reparse')).json()).state as string;
+	// Nothing else re-parsing: earlier tests' requests are done, and a run an
+	// earlier try left held is stopped.
+	await expect.poll(reparseState, { timeout: 60_000 }).not.toBe('running');
+	if ((await reparseState()) !== 'idle') {
+		await page.request.post('/api/v1/admin/reparse/start');
+		await expect.poll(reparseState, { timeout: 60_000 }).toBe('idle');
+	}
+
+	let release = await holdMessage(held);
+	try {
+		queue('alias added');
+		await expect.poll(reparseState, { timeout: 30_000 }).toBe('running');
+		await page.goto('/admin');
+		await expect(page.getByTestId('reparse-tag')).toHaveText(/running, \d+ %/, { timeout: 30_000 });
+		await page.getByTestId('admin-screens').getByRole('link', { name: 'Re-parse' }).click();
+		await expect(page).toHaveURL(/\/admin\/reparse$/);
+		const state = page.getByTestId('reparse-state');
+		const done = page.getByTestId('reparse-done');
+		await expect(state).toHaveText('Running');
+		await expect(done).toContainText('1,499 of 3,000 messages (49 %)', { timeout: 30_000 });
+		await expect(page.getByTestId('reparse-status')).toContainText('an alias added');
+		await expect(page.getByTestId('reparse-rate')).toContainText(/a minute|Working it out/);
+		await expect(page.getByTestId('reparse-eta')).toBeVisible();
+		const controls = page.getByRole('group', { name: 'Re-parse controls' });
+		await expect(controls.getByRole('button')).toHaveText(['Pause', 'Stop', 'Start again']);
+		expect(await axeOf(page), 'axe: re-parse running, 1280px').toEqual([]);
+		await page.setViewportSize({ width: 375, height: 800 });
+		await noSideways('running, 375px');
+		expect(await axeOf(page), 'axe: re-parse running, 375px').toEqual([]);
+		await page.screenshot({ path: info.outputPath('reparse-running-375.png'), fullPage: true });
+		await page.setViewportSize({ width: 1280, height: 900 });
+
+		// Pause: it stops after the page in hand.
+		await controls.getByRole('button', { name: 'Pause' }).click();
+		await expect(state).toHaveText('Paused');
+		await expect(controls.getByRole('button')).toHaveText(['Resume', 'Stop', 'Start again']);
+		await release();
+		await page.reload();
+		await expect(done).toContainText('1,500 of 3,000 messages (50 %)', { timeout: 15_000 });
+		await expect(page.getByTestId('reparse-rate')).toHaveCount(0);
+		expect(await axeOf(page), 'axe: re-parse paused').toEqual([]);
+		await page.goto('/admin');
+		await expect(page.getByTestId('reparse-tag')).toHaveText('paused');
+		await page.goto('/admin/reparse');
+
+		// Resume: on to the end, and Idle with the run's numbers.
+		await controls.getByRole('button', { name: 'Resume' }).click();
+		await expect(state).toHaveText('Idle', { timeout: 60_000 });
+		await expect(done).toContainText('3,000 of 3,000 messages (100 %)');
+		await expect(controls.getByRole('button')).toHaveText(['Start again']);
+		expect(await axeOf(page), 'axe: re-parse idle').toEqual([]);
+
+		// Stop, then Start again from the beginning.
+		release = await holdMessage(held);
+		queue('alias template changed');
+		await expect(state).toHaveText('Running', { timeout: 30_000 });
+		await expect(done).toContainText('1,499 of 3,000', { timeout: 30_000 });
+		await controls.getByRole('button', { name: 'Stop' }).click();
+		await expect(state).toHaveText('Stopped');
+		await expect(controls.getByRole('button')).toHaveText(['Start again']);
+		await page.setViewportSize({ width: 375, height: 800 });
+		await noSideways('stopped, 375px');
+		expect(await axeOf(page), 'axe: re-parse stopped, 375px').toEqual([]);
+		await page.goto('/admin');
+		await expect(page.getByTestId('reparse-tag')).toHaveText('stopped');
+		await page.goto('/admin/reparse');
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await controls.getByRole('button', { name: 'Start again' }).click();
+		await expect(state).toHaveText('Running');
+		await expect(done).toContainText(/\d of 3,000/);
+		await release();
+		await expect(state).toHaveText('Idle', { timeout: 60_000 });
+		await expect(done).toContainText('3,000 of 3,000 messages (100 %)');
+	} finally {
+		await release();
+		await page.context().close();
+	}
+	console.log(`A123 ${info.project.name}: running at 1,499 of 3,000, paused at 1,500, resumed to Idle, stopped and started again; 1280 and 375 px, axe clean`);
 });

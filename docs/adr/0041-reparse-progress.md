@@ -48,6 +48,8 @@ It's provisioned from the repository's file, like the others, so a release deliv
 
 ### 5. Not done: resuming a run after a restart
 
+Done since by ADR 0043 (R23c): a run is kept in the database and carries on after a restart. What follows is how it was when this was written.
+
 A restart still starts a run again from the beginning: the claimed request is gone, and the start-up check queues a full re-parse again when the profiles changed. This ADR changes visibility only. The walk is already by ID, so resuming would be cheap to add: keep the claimed requests (marked, not deleted) with each pattern's last ID, written once a batch, and start from it; the progress would then start from the count up to that ID instead of 0.
 
 ### 6. Shown by A122
