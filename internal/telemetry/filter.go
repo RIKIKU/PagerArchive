@@ -25,8 +25,9 @@ const (
 	anyKind kind = iota // set only by this code, from fixed values (a route, a version)
 	intKind             // a number: an ID, a count, a status code
 	boolKind
-	codeKind // a short code; other text becomes "other" (ErrorKind)
-	idKind   // a receiving client's ID, as an admin named it; else "other"
+	codeKind  // a short code; other text becomes "other" (ErrorKind)
+	codesKind // codes separated by commas, each as codeKind
+	idKind    // a receiving client's ID, as an admin named it; else "other"
 )
 
 // SpanKeys are the attribute keys spans (and their links) may carry.
@@ -101,6 +102,14 @@ var LogKeys = map[string]kind{
 	"traces":          boolKind,
 	"logs":            boolKind,
 	"metrics":         boolKind,
+	// The re-parse's progress (R23b): counts, and its requests' reasons as codes.
+	"reasons":     codesKind,
+	"patterns":    intKind,
+	"total":       intKind,
+	"done":        intKind,
+	"percent":     intKind,
+	"per_minute":  intKind,
+	"eta_seconds": intKind,
 }
 
 // ResourceKeys are the resource attributes kept from the program and
@@ -193,6 +202,15 @@ func keep(keys map[string]kind, kv attribute.KeyValue) (attribute.KeyValue, bool
 			return kv, kv.Value.Type() == attribute.INT64 || kv.Value.Type() == attribute.BOOL
 		}
 		return attribute.String(string(kv.Key), ErrorKind(kv.Value.AsString())), true
+	case codesKind:
+		if kv.Value.Type() != attribute.STRING {
+			return kv, false
+		}
+		parts := strings.Split(kv.Value.AsString(), ",")
+		for i, p := range parts {
+			parts[i] = ErrorKind(p)
+		}
+		return attribute.String(string(kv.Key), strings.Join(parts, ",")), true
 	case idKind:
 		if kv.Value.Type() != attribute.STRING {
 			return kv, false

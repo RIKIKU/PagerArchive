@@ -154,6 +154,11 @@ SELECT pg_notify('pagerarchive_reparse', '');
 -- name: ClaimReparseRequests :many
 DELETE FROM reparse_requests RETURNING capcode_pattern, reason;
 
+-- name: CountMessagesToReparse :one
+-- R23b: how many messages a re-parse of one pattern has to do, counted once
+-- when it starts, for its progress.
+SELECT count(*) FROM messages WHERE capcode LIKE sqlc.arg(pattern)::text;
+
 -- name: MessagesToReparse :many
 -- R23a. in_event and live tell the re-parse which pages large events are
 -- rebuilt around (ADR 0027 §9): a page in an event, or a live page (one a

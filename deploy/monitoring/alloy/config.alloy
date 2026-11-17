@@ -135,7 +135,7 @@ otelcol.processor.transform "allowlist" {
   log_statements {
     context    = "log"
     statements = [
-      `keep_keys(log.attributes, ["client", "outcome", "message_id", "user", "by", "owner", "users", "role", "code", "reason", "error", "op", "kind", "status", "result", "count", "deleted", "redacted", "rows", "requests", "requests_closed", "integrations", "aliases", "entries", "conflicts", "streets", "localities", "addresses", "seconds", "heap_mib", "uploaded_bytes", "stored_bytes", "buffered", "dropped", "days", "agencies", "ok", "dry_run", "update", "trusted", "version", "traces", "logs", "metrics"])`,
+      `keep_keys(log.attributes, ["client", "outcome", "message_id", "user", "by", "owner", "users", "role", "code", "reason", "error", "op", "kind", "status", "result", "count", "deleted", "redacted", "rows", "requests", "requests_closed", "integrations", "aliases", "entries", "conflicts", "streets", "localities", "addresses", "seconds", "heap_mib", "uploaded_bytes", "stored_bytes", "buffered", "dropped", "days", "agencies", "ok", "dry_run", "update", "trusted", "version", "traces", "logs", "metrics", "reasons", "patterns", "total", "done", "percent", "per_minute", "eta_seconds"])`,
     ]
   }
 

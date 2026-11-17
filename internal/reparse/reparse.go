@@ -45,6 +45,10 @@ type Worker struct {
 	// Regroup rebuilds the large events around the re-parsed pages after
 	// each re-parse (R87; owner, 2026-11-14; ADR 0027 §9); nil rebuilds none.
 	Regroup *events.Regrouper
+	// Progress is how far the re-parse has got, for /metrics (R23b).
+	Progress Progress
+	// ProgressEvery is how often a run logs its progress: 30 s if 0.
+	ProgressEvery time.Duration
 }
 
 // CheckProfiles queues a full re-parse if the profiles or address dataset
@@ -122,6 +126,26 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		w.requeue(ctx, patterns)
 		return 0, err
 	}
+	// R23b: what this run has to do, counted once, for its progress.
+	var total int64
+	for pattern := range patterns {
+		c, err := w.Store.CountMessagesToReparse(ctx, pattern)
+		if err != nil {
+			w.requeue(ctx, patterns)
+			return 0, err
+		}
+		total += c
+	}
+	reasons := make([]string, len(reqs))
+	for i, r := range reqs {
+		reasons[i] = r.Reason
+	}
+	started := time.Now()
+	w.Progress.start(total, started)
+	defer w.Progress.finish()
+	w.Log.InfoContext(ctx, "re-parse started", "reasons", reasonCodes(reasons), "requests", len(reqs), "patterns", len(patterns), "total", total)
+	stopLog := w.logProgress(ctx)
+	defer stopLog()
 	n := 0
 	var aff events.Affected
 	for pattern := range patterns {
@@ -139,14 +163,17 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 				}
 				after = m.ID
 				n++
+				w.Progress.add()
 			}
 			if len(rows) < batchSize {
 				break
 			}
 		}
 	}
+	stopLog()
 	span.SetAttributes(attribute.Int("pagerarchive.reparse.messages", n))
-	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", len(reqs))
+	perMin, _ := w.Progress.Snapshot().Rate(time.Now())
+	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", len(reqs), "seconds", int64(time.Since(started).Seconds()), "per_minute", int64(perMin))
 	if err := w.regroup(ctx, &aff); err != nil {
 		w.requeue(ctx, patterns)
 		return n, err

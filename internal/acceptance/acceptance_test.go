@@ -223,6 +223,7 @@ func setup(t *testing.T, with ...traced) *env {
 	e.cat = srv.Catalog
 	e.worker = &reparse.Worker{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, Log: log, Poll: time.Minute, Tracer: tr,
 		Regroup: &events.Regrouper{Network: n}}
+	srv.Reparse = &e.worker.Progress
 	melbourne, err := time.LoadLocation("Australia/Melbourne")
 	if err != nil {
 		t.Fatal(err)

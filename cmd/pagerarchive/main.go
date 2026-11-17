@@ -468,6 +468,7 @@ func serve(stderr io.Writer) error {
 		AppURL:                auth.appURL,
 		AccountURL:            auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
 		Nightly:               job,
+		Reparse:               &worker.Progress,
 		BackupStatusFile:      os.Getenv("BACKUP_STATUS_FILE"),
 		BackupRequestFile:     os.Getenv("BACKUP_REQUEST_FILE"),
 		AutoUpgradeStatusFile: os.Getenv("AUTO_UPGRADE_STATUS_FILE"),

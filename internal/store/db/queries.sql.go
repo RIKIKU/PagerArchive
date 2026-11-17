@@ -1329,6 +1329,19 @@ func (q *Queries) CountLiveInvitationsBy(ctx context.Context, arg CountLiveInvit
 	return count, err
 }
 
+const countMessagesToReparse = `-- name: CountMessagesToReparse :one
+SELECT count(*) FROM messages WHERE capcode LIKE $1::text
+`
+
+// R23b: how many messages a re-parse of one pattern has to do, counted once
+// when it starts, for its progress.
+func (q *Queries) CountMessagesToReparse(ctx context.Context, pattern string) (int64, error) {
+	row := q.db.QueryRow(ctx, countMessagesToReparse, pattern)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countWaitingRequests = `-- name: CountWaitingRequests :one
 SELECT count(*) FROM alias_requests WHERE status = 'waiting'
 `
