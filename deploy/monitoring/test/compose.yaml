@@ -2,7 +2,9 @@
 # never for a deployment:
 #   - a webhook contact point that receives every alert (PA_ALERT_WEBHOOK_URL,
 #     a receiver the test runs on the host), and a fast notification policy;
-#   - Alloy's OTLP port on 127.0.0.1, for a client run on the host.
+#   - Alloy's OTLP port on 127.0.0.1, for a client run on the host;
+#   - Prometheus on 127.0.0.1, taking samples up to 9 days old, so A119 can
+#     write made-up clients' history straight into it (remote write).
 services:
   grafana:
     volumes:
@@ -16,3 +18,10 @@ services:
   alloy:
     ports:
       - "${ALLOY_OTLP_BIND:-127.0.0.1:14318}:4318"
+  prometheus:
+    volumes:
+      - ./test/prometheus-test.yml:/etc/prometheus/prometheus.yml:ro
+    # An internal network can't publish a port: the grafana network can.
+    networks: [internal, grafana]
+    ports:
+      - "${PROMETHEUS_TEST_BIND:-127.0.0.1:19090}:9090"

@@ -241,7 +241,7 @@ func TestA115FailuresAndAuthentik(t *testing.T) {
 			"Tasks waiting", "Database connections and errors (per minute)"},
 		"pa-failures": {"Server errors, 1 h", "Refused pages, 1 h", "Not receiving", "Failed sends, 1 h",
 			"Failed deliveries, 1 h", "Locked accounts", "Nightly run", "Backups", "Upgrades", "Authentik down",
-			"Failed sign-ins, 5 min", "Authentik errors, 5 min", "Pages refused (per minute)",
+			"Failed sign-ins, 5 min", "Authentik errors, 5 min", "Radio stalled", "Radio not decoding", "Pages refused (per minute)",
 			"Authentik: failed sign-ins and errors", "Errors and warnings in the logs, by message",
 			"The error and warning lines (click one for its trace)"},
 	}

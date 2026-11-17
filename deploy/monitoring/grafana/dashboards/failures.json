@@ -132,9 +132,27 @@
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {
+      "id": 24, "type": "stat", "title": "Radio stalled",
+      "description": "Clients running the radio that have had no audio from rtl_fm for more than 2 minutes while still reporting, as \"Radio stalled\" alerts (R74a): a stuck dongle. Normal: 0. Worry: any: reset that client's dongle; the Clients dashboard has its radio health.",
+      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(max by (instance) (pagerarchive_client_radio_silent_seconds) > 120) or vector(0)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 25, "type": "stat", "title": "Radio not decoding",
+      "description": "Clients whose radio gives audio but which decoded less than a quarter of their usual pages in the last 30 minutes (the same half hour's average over the 7 days before, when that's 20 pages or more), as \"Radio not decoding\" counts them (R74b). The alert itself waits 5 minutes before it fires and clears above half the usual. Normal: 0. Worry: any: the signal, not the dongle; the Clients dashboard's \"Pages decoded: the last 30 minutes against the usual\" shows it.",
+      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(((sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m])) and on (instance) (sum by (instance) (rate(pagerarchive_client_radio_audio_bytes_total[5m])) > 40000)) / (avg by (instance) (label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), \"day\", \"1\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), \"day\", \"2\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), \"day\", \"3\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), \"day\", \"4\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), \"day\", \"5\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), \"day\", \"6\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), \"day\", \"7\", \"\", \"\")) >= 20)) < 0.25) or vector(0)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
       "id": 15, "type": "timeseries", "title": "Server errors by route (per minute)",
       "description": "API requests answered with a 5xx status, per minute, by route pattern and status. Normal: nothing. Worry: one route failing on its own (that feature) or every route at once (the database or the API itself). Requests and load has the slow ones and their traces.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 27},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 31},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (route, status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", status=~\"5..\"}[$__rate_interval])) * 60", "legendFormat": "{{route}} {{status}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}, "noValue": "None"}, "overrides": []},
@@ -143,7 +161,7 @@
     {
       "id": 16, "type": "timeseries", "title": "Pages refused (per minute)",
       "description": "Pages the API refused, per minute: by status for POST /api/v1/pages (401 a bad or revoked client key, 400 or 422 a malformed page) and pages whose client clock was ahead. Ignored and duplicate pages aren't failures and aren't shown. Normal: nothing. Worry: a line that keeps going.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 27},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\"}[$__rate_interval])) * 60", "legendFormat": "HTTP {{status}}"},
@@ -155,7 +173,7 @@
     {
       "id": 17, "type": "timeseries", "title": "Clients' failed sends and drops (per minute)",
       "description": "From each receiving client's own numbers (R74), per minute. Failed sends and retries: the client couldn't reach the server, or it answered slowly; it keeps the pages and tries again. Dropped: lost, the buffer full or the page too old. Normal: nothing, or a blip during a restart. Worry: failed sends that go on, and any dropped pages.",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 35},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 39},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed sends"},
@@ -168,7 +186,7 @@
     {
       "id": 18, "type": "table", "title": "Clients with pages waiting",
       "description": "Receiving clients holding pages they couldn't send yet, as they last reported (R15). They send them, oldest first, once the server answers. Normal: empty. Worry: a client that stays here: it can't reach the server.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 35},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 39},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "format": "table", "expr": "max by (instance) (pagerarchive_client_pages_buffered) > 0"}],
       "transformations": [{"id": "organize", "options": {"excludeByName": {"Time": true}, "renameByName": {"instance": "Client", "Value": "Pages waiting"}}}],
@@ -178,7 +196,7 @@
     {
       "id": 19, "type": "timeseries", "title": "Failed deliveries by kind (per hour)",
       "description": "Deliveries to users' integrations that failed after their retries, by kind, per hour. Normal: 0. Worry: one kind failing steadily (a user's endpoint: they see it on their Integrations page) or every kind at once (this server's network).",
-      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 43},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 47},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (kind) (increase(pagerarchive_integration_deliveries_total{job=\"pagerarchive\", result=\"failed\"}[1h])) > 0", "legendFormat": "{{kind}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "None"}, "overrides": []},
@@ -187,7 +205,7 @@
     {
       "id": 20, "type": "timeseries", "title": "Authentik: failed sign-ins and errors",
       "description": "From Authentik's event log, counted each minute over the 5 minutes before (R89b): failed sign-ins by where they failed (password, second factor, other) and Authentik's errors by kind. Normal: 0, with the odd failed password. Worry: a burst of failed sign-ins, or any error. The Authentik dashboard has more.",
-      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 43},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 47},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (action, reason) (pagerarchive_authentik_events_5m{job=\"pagerarchive\", action!=\"login\"})", "legendFormat": "{{action}} {{reason}}"}],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not counted"}, "overrides": []},
@@ -196,7 +214,7 @@
     {
       "id": 21, "type": "table", "title": "Errors and warnings in the logs, by message",
       "description": "The API's and the clients' ERROR and WARN log lines in the dashboard's time range, counted by service, level and message. Messages are fixed texts from the code, never page text, search terms, names or addresses (R70). Normal: a few WARNs at start-up (such as the made-up example profile). Worry: an ERROR, or a WARN that keeps coming. The lines below open their traces.",
-      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 51},
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 55},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "queryType": "instant", "instant": true, "range": false, "expr": "sum by (service_name, severity_text, message) (count_over_time({service_name=~\"pagerarchive|pagerarchive-client\"} | severity_text=~\"ERROR|WARN\" | label_format message=\"{{ __line__ }}\" [$__range]))"}],
       "transformations": [
@@ -210,7 +228,7 @@
     {
       "id": 22, "type": "table", "title": "Upgrades' failed steps",
       "description": "The automatic upgrade script's steps that failed or warned in the dashboard's time range (check, verify, backup, upgrade, health, rollback, restore), with the reason as fixed text. Normal: empty (or upgrades are off). Worry: any row: Backups and upgrades has every step.",
-      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 60},
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 64},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "queryType": "instant", "instant": true, "range": false, "expr": "sum by (step, reason) (count_over_time({service_name=\"pagerarchive-auto-upgrade\", level=~\"error|warn\"} | json reason [$__range]))"}],
       "transformations": [
@@ -223,7 +241,7 @@
     {
       "id": 23, "type": "logs", "title": "The error and warning lines (click one for its trace)",
       "description": "The lines counted above, newest first. Click one for its fields; one with a trace ID opens the request or page it belongs to in Tempo.",
-      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 66},
+      "gridPos": {"h": 10, "w": 24, "x": 0, "y": 70},
       "datasource": {"type": "loki", "uid": "loki"},
       "targets": [{"refId": "A", "datasource": {"type": "loki", "uid": "loki"}, "expr": "{service_name=~\"pagerarchive|pagerarchive-client\"} | severity_text=~\"ERROR|WARN\""}],
       "options": {"showTime": true, "wrapLogMessage": true, "enableLogDetails": true, "sortOrder": "Descending"}
