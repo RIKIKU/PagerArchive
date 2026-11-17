@@ -32,7 +32,7 @@ survived=0
 # and restore. <test> is "go:<regexp>" (the acceptance checks),
 # "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
 # dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
-# "mon:<regexp>" (the example stack's checks: TestA65, TestA67),
+# "mon:<regexp>" (the example stack's checks: TestA65, TestA67, TestA118),
 # "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages),
 # "a76:<regexp>" (A76's checks through the command, scripts/a76-checks.sh) or
 # "stack:<regexp>" (the account checks against Authentik, through
@@ -79,8 +79,8 @@ mutate() {
 		;;
 	mon:*)
 		out=$(PA_MON_RUN="${test#mon:}" sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
-		# What failed, not the steps that passed before it (their lines say "A65:" or "A67:").
-		printf '%s\n' "$out" | grep -E '^\s+a(6[57]|80)_test.go:[0-9]+: ' | grep -vE ': A(6[57]|80): ' | head -4
+		# What failed, not the steps that passed before it (their lines say "A65:", "A67:" or "A118:").
+		printf '%s\n' "$out" | grep -E '^\s+a(6[57]|80|118)_test.go:[0-9]+: ' | grep -vE ': A(6[57]|80|118): ' | head -4
 		;;
 	stack:*)
 		out=$(PA_STACK_PART=accounts sh scripts/stack-checks.sh -run "TestA23FirstAdmin|${test#stack:}" 2>&1)
@@ -361,6 +361,13 @@ if command -v docker >/dev/null; then
 	mutate "the clients panel back on instant queries only" deploy/monitoring/grafana/dashboards/clients.json mon:TestA67 \
 		'last_over_time(' '(' \
 		deploy/monitoring/grafana/dashboards/clients.json '[$__range:1m])' ')'
+	# R74b: "Radio not decoding" (A118): its query, its audio check and its floor.
+	mutate "the \"radio not decoding\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA118 \
+		'(label_replace(increase(pagerarchive_client_pages_decoded_total[30m]), "client"' '(label_replace(increase(pagerarchive_client_pages_decode_total[30m]), "client"'
+	mutate "the \"radio not decoding\" alert rule without its audio check" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA118 \
+		'"(.*)")) > 40000)' '"(.*)")) >= 0)'
+	mutate "the \"radio not decoding\" alert rule without its floor" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA118 \
+		'                >= 20' '                >= 0'
 else
 	echo "=== the alert rules' and dashboard's mutations skipped: no Docker"
 fi

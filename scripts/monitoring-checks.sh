@@ -1,5 +1,5 @@
 #!/bin/sh
-# A65, A67, A80's alert, A90's Grafana part, A113 and A115 against the example
+# A65, A67, A80's alert, A90's Grafana part, A113, A115 and A118 against the example
 # monitoring stack itself (deploy/monitoring): the API, its database, Authentik
 # and the backup services from the compose file at the top, joined to the
 # stack's `monitoring` and `monitoring-authentik` networks by the override
@@ -24,8 +24,9 @@
 # TestA67; mutation-checks.sh uses it.
 # needs: Docker with compose, Go, curl, and no network named monitoring or
 # monitoring-authentik (the stack owns those names, on the whole host). Uses
-# 127.0.0.1:18091, :19091 (Authentik), :18026, :13001, :14319, :55437 and 0.0.0.0:18099 (the webhook, which Grafana reaches through the
-# Docker host's gateway).
+# 127.0.0.1:18091, :19091 (Authentik), :18026, :13001, :14319, :19090 (Prometheus, for A118), :55437 and
+# 0.0.0.0:18099 (the webhook, which Grafana reaches through the Docker host's gateway;
+# PA_MON_WEBHOOK_PORT another port, on a host where 18099 is taken).
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -63,6 +64,7 @@ chmod 755 "$AUTOUP"
 export AUTO_UPGRADE_STATUS_DIR="$AUTOUP"
 export PAGERARCHIVE_VERSION=montest API_BIND=127.0.0.1:18091 AUTHENTIK_BIND=127.0.0.1:19091 MAILPIT_BIND=127.0.0.1:18026 PA_MON_DB_BIND=127.0.0.1:55437
 GRAFANA_ADMIN_PASSWORD=test-grafana-admin-password
+WEBHOOK_PORT=${PA_MON_WEBHOOK_PORT:-18099}
 . ./scripts/install-lib.sh
 MONROOT=$(mktemp -d)
 MONDIR=$MONROOT/deploy/monitoring
@@ -182,11 +184,12 @@ PA_MON_GRAFANA_URL=http://127.0.0.1:13001 PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMI
 # From here on, the test's own overlay: a webhook contact point and Alloy's OTLP port.
 cp deploy/monitoring/test/compose.yaml "$MONDIR/compose.override.yaml"
 mkdir -p "$MONDIR/test"
-cp deploy/monitoring/test/alerting-test.yaml "$MONDIR/test/"
+cp deploy/monitoring/test/alerting-test.yaml deploy/monitoring/test/prometheus-test.yml "$MONDIR/test/"
 chmod -R a+rX "$MONDIR/test"
 cat >"$MONROOT/vars" <<VARS
 ALLOY_OTLP_BIND=127.0.0.1:14319
-PA_ALERT_WEBHOOK_URL=http://host.docker.internal:18099/alert
+PA_ALERT_WEBHOOK_URL=http://host.docker.internal:$WEBHOOK_PORT/alert
+PROMETHEUS_TEST_BIND=127.0.0.1:19090
 VARS
 fill_env "$MONDIR/.env" "$MONROOT/vars"
 mon_up
@@ -228,7 +231,7 @@ sleep 120
 echo checks >"$PHASE_FILE"
 
 PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http://127.0.0.1:13001 \
-	PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" PA_MON_WEBHOOK_ADDR=0.0.0.0:18099 \
+	PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMIN_PASSWORD" PA_MON_WEBHOOK_ADDR=0.0.0.0:$WEBHOOK_PORT PA_MON_PROMETHEUS_URL=http://127.0.0.1:19090 \
 	PA_MON_DB_URL="postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:55437/postgres?sslmode=disable" \
 	PA_MON_STOP_API="docker compose -p $P --project-directory $PWD $APP_FILES stop api" \
 	PA_MON_START_API="docker compose -p $P --project-directory $PWD $APP_FILES start api" \
@@ -239,7 +242,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_AUTHENTIK_URL=http://127.0.0.1:19091 \
 	PA_MON_STOP_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES stop authentik-server" \
 	PA_MON_START_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES start authentik-server" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115}" ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA90|TestA113|TestA115|TestA118}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then
