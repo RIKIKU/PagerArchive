@@ -1,4 +1,8 @@
-package monitortest
+		t.Errorf("while it runs, the dashboard's re-parse panels say %v, and the graph to do and done %v (want %d and %d)",
+			pick(got, wantRunning), got["Re-parse: messages to do and done"], pages, held-1)
+	} else {
+		t.Logf("A122: while it runs: %v; the graph: to do and done %v", pick(got, wantRunning), got["Re-parse: messages to do and done"])
+	}package monitortest
 
 import (
 	"context"
@@ -75,7 +79,9 @@ func TestA122ReparseInGrafana(t *testing.T) {
 				return false
 			}
 		}
-		return true
+		// The graph's last point is a step (15 s) behind the stats'.
+		g := got["Re-parse: messages to do and done"]
+		return len(g) == 2 && g[0] == pages && g[1] == held-1
 	})
 	if !ok {
 		t.Errorf("while it runs, the dashboard's re-parse panels say %v", pick(got, wantRunning))
