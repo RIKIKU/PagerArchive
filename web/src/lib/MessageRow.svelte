@@ -55,7 +55,7 @@
 				style:--agency={m.colour ?? 'transparent'}>{m.alias ?? m.capcode}</a
 			></span
 		>
-		{#if m.call_sign}<span class="callsign" title="Call sign"><span class="visually-hidden">Call sign </span>{m.call_sign}</span>{/if}
+		{#if m.call_sign}<span class="callsign" title="Call sign"><span class="visually-hidden">Call sign&nbsp;</span>{m.call_sign}</span>{/if}
 		{#if m.job_number}<a class="job" href="/jobs/{encodeURIComponent(m.job_number)}">Job {m.job_number}</a>{/if}
 		{#if pick}<PrintTick id={m.id} />{/if}
 	</header>

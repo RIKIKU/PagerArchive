@@ -5565,7 +5565,9 @@ test('A121 call sign', async ({ browser, request }, info) => {
 	await expect(list.locator('article')).toHaveCount(1);
 	const found = await ids();
 	const row = list.locator('article').first();
-	await expect(row.locator('.callsign')).toHaveText(`Call sign ${sign}`);
+	// The words are for screen readers, with the value: "Call sign CS…".
+	await expect(row.locator('.callsign')).toHaveText(new RegExp(`^Call sign\\s${sign}$`));
+	await expect(row.locator('.callsign .visually-hidden')).toHaveText(/^Call sign\s?$/);
 	await expect(row.locator('.callsign')).toHaveAttribute('title', 'Call sign');
 
 	// A typed group: finds the same page, and the address it writes says callsign=.
