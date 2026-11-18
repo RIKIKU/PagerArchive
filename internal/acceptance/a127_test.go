@@ -78,7 +78,8 @@ func (e *env) scrape() (string, time.Duration) {
 	req, _ := http.NewRequest(http.MethodGet, e.url+"/metrics", nil)
 	req.Header.Set("Authorization", "Bearer "+metricsToken)
 	start := time.Now()
-	resp, err := http.DefaultClient.Do(req)
+	// A scrape that waits for messages' lock fails here, rather than hanging.
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		e.t.Fatal(err)
 	}
@@ -170,6 +171,8 @@ func TestA127ScrapeDoesNotCountArchive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// A scrape that fails while it's held mustn't leave the lock behind.
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
 	if _, err := tx.Exec(e.ctx, `LOCK TABLE messages IN ACCESS EXCLUSIVE MODE`); err != nil {
 		t.Fatal(err)
 	}
