@@ -94,6 +94,9 @@ type Server struct {
 	MetricsToken string
 	Locks        LockCounter
 	Version      string
+	// Flagged has the flagged messages' counts for /metrics, counted in the
+	// background (R52); nil leaves them out.
+	Flagged *FlagCounts
 	// Tracer traces requests, ingest and live updates (R71, R72); nil
 	// traces nothing. Requests counts them for /metrics.
 	Tracer   trace.Tracer

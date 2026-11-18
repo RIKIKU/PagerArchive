@@ -281,7 +281,7 @@ Each preset turns the same message into the service's documented request. Format
   | `pagerarchive_nightly_last_run_timestamp_seconds`, `…_success` (1 or 0), `…_deleted`, `…_redacted` | gauge | none |
   | `pagerarchive_build_info` | gauge | `version` |
 
-- Counters start at zero when the API starts (Prometheus' `rate()` handles that). Flag counts come from new partial indexes, so a scrape stays cheap on a large archive. The locked-accounts count is cached for 60 s. No metric has page text, alias names, integration names, users or destinations as a label.
+- Counters start at zero when the API starts (Prometheus' `rate()` handles that). Flag counts come from new partial indexes, so a scrape stays cheap on a large archive. (Later, 2026-11-18: after a mass rewrite they didn't, until the table was vacuumed: the index-only scans read the table for every row, and a scrape took ten times as long. They're now counted in the background every 60 s, and a scrape shows the last counts, with `pagerarchive_messages_flagged_counted_timestamp_seconds` for when: SPEC.md R52.) The locked-accounts count is cached for 60 s. No metric has page text, alias names, integration names, users or destinations as a label.
 
 ### 12. Deployment and docs
 

@@ -62,6 +62,8 @@ type env struct {
 	job    *nightly.Job
 	// redactor is retroactive redaction (R45a), which the nightly run does.
 	redactor *redaction.Worker
+	// queries records the SQL of queries made for requests, when asked (A127).
+	queries *queryLog
 
 	// Integrations (M5). Their clock is e.clock(), which tests can move
 	// (e.advance); every other part keeps the real clock.
@@ -132,7 +134,13 @@ func setup(t *testing.T, with ...traced) *env {
 	}
 	conn.Close(ctx)
 
-	st, err := store.Open(ctx, url, dbTracer...)
+	// Every query is offered to queries, which records those made for a
+	// request while a test asks it to (A127).
+	queries := &queryLog{}
+	if len(dbTracer) > 0 {
+		queries.next = dbTracer[0]
+	}
+	st, err := store.Open(ctx, url, queries)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -160,7 +168,7 @@ func setup(t *testing.T, with ...traced) *env {
 		}
 	}
 
-	e := &env{t: t, ctx: ctx, st: st, keys: map[string]string{}, logs: &syncBuffer{}, now: time.Now().UTC().Truncate(time.Second)}
+	e := &env{t: t, ctx: ctx, st: st, queries: queries, keys: map[string]string{}, logs: &syncBuffer{}, now: time.Now().UTC().Truncate(time.Second)}
 	for _, id := range []string{"a", "b"} {
 		key, err := st.AddClient(ctx, id, "Client "+strings.ToUpper(id))
 		if err != nil {

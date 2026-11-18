@@ -241,6 +241,14 @@ func TestA32Metrics(t *testing.T) {
 	if _, err := e.st.Pool.Exec(e.ctx, `UPDATE clients SET last_seen_at = CASE id WHEN 'a' THEN now() - interval '31 minutes' ELSE now() - interval '5 minutes' END`); err != nil {
 		t.Fatal(err)
 	}
+	// The flagged counts are counted in the background, as serve does (R52, A127).
+	e.countFlags(time.Minute)
+	if !eventually(5*time.Second, func() bool {
+		b, _ := e.scrape()
+		return strings.Contains(b, `pagerarchive_messages_flagged{flag="parse_failed"}`)
+	}) {
+		t.Fatal("the flagged counts weren't counted")
+	}
 	scrape := func(token string) (int, string) {
 		req, _ := http.NewRequest(http.MethodGet, e.url+"/metrics", nil)
 		if token != "" {
