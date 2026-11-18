@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
 )
 
@@ -125,10 +126,34 @@ type Filter struct {
 	OldCallSign string `json:"group,omitempty"`
 	Agency      string `json:"agency,omitempty"`
 	Job         string `json:"job,omitempty"`
+	// Level keeps pages at or above one level of an agency profile's level
+	// field (R49a), such as an alarm level. nil: any level, or none.
+	Level *LevelFilter `json:"level,omitempty"`
 	// Admin only (R33, R49): ignored while the owner isn't an admin.
 	ParseFailed      bool `json:"parse_failed,omitempty"`
 	AddressUnsplit   bool `json:"address_unsplit,omitempty"`
 	LocationMismatch bool `json:"location_mismatch,omitempty"`
+}
+
+// LevelFilter is "<field> at or above <level>" for one agency profile
+// (R49a). A page matches when its template's agency profile is Profile and
+// its Field's value is AtLeast or a level after it in the profile's order.
+// Pages of any other agency profile, with no value, or with a value the
+// profile doesn't list, don't.
+type LevelFilter struct {
+	Profile string `json:"profile"`  // the agency profile's name, such as "example-fire"
+	Field   string `json:"field"`    // one of its level fields
+	AtLeast string `json:"at_least"` // one of the field's values
+}
+
+// LevelChoice is one agency profile's level field as the integration form
+// offers it (R49a): the only place the app shows levels.
+type LevelChoice struct {
+	Profile string          `json:"profile"`
+	Agency  string          `json:"agency"` // the profile's description, or its name
+	Field   string          `json:"field"`
+	Label   string          `json:"label"`
+	Levels  []profile.Level `json:"levels"` // lowest first
 }
 
 // Request creates or changes an integration.

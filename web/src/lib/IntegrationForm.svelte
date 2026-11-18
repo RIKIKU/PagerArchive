@@ -10,6 +10,8 @@
 		type IntegrationKind,
 		type IntegrationRequest,
 		type IntegrationSecrets,
+		type LevelChoice,
+		type LevelFilter,
 		type Meta
 	} from './api.ts';
 	import { kindLabels, presets } from './integrations.ts';
@@ -45,6 +47,37 @@
 	let callSign = $state(init?.filter.call_sign ?? '');
 	let agency = $state(init?.filter.agency ?? '');
 	let job = $state(init?.filter.job ?? '');
+	// R49a: "<field> at or above <level>" for one agency profile. The levels
+	// are shown here only: never on pages, jobs or notifications (R87b).
+	const savedLevel = init?.filter.level ?? null;
+	const levelKeyOf = (profile: string, field: string) => `${profile}/${field}`;
+	let levelChoices: LevelChoice[] = $state([]);
+	let levelsLoaded = $state(false);
+	let levelKey = $state(savedLevel ? levelKeyOf(savedLevel.profile, savedLevel.field) : '');
+	let atLeast = $state(savedLevel?.at_least ?? '');
+	const levelChoice = $derived(levelChoices.find((c) => levelKeyOf(c.profile, c.field) === levelKey));
+	// A saved level whose profile or field isn't loaded now: kept until changed.
+	const levelGone = $derived(
+		levelsLoaded && !!savedLevel && !levelChoices.some((c) => levelKeyOf(c.profile, c.field) === levelKeyOf(savedLevel.profile, savedLevel.field))
+	);
+	api.integrationLevels().then(
+		(l) => {
+			levelChoices = l;
+			levelsLoaded = true;
+		},
+		() => {}
+	);
+
+	function levelFieldChanged() {
+		// A new field starts at its lowest level, unless the level is one of its own.
+		if (levelChoice && !levelChoice.levels.some((l) => l.value === atLeast)) atLeast = levelChoice.levels[0]?.value ?? '';
+	}
+
+	function levelFilter(): LevelFilter | null {
+		if (levelChoice && atLeast) return { profile: levelChoice.profile, field: levelChoice.field, at_least: atLeast };
+		if (savedLevel && levelKey === levelKeyOf(savedLevel.profile, savedLevel.field)) return savedLevel;
+		return null;
+	}
 	let parseFailed = $state(init?.filter.parse_failed ?? false);
 	let addressUnsplit = $state(init?.filter.address_unsplit ?? false);
 	let locationMismatch = $state(init?.filter.location_mismatch ?? false);
@@ -90,6 +123,7 @@
 				call_sign: callSign,
 				agency,
 				job,
+				level: levelFilter(),
 				parse_failed: admin && parseFailed,
 				address_unsplit: admin && addressUnsplit,
 				location_mismatch: admin && locationMismatch
@@ -203,6 +237,41 @@
 					<input id="{id}-job" bind:value={job} autocomplete="off" autocapitalize="characters" spellcheck="false" />
 				</div>
 			</div>
+			{#if levelChoices.length > 0 || savedLevel}
+				<fieldset class="inner" data-testid="level-filter">
+					<legend>Level</legend>
+					<div class="grid">
+						<div class="field">
+							<label for="{id}-level-field">Field</label>
+							<select id="{id}-level-field" bind:value={levelKey} onchange={levelFieldChanged}>
+								<option value="">Any level</option>
+								{#each levelChoices as c (levelKeyOf(c.profile, c.field))}
+									<option value={levelKeyOf(c.profile, c.field)}>{c.agency}: {c.label}</option>
+								{/each}
+								{#if savedLevel && levelGone}
+									<option value={levelKeyOf(savedLevel.profile, savedLevel.field)}
+										>{savedLevel.profile}: {savedLevel.field} (not in the profiles now)</option
+									>
+								{/if}
+							</select>
+						</div>
+						{#if levelChoice}
+							<div class="field">
+								<label for="{id}-level-at">At or above</label>
+								<select id="{id}-level-at" bind:value={atLeast}>
+									{#each levelChoice.levels as l (l.value)}
+										<option value={l.value}>{l.label}</option>
+									{/each}
+								</select>
+							</div>
+						{/if}
+					</div>
+					<p class="help">
+						With a field chosen, only that agency's pages at the chosen level or a higher one are sent: not its pages with no level or
+						another one, and not other agencies' pages.
+					</p>
+				</fieldset>
+			{/if}
 			{#if admin}
 				<fieldset class="inner">
 					<legend>Flags (admins only)</legend>

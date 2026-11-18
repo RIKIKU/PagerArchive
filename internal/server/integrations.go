@@ -167,6 +167,16 @@ func (s *Server) integrationDeliveries(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+// integrationLevels are the agency profiles' level fields the integration
+// form's filter offers (R49a), with their levels by label: the only place
+// the app shows them.
+func (s *Server) integrationLevels(w http.ResponseWriter, r *http.Request) {
+	if s.integrationsOff(w) {
+		return
+	}
+	writeJSON(w, http.StatusOK, s.Integrations.Levels())
+}
+
 // suggestSelection is what the selection field offers for ?q= (R48).
 func (s *Server) suggestSelection(w http.ResponseWriter, r *http.Request) {
 	if s.integrationsOff(w) {

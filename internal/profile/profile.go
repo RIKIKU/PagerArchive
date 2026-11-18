@@ -133,11 +133,26 @@ type Category struct {
 
 // Agency is a compiled agency profile.
 type Agency struct {
-	Name    string
-	File    string
-	Hash    string
-	Formats []Format
-	Labels  map[string]map[string]string
+	Name string
+	// Description is the profile's own name for the agency, such as
+	// "Example Fire Service"; "" if it gives none. Display only.
+	Description string
+	File        string
+	// Hash decides whether pages are re-parsed (R23a): the file's, with its
+	// display-only members cut out (labels, levels, description and
+	// comments), so changing those re-parses nothing (ADR 0045).
+	Hash string
+	// FileHash is the whole file's, as Hash was before display-only members
+	// were cut out of it: an install upgraded from then compares it with the
+	// hash it saved, so the upgrade itself re-parses nothing (ADR 0045).
+	FileHash string
+	Formats  []Format
+	Labels   map[string]map[string]string
+	// Levels are the agency's ordered level fields (R7, R49a), such as an
+	// alarm level, in the profile's order: an integration's filter can keep
+	// pages at or above one of a field's levels. Display and filter only:
+	// they change nothing a page says. Empty: the agency has none.
+	Levels []LevelField
 	// LargeEventFields are field values that open a large event (R87): a
 	// page whose field holds a listed value opens one, as a page with a code
 	// does. Empty: the agency's fields open none.
@@ -153,6 +168,47 @@ type Agency struct {
 type LargeEventField struct {
 	Field  string
 	Values map[string]bool
+}
+
+// LevelField is one of an agency's level fields (R7, R49a): a text field
+// whose values are levels in an order, lowest first, each with the label
+// the integration form shows. A value the list doesn't have is no level:
+// it's never at or above any.
+type LevelField struct {
+	Field  string
+	Label  string // what the field is called, such as "Alarm level"
+	Levels []Level
+	rank   map[string]int
+}
+
+// Level is one value of a level field and its label.
+type Level struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+// Rank is a value's place in the field's order, from 0 for the lowest, or
+// -1 for a value the list doesn't have. Values are compared exactly, as
+// extracted (P3).
+func (l *LevelField) Rank(value string) int {
+	if r, ok := l.rank[value]; ok {
+		return r
+	}
+	return -1
+}
+
+// LevelField is the agency's level field named field, or nil if it has
+// none by that name. A nil agency has none.
+func (a *Agency) LevelField(field string) *LevelField {
+	if a == nil {
+		return nil
+	}
+	for i := range a.Levels {
+		if a.Levels[i].Field == field {
+			return &a.Levels[i]
+		}
+	}
+	return nil
 }
 
 // OpensLargeEvent reports whether parsed fields hold a value one of the
@@ -312,27 +368,61 @@ type networkJSON struct {
 
 // parseHash is a network profile's hash, which decides whether pages are
 // re-parsed (R23a): the file's, with its top-level "areas" member cut out,
-// so adding, changing or removing areas re-parses nothing (R88d). The cut
-// takes the member with the comma before it, or for a first member the comma
-// after it, so the file hashes as it would without the member.
+// so adding, changing or removing areas re-parses nothing (R88d).
 func parseHash(data []byte) string {
+	return hashOf(withoutMembers(data, func(key string) bool { return key == "areas" }))
+}
+
+// agencyHash is an agency profile's hash, which decides whether pages are
+// re-parsed (R23a): the file's, with its display-only top-level members cut
+// out, so changing them re-parses nothing (ADR 0045): labels and levels
+// (shown, and an integration's level filter, R49a), the description and
+// comments. Everything else (formats, large_event_fields, the name) can
+// change what a page says or which events it opens, so it counts.
+func agencyHash(data []byte) string {
+	return hashOf(withoutMembers(data, displayOnly))
+}
+
+// displayOnly names an agency profile's top-level members that change
+// nothing a page says (ADR 0045).
+func displayOnly(key string) bool {
+	return key == "labels" || key == "levels" || key == "description" || strings.HasPrefix(key, "_")
+}
+
+// withoutMembers is data with every top-level member whose key drop names
+// cut out, so it hashes as the file would without them. Each cut takes the
+// member with the comma before it, or for a first member the comma after
+// it. Anything that isn't a JSON object is returned as it is.
+func withoutMembers(data []byte, drop func(key string) bool) []byte {
+	for {
+		cut, ok := cutMember(data, drop)
+		if !ok {
+			return data
+		}
+		data = cut
+	}
+}
+
+// cutMember cuts the first top-level member drop names out of data, and
+// reports whether there was one.
+func cutMember(data []byte, drop func(key string) bool) ([]byte, bool) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return hashOf(data)
+		return data, false
 	}
 	first := true
 	for dec.More() {
 		before := int(dec.InputOffset()) // the end of the previous value, or the '{'
 		t, err := dec.Token()
 		if err != nil {
-			return hashOf(data)
+			return data, false
 		}
 		var raw json.RawMessage
 		if err := dec.Decode(&raw); err != nil {
-			return hashOf(data)
+			return data, false
 		}
 		end := int(dec.InputOffset())
-		if key, _ := t.(string); key == "areas" {
+		if key, _ := t.(string); drop(key) {
 			from, to := before, end
 			if first {
 				// From the key itself to the next member's key.
@@ -343,12 +433,11 @@ func parseHash(data []byte) string {
 					to++
 				}
 			}
-			cut := append(append([]byte{}, data[:from]...), data[to:]...)
-			return hashOf(cut)
+			return append(append([]byte{}, data[:from]...), data[to:]...), true
 		}
 		first = false
 	}
-	return hashOf(data)
+	return data, false
 }
 
 func isSpace(b byte) bool { return b == ' ' || b == '\t' || b == '\n' || b == '\r' }
@@ -498,9 +587,17 @@ func parseRange(s string) (CapcodeRange, error) {
 
 type agencyJSON struct {
 	Name             string                       `json:"name"`
+	Description      string                       `json:"description"`
 	Formats          []formatJSON                 `json:"formats"`
 	Labels           map[string]map[string]string `json:"labels"`
 	LargeEventFields []largeEventFieldJSON        `json:"large_event_fields"`
+	Levels           []levelFieldJSON             `json:"levels"`
+}
+
+type levelFieldJSON struct {
+	Field  string  `json:"field"`
+	Label  string  `json:"label"`
+	Values []Level `json:"values"`
 }
 
 type largeEventFieldJSON struct {
@@ -540,7 +637,7 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 	warn := func(p, msg string) { warnings = append(warnings, (&Error{File: path, Path: p, Msg: msg}).Error()) }
 	renameOldCallSign(&j, warn, fail)
 
-	a := &Agency{Name: j.Name, File: path, Hash: hashOf(data), Labels: j.Labels, Warnings: warnings}
+	a := &Agency{Name: j.Name, Description: j.Description, File: path, Hash: agencyHash(data), FileHash: hashOf(data), Labels: j.Labels, Warnings: warnings}
 	names := map[string]bool{}
 	// What the formats extract, for large_event_fields: text fields, and
 	// fields a format splits into a list.
@@ -641,6 +738,7 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 		a.Formats = append(a.Formats, f)
 	}
 	a.LargeEventFields = largeEventFields(j.LargeEventFields, text, lists, fail)
+	a.Levels = levelFields(j.Levels, text, lists, fail)
 	if len(errs) > 0 {
 		return nil, errs
 	}
@@ -731,6 +829,57 @@ func largeEventFields(rules []largeEventFieldJSON, text, lists map[string]bool, 
 			rule.Values[v] = true
 		}
 		out = append(out, rule)
+	}
+	return out
+}
+
+// levelFields compiles an agency's level fields (R7, R49a). The schema has
+// checked their shape; here each field must be a text field one of the
+// agency's formats extracts, with one list, and within a list no value or
+// label may appear twice, no label may be blank, and no value may start or
+// end with a space (extracted values are trimmed, so it could never match).
+func levelFields(rules []levelFieldJSON, text, lists map[string]bool, fail func(p, msg string)) []LevelField {
+	var out []LevelField
+	seen := map[string]bool{}
+	for i, r := range rules {
+		p := fmt.Sprintf("/levels/%d", i)
+		switch {
+		case seen[r.Field]:
+			fail(p+"/field", fmt.Sprintf("field %q has a level list already: one list a field", r.Field))
+			continue
+		case lists[r.Field]:
+			fail(p+"/field", fmt.Sprintf("%q is a list field (a format splits it): levels takes a text field", r.Field))
+			continue
+		case !text[r.Field]:
+			fail(p+"/field", fmt.Sprintf("no format extracts a field named %q", r.Field))
+			continue
+		}
+		seen[r.Field] = true
+		lf := LevelField{Field: r.Field, Label: strings.TrimSpace(r.Label), rank: map[string]int{}}
+		if lf.Label == "" {
+			fail(p+"/label", "a level field's label can't be blank")
+		}
+		labels := map[string]bool{}
+		for k, l := range r.Values {
+			vp := fmt.Sprintf("%s/values/%d", p, k)
+			label := strings.TrimSpace(l.Label)
+			switch {
+			case strings.TrimSpace(l.Value) != l.Value:
+				fail(vp+"/value", fmt.Sprintf("value %q starts or ends with a space: extracted values are trimmed, so it would never match", l.Value))
+			case lf.Rank(l.Value) >= 0:
+				fail(vp+"/value", fmt.Sprintf("value %q is listed twice", l.Value))
+			case label == "":
+				fail(vp+"/label", "a level's label can't be blank")
+			case labels[label]:
+				fail(vp+"/label", fmt.Sprintf("label %q is given to two levels", label))
+			}
+			labels[label] = true
+			if lf.Rank(l.Value) < 0 {
+				lf.rank[l.Value] = len(lf.Levels)
+				lf.Levels = append(lf.Levels, Level{Value: l.Value, Label: label})
+			}
+		}
+		out = append(out, lf)
 	}
 	return out
 }

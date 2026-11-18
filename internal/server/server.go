@@ -188,6 +188,7 @@ func (s *Server) Handler() http.Handler {
 		"POST /api/v1/admin/users/{id}/deactivate-tree":     s.adminOnly(s.deactivateTree),
 		"PUT /api/v1/admin/users/{id}/trusted":              s.adminOnly(s.setTrusted),
 		"GET /api/v1/integrations/selection":                s.suggestSelection,
+		"GET /api/v1/integrations/levels":                   s.integrationLevels,
 		"GET /api/v1/integrations":                          s.listIntegrations,
 		"POST /api/v1/integrations":                         s.createIntegration,
 		"GET /api/v1/integrations/{id}":                     s.getIntegration,
