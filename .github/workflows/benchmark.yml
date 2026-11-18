@@ -19,9 +19,6 @@ on:
     - cron: "23 2 * * 1"
   # By hand, on any branch: a change that might be slower, or a check of this.
   workflow_dispatch:
-  # TEMPORARY, to register the workflow from this branch (removed in the next commit).
-  push:
-    branches: [a76-split]
 
 permissions:
   contents: read
@@ -37,7 +34,6 @@ env:
 jobs:
   search:
     name: Search speed (A75), benchmark
-    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 55
     services:
@@ -74,7 +70,6 @@ jobs:
 
   import:
     name: Importing messages (A76), benchmark
-    if: github.event_name != 'push'
     runs-on: ubuntu-24.04
     timeout-minutes: 85
     steps:
