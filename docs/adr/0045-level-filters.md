@@ -2,7 +2,7 @@
 
 ## Status
 
-Status: Proposed (2026-11-18). The owner's decision of 2026-11-18: "the integrations should be able to fire on [an agency's] alarm level", at or above a chosen level, with the levels shown in the integration form only: pages, the job view and notifications still show no level (R87b). R7, R49a, A125. No migration. `VERSION` and the compose image stay as they are (ADR 0024); the pull request is labelled `feature`.
+Status: Proposed (2026-11-18). The owner's decision of 2026-11-18: "the integrations should be able to fire on [an agency's] alarm level", at or above a chosen level, with the levels shown in the integration form only: pages, the job view and notifications still show no level (R87b). R7, R49a, A126. No migration. `VERSION` and the compose image stay as they are (ADR 0024); the pull request is labelled `feature`.
 
 ## Context
 
@@ -63,5 +63,5 @@ An agency profile's hash, which decides whether pages are re-parsed (R23a), is n
 
 - `internal/profile`: the example's levels and their order (`Rank`, an unlisted `10` and `02`); every validation error with its path; the hash unchanged by a label, a level's label, the field's label, a level more, the description, a top-level comment and the levels removed, and changed by a format and `large_event_fields`; a profile with none of those members hashing as its file; the call sign rename's hashes from the raw file.
 - `internal/integrations`: the filter at levels 2, 3, 9 (match), 1, none, `10`, `02`, another profile, no profile, a level, field or profile no longer there (no match), and with another criterion; saving refuses an unknown profile, field or level; the form's choices.
-- `internal/acceptance/a125_test.go`: A125 at the API (`TestA125LevelFilter`: the levels offered; refusals; a Full webhook and a Summary ntfy at Second alarm on Station 1 fire for the level 2 and 3 pages only, none naming a level's label, the payload's `extra` and `labels` as before, the notification with no level); `TestA125ProfileHashLeavesOutLabelsAndLevels` (labels and levels changed: nothing re-parsed; a format changed: re-parsed; an old-way hash of the same files: nothing re-parsed and the new hash saved; of other files: re-parsed).
-- `web/tests/e2e.spec.ts`: A125 in the browser (each project): the form lists the field and its nine levels by label, saves Second alarm, gets the level 2 and 3 pages and not 1 or none, keeps the choice when edited again; the card, the message list and a page's detail show no level's label.
+- `internal/acceptance/a126_test.go`: A126 at the API (`TestA126LevelFilter`: the levels offered; refusals; a Full webhook and a Summary ntfy at Second alarm on Station 1 fire for the level 2 and 3 pages only, none naming a level's label, the payload's `extra` and `labels` as before, the notification with no level); `TestA126ProfileHashLeavesOutLabelsAndLevels` (labels and levels changed: nothing re-parsed; a format changed: re-parsed; an old-way hash of the same files: nothing re-parsed and the new hash saved; of other files: re-parsed).
+- `web/tests/e2e.spec.ts`: A126 in the browser (each project): the form lists the field and its nine levels by label, saves Second alarm, gets the level 2 and 3 pages and not 1 or none, keeps the choice when edited again; the card, the message list and a page's detail show no level's label.

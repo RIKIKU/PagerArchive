@@ -20,14 +20,14 @@ import (
 // section 10): shown in the integration form only (R49a, R87b).
 var levelLabels = []string{"First alarm", "Second alarm", "Third alarm", "Fourth alarm", "Fifth alarm", "Sixth alarm", "Seventh alarm", "Eighth alarm", "Ninth alarm"}
 
-// A125. An integration fires at or above a level (owner, 2026-11-18; R7,
+// A126. An integration fires at or above a level (owner, 2026-11-18; R7,
 // R49a, R87b). Given the example profile's alarm levels, user B's webhook
 // (Full) and ntfy (Summary) integrations at "Alarm level at or above
 // Second alarm" on Station 1, when pages at levels 1, none, 2 and 3 (the
 // last an escalation of the level 2 page's job) arrive, then each fires
 // for the level 2 and 3 pages only, once each, and no delivery names a
 // level's label; the ntfy notification has no level at all.
-func TestA125LevelFilter(t *testing.T) {
+func TestA126LevelFilter(t *testing.T) {
 	e := setup(t)
 	e.allowLoopback()
 	e.runWorker()
@@ -124,14 +124,14 @@ func TestA125LevelFilter(t *testing.T) {
 	if v := append(hook.Violations(), ntfy.Violations()...); len(v) > 0 {
 		t.Errorf("stand-in violations: %q", v)
 	}
-	t.Logf("A125: levels offered %q; at or above Second alarm, the webhook got %v and ntfy 2 (levels 2 and 3 of 1, none, 2, 3), none naming a level", labels, got)
+	t.Logf("A126: levels offered %q; at or above Second alarm, the webhook got %v and ntfy 2 (levels 2 and 3 of 1, none, 2, 3), none naming a level", labels, got)
 }
 
-// A125, ADR 0045. The profile hash leaves out what changes nothing a page
+// A126, ADR 0045. The profile hash leaves out what changes nothing a page
 // says: changing only an agency's labels or levels queues no re-parse,
 // changing a format does, and an install upgraded with a hash saved the old
 // way (from the whole files), with the profiles unchanged, isn't re-parsed.
-func TestA125ProfileHashLeavesOutLabelsAndLevels(t *testing.T) {
+func TestA126ProfileHashLeavesOutLabelsAndLevels(t *testing.T) {
 	e := setup(t)
 	e.mustPost("a", "0100001", row1, e.now)
 	dir := t.TempDir()
@@ -218,5 +218,5 @@ func TestA125ProfileHashLeavesOutLabelsAndLevels(t *testing.T) {
 	if n := start(""); n != 1 {
 		t.Errorf("upgraded with changed profiles: re-parsed %d, want 1", n)
 	}
-	t.Log("A125: labels and levels changed, nothing re-parsed; a format changed, re-parsed; an old-style hash of the same files, nothing re-parsed")
+	t.Log("A126: labels and levels changed, nothing re-parsed; a format changed, re-parsed; an old-style hash of the same files, nothing re-parsed")
 }

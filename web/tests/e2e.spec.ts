@@ -5831,12 +5831,12 @@ test('A123 re-parse controls in Administration', async ({ browser }, info) => {
 	console.log(`A123 ${info.project.name}: running at 1,499 of 3,000, paused at 1,500, resumed to Idle, stopped and started again; 1280 and 375 px, axe clean`);
 });
 
-// A125 (R49a; owner, 2026-11-18): the integration form offers the example
+// A126 (R49a; owner, 2026-11-18): the integration form offers the example
 // agency's alarm levels by label, and only there. A webhook at "Alarm level
 // at or above Second alarm" gets the level 2 and 3 pages, not level 1 or
 // none, and nothing it gets, the integration's card and the pages' views
 // name a level.
-test('A125 level filter in the integration form', async ({ page, request }, info) => {
+test('A126 level filter in the integration form', async ({ page, request }, info) => {
 	const labels = ['First alarm', 'Second alarm', 'Third alarm', 'Fourth alarm', 'Fifth alarm', 'Sixth alarm', 'Seventh alarm', 'Eighth alarm', 'Ninth alarm'];
 	const http = await import('node:http');
 	const received: Record<string, unknown>[] = [];
@@ -5910,7 +5910,7 @@ test('A125 level filter in the integration form', async ({ page, request }, info
 		await page.getByTestId('message-list').locator('article').first().locator('a.open').click();
 		await expect(page.locator('.rest dl')).toBeVisible();
 		for (const l of labels) await expect(page.locator('main')).not.toContainText(l);
-		console.log(`A125: the form listed ${labels.length} levels; at or above Second alarm, the webhook got ${jobs[2]} at 2 and 3, not ${jobs[0]} (1) or ${jobs[1]} (none)`);
+		console.log(`A126: the form listed ${labels.length} levels; at or above Second alarm, the webhook got ${jobs[2]} at 2 and 3, not ${jobs[0]} (1) or ${jobs[1]} (none)`);
 
 
 	} finally {
