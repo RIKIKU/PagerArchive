@@ -1118,7 +1118,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/redaction', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -1133,7 +1133,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Re-parse', 'Integration addresses', 'Large event settings']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Re-parse', 'Retroactive redaction', 'Integration addresses', 'Large event settings']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -1144,6 +1144,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Backups', 'Backups'],
 			['Upgrades', 'Upgrades'],
 			['Re-parse', 'Re-parse'],
+			['Retroactive redaction', 'Retroactive redaction'],
 			['Integration addresses', 'Integration addresses'],
 			['Large event settings', 'Large event settings']
 		]) {
