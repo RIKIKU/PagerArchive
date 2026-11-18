@@ -41,9 +41,14 @@ type Worker struct {
 	Agencies    map[string]*profile.Agency
 	Streets     *streets.Index
 	Geo         *geocode.Geocoder
-	ProfileHash string // hash of the profiles and address dataset in use
-	Log         *slog.Logger
-	Poll        time.Duration
+	ProfileHash string // hash of the profiles and address dataset in use (ProfileHashes)
+	// LegacyProfileHash is the same as releases before ADR 0045 worked it
+	// out, from each agency profile's whole file: a saved hash equal to it
+	// means nothing changed since, so the upgrade re-parses nothing. ""
+	// matches no saved hash.
+	LegacyProfileHash string
+	Log               *slog.Logger
+	Poll              time.Duration
 	// Tracer traces each re-parse that has work (R72); nil traces nothing.
 	Tracer trace.Tracer
 	// Regroup rebuilds the large events around the re-parsed pages after
@@ -62,9 +67,21 @@ type Worker struct {
 // (running, paused or stopped: interrupted by the restart, or held by an
 // admin) has parsed its pages with the old profiles, so it starts again
 // from the beginning, over every message, in the state it was in (R23c).
+//
+// A saved hash worked out as releases before ADR 0045 did, from the same
+// files, is the same profiles: the new hash is saved in its place and
+// nothing is re-parsed, so the upgrade that changed how it's worked out
+// doesn't re-parse the archive.
 func (w *Worker) CheckProfiles(ctx context.Context) error {
 	old, err := w.Store.GetSetting(ctx, hashKey)
 	if err == nil && old == w.ProfileHash {
+		return nil
+	}
+	if err == nil && w.LegacyProfileHash != "" && old == w.LegacyProfileHash {
+		if err := w.Store.SetSetting(ctx, db.SetSettingParams{Key: hashKey, Value: w.ProfileHash}); err != nil {
+			return err
+		}
+		w.Log.InfoContext(ctx, "profile hash now leaves out display-only keys: nothing to re-parse")
 		return nil
 	}
 	var again *db.ReparseRun

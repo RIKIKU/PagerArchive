@@ -344,7 +344,7 @@ func TestAreasLayers(t *testing.T) {
 // ADR 0040 (R8): the call sign's old name, group, is read as call_sign
 // wherever an agency profile names it (a capture in either spelling, its
 // fields options, labels and a large_event_fields rule), with a warning
-// for each; naming both is an error. The hash is the file's, so an
+// for each; naming both is an error. The hashes are the file's, so an
 // unchanged profile re-parses nothing.
 func TestOldCallSignName(t *testing.T) {
 	const old = `{"kind": "agency", "name": "made-up", "formats": [
@@ -384,7 +384,7 @@ func TestOldCallSignName(t *testing.T) {
 			}
 		}
 	}
-	if a.Hash != hashOf([]byte(old)) {
+	if a.FileHash != hashOf([]byte(old)) || a.Hash != agencyHash([]byte(old)) {
 		t.Error("the hash isn't the file's")
 	}
 
@@ -398,4 +398,115 @@ func TestOldCallSignName(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 		}
 	}
+}
+
+// R7, R49a: an agency's level fields, in order, and what's refused.
+func TestLevels(t *testing.T) {
+	set, err := LoadDir("../../profiles/example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lf := set.Agencies["example-fire"].LevelField("alarm_level")
+	if lf == nil || lf.Label != "Alarm level" || len(lf.Levels) != 9 || lf.Levels[0] != (Level{"1", "First alarm"}) {
+		t.Fatalf("the example's levels: %+v", lf)
+	}
+	for v, want := range map[string]int{"1": 0, "2": 1, "9": 8, "10": -1, "02": -1, "": -1} {
+		if got := lf.Rank(v); got != want {
+			t.Errorf("rank of %q: %d, want %d", v, got, want)
+		}
+	}
+	if set.Agencies["example-fire"].LevelField("call_sign") != nil {
+		t.Error("a field with no levels has some")
+	}
+	const formats = `"formats": [{"name": "a", "match": "^(?P<job_number>[0-9]+) (?P<level>\\S+) (?P<units>.*)$", "fields": {"units": {"split": " "}}}]`
+	doc := func(levels string) string {
+		return `{"kind": "agency", "name": "x", ` + formats + `, "levels": [` + levels + `]}`
+	}
+	if err := loadOne(t, "x.json", doc(`{"field": "level", "label": "Level", "values": [{"value": "L1", "label": "One"}, {"value": "L2", "label": "Two"}]}`)); err != nil {
+		t.Errorf("a valid list: %v", err)
+	}
+	for name, c := range map[string]struct{ levels, want string }{
+		"unknown field":  {`{"field": "nope", "label": "L", "values": [{"value": "1", "label": "One"}]}`, `/levels/0/field: no format extracts a field named "nope"`},
+		"list field":     {`{"field": "units", "label": "L", "values": [{"value": "1", "label": "One"}]}`, `/levels/0/field: "units" is a list field`},
+		"two lists":      {`{"field": "level", "label": "L", "values": [{"value": "1", "label": "One"}]}, {"field": "level", "label": "M", "values": [{"value": "1", "label": "One"}]}`, `/levels/1/field: field "level" has a level list already`},
+		"value twice":    {`{"field": "level", "label": "L", "values": [{"value": "1", "label": "One"}, {"value": "1", "label": "Uno"}]}`, `/levels/0/values/1/value: value "1" is listed twice`},
+		"label twice":    {`{"field": "level", "label": "L", "values": [{"value": "1", "label": "One"}, {"value": "2", "label": "One"}]}`, `/levels/0/values/1/label: label "One" is given to two levels`},
+		"spaced value":   {`{"field": "level", "label": "L", "values": [{"value": "1 ", "label": "One"}]}`, `starts or ends with a space`},
+		"blank label":    {`{"field": "level", "label": "L", "values": [{"value": "1", "label": " "}]}`, `/levels/0/values/0/label: a level's label can't be blank`},
+		"no field label": {`{"field": "level", "values": [{"value": "1", "label": "One"}]}`, `/levels/0`},
+		"no level label": {`{"field": "level", "label": "L", "values": [{"value": "1"}]}`, `/levels/0/values/0`},
+		"no values":      {`{"field": "level", "label": "L", "values": []}`, `/levels/0/values`},
+		"another key":    {`{"field": "level", "label": "L", "values": [{"value": "1", "label": "One"}], "order": "up"}`, `/levels/0`},
+	} {
+		if err := loadOne(t, "x.json", doc(c.levels)); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: %v, want %q", name, err, c.want)
+		}
+	}
+}
+
+// ADR 0045: an agency profile's hash leaves out its labels, levels,
+// description and comments, so changing only those re-parses nothing;
+// anything else, a format above all, changes it. FileHash is the whole
+// file's, as the hash was before.
+func TestAgencyHashLeavesOutDisplayOnly(t *testing.T) {
+	b, err := os.ReadFile("../../profiles/example/example-fire.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(b)
+	load := func(doc string) *Agency {
+		t.Helper()
+		a, errs := loadAgency("example-fire.json", []byte(doc))
+		if len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		return a
+	}
+	base := load(s)
+	if base.FileHash != hashOf(b) || base.Hash == base.FileHash {
+		t.Errorf("hashes: %s, file %s", base.Hash, base.FileHash)
+	}
+	for name, doc := range map[string]string{
+		"a label":          strings.Replace(s, `"House fire"`, `"Building fire"`, 1),
+		"a level's label":  strings.Replace(s, `"Second alarm"`, `"Two alarm"`, 1),
+		"the field label":  strings.Replace(s, `"label": "Alarm level"`, `"label": "Alarm"`, 1),
+		"a level more":     strings.Replace(s, `{ "value": "9", "label": "Ninth alarm" }`, `{ "value": "9", "label": "Ninth alarm" }, { "value": "0", "label": "Tenth alarm" }`, 1),
+		"the description":  strings.Replace(s, `"Example Fire Service"`, `"Example Fire Brigade"`, 1),
+		"a comment":        strings.Replace(s, `(SPEC.md section 10).`, `(SPEC.md section 10, made up).`, 1),
+		"no levels at all": cutLevels(t, s),
+	} {
+		if doc == s {
+			t.Fatalf("%s: nothing changed", name)
+		}
+		if a := load(doc); a.Hash != base.Hash || a.FileHash == base.FileHash {
+			t.Errorf("%s: the hash changed (%v) or the file's didn't (%v)", name, a.Hash != base.Hash, a.FileHash == base.FileHash)
+		}
+	}
+	for name, doc := range map[string]string{
+		"a format":           strings.Replace(s, `(?: GRID (?P<grid_ref>[0-9]{6}))?`, `(?: GRID (?P<grid_ref>[0-9]{5,6}))?`, 1),
+		"large_event_fields": strings.Replace(s, `"values": ["3", "4",`, `"values": ["4",`, 1),
+	} {
+		if doc == s {
+			t.Fatalf("%s: nothing changed", name)
+		}
+		if load(doc).Hash == base.Hash {
+			t.Errorf("%s: the hash didn't change", name)
+		}
+	}
+	// With none of those members, the hash is the file's.
+	bare := `{"kind": "agency", "name": "x", "formats": [{"name": "a", "match": ""}]}`
+	if a := load(bare); a.Hash != hashOf([]byte(bare)) {
+		t.Error("with nothing to leave out, the hash isn't the file's")
+	}
+}
+
+// cutLevels is the example agency profile without its levels member.
+func cutLevels(t *testing.T, s string) string {
+	t.Helper()
+	i := strings.Index(s, ",\n  \"levels\": [")
+	j := strings.Index(s, "\n  ],\n  \"labels\"")
+	if i < 0 || j < i {
+		t.Fatal("the example's levels aren't where they were")
+	}
+	return s[:i] + s[j+len("\n  ]"):]
 }

@@ -34,6 +34,24 @@
       "values": ["3", "4", "5", "6", "7", "8", "9"]
     }
   ],
+  "levels": [
+    {
+      "_comment": "The made-up alarm level's order, lowest first: an integration can send pages at or above one (R49a). Shown only in the integration form.",
+      "field": "alarm_level",
+      "label": "Alarm level",
+      "values": [
+        { "value": "1", "label": "First alarm" },
+        { "value": "2", "label": "Second alarm" },
+        { "value": "3", "label": "Third alarm" },
+        { "value": "4", "label": "Fourth alarm" },
+        { "value": "5", "label": "Fifth alarm" },
+        { "value": "6", "label": "Sixth alarm" },
+        { "value": "7", "label": "Seventh alarm" },
+        { "value": "8", "label": "Eighth alarm" },
+        { "value": "9", "label": "Ninth alarm" }
+      ]
+    }
+  ],
   "labels": {
     "event_type": {
       "HSF1": "House fire",

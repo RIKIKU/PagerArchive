@@ -111,7 +111,7 @@ func (s *Service) Enqueue(ctx context.Context, q *db.Queries, messageID int64) e
 		if err != nil {
 			return err
 		}
-		if !l.filter.Matches(*m, s.Network, c.OwnerRole == adminRole) {
+		if !l.filter.Matches(*m, s.Network, s.Agencies, c.OwnerRole == adminRole) {
 			continue
 		}
 		p := db.InsertDeliveryParams{IntegrationID: c.ID, MessageID: messageID, Status: statusPending, NextAttemptAt: &now}

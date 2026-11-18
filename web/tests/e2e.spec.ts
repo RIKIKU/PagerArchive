@@ -6018,3 +6018,95 @@ test('A123 re-parse controls in Administration', async ({ browser }, info) => {
 	}
 	console.log(`A123 ${info.project.name}: running at 1,499 of 3,000, paused at 1,500, resumed to Idle, stopped and started again; 1280 and 375 px, axe clean`);
 });
+
+// A126 (R49a; owner, 2026-11-18): the integration form offers the example
+// agency's alarm levels by label, and only there. A webhook at "Alarm level
+// at or above Second alarm" gets the level 2 and 3 pages, not level 1 or
+// none, and nothing it gets, the integration's card and the pages' views
+// name a level.
+test('A126 level filter in the integration form', async ({ page, request }, info) => {
+	const labels = ['First alarm', 'Second alarm', 'Third alarm', 'Fourth alarm', 'Fifth alarm', 'Sixth alarm', 'Seventh alarm', 'Eighth alarm', 'Ninth alarm'];
+	const http = await import('node:http');
+	const received: Record<string, unknown>[] = [];
+	const bodies: string[] = [];
+	const receiver = http.createServer((req, res) => {
+		let data = '';
+		req.on('data', (c) => (data += c));
+		req.on('end', () => {
+			bodies.push(data);
+			received.push(JSON.parse(data || '{}'));
+			res.writeHead(200, { 'Content-Type': 'text/plain' }).end('ok');
+		});
+	});
+	await new Promise<void>((r) => receiver.listen(0, '127.0.0.1', r));
+	const port = (receiver.address() as { port: number }).port;
+	try {
+		const allow = await request.put(`${URL}/api/v1/admin/integration-hosts`, {
+			headers: { Cookie: `pa_session=${SESSIONS.admin}` },
+			data: { entries: ['127.0.0.0/8'] }
+		});
+		expect(allow.status()).toBe(200);
+		const name = `Bigger jobs ${projectN(info)} ${Date.now()}`;
+		await page.goto('/integrations');
+		await page.getByRole('button', { name: 'New integration' }).click();
+		const form = page.locator('form.integration-form');
+		const levels = form.getByTestId('level-filter');
+		const field = levels.getByLabel('Field', { exact: true });
+		await expect(field.locator('option')).toHaveText(['Any level', 'Example Fire Service: Alarm level']);
+		await expect(levels.getByLabel('At or above', { exact: true })).toHaveCount(0);
+		await field.selectOption({ label: 'Example Fire Service: Alarm level' });
+		const at = levels.getByLabel('At or above', { exact: true });
+		await expect(at.locator('option')).toHaveText(labels);
+		await expect(at).toHaveValue('1');
+		await at.selectOption({ label: 'Second alarm' });
+
+		await form.getByLabel('Name', { exact: true }).fill(name);
+		await chooseInSelection(page, '0100001', 'Station 1 (0100001)');
+		await form.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
+		await form.getByRole('button', { name: 'Save integration' }).click();
+		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
+		const card = page.getByTestId('integration').filter({ hasText: name });
+		for (const l of labels) await expect(card).not.toContainText(l);
+
+		const jobs = [uniqueJob(), uniqueJob(), uniqueJob()];
+		const fire = (job: string, level: string) => `@@${job} HSF1 FACTORY FIRE @ 12 FICTION ST, MADEUPTON${level ? ` ALARM ${level}` : ''} #STN1`;
+		await post(request, '0100001', fire(jobs[0], '1'));
+		await post(request, '0100001', fire(jobs[1], ''));
+		await post(request, '0100001', fire(jobs[2], '2'));
+		await post(request, '0100001', fire(jobs[2], '3'));
+		const ours = () => received.filter((r) => jobs.includes(r.job_number as string));
+		await expect.poll(() => ours().length, { timeout: 10000 }).toBe(2);
+		await page.waitForTimeout(1000);
+		expect(ours().map((r) => [r.job_number, (r.extra as Record<string, string>).alarm_level])).toEqual([
+			[jobs[2], '2'],
+			[jobs[2], '3']
+		]);
+		for (const b of bodies) for (const l of labels) expect(b).not.toContain(l);
+
+		// Edited again, the form keeps the field and the level.
+		await card.getByRole('button', { name: 'Edit' }).click();
+		const again = page.locator('form.integration-form');
+		await expect(again.getByTestId('level-filter').getByLabel('Field', { exact: true })).toHaveValue('example-fire/alarm_level');
+		await expect(again.getByTestId('level-filter').getByLabel('At or above', { exact: true })).toHaveValue('2');
+		await again.getByRole('button', { name: 'Cancel' }).click();
+
+		// The pages and their job show no level's label (R87b).
+		await page.goto(`/?job=${jobs[2]}`);
+		await waitLive(page);
+		await expect(page.getByTestId('message-list').locator('article')).toHaveCount(2);
+		for (const l of labels) await expect(page.locator('main')).not.toContainText(l);
+		await page.getByTestId('message-list').locator('article').first().locator('a.open').click();
+		await expect(page.locator('.rest dl')).toBeVisible();
+		for (const l of labels) await expect(page.locator('main')).not.toContainText(l);
+		console.log(`A126: the form listed ${labels.length} levels; at or above Second alarm, the webhook got ${jobs[2]} at 2 and 3, not ${jobs[0]} (1) or ${jobs[1]} (none)`);
+
+
+	} finally {
+		receiver.close();
+		// Its integration goes, so other tests' Station 1 pages don't reach it.
+		const list = await request.get(`${URL}/api/v1/integrations`, { headers: asRole('user') });
+		for (const i of (await list.json()).integrations as { id: number; name: string }[]) {
+			if (i.name.startsWith(`Bigger jobs ${projectN(info)} `)) await request.delete(`${URL}/api/v1/integrations/${i.id}`, { headers: asRole('user') });
+		}
+	}
+});

@@ -574,9 +574,27 @@ export interface IntegrationFilter {
 	call_sign?: string;
 	agency?: string;
 	job?: string;
+	/** R49a: pages at or above one level of an agency profile's level field. */
+	level?: LevelFilter | null;
 	parse_failed?: boolean;
 	address_unsplit?: boolean;
 	location_mismatch?: boolean;
+}
+
+/** R49a: "<field> at or above <level>" for one agency profile. */
+export interface LevelFilter {
+	profile: string;
+	field: string;
+	at_least: string;
+}
+
+/** One agency profile's level field, as the integration form offers it (R49a): its levels lowest first. */
+export interface LevelChoice {
+	profile: string;
+	agency: string;
+	field: string;
+	label: string;
+	levels: { value: string; label: string }[];
 }
 
 export interface IntegrationConfig {
@@ -879,6 +897,7 @@ export const api = {
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
 	// Integrations (R47-R51c).
 	selection: (q: string) => get<Suggestion[]>(`/api/v1/integrations/selection?q=${encodeURIComponent(q)}`),
+	integrationLevels: () => get<LevelChoice[]>('/api/v1/integrations/levels'),
 	integrations: () => get<{ enabled: boolean; integrations: Integration[] }>('/api/v1/integrations'),
 	createIntegration: (r: IntegrationRequest) => request<Integration>('POST', '/api/v1/integrations', r),
 	updateIntegration: (id: number, r: IntegrationRequest) => request<Integration>('PUT', `/api/v1/integrations/${id}`, r),
