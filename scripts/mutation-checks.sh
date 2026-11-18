@@ -80,7 +80,7 @@ mutate() {
 	mon:*)
 		out=$(PA_MON_RUN="${test#mon:}" sh scripts/monitoring-checks.sh -o "$work/mon-results" 2>&1)
 		# What failed, not the steps that passed before it (their lines say "A65:", "A67:" or "A119:").
-		printf '%s\n' "$out" | grep -E '^\s+a(6[57]|80|118)_test.go:[0-9]+: ' | grep -vE ': A(6[57]|80|118): ' | head -4
+		printf '%s\n' "$out" | grep -E '^\s+a(6[57]|80|119)_test.go:[0-9]+: ' | grep -vE ': A(6[57]|80|119): ' | head -4
 		;;
 	stack:*)
 		out=$(PA_STACK_PART=accounts sh scripts/stack-checks.sh -run "TestA23FirstAdmin|${test#stack:}" 2>&1)
@@ -361,13 +361,16 @@ if command -v docker >/dev/null; then
 	mutate "the clients panel back on instant queries only" deploy/monitoring/grafana/dashboards/clients.json mon:TestA67 \
 		'last_over_time(' '(' \
 		deploy/monitoring/grafana/dashboards/clients.json '[$__range:1m])' ')'
-	# R74b: "Radio not decoding" (A119): its query, its audio check and its floor.
+	# R74b: "Radio not decoding" (A119): its query, its audio check, its floor and the busiest day left out of its usual.
 	mutate "the \"radio not decoding\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA119 \
 		'(label_replace(increase(pagerarchive_client_pages_decoded_total[30m]), "client"' '(label_replace(increase(pagerarchive_client_pages_decode_total[30m]), "client"'
 	mutate "the \"radio not decoding\" alert rule without its audio check" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA119 \
 		'"(.*)")) > 40000)' '"(.*)")) >= 0)'
 	mutate "the \"radio not decoding\" alert rule without its floor" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA119 \
 		'                >= 20' '                >= 0'
+	mutate "the \"radio not decoding\" alert rule back on the plain average (the busiest day counted)" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA119 \
+		'- max by (client) (label_replace(' '- 0 * max by (client) (label_replace(' \
+		deploy/monitoring/grafana/provisioning/alerting/rules.yaml '"(.*)")) - 1)' '"(.*)")) - 0)'
 else
 	echo "=== the alert rules' and dashboard's mutations skipped: no Docker"
 fi

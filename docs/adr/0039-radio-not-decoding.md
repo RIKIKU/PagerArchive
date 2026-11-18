@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-17). The owner: "add that alert ... let's start doing that now". SPEC.md R74b, with A119. On the branch `decode-alert` from main; the pull request is labelled `feature`. It adds to the telemetry decisions of ADR 0013 (R74a's "Radio stalled").
+Proposed (2026-11-17). The owner: "add that alert ... let's start doing that now". SPEC.md R74b, with A119. On the branch `decode-alert` from main; the pull request is labelled `feature`. It adds to the telemetry decisions of ADR 0013 (R74a's "Radio stalled"). Amended 2026-11-19 (owner): the usual leaves the busiest of the 7 days out (the section of that date, on the branch `alert-tune`).
 
 ## Context
 
@@ -62,6 +62,37 @@ Every number below is from the production Prometheus (read-only queries of the r
   2026-11-10 07:06 (19 min, 0.12), 20:30 (155 min, 0.00); 11-11 00:02 (10 min, 0.15), 00:22 (48 min, 0.21), 08:17 (13 min, 0.19), 09:03 (28 min, 0.10), 12:16 (3 min, 0.00), 19:08 (23 min, 0.00); 11-12 02:52 (15 min, 0.06), 03:20 (225 min, 0.00), 09:10 (83 min, 0.05), 21:24 (31 min, 0.00); 11-13 19:18 (11 min, 0.09); 11-14 09:58 (13 min, 0.19).
   Prometheus alone can't say which were faults: there's no second receiver in it. But most look like 00:23, not like quiet: audio normal throughout, and whole half hours with no page at all at times of day when this client usually decodes 20 to 50, for hours at a time (2026-11-10 20:30 to 23:06, 2026-11-12 03:20 to 07:06, with two client restarts at 03:17 on 11-12). The short ones at 0.15 to 0.21 are the likeliest to be quiet spells. Checking those times against another receiver (or Pagermon) would settle it.
 - With the rule's own queries: without `for: 5m` it would have fired 25 times in all; with a floor of 16 instead of 20, 21.
+
+## The busiest day left out of the usual (owner, 2026-11-19)
+
+The owner, 2026-11-19: "yes", to a backtest's recommendation. **`usual` is now the average of the 7 days with the busiest of them left out**: the same seven labelled `increase(...[30m] offset Nd)` series as before, summed, less their largest, over their count less one:
+
+```
+(sum by (client) (X) - max by (client) (X)) / (count by (client) (X) - 1) >= 20
+```
+
+Everything else stays: the 30-minute window, the floor of 20, under 0.25 to fire and over 0.5 to clear, `for: 5m`, the audio check, the rule's uid, title, labels and annotations, and the notification policy it goes to. The Clients chart's usual and alert line, and the Failures square, use the same expression, so the dashboards still match the alert.
+
+**Why.** One busy day (a big incident, a storm) lifts the plain average of the 7 days for that half hour, and the next days' normal traffic at that hour then looks like under a quarter of it. The backtest emulated the rule each minute over the archive's stored pages (7.3 years, about 3.2 million pages, one receiver; counts and times only), the same window, mean, floor, lines, `for` and recovery line. It reproduces 13 of the 15 firings of the Prometheus check above, the 00:23 collapse among them. Each firing was counted as an *outage* (it overlaps a silence of over 30 minutes when pages or heartbeats were due), a *strong drop* (under half the lowest of the 7 days before at that half hour) or *normal for the hour* (within the 7 days' range, so most likely a false alarm):
+
+| | Firings a year, whole history | Last 365 days (outage / strong drop / normal for the hour) | The receiver now in use (the last 4 years): firings a year (outage / strong / normal) | Since this archive went live (9.6 days) |
+|---|---|---|---|---|
+| Plain average (as shipped) | 377 | 394 (70 / 177 / 147) | 374 (90 / 153 / 131) | 17 |
+| **Busiest day left out** | **236** | **220 (53 / 112 / 55)** | **232 (80 / 109 / 42)** | **12** |
+
+The normal-for-the-hour firings fall by about two thirds (147 to 55 over the last year; 131 to 42 a year on the current receiver), and most outages and strong drops are still caught. The 00:23 collapse still fires at the same minute as with the plain average. "The receiver now in use" starts where the history changes character: before it, silences of over 30 minutes came about 520 times a year and ones when pages or heartbeats were due about 200; after, 60 and 46.
+
+Rejected, on the same backtest:
+
+- **The median of the 7 days**: about as many firings as the plain average (379 over the last year).
+- **Anything stricter**: `for: 15m`, firing under 0.10 or 0.20, a floor of 40, a 60-minute window, or counting minutes with a page rather than pages each lose the 00:23 collapse, whose share only fell to 0.14 to 0.17.
+- **`for: 10m` as well**: 130 a year, but 5 minutes later on the collapse. The owner can still choose it; `for` is a setting.
+
+**In PromQL, not recording rules.** The expression needs the seven days three times (sum, max and count), so Prometheus works out 21 `increase()`s over 30 minutes per evaluation instead of 7: for each client, about 120 samples each, every 30 seconds. That's small, and it reads the series already kept. A recording rule for the 30-minute count would mean one query instead of three, but it would have no history for its first 7 days after an upgrade (recording rules aren't backfilled), so the alert would go quiet for a week, and A119's remote-written history would never pass through it.
+
+**With fewer than two days** there's no usual: `count - 1` is 0, so `0 / 0` gives NaN, which `>= 20` drops. A new client is unwatched for two days, not one.
+
+A119 has two more made-up clients: one whose decoding collapses to 15 % of its usual (36 pages, its busier day's 48 left out), as the real one did, and fires; and one with a normal quiet half hour (30 pages) the day after a busy one (240, against 45 the day before), which the plain average (142.5) would fire on and this one (45) doesn't. A mutation (`scripts/mutation-checks.sh`) puts the plain average back, and A119 catches it.
 
 ## Consequences
 
