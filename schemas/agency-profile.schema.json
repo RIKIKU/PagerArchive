@@ -28,11 +28,50 @@
       "type": "array",
       "minItems": 1,
       "items": { "$ref": "#/$defs/largeEventField" }
+    },
+    "levels": {
+      "description": "Ordered level fields (R7, R49a), such as an alarm level: each a text field the formats extract, with its values in order, lowest first, each with a label. An integration's filter can keep pages at or above one of the levels; a value not listed is never at or above any. Shown only in the integration form; display and filter only, so changing them re-parses nothing.",
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/levelField" }
     }
   },
   "patternProperties": { "^_": {} },
   "additionalProperties": false,
   "$defs": {
+    "levelField": {
+      "type": "object",
+      "required": ["field", "label", "values"],
+      "properties": {
+        "field": {
+          "description": "A text field one of the formats extracts: a named group, or an address_split output.",
+          "type": "string",
+          "minLength": 1
+        },
+        "label": {
+          "description": "What the field is called in the integration form, such as \"Alarm level\".",
+          "type": "string",
+          "minLength": 1
+        },
+        "values": {
+          "description": "The field's levels, lowest first: each value as extracted (P3) and its label, such as \"Second alarm\".",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "required": ["value", "label"],
+            "properties": {
+              "value": { "type": "string", "minLength": 1 },
+              "label": { "type": "string", "minLength": 1 }
+            },
+            "patternProperties": { "^_": {} },
+            "additionalProperties": false
+          }
+        }
+      },
+      "patternProperties": { "^_": {} },
+      "additionalProperties": false
+    },
     "largeEventField": {
       "type": "object",
       "required": ["field", "values"],

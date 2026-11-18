@@ -117,6 +117,27 @@ The API loads each layer into the database before it starts listening, when its 
   Problems that stop the server and fail `validate-profile`: a field no format extracts (a named group not starting with `_`, or an `address_split` output), a list field (`units`, or any field a format splits), the same field in two rules, no values, an empty value or one listed twice, a value with a space at either end (extracted values are trimmed, so it could never match), and a rule without `field` or `values` or with any other key.
 
   The flag is worked out when a page is parsed and stored with it, so a change to the rule applies to older pages when they're re-parsed (R23a), which a changed profile does at start-up. The re-parse then rebuilds the large events around them (R87f): older pages at a listed value form events, and no integration is told of them.
+- `levels` (optional): fields whose values are **levels in an order**, such as an alarm level, so an integration can send only pages at or above a level (R7, R49a, ADR 0045). Each rule names one text field the formats extract, what it's called, and its values **lowest first**, each with a label:
+
+  ```json
+  "levels": [
+    {
+      "field": "alarm_level",
+      "label": "Alarm level",
+      "values": [
+        { "value": "1", "label": "First alarm" },
+        { "value": "2", "label": "Second alarm" },
+        { "value": "3", "label": "Third alarm" }
+      ]
+    }
+  ]
+  ```
+
+  The integration form offers each one as "<agency>: <label>" (the agency is the profile's `description`, or its name) and then its levels by label. It's the only place a level list's labels are shown: pages, jobs, events and notifications don't (R87b), so a level's label isn't a `labels` entry. To name the values on pages and in payloads too, label them in `labels` as well, as any field's; the two are independent. Values are compared exactly as extracted (P3), and a value not listed (say `"10"`, or `"03"` for `"3"`) is no level: never at or above any, so a filter doesn't fire on it until you add it. It's separate from `large_event_fields`: a field can have either, or both. The example agency lists `alarm_level` from `1` "First alarm" to `9` "Ninth alarm".
+
+  Problems that stop the server and fail `validate-profile`: a field no format extracts or a list field (as for `large_event_fields`), the same field in two rules, no values, a value listed twice or with a space at either end, a blank label, two levels with the same label, and a rule or value without its keys or with any other key.
+
+**What re-parses** (R23a, ADR 0045). A changed agency profile re-parses every page at start-up, which takes hours on a large archive, so changing what doesn't change a page re-parses nothing: the top-level `labels`, `levels`, `description` and comments (`_…` keys) are left out of the profile's hash. Changing a format (its comments included), `large_event_fields` or the name re-parses.
 
 A page whose capcode has an agency profile but matches no format is stored in full and flagged `parse_failed` (admins only).
 

@@ -13,8 +13,9 @@ import (
 // Matches reports whether a stored message passes the filter (R49). The
 // selection is checked by the database before this. Categories come from
 // the same function the display uses, so an integration and the message
-// list agree. admin is the owner's role: flag criteria apply to admins only.
-func (f Filter) Matches(m db.SearchMessagesRow, n *profile.Network, admin bool) bool {
+// list agree. agencies are the loaded agency profiles, for a level (R49a).
+// admin is the owner's role: flag criteria apply to admins only.
+func (f Filter) Matches(m db.SearchMessagesRow, n *profile.Network, agencies map[string]*profile.Agency, admin bool) bool {
 	if len(f.Categories) > 0 || len(f.Codes) > 0 {
 		ok := false
 		if m.EventType != nil {
@@ -46,6 +47,9 @@ func (f Filter) Matches(m db.SearchMessagesRow, n *profile.Network, admin bool) 
 		return false
 	}
 	if f.Job != "" && (m.JobNumber == nil || *m.JobNumber != f.Job) {
+		return false
+	}
+	if f.Level != nil && !f.Level.matches(m, agencies) {
 		return false
 	}
 	if admin {
@@ -83,4 +87,41 @@ func textContains(m db.SearchMessagesRow, q string) bool {
 		}
 	}
 	return false
+}
+
+// matches reports whether a page is at or above the level (R49a), in its
+// agency profile's order as loaded now. A page of another agency profile,
+// with no value, or with a value the profile doesn't list, isn't; nor is
+// any page while the profile, its level field or the level is gone.
+func (l *LevelFilter) matches(m db.SearchMessagesRow, agencies map[string]*profile.Agency) bool {
+	if m.AgencyProfile == nil || *m.AgencyProfile != l.Profile {
+		return false
+	}
+	lf := agencies[l.Profile].LevelField(l.Field)
+	if lf == nil {
+		return false
+	}
+	v, ok := fieldValue(m, l.Field)
+	if !ok {
+		return false
+	}
+	at, least := lf.Rank(v), lf.Rank(l.AtLeast)
+	return at >= 0 && least >= 0 && at >= least
+}
+
+// fieldValue is a page's text field by name: a standard one, or an extra
+// field holding text.
+func fieldValue(m db.SearchMessagesRow, name string) (string, bool) {
+	standard := map[string]*string{"job_number": m.JobNumber, "event_type": m.EventType, "description": m.Description,
+		"address": m.Address, "locality": m.Locality, "grid_ref": m.GridRef, profile.StandardCallSign: m.CallSign}
+	if p, ok := standard[name]; ok {
+		if p == nil {
+			return "", false
+		}
+		return *p, true
+	}
+	var extra map[string]any
+	_ = json.Unmarshal(m.Extra, &extra)
+	s, ok := extra[name].(string)
+	return s, ok
 }

@@ -246,7 +246,7 @@ func network(t *testing.T) (*profile.Network, map[string]*profile.Agency) {
 func sp(s string) *string { return &s }
 
 func TestFilterMatches(t *testing.T) {
-	n, _ := network(t)
+	n, agencies := network(t)
 	fire := db.SearchMessagesRow{Text: "@@EX0000001 HSF1 SMOKE FROM ROOF", Priority: sp("Emergency"), EventType: sp("HSF1"),
 		CallSign: sp("STN1"), Agency: sp("Example Fire Service"), JobNumber: sp("EX0000001"), Extra: []byte(`{"premises":"OLD MILL"}`)}
 	admin := db.SearchMessagesRow{Text: "QDTraining Tuesday", Priority: sp("Admin"), Extra: []byte(`{}`), ParseFailed: true}
@@ -278,7 +278,7 @@ func TestFilterMatches(t *testing.T) {
 		{"flag set", Filter{ParseFailed: true}, admin, true, true},
 	}
 	for _, c := range cases {
-		if got := c.f.Matches(c.m, n, c.admin); got != c.want {
+		if got := c.f.Matches(c.m, n, agencies, c.admin); got != c.want {
 			t.Errorf("%s: %v, want %v", c.name, got, c.want)
 		}
 	}
@@ -655,5 +655,75 @@ func TestFilterOldCallSignSpelling(t *testing.T) {
 		if out.CallSign != "STN1" || string(saved) != `{"call_sign":"STN1"}` {
 			t.Errorf("%s: call sign %q, saved as %s", body, out.CallSign, saved)
 		}
+	}
+}
+
+// R49a: "Alarm level at or above Second alarm" keeps the example agency's
+// pages at levels 2 and above, in its order, and nothing else: level 1, no
+// level, a value the profile doesn't list, another agency profile's page
+// with the same value, or a level, field or profile that isn't there now.
+func TestLevelFilter(t *testing.T) {
+	n, agencies := network(t)
+	fire := "example-fire"
+	at := func(level string) db.SearchMessagesRow {
+		m := db.SearchMessagesRow{Priority: sp("Emergency"), AgencyProfile: &fire, Extra: []byte(`{}`)}
+		if level != "" {
+			m.Extra = []byte(`{"alarm_level":"` + level + `"}`)
+		}
+		return m
+	}
+	second := Filter{Level: &LevelFilter{Profile: fire, Field: "alarm_level", AtLeast: "2"}}
+	other := "example-rescue"
+	elsewhere := at("3")
+	elsewhere.AgencyProfile = &other
+	unprofiled := at("3")
+	unprofiled.AgencyProfile = nil
+	cases := []struct {
+		name string
+		f    Filter
+		m    db.SearchMessagesRow
+		want bool
+	}{
+		{"level 2", second, at("2"), true},
+		{"level 3", second, at("3"), true},
+		{"level 9", second, at("9"), true},
+		{"level 1", second, at("1"), false},
+		{"no level", second, at(""), false},
+		{"a value not listed", second, at("10"), false},
+		{"not as extracted", second, at("02"), false},
+		{"another agency profile", second, elsewhere, false},
+		{"no agency profile", second, unprofiled, false},
+		{"the lowest takes every listed level", Filter{Level: &LevelFilter{Profile: fire, Field: "alarm_level", AtLeast: "1"}}, at("1"), true},
+		{"a level no longer listed", Filter{Level: &LevelFilter{Profile: fire, Field: "alarm_level", AtLeast: "0"}}, at("3"), false},
+		{"a field with no levels", Filter{Level: &LevelFilter{Profile: fire, Field: "call_sign", AtLeast: "2"}}, at("3"), false},
+		{"a profile not loaded", Filter{Level: &LevelFilter{Profile: "gone", Field: "alarm_level", AtLeast: "2"}}, at("3"), false},
+		{"with another criterion", Filter{Priorities: []string{"Non-emergency"}, Level: second.Level}, at("3"), false},
+	}
+	for _, c := range cases {
+		if got := c.f.Matches(c.m, n, agencies, false); got != c.want {
+			t.Errorf("%s: %v, want %v", c.name, got, c.want)
+		}
+	}
+
+	s := service(t, DefaultPresets())
+	got, err := s.validFilter(Filter{Level: &LevelFilter{Profile: " example-fire ", Field: "alarm_level", AtLeast: "2"}})
+	if err != nil || got.Level == nil || *got.Level != *second.Level {
+		t.Errorf("a valid level: %+v, %v", got.Level, err)
+	}
+	for name, l := range map[string]LevelFilter{
+		"no such profile": {Profile: "gone", Field: "alarm_level", AtLeast: "2"},
+		"no such field":   {Profile: fire, Field: "call_sign", AtLeast: "2"},
+		"no such level":   {Profile: fire, Field: "alarm_level", AtLeast: "10"},
+		"empty":           {},
+	} {
+		if _, err := s.validFilter(Filter{Level: &l}); err == nil {
+			t.Errorf("%s: accepted", name)
+		}
+	}
+
+	levels := s.Levels()
+	if len(levels) != 1 || levels[0].Profile != fire || levels[0].Agency != "Example Fire Service" || levels[0].Label != "Alarm level" ||
+		len(levels[0].Levels) != 9 || levels[0].Levels[1] != (profile.Level{Value: "2", Label: "Second alarm"}) {
+		t.Errorf("levels offered: %+v", levels)
 	}
 }

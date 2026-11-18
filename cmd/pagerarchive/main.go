@@ -9,8 +9,6 @@ package main
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,7 +19,6 @@ import (
 	"os"
 	"os/signal"
 	"runtime"
-	"sort"
 	"strings"
 	"syscall"
 	"text/tabwriter"
@@ -52,27 +49,6 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 	"github.com/RIKIKU/PagerArchive/web"
 )
-
-// profileHash identifies the profiles and address dataset in use, so a
-// change triggers a re-parse (section 14, R23a).
-func profileHash(set *profile.Set, net *profile.Network) (string, error) {
-	dataset, err := geocode.DatasetHash(net.DatasetPath, net.StreetTypes)
-	if err != nil {
-		return "", fmt.Errorf("address dataset: %w", err)
-	}
-	h := sha256.New()
-	fmt.Fprintf(h, "network %s %s\n", net.Name, net.Hash)
-	names := make([]string, 0, len(set.Agencies))
-	for n := range set.Agencies {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		fmt.Fprintf(h, "agency %s %s\n", n, set.Agencies[n].Hash)
-	}
-	fmt.Fprintf(h, "dataset %s\n", dataset)
-	return hex.EncodeToString(h.Sum(nil)), nil
-}
 
 // version is the build's, from the VERSION file (ADR 0016, ADR 0024).
 var version = pagerarchive.Version
@@ -275,7 +251,7 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	hash, err := profileHash(set, net)
+	hash, legacyHash, err := reparse.ProfileHashes(set, net)
 	if err != nil {
 		return err
 	}
@@ -343,7 +319,7 @@ func serve(stderr io.Writer) error {
 	}()
 	worker := &reparse.Worker{
 		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
-		ProfileHash: hash, Log: log, Poll: time.Minute, Tracer: tracer,
+		ProfileHash: hash, LegacyProfileHash: legacyHash, Log: log, Poll: time.Minute, Tracer: tracer,
 		Regroup: &events.Regrouper{Network: net},
 	}
 	if err := worker.CheckProfiles(ctx); err != nil {

@@ -288,7 +288,34 @@ func (s *Service) validFilter(f Filter) (Filter, error) {
 			return out, invalid("Filter values must be at most 200 characters.")
 		}
 	}
+	if f.Level != nil {
+		l := LevelFilter{Profile: strings.TrimSpace(f.Level.Profile), Field: strings.TrimSpace(f.Level.Field), AtLeast: f.Level.AtLeast}
+		lf := s.Agencies[l.Profile].LevelField(l.Field)
+		switch {
+		case lf == nil:
+			return out, invalid("No agency profile %q has a level field %q.", l.Profile, l.Field)
+		case lf.Rank(l.AtLeast) < 0:
+			return out, invalid("%q isn't one of the %s levels.", l.AtLeast, lf.Label)
+		}
+		out.Level = &l
+	}
 	return out, nil
+}
+
+// Levels are the level fields of the agency profiles loaded (R49a), for
+// the integration form to offer, by agency and then field, each with its
+// levels lowest first. It's the only place the app shows levels.
+func (s *Service) Levels() []LevelChoice {
+	out := []LevelChoice{}
+	for name, a := range s.Agencies {
+		for _, lf := range a.Levels {
+			out = append(out, LevelChoice{Profile: name, Agency: cmp.Or(a.Description, name), Field: lf.Field, Label: lf.Label, Levels: lf.Levels})
+		}
+	}
+	slices.SortFunc(out, func(a, b LevelChoice) int {
+		return cmp.Or(cmp.Compare(a.Agency, b.Agency), cmp.Compare(a.Profile, b.Profile), cmp.Compare(a.Label, b.Label))
+	})
+	return out
 }
 
 // checkHost checks a destination's host against the address rules (R51).

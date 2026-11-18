@@ -5,7 +5,7 @@
 Each user can forward new pages to their own systems from **Integrations** in the app (SPEC.md R47–R51c; design in [ADR 0006](adr/0006-m5-integrations-and-metrics.md)). An integration is:
 
 - a **selection**: one or more capcodes and/or aliases, chosen in one field. Type an alias name or a capcode and choose from the suggestions. A capcode with its own alias is chosen as that alias ("Station 1 (0100001)"). A capcode that only a range alias covers stays a capcode, with the range named beside it ("0100009 in Stations block"), so typing one capcode never selects a whole range; type the range's name to choose it. The selection is required, so nobody forwards the whole network by accident. An alias selects the pages that resolved to it, as its alias view shows; or, instead, **large events**, each when it opens (see [Large events](#large-events));
-- an optional **filter**: event categories or raw event-type codes, priorities, and text, call sign, agency or job number (admins also have the flags). Empty means every page from the selection;
+- an optional **filter**: event categories or raw event-type codes, priorities, and text, call sign, agency or job number, and a **level** where an agency's profile has one (see [At or above a level](#at-or-above-a-level)); admins also have the flags. Empty means every page from the selection;
 - a **destination**: a webhook, MQTT, Discord, Telegram, Pushover or ntfy;
 - its **content**: **Full** (the text and every field) or **Summary** (alias, capcode, event type and category, priority, sent time and job number; no text, address, location or extra fields). Webhooks and MQTT default to Full. Discord, Telegram, Pushover and ntfy are third parties, so they default to Summary.
 
@@ -24,6 +24,16 @@ Nobody else can see your integrations. Admins can see that they exist, and pause
 Each integration lists its last 100 deliveries for 30 days: **Delivered**, **Retrying**, **Failed**, **Skipped: too old** or **Cancelled** (paused, or its owner was deactivated). Errors never contain page text.
 
 **Send test** sends a made-up delivery marked `"test": true` and shows whether it was delivered, the answer's status (such as `HTTP 200 OK`) or why it failed (such as `connection refused`), and how long it took. It never shows the reply itself: an allowed address can be an internal service, and every user can test against it.
+
+## At or above a level
+
+Some agencies dispatch with a level on each page, such as an alarm level. When an agency's profile lists its levels in order (`levels`, see [profiles](profiles.md)), the filter has a **Level** group: choose the **Field** ("Example Fire Service: Alarm level") and **At or above** a level, by its label ("Second alarm"). Then only that agency's pages at that level or a higher one are sent (SPEC.md R49a):
+
+- pages of other agencies, pages with no level, and pages with a value the profile doesn't list aren't sent. The level names its agency, so the Agency field can stay empty;
+- a job's later page at a higher level is a page of its own, so it's sent too (a job going from a second to a third alarm sends both pages). As always, each page is sent at most once, and a repeat within 10 seconds is the same page;
+- the order is the profile's as it is now: if the profile drops the field or the level, the integration sends nothing until you edit it.
+
+The form is the only place levels and their names are shown. Deliveries don't name a level: a Full payload carries the page's text and its extra fields as before (the example's level is `extra.alarm_level`, such as `"2"`), and never a level list's label (a profile's `labels` for the field, if it has them, are in the payload's `labels` as any field's are); Summary sends no level at all. In the API, the filter is `"level": {"profile": "example-fire", "field": "alarm_level", "at_least": "2"}`, and `GET /api/v1/integrations/levels` lists what can be chosen.
 
 ## Private addresses
 
