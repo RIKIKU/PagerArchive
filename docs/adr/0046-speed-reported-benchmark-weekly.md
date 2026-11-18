@@ -70,4 +70,50 @@ It's read by the search and import jobs only, so `scripts/ci/changes.sh` gives i
 
 ## Evidence
 
-To follow: the checks run on cld01 (warn and pass in a gate, fail in the benchmark) and the dispatched run.
+`scripts/speed-report.sh` on made-up timings (cld01): in a gate, a step over its limit and one over twice it are both warnings, and it exits 0; with `PAGERARCHIVE_SPEED=benchmark` the one over twice its limit is an error and it exits 1; with no timings it exits 0 in a gate and 1 in the benchmark.
+
+`scripts/a76.sh -s 100000 -n 60000 -r` on cld01, with its own ports (`API_BIND=127.0.0.1:18476 PA_A76_DB_PORT=55476 PA_A76_HOOK_PORT=14376`) and image tag (`PAGERARCHIVE_VERSION=a76split`). The forced slow step: once the API answered, its container was cut to a fraction of a core (`docker update --cpus`), so the import, which runs in it, slowed.
+
+In a gate (0.15 of a core), it warns and passes:
+
+```
+A76 speed: PASS
+--- A76, importing messages (a gate: a step over its limit is a warning, never a failure)
+  the import of 60000 pages                                       229.030 s  limit    120 s  slow: 262 pages a second, the limit 500 (R83f)
+::warning title=Slow::slow: the import of 60000 pages took 229.030 s, over its limit of 120 s (262 pages a second, the limit 500 (R83f))
+  a live page: post answered, the slowest                           0.097 s  limit      2 s  during the import (R32)
+  a live page: live update in an open list, the slowest             0.119 s  limit      2 s  during the import (R32)
+  a live page: delivered to the integration, the slowest            0.120 s  limit      5 s  during the import (R51a)
+  A75's searches after the import, the slowest of 3 runs            0.112 s  limit      1 s  alias:"Station 1", a term never in its pages (R33b)
+API peak:          27.5 MiB (limit 256)  PASS
+api + db peaks:    335.4 MiB (limit 1024) PASS
+A76 correctness, budget and timings (gate): PASS
+a76.sh exit 0
+```
+
+The job's summary it wrote:
+
+| Step | Seconds | Limit (s) | Notes |
+|---|---:|---:|---|
+| the import of 60000 pages | 229.030 | 120 | **slow**: 262 pages a second, the limit 500 (R83f) |
+| a live page: post answered, the slowest | 0.097 | 2 | during the import (R32) |
+| a live page: live update in an open list, the slowest | 0.119 | 2 | during the import (R32) |
+| a live page: delivered to the integration, the slowest | 0.120 | 5 | during the import (R51a) |
+| A75's searches after the import, the slowest of 3 runs | 0.112 | 1 | alias:"Station 1", a term never in its pages (R33b) |
+
+In the benchmark (0.08 of a core), the same check fails, on the import alone:
+
+```
+A76 speed: PASS
+--- A76, importing messages (the weekly benchmark: a step over 2 times its limit fails)
+  the import of 60000 pages                                       424.866 s  limit    120 s  slow, over 2 times the limit: 141 pages a second, the limit 500 (R83f)
+::error title=Slow::slow: the import of 60000 pages took 424.866 s, over its limit of 120 s (141 pages a second, the limit 500 (R83f)), over 2 times the limit
+  ...
+API peak:          25.9 MiB (limit 256)  PASS
+api + db peaks:    323.9 MiB (limit 1024) PASS
+--- A76, importing messages: a step took more than 2 times its limit
+A76 correctness, budget and timings (benchmark): FAIL
+a76.sh exit 1
+```
+
+`actionlint` (1.7.12, cld01) passes on every workflow, and `scripts/ci/changes-checks.sh` passes with `scripts/speed-report.sh: search import`. A75's test with `PAGERARCHIVE_SPEED_FILE` runs in this pull request's CI and in the benchmark run dispatched on the branch.
