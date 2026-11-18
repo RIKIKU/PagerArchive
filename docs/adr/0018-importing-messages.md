@@ -4,6 +4,8 @@
 
 Proposed (2026-11-03). The owner's brief for M16: SPEC.md section 7.21 (R83-R83f) and A76 (owner, 2026-11-02), on the branch `m16` from main at a2f7e70. Revised for the owner's decision of 2026-11-02 (main 5cb6da1, merged into `m16`): searches during an import aren't held to R33b. Released as 0.14.0. The UI, the search, the client and the PowerShell module don't change. It must fit M17: nothing from the repo at run time, no extra mounts, and a migration that runs by itself and only goes forward (R84, R84a).
 
+Since 2026-11-18, CI enforces this check's correctness in every gate and only reports its times there; a weekly benchmark fails a time over twice its limit (ADR 0046).
+
 ## Context
 
 The owner is moving about 3.1 million pages from an older archive, and the first production instance needs that (section 12). Converting the old data into this format happens privately, outside this repo. The brief asks for a server-only command that treats each page as a live page and doesn't tell anyone, with a report, at 500 pages a second while live pages keep arriving on time.

@@ -1,0 +1,93 @@
+name: Benchmark
+
+# The weekly benchmark (ADR 0046): A75's and A76's timings on GitHub's hosted
+# runners, the same steps CI's "Search speed (A75)" and "Importing messages
+# (A76)" jobs run. In those gates (pull requests, main, the Release workflow's
+# checks) a step over its limit is only reported, as the shared runners' times
+# for one commit vary nearly twofold; here a step that took more than twice its
+# limit fails the run (scripts/speed-report.sh, PAGERARCHIVE_SPEED=benchmark),
+# a big slowdown rather than a slow runner. Their correctness checks and A76's
+# memory budget fail it too, as they do in CI.
+#
+# A failed scheduled run is the owner's notice: GitHub emails it. It builds the
+# API's image for A76's stack on the runner only: it publishes nothing, needs
+# no secret and only reads the repository. Never on a self-hosted runner: the
+# repository is public, and the release's attestations refuse them.
+on:
+  # Monday 02:23 UTC, after the weekend's release (Friday 18:17 UTC).
+  schedule:
+    - cron: "23 2 * * 1"
+  # By hand, on any branch: a change that might be slower, or a check of this.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One benchmark at a time per branch, never cancelled by the next.
+concurrency:
+  group: benchmark-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  PAGERARCHIVE_SPEED: benchmark
+
+jobs:
+  search:
+    name: Search speed (A75), benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 55
+    services:
+      postgres:
+        image: postgis/postgis:18-3.7
+        env:
+          POSTGRES_PASSWORD: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      PAGERARCHIVE_TEST_DATABASE_URL: postgres://postgres:test@localhost:5432/postgres?sslmode=disable
+      PAGERARCHIVE_REQUIRE_DB: "1"
+      PAGERARCHIVE_A75: "1"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: A75 on 4,562,500 made-up pages
+        env:
+          PAGERARCHIVE_A75_CONTAINER: ${{ job.services.postgres.id }}
+          PAGERARCHIVE_SPEED_FILE: ${{ github.workspace }}/a75-timings.tsv
+        run: go test -count=1 -v -timeout 50m -run TestA75SearchSpeed ./internal/acceptance/
+      - name: A75's timings (a step over twice its limit fails)
+        if: ${{ !cancelled() }}
+        run: sh scripts/speed-report.sh "A75, search speed" a75-timings.tsv
+
+  import:
+    name: Importing messages (A76), benchmark
+    runs-on: ubuntu-24.04
+    timeout-minutes: 85
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: Pull the images (retried)
+        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml
+      - name: A76's speed, 200,000 pages in random order on top of 4,562,500 with live pages, then A75's searches (a step over twice its limit fails)
+        run: sh scripts/a76.sh -r -o a76-results
+      - name: Upload the rate, memory samples and logs
+        if: always()
+        uses: ./.github/actions/upload
+        with:
+          name: a76-benchmark-${{ github.run_id }}-${{ github.run_attempt }}
+          path: a76-results/
+          if-no-files-found: ignore
+          retention-days: 30

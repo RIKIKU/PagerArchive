@@ -272,12 +272,62 @@ func a75DiskReads() (reads, ms int64) {
 
 var a75WholeDisk = regexp.MustCompile(`^(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme[0-9]+n[0-9]+)$`)
 
+// a75Speed keeps the slowest time of each of A75's timed steps, with its
+// limit (ADR 0046). A step over its limit is logged, "slow: …", and never
+// fails the test: TestA75SearchSpeed fails on what its searches, counts and
+// reports return. When the test ends the steps are written to
+// PAGERARCHIVE_SPEED_FILE, if it's set, for scripts/speed-report.sh: in a gate
+// it reports them, and in the weekly benchmark it fails a step over twice its
+// limit.
+type a75Speed struct{ steps []*a75Step }
+
+type a75Step struct {
+	name        string
+	took, limit time.Duration
+	detail      string
+}
+
+func newA75Speed(t *testing.T) *a75Speed {
+	s := &a75Speed{}
+	t.Cleanup(func() {
+		path := os.Getenv("PAGERARCHIVE_SPEED_FILE")
+		if path == "" {
+			return
+		}
+		var b strings.Builder
+		for _, st := range s.steps {
+			fmt.Fprintf(&b, "%s\t%.3f\t%g\t%s\n", st.name, st.took.Seconds(), st.limit.Seconds(), st.detail)
+		}
+		if err := os.WriteFile(path, []byte(b.String()), 0o644); err != nil {
+			t.Error(err)
+		}
+	})
+	return s
+}
+
+func (s *a75Speed) note(t *testing.T, step string, took, limit time.Duration, detail string) {
+	t.Helper()
+	if took > limit {
+		t.Logf("slow: %s: %s took %s, over %s", step, detail, took.Round(time.Millisecond), limit)
+	}
+	for _, st := range s.steps {
+		if st.name == step {
+			if took > st.took {
+				st.took, st.detail = took, detail
+			}
+			return
+		}
+	}
+	s.steps = append(s.steps, &a75Step{step, took, limit, detail})
+}
+
 // A75. Search speed: 4,562,500 made-up pages, each of A75's searches lists
 // its first page within 1 second, and the same pages as the query before
 // M13a. That counts its first run straight after a restart with both caches
 // cold, then three runs warm. Run by CI's search-speed job (PAGERARCHIVE_A75=1,
 // PAGERARCHIVE_A75_CONTAINER naming the test database's container, and sudo);
-// PAGERARCHIVE_A75_PAGES sets a smaller number for a quick local try.
+// PAGERARCHIVE_A75_PAGES sets a smaller number for a quick local try. The
+// pages listed fail it; the times are a75Speed's (ADR 0046).
 func TestA75SearchSpeed(t *testing.T) {
 	if os.Getenv("PAGERARCHIVE_A75") != "1" {
 		t.Skip("set PAGERARCHIVE_A75=1: seeds 4,562,500 pages (CI's search-speed job)")
@@ -293,6 +343,7 @@ func TestA75SearchSpeed(t *testing.T) {
 		}
 	}
 	e := setup(t)
+	speed := newA75Speed(t)
 	start := time.Now()
 	seeded, built, err := seeddata.Seed(e.ctx, e.st.Pool, pages)
 	if err != nil {
@@ -414,11 +465,13 @@ func TestA75SearchSpeed(t *testing.T) {
 		if !slices.Equal(cold, want) {
 			t.Errorf("%s: after a cold start lists %v, the query before M13a %v", s.name, cold, want)
 		}
-		if s.a75 && slowest > time.Second {
-			t.Errorf("%s: %s, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
-		}
-		if s.a75 && coldTime > time.Second {
-			again = append(again, a75Again{s.name, query, want, coldTime})
+		if s.a75 {
+			speed.note(t, "A75's searches, warm, the slowest of 3 runs", slowest, time.Second, s.name+" (R33b)")
+			if coldTime > time.Second {
+				again = append(again, a75Again{s.name, query, want, coldTime})
+			} else {
+				speed.note(t, "A75's searches, the first run after a cold start", coldTime, time.Second, s.name+" (R33b)")
+			}
 		}
 	}
 	// A cold run over 1 second gets one more cold start, after all the others
@@ -432,15 +485,13 @@ func TestA75SearchSpeed(t *testing.T) {
 		if !slices.Equal(cold, a.want) {
 			t.Errorf("%s: after another cold start lists %v, the query before M13a %v", a.name, cold, a.want)
 		}
-		if coldTime > time.Second {
-			t.Errorf("%s: the first run after a cold start took %s, and %s after another, over 1 second (R33b)", a.name,
-				a.first.Round(time.Millisecond), coldTime.Round(time.Millisecond))
-		}
+		speed.note(t, "A75's searches, the first run after a cold start", min(a.first, coldTime), time.Second,
+			fmt.Sprintf("%s, the better of two cold starts: %s and %s (R33b)", a.name, a.first.Round(time.Millisecond), coldTime.Round(time.Millisecond)))
 	}
 	// A71 on the same pages (M14, ADR 0026): the scrubber's counts.
-	a71CountsSpeed(t, e, container)
+	a71CountsSpeed(t, e, container, speed)
 	// A99 on the same pages (M24, ADR 0031): the reports.
-	a99ReportsSpeed(t, e, container)
+	a99ReportsSpeed(t, e, container, speed)
 }
 
 // R33b (ADR 0017): a search's second try, which also finds the alias:

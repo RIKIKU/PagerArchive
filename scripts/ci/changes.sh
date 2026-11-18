@@ -59,6 +59,7 @@ area_of() {
 	scripts/stack-checks.sh) echo job:stack ;;
 	scripts/stack-e2e.sh) echo job:stack-e2e ;;
 	scripts/a76.sh | scripts/a76-checks.sh) echo job:import ;;
+	scripts/speed-report.sh) echo speed ;;
 	scripts/a77.sh | scripts/a90.sh) echo job:upgrade ;;
 	scripts/a78.sh) echo job:install ;;
 	scripts/a80.sh | scripts/a80-size.sh | scripts/backup-checks.sh) echo job:backups ;;
@@ -98,6 +99,8 @@ area_jobs() {
 	# The client image, and every job that builds it.
 	client-image) echo "images stack-e2e install monitoring" ;;
 	images) echo "images stack stack-e2e import upgrade install backups budget monitoring" ;;
+	# A75's and A76's timings' report (ADR 0046).
+	speed) echo "search import" ;;
 	job:*) echo "${1#job:}" ;;
 	*)
 		echo "changes: no jobs for area $1" >&2

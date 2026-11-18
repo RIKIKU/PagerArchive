@@ -217,3 +217,7 @@ No change: it isn't in our files, and a bot or app is ruled out. What helps is a
 ### Layer 3 (ci-retry.yml)
 
 Live from main since #21 merged (2026-11-12 07:20 UTC). Up to 2026-11-13 13:40 UTC it ran 27 times, once for each completed CI run of a pull request or main (25 passed, 2 cancelled by a reopen), and skipped the job every time, as its `if` wants: no first attempt failed in that time. It hasn't re-run anything yet, so there's nothing to judge beyond that. The one re-run in the history, the A76 flake's run's attempt 2, was made by hand before layer 3 existed.
+
+## Follow-up (2026-11-18): times on the shared runners
+
+A76's and A75's time limits failed at random on the shared runners (Release run 44278003288, v1.17.0, among others), and a retry only hid it. ADR 0046: in a gate their times are reported, a `slow: …` warning beside the `flaky: …` ones, never a failure; their correctness and A76's memory budget still fail it. A weekly benchmark (`benchmark.yml`) fails a step over twice its limit. `scripts/speed-report.sh`, read by the search and import jobs only, has an area of its own, `speed`.
