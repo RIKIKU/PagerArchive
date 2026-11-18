@@ -173,6 +173,7 @@ func (s *Server) Handler() http.Handler {
 		"GET /api/v1/me":                           s.getMe,
 		"DELETE /api/v1/me":                        s.deleteMe,
 		"PATCH /api/v1/me":                         s.patchMe,
+		"POST /api/v1/me/release-seen":             s.releaseSeen,
 		"GET /api/v1/invitations":                  s.myInvitations,
 		"POST /api/v1/invitations":                 s.invite,
 		"DELETE /api/v1/invitations/{id}":          s.cancelInvitation,

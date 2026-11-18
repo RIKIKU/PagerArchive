@@ -7,7 +7,7 @@
 	// carries the count of alias requests waiting; R67: the print sheet its
 	// count of messages; R39: admins see when a receiver has gone quiet. At
 	// the very bottom, the build's version, as the API reports it (owner,
-	// 2026-11-14).
+	// 2026-11-14), where the "New release" notice lands (R77b).
 	import { albums } from './albums.svelte.ts';
 	import Icon from './Icon.svelte';
 	import { releaseHref } from './release.ts';
@@ -127,7 +127,7 @@
 			>
 			{#if shrunk}<span class="tip" aria-hidden="true">Show the pages' names again</span>{/if}
 		</div>
-		{#if version}<p class="version"><a data-testid="version" href={releaseHref(version)} target="_blank" rel="noopener noreferrer" aria-label={`Release notes for v${version}`}>v{version}</a></p>{/if}
+		{#if version}<p class="version"><a data-testid="version" data-release-target href={releaseHref(version)} target="_blank" rel="noopener noreferrer" aria-label={`Release notes for v${version}`}>v{version}</a></p>{/if}
 	</div>
 </div>
 
