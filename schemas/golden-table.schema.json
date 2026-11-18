@@ -34,6 +34,7 @@
               "call_sign": { "$ref": "#/$defs/text" },
               "group": { "description": "The old name of call_sign (ADR 0040): read as call_sign, with a warning to rename it.", "$ref": "#/$defs/text" },
               "units": { "$ref": "#/$defs/list" },
+              "call_signs": { "description": "The call signs and roles a page names, apart from its appliances (R8, ADR 0047).", "$ref": "#/$defs/list" },
               "extra": {
                 "type": "object",
                 "additionalProperties": { "anyOf": [{ "$ref": "#/$defs/text" }, { "$ref": "#/$defs/list" }] }

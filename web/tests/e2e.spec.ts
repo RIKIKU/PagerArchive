@@ -135,6 +135,35 @@ test('R8 units shown as Appliances', async ({ page, request }) => {
 	await expect(details).not.toContainText(/\bUnits\b/);
 });
 
+// A128 (R8, ADR 0047): the call signs and roles a page names are shown as
+// Call signs, after Appliances, in its detail view, on a phone and beside the
+// list on a desktop; its row shows the paged unit's call sign only (R31).
+test('A128 call signs apart from appliances', async ({ browser, request }) => {
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON UNITS T1 STN2 STN2T DO01 #STN1`);
+	const res = await request.get(`${URL}/api/v1/messages?job=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	const m = (await res.json()).messages[0] as { id: number; units: string[]; call_signs: string[]; call_sign: string };
+	expect([m.units, m.call_signs, m.call_sign]).toEqual([['T1', 'STN2T'], ['STN2', 'DO01'], 'STN1']);
+	for (const viewport of [{ width: 375, height: 740 }, { width: 1440, height: 900 }]) {
+		const ctx = await signedIn(browser, 'user', { viewport });
+		const page = await ctx.newPage();
+		await page.goto(`/?job=${job}`);
+		const row = page.getByTestId('message-list').locator('article').first();
+		await expect(row.locator('.callsign')).toHaveText(/^Call sign\sSTN1$/);
+		await expect(row).not.toContainText('Call signs');
+		await page.goto(`/messages/${m.id}`);
+		const details = page.locator('.rest dl');
+		await expect(details.locator('dt:text-is("Appliances") + dd')).toHaveText('T1, STN2T');
+		await expect(details.locator('dt:text-is("Call signs") + dd')).toHaveText('STN2, DO01');
+		await expect(details.locator('dt:text-is("Call sign") + dd')).toHaveText('STN1');
+		const terms = await details.locator('dt').allTextContents();
+		expect(terms.indexOf('Call signs'), `${viewport.width} px: Call signs after Appliances`).toBe(terms.indexOf('Appliances') + 1);
+		const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+		expect(overflow, `${viewport.width} px: no horizontal scroll`).toBeLessThanOrEqual(0);
+		await ctx.close();
+	}
+});
+
 // R31: at 375 px, date, time and alias stay visible with no horizontal scroll.
 test('R31 phone width keeps date, time and alias visible', async ({ browser, request }) => {
 	const job = uniqueJob();

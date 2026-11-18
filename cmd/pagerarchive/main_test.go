@@ -59,7 +59,7 @@ func TestValidateProfileExample(t *testing.T) {
 	if code := run([]string{"validate-profile", "-v", "../../profiles/example"}, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
 	}
-	for _, want := range []string{"example-network (network,", ": 10 passed, 0 failed", "example-fire (agency,", ": 8 passed, 0 failed"} {
+	for _, want := range []string{"example-network (network,", ": 10 passed, 0 failed", "example-fire (agency,", ": 9 passed, 0 failed"} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output doesn't contain %q:\n%s", want, out.String())
 		}
@@ -91,6 +91,48 @@ func TestValidateProfileLargeEventFieldErrors(t *testing.T) {
 			t.Fatal(err)
 		}
 		var out, errOut bytes.Buffer
+		code := run([]string{"validate-profile", dir}, &out, &errOut)
+		msg := out.String() + errOut.String()
+		if code == 0 || !strings.Contains(msg, fire) || !strings.Contains(msg, c.want) {
+			t.Errorf("%s: exit %d, output:\n%s\nwant %q", c.name, code, msg, c.want)
+		}
+		t.Logf("%s: exit %d: %s", c.name, code, strings.TrimSpace(errOut.String()))
+	}
+}
+
+// A128 (R7, ADR 0047): validate-profile passes the example's into and its
+// proposed row, and fails an into whose values file is missing or that
+// names a single-value field, naming the file and the path.
+func TestValidateProfileInto(t *testing.T) {
+	var out, errOut bytes.Buffer
+	if code := run([]string{"validate-profile", "-v", "../../profiles/example"}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if s := out.String(); !strings.Contains(s, "PASS example-fire: emergency whose units name call signs and a role moves them to call_signs") {
+		t.Errorf("the proposed row isn't reported passing:\n%s", s)
+	}
+	dir := t.TempDir()
+	if err := os.CopyFS(dir, os.DirFS("../../profiles/example")); err != nil {
+		t.Fatal(err)
+	}
+	fire := filepath.Join(dir, "example-fire.json")
+	data, err := os.ReadFile(fire)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct{ name, from, to, want string }{
+		{"missing values file", `"values_file": "example-call-signs.txt"`, `"values_file": "example-call-sign.txt"`, `at /formats/0/fields/units/into/values_file: values_file "example-call-sign.txt" can't be read`},
+		{"single-value field", `"field": "call_signs"`, `"field": "call_sign"`, `at /formats/0/fields/units/into/field: "call_sign" is a single-value field`},
+	} {
+		broken := strings.Replace(string(data), c.from, c.to, 1)
+		if broken == string(data) {
+			t.Fatalf("%s: nothing replaced", c.name)
+		}
+		if err := os.WriteFile(fire, []byte(broken), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		out.Reset()
+		errOut.Reset()
 		code := run([]string{"validate-profile", dir}, &out, &errOut)
 		msg := out.String() + errOut.String()
 		if code == 0 || !strings.Contains(msg, fire) || !strings.Contains(msg, c.want) {
@@ -222,7 +264,7 @@ func TestValidateProfileOldCallSign(t *testing.T) {
 		"warning: " + fire + ": at /formats/0/match: the call sign's field is now call_sign (ADR 0040): rename group to call_sign",
 		"warning: " + fire + ": at /formats/1/match: ",
 		"warning: " + golden + ": at /cases/0/expect/group: ",
-		"example-fire (agency, " + golden + "): 8 passed, 0 failed",
+		"example-fire (agency, " + golden + "): 9 passed, 0 failed",
 	} {
 		if !strings.Contains(out.String(), want) {
 			t.Errorf("output doesn't contain %q:\n%s", want, out.String())

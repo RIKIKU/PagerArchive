@@ -93,6 +93,21 @@ Describe 'Get-PagerArchiveMessage' {
         $out.CallSign | Should -Be 'STN1'
         $out.PSObject.Properties.Name | Should -Not -Contain 'Group'
     }
+    It 'outputs the call signs apart from the appliances as CallSigns (R8, ADR 0047)' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/messages' } -MockWith {
+            $m = New-ApiMessage -Id 1
+            $m.units = @('T1', 'STN2T')
+            $m | Add-Member -NotePropertyName call_signs -NotePropertyValue @('STN2', 'DO01')
+            $old = New-ApiMessage -Id 2
+            [pscustomobject]@{ messages = @($m, $old); next = '' }
+        }
+        $out = @(Get-PagerArchiveMessage -First 2)
+        $out[0].Units | Should -Be @('T1', 'STN2T')
+        $out[0].CallSigns | Should -Be @('STN2', 'DO01')
+        ($out[0] | Format-List | Out-String) | Should -Match 'Call signs\s*:\s*STN2, DO01'
+        # An API from before call_signs sends none: an empty list, as Units.
+        $out[1].CallSigns.Count | Should -Be 0
+    }
     It 'fetches pages only as the pipeline asks for more' {
         $out = @(Get-PagerArchiveMessage | Select-Object -First 250)
         $out.Count | Should -Be 250

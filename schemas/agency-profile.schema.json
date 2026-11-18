@@ -123,6 +123,36 @@
           "description": "RE2 pattern that splits the value into a list. Elements are trimmed; empty ones are dropped. An empty pattern splits into single characters.",
           "type": "string"
         },
+        "into": {
+          "description": "Moves some of the split list's tokens into another list (R7, ADR 0047): each token that is one of the known values (values, values_file) or that match matches in full moves to field, in its order; the others stay. Values are compared exactly as extracted (P3). Needs split beside it.",
+          "type": "object",
+          "required": ["field"],
+          "properties": {
+            "field": {
+              "description": "The list the tokens move to: call_signs (shown as Call signs), units, or an extra field. Not the field being split, a single-value standard field, or a field the format captures.",
+              "type": "string",
+              "minLength": 1
+            },
+            "values": {
+              "description": "Known values: a token equal to one moves.",
+              "type": "array",
+              "minItems": 1,
+              "items": { "type": "string" }
+            },
+            "values_file": {
+              "description": "Known values in a file beside the profile (relative to it): UTF-8 text, one value a line; lines are trimmed, and blank lines and lines starting with # are skipped. Name it .txt. Its values count in what decides a re-parse (R23a).",
+              "type": "string",
+              "minLength": 1
+            },
+            "match": {
+              "description": "RE2 pattern a whole token must match to move (anchored as ^(?:...)$), for values that follow a shape.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "patternProperties": { "^_": {} },
+          "additionalProperties": false
+        },
         "address_split": {
           "description": "Splits the value at the longest suffix that is [house number] <street> <locality> from the address dataset.",
           "type": "object",
@@ -136,7 +166,7 @@
       },
       "patternProperties": { "^_": {} },
       "additionalProperties": false,
-      "maxProperties": 1
+      "dependentRequired": { "into": ["split"] }
     }
   }
 }

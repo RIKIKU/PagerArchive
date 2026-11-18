@@ -41,6 +41,8 @@
 		['grid_ref', 'Grid reference'],
 		// R8: the units field, shown as Appliances (owner, 2026-11-13).
 		['units', 'Appliances'],
+		// R8, ADR 0047: the call signs and roles it names, apart from its appliances.
+		['call_signs', 'Call signs'],
 		['call_sign', 'Call sign']
 	];
 

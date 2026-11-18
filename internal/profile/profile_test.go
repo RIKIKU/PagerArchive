@@ -22,9 +22,15 @@ func loadOne(t *testing.T, name, doc string) error {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(doc), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// The example agency's into reads its call signs from beside it.
+	if err := os.WriteFile(filepath.Join(dir, exampleCallSigns), []byte(readExample(t, exampleCallSigns)), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	_, err := LoadDir(dir)
 	return err
 }
+
+const exampleCallSigns = "example-call-signs.txt"
 
 func TestExampleLoads(t *testing.T) {
 	set, err := LoadDir("../../profiles/example")
@@ -70,13 +76,13 @@ func TestProfileErrors(t *testing.T) {
 		{
 			name: "split on a group that doesn't exist",
 			file: "fire.json",
-			doc:  strings.Replace(fire, `"units": { "split": " " }`, `"unitz": { "split": " " }`, 1),
+			doc:  strings.Replace(fire, `"units": {`, `"unitz": {`, 1),
 			want: []string{"at /formats/0/fields/unitz", `no group named "unitz"`},
 		},
 		{
 			name: "list field without split",
 			file: "fire.json",
-			doc:  strings.Replace(fire, `"units": { "split": " " }`, `"call_sign": { "split": " " }`, 1),
+			doc:  strings.Replace(fire, `"units": {`, `"call_sign": {`, 1),
 			want: []string{"at /formats/0/fields/units", "list field"},
 		},
 		{
@@ -384,7 +390,7 @@ func TestOldCallSignName(t *testing.T) {
 			}
 		}
 	}
-	if a.FileHash != hashOf([]byte(old)) || a.Hash != agencyHash([]byte(old)) {
+	if a.FileHash != hashOf([]byte(old)) || a.Hash != agencyHash([]byte(old), nil) {
 		t.Error("the hash isn't the file's")
 	}
 
@@ -449,14 +455,15 @@ func TestLevels(t *testing.T) {
 // anything else, a format above all, changes it. FileHash is the whole
 // file's, as the hash was before.
 func TestAgencyHashLeavesOutDisplayOnly(t *testing.T) {
-	b, err := os.ReadFile("../../profiles/example/example-fire.json")
+	path := "../../profiles/example/example-fire.json"
+	b, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s := string(b)
 	load := func(doc string) *Agency {
 		t.Helper()
-		a, errs := loadAgency("example-fire.json", []byte(doc))
+		a, errs := loadAgency(path, []byte(doc))
 		if len(errs) > 0 {
 			t.Fatal(errs)
 		}

@@ -33,7 +33,7 @@ const (
 )
 
 // StandardFields are the fields core features rely on (R8).
-var StandardFields = []string{"job_number", "event_type", "description", "address", "locality", "grid_ref", "units", StandardCallSign}
+var StandardFields = []string{"job_number", "event_type", "description", "address", "locality", "grid_ref", "units", StandardCallSign, StandardCallSigns}
 
 // OldCallSign is the call sign's name before ADR 0040: a profile or golden
 // table that still says it is read as call_sign, with a warning to rename it.
@@ -43,8 +43,13 @@ const OldCallSign = "group"
 // often a short code at the end of a page.
 const StandardCallSign = "call_sign"
 
+// StandardCallSigns is the list of the call signs a page dispatches and the
+// roles it names, apart from its appliances (R8, ADR 0047): filled by a
+// format that captures it or moves a split field's tokens into it (into).
+const StandardCallSigns = "call_signs"
+
 // ListFields are standard fields that hold a list.
-var ListFields = map[string]bool{"units": true}
+var ListFields = map[string]bool{"units": true, StandardCallSigns: true}
 
 // Network is a compiled network profile.
 type Network struct {
@@ -233,7 +238,24 @@ type Format struct {
 	Priorities map[Priority]bool // nil: every priority, including none
 	Re         *regexp.Regexp    // nil: text-only format, matches everything
 	Split      map[string]*regexp.Regexp
-	AddrSplit  map[string]AddressSplit
+	// Into moves some of a split field's tokens into another list (R7,
+	// ADR 0047), by the split field's name.
+	Into      map[string]*Into
+	AddrSplit map[string]AddressSplit
+}
+
+// Into is a split field's into (R7, ADR 0047): the list a token moves to
+// when it's one of the known values or the pattern matches all of it.
+// Values are compared exactly, as extracted (P3).
+type Into struct {
+	Field  string
+	Values map[string]bool
+	Match  *regexp.Regexp // anchored to the whole token; nil when none is given
+}
+
+// Moves reports whether a token moves into the other list.
+func (in *Into) Moves(token string) bool {
+	return in.Values[token] || (in.Match != nil && in.Match.MatchString(token))
 }
 
 // AddressSplit names the fields an address_split writes.
@@ -378,9 +400,19 @@ func parseHash(data []byte) string {
 // out, so changing them re-parses nothing (ADR 0045): labels and levels
 // (shown, and an integration's level filter, R49a), the description and
 // comments. Everything else (formats, large_event_fields, the name) can
-// change what a page says or which events it opens, so it counts.
-func agencyHash(data []byte) string {
-	return hashOf(withoutMembers(data, displayOnly))
+// change what a page says or which events it opens, so it counts. So do
+// fileValues, the values its formats' into read from files (R23a, ADR
+// 0047), each file's in order; a profile that reads none hashes as before.
+func agencyHash(data []byte, fileValues []string) string {
+	b := withoutMembers(data, displayOnly)
+	if len(fileValues) == 0 {
+		return hashOf(b)
+	}
+	b = append(append([]byte{}, b...), "\n\x00into values files\n"...)
+	for _, v := range fileValues {
+		b = append(append(b, v...), '\n')
+	}
+	return hashOf(b)
 }
 
 // displayOnly names an agency profile's top-level members that change
@@ -613,11 +645,19 @@ type formatJSON struct {
 }
 
 type fieldJSON struct {
-	Split        *string `json:"split"`
+	Split        *string   `json:"split"`
+	Into         *intoJSON `json:"into"`
 	AddressSplit *struct {
 		Description string `json:"description"`
 		Address     string `json:"address"`
 	} `json:"address_split"`
+}
+
+type intoJSON struct {
+	Field      string   `json:"field"`
+	Values     []string `json:"values"`
+	ValuesFile string   `json:"values_file"`
+	Match      *string  `json:"match"`
 }
 
 var fieldName = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
@@ -637,7 +677,10 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 	warn := func(p, msg string) { warnings = append(warnings, (&Error{File: path, Path: p, Msg: msg}).Error()) }
 	renameOldCallSign(&j, warn, fail)
 
-	a := &Agency{Name: j.Name, Description: j.Description, File: path, Hash: agencyHash(data), FileHash: hashOf(data), Labels: j.Labels, Warnings: warnings}
+	a := &Agency{Name: j.Name, Description: j.Description, File: path, FileHash: hashOf(data), Labels: j.Labels, Warnings: warnings}
+	// The values its formats' into read from files, which count in the
+	// hash (R23a, ADR 0047).
+	var fileValues []string
 	names := map[string]bool{}
 	// What the formats extract, for large_event_fields: text fields, and
 	// fields a format splits into a list.
@@ -648,7 +691,7 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 			fail(p+"/name", fmt.Sprintf("duplicate format name %q", fj.Name))
 		}
 		names[fj.Name] = true
-		f := Format{Name: fj.Name, Split: map[string]*regexp.Regexp{}, AddrSplit: map[string]AddressSplit{}}
+		f := Format{Name: fj.Name, Split: map[string]*regexp.Regexp{}, Into: map[string]*Into{}, AddrSplit: map[string]AddressSplit{}}
 		if fj.Priorities != nil {
 			f.Priorities = map[Priority]bool{}
 			for _, pr := range fj.Priorities {
@@ -693,6 +736,8 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 				continue
 			}
 			switch {
+			case opt.Split != nil && opt.AddressSplit != nil:
+				fail(fp, "a field takes split or address_split, not both")
 			case opt.Split != nil:
 				re, err := regexp.Compile(*opt.Split)
 				if err != nil {
@@ -700,6 +745,15 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 					continue
 				}
 				f.Split[name] = re
+				if opt.Into != nil {
+					in, values := compileInto(path, fp+"/into", name, re, opt.Into, fail)
+					if in != nil {
+						f.Into[name] = in
+					}
+					fileValues = append(fileValues, values...)
+				}
+			case opt.Into != nil:
+				fail(fp+"/into", "into moves a split field's tokens: add split beside it")
 			case opt.AddressSplit != nil:
 				as := AddressSplit{Description: opt.AddressSplit.Description, Address: opt.AddressSplit.Address}
 				for _, out := range []string{as.Description, as.Address} {
@@ -735,8 +789,23 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 		for _, as := range f.AddrSplit {
 			text[as.Description], text[as.Address] = true, true
 		}
+		// Where a split field's tokens move (ADR 0047): a list of their own,
+		// not a field the format captures or writes otherwise.
+		for _, name := range keys {
+			in := f.Into[name]
+			if in == nil {
+				continue
+			}
+			if out, written := outputs[in.Field]; written && out != "into" && in.Field != name {
+				fail(p+"/fields/"+name+"/into/field", fmt.Sprintf("this format also captures or writes %q: into moves tokens into a list no group fills", in.Field))
+				continue
+			}
+			outputs[in.Field] = "into"
+			lists[in.Field] = true
+		}
 		a.Formats = append(a.Formats, f)
 	}
+	a.Hash = agencyHash(data, fileValues)
 	a.LargeEventFields = largeEventFields(j.LargeEventFields, text, lists, fail)
 	a.Levels = levelFields(j.Levels, text, lists, fail)
 	if len(errs) > 0 {
@@ -798,6 +867,93 @@ func renameOldCallSign(j *agencyJSON, warn, fail func(p, msg string)) {
 			warn(fmt.Sprintf("/large_event_fields/%d/field", i), rename)
 		}
 	}
+}
+
+// compileInto compiles a split field's into (R7, ADR 0047): the list some of
+// its tokens move to, by known values (in the profile, in a file beside it,
+// or both) and a pattern a whole token matches. The schema has checked its
+// shape. profilePath is the profile's file, which a values_file is relative
+// to; p is the into's JSON path. It returns nil after a problem, and the
+// values read from the file, after a line naming it, for the hash.
+func compileInto(profilePath, p, splitField string, split *regexp.Regexp, j *intoJSON, fail func(p, msg string)) (*Into, []string) {
+	in := &Into{Field: j.Field, Values: map[string]bool{}}
+	ok := true
+	bad := func(p, msg string) { fail(p, msg); ok = false }
+	switch {
+	case j.Field == splitField:
+		bad(p+"/field", fmt.Sprintf("%q is the field being split: into moves its tokens into another list", j.Field))
+	case j.Field == OldCallSign || (slices.Contains(StandardFields, j.Field) && !ListFields[j.Field]):
+		bad(p+"/field", fmt.Sprintf("%q is a single-value field: into moves tokens into a list (%s, units or an extra field)", j.Field, StandardCallSigns))
+	case strings.HasPrefix(j.Field, "_") || !fieldName.MatchString(j.Field):
+		bad(p+"/field", fmt.Sprintf("%q is not a field name: use lower-case letters, digits and _", j.Field))
+	}
+	if j.Values == nil && j.ValuesFile == "" && j.Match == nil {
+		bad(p, "into needs values, a values_file or a match: which tokens move")
+	}
+	// add takes one known value, at path at, if it could be a token.
+	add := func(at, where, v string) {
+		switch {
+		case v == "":
+			bad(at, where+"a value can't be empty")
+		case strings.TrimSpace(v) != v:
+			bad(at, where+fmt.Sprintf("value %q starts or ends with a space: split tokens are trimmed, so it would never match", v))
+		case in.Values[v]:
+			bad(at, where+fmt.Sprintf("value %q is listed twice", v))
+		case len(split.Split(v, -1)) != 1:
+			bad(at, where+fmt.Sprintf("value %q would be split: it could never be one token", v))
+		default:
+			in.Values[v] = true
+		}
+	}
+	for k, v := range j.Values {
+		add(fmt.Sprintf("%s/values/%d", p, k), "", v)
+	}
+	var fileValues []string
+	if j.ValuesFile != "" {
+		file := j.ValuesFile
+		if !filepath.IsAbs(file) {
+			file = filepath.Join(filepath.Dir(profilePath), file)
+		}
+		data, err := os.ReadFile(file)
+		switch {
+		case err != nil:
+			bad(p+"/values_file", fmt.Sprintf("values_file %q can't be read: %v", j.ValuesFile, errors.Unwrap(err)))
+		case !utf8.Valid(data):
+			bad(p+"/values_file", fmt.Sprintf("values_file %q isn't UTF-8 text", j.ValuesFile))
+		default:
+			fileValues = append(fileValues, "\x00"+j.ValuesFile)
+			data = bytes.TrimPrefix(data, []byte{0xEF, 0xBB, 0xBF}) // a byte order mark
+			for n, line := range strings.Split(string(data), "\n") {
+				v := strings.TrimSpace(line)
+				if v == "" || strings.HasPrefix(v, "#") {
+					continue
+				}
+				add(p+"/values_file", fmt.Sprintf("%s line %d: ", j.ValuesFile, n+1), v)
+				fileValues = append(fileValues, v)
+			}
+			if len(fileValues) == 1 {
+				bad(p+"/values_file", fmt.Sprintf("values_file %q has no values: one a line", j.ValuesFile))
+			}
+		}
+	}
+	if j.Match != nil {
+		re, err := regexp.Compile(`^(?:` + *j.Match + `)$`)
+		switch {
+		case err != nil:
+			if _, e := regexp.Compile(*j.Match); e != nil {
+				err = e
+			}
+			bad(p+"/match", err.Error())
+		case *j.Match == "":
+			bad(p+"/match", "match can't be empty")
+		default:
+			in.Match = re
+		}
+	}
+	if !ok {
+		return nil, fileValues
+	}
+	return in, fileValues
 }
 
 // largeEventFields compiles an agency's large_event_fields (R87). The schema

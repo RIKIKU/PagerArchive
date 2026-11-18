@@ -208,3 +208,45 @@ func TestDeploymentCodes(t *testing.T) {
 		t.Errorf("no pattern: %v", got)
 	}
 }
+
+// R7, R8, ADR 0047: a split field's tokens that are known values, alone, or
+// that the pattern matches in full move into the other list, in their
+// order; the rest stay. A list left with none is null.
+func TestIntoMovesTokens(t *testing.T) {
+	n, ag := example(t)
+	for _, c := range []struct {
+		units                string
+		wantUnits, wantSigns []string
+	}{
+		{"T1 STN2 STN2T DO01", []string{"T1", "STN2T"}, []string{"STN2", "DO01"}},
+		{"DO02 T1  STN4 STN1", []string{"T1"}, []string{"DO02", "STN4", "STN1"}},
+		{"T1 T2", []string{"T1", "T2"}, nil},
+		{"STN1 DO01", nil, []string{"STN1", "DO01"}},
+		{"stn1 STN5 DO1 DO012 XDO01", []string{"stn1", "STN5", "DO1", "DO012", "XDO01"}, nil},
+	} {
+		p := Parse(n, ag, nil, Prepare(n, "0100001", "@@EX0000006 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON UNITS "+c.units+" #STN1"))
+		units, _ := p.Fields["units"].([]string)
+		signs, _ := p.Fields["call_signs"].([]string)
+		if !slices.Equal(units, c.wantUnits) || !slices.Equal(signs, c.wantSigns) || p.String("call_sign") != "STN1" {
+			t.Errorf("%s: units %q, call_signs %q, call_sign %q", c.units, units, signs, p.String("call_sign"))
+		}
+		if _, ok := p.Fields["units"]; ok != (c.wantUnits != nil) {
+			t.Errorf("%s: units present %v", c.units, ok)
+		}
+		if _, ok := p.Fields["call_signs"]; ok != (c.wantSigns != nil) {
+			t.Errorf("%s: call_signs present %v", c.units, ok)
+		}
+	}
+	// Two split fields of a format moving into one list: in the match's order.
+	set, err := loadAgencyJSON(t, `{"kind": "agency", "name": "two", "formats": [{"name": "f",
+	  "match": "^A (?P<units>.+) B (?P<crew>.+)$",
+	  "fields": {"units": {"split": " ", "into": {"field": "call_signs", "values": ["S1", "S2"]}},
+	             "crew": {"split": ",", "into": {"field": "call_signs", "match": "R[0-9]"}}}}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := Parse(n, set.Agencies["two"], nil, Prepare(n, "0100001", "A T1 S2 B R1,X,S1"))
+	if got, _ := p.Fields["call_signs"].([]string); !slices.Equal(got, []string{"S2", "R1"}) || !slices.Equal(p.Fields["crew"].([]string), []string{"X", "S1"}) {
+		t.Errorf("two into: %+v", p.Fields)
+	}
+}
