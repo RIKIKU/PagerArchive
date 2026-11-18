@@ -33,7 +33,7 @@ Some agencies dispatch with a level on each page, such as an alarm level. When a
 - a job's later page at a higher level is a page of its own, so it's sent too (a job going from a second to a third alarm sends both pages). As always, each page is sent at most once, and a repeat within 10 seconds is the same page;
 - the order is the profile's as it is now: if the profile drops the field or the level, the integration sends nothing until you edit it.
 
-The form is the only place levels and their names are shown. Deliveries don't name a level: a Full payload carries the page's text and its extra fields as before (the example's level is `extra.alarm_level`, such as `"2"`), and never a level's label; Summary sends no level at all. In the API, the filter is `"level": {"profile": "example-fire", "field": "alarm_level", "at_least": "2"}`, and `GET /api/v1/integrations/levels` lists what can be chosen.
+The form is the only place levels and their names are shown. Deliveries don't name a level: a Full payload carries the page's text and its extra fields as before (the example's level is `extra.alarm_level`, such as `"2"`), and never a level list's label (a profile's `labels` for the field, if it has them, are in the payload's `labels` as any field's are); Summary sends no level at all. In the API, the filter is `"level": {"profile": "example-fire", "field": "alarm_level", "at_least": "2"}`, and `GET /api/v1/integrations/levels` lists what can be chosen.
 
 ## Private addresses
 
