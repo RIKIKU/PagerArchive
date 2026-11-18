@@ -15,6 +15,7 @@
 	import { here } from '#lib/here.svelte.ts';
 	import { list, listHref } from '#lib/listState.svelte.ts';
 	import Menu from '#lib/Menu.svelte';
+	import ReleaseNotice from '#lib/ReleaseNotice.svelte';
 	import { menu } from '#lib/menu.svelte.ts';
 	import { crumbs } from '#lib/nav.ts';
 	import SearchBox from '#lib/SearchBox.svelte';
@@ -148,6 +149,8 @@
 			}}>Skip to the date scrubber (Alt+J)</a
 		>
 	{/if}
+	<!-- R77b: told of a new release once; early in the tab order, as it's on screen only briefly. -->
+	<ReleaseNotice />
 	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
 		<nav class="side" aria-label="Main">
 			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} version={meta?.version ?? ''} />
