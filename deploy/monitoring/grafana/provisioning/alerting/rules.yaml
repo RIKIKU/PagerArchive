@@ -203,15 +203,19 @@ groups:
               instant: true
               range: false
               # THE THRESHOLD SETTING (1 of 3): the window, 30m here and in
-              # each of usual's 7 lines; change them together.
+              # each of usual's 21 lines (7 in each of its 3 parts); change
+              # them together.
               expr: >-
                 sum by (client) (label_replace(increase(pagerarchive_client_pages_decoded_total[30m]), "client", "$1", "instance", "(.*)"))
                 and on (client)
                 (sum by (client) (label_replace(rate(pagerarchive_client_radio_audio_bytes_total[5m]), "client", "$1", "instance", "(.*)")) > 40000)
           # What the client usually decodes in those 30 minutes: its average
-          # for the same 30 minutes on each of the 7 days before. A day it
-          # has no numbers for (it's new) isn't counted; with none at all
-          # there's no usual, and no alert.
+          # for the same 30 minutes on each of the 7 days before, the busiest
+          # of them left out (ADR 0039, 2026-11-19), so one busy day doesn't
+          # make a normal half hour look like a fault. That's the 7 days'
+          # sum less their largest, over their count less one. A day it has
+          # no numbers for (it's new) isn't counted; with fewer than two
+          # there's no usual (0 / 0), and no alert.
           - refId: usual
             relativeTimeRange: {from: 1800, to: 0}
             datasourceUid: prometheus
@@ -225,15 +229,35 @@ groups:
               # quiet network, or a quiet hour, is left to "Client not
               # receiving".
               expr: >-
-                avg by (client) (label_replace(
-                  label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), "day", "1", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), "day", "2", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), "day", "3", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), "day", "4", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), "day", "5", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), "day", "6", "", "")
-                  or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), "day", "7", "", ""),
-                  "client", "$1", "instance", "(.*)"))
+                (
+                  sum by (client) (label_replace(
+                    label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), "day", "1", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), "day", "2", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), "day", "3", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), "day", "4", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), "day", "5", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), "day", "6", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), "day", "7", "", ""),
+                    "client", "$1", "instance", "(.*)"))
+                  - max by (client) (label_replace(
+                    label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), "day", "1", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), "day", "2", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), "day", "3", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), "day", "4", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), "day", "5", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), "day", "6", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), "day", "7", "", ""),
+                    "client", "$1", "instance", "(.*)"))
+                )
+                / (count by (client) (label_replace(
+                    label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), "day", "1", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), "day", "2", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), "day", "3", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), "day", "4", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), "day", "5", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), "day", "6", "", "")
+                    or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), "day", "7", "", ""),
+                    "client", "$1", "instance", "(.*)")) - 1)
                 >= 20
           - refId: share
             datasourceUid: __expr__
