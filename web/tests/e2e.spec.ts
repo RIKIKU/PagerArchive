@@ -3547,16 +3547,39 @@ for (const width of [1280, 375]) {
 	});
 }
 
-test('A125 no notice for a build that is not a release', async ({ page, request }) => {
-	// This build (0.0.0-dev, or <next>-dev+<commit> in CI) isn't a release.
+// The server says whether to show the notice, and a build that isn't a release
+// never is shown and records nothing (A125's API half, for 0.0.0-dev and
+// 1.11.0-dev+abc1234: internal/acceptance/a125_test.go). The API under test
+// runs this build's version: 0.0.0-dev unstamped, <next>-dev+<commit> in a CI
+// run, but in the Release workflow's run the release's own (ADR 0024: what's
+// tested is what's published). So the app is given each kind of build that
+// isn't a release here, whatever this build is, and the real API's own answer
+// is checked when this build isn't a release.
+test('A125 no notice for a build that is not a release', async ({ browser, request }) => {
+	const noNotice = async (page: Page, version: string) => {
+		const asked = page.waitForResponse('**/api/v1/me/release-seen');
+		await page.goto('/');
+		await waitLive(page);
+		expect(await (await asked).json(), `${version}: the answer`).toEqual({ version, show: false });
+		await expect(page.getByRole('navigation', { name: 'Main' }).getByTestId('version')).toHaveText(`v${version}`);
+		await page.waitForTimeout(500);
+		await expect(page.getByTestId('release-notice'), `${version}: no notice`).toHaveCount(0);
+	};
+	for (const version of ['0.0.0-dev', '1.11.0-dev+abc1234']) {
+		const page = await (await signedIn(browser, 'user')).newPage();
+		await page.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), version } }));
+		await page.route('**/api/v1/me/release-seen', (r) => r.fulfill({ json: { version, show: false } }));
+		await noNotice(page, version);
+		await page.context().close();
+	}
 	const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
-	expect(meta.version).not.toMatch(/^\d+\.\d+\.\d+$/);
-	const asked = page.waitForResponse('**/api/v1/me/release-seen');
-	await page.goto('/');
-	await waitLive(page);
-	expect(await (await asked).json()).toEqual({ version: meta.version, show: false });
-	await page.waitForTimeout(500);
-	await expect(page.getByTestId('release-notice')).toHaveCount(0);
+	if (/^\d+\.\d+\.\d+$/.test(meta.version)) {
+		test.info().annotations.push({ type: 'A125', description: `this build is the release ${meta.version}: the real API's answer for a build that isn't one isn't checked here` });
+		return;
+	}
+	const page = await (await signedIn(browser, 'user')).newPage();
+	await noNotice(page, meta.version);
+	await page.context().close();
 });
 
 // WCAG 2.1 AA: 4.5:1 for text (1.4.3), 3:1 for focus rings, control borders
