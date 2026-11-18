@@ -3,7 +3,7 @@
 	// opens the rest of the menu, without the pages that are desktop only (the
 	// print sheet, Administration). They still open from a link or bookmark.
 	// At the bottom of More, the build's version, as at the foot of the side
-	// menu (owner, 2026-11-14).
+	// menu (owner, 2026-11-14). The "New release" notice lands on More (R77b).
 	import Icon from './Icon.svelte';
 	import { releaseHref } from './release.ts';
 	import { entryOf, visible } from './nav.ts';
@@ -36,7 +36,7 @@
 		<li><a href={mapHref} aria-current={path === '/map' ? 'page' : undefined}><Icon name="map" /><span>Map</span></a></li>
 		<li><a href="/albums" aria-current={onAlbums ? 'page' : undefined}><Icon name="albums" /><span>Albums</span></a></li>
 		<li>
-			<button type="button" aria-haspopup="dialog" aria-expanded={more} aria-current={inMore ? 'page' : undefined} onclick={show}
+			<button type="button" aria-haspopup="dialog" aria-expanded={more} aria-current={inMore ? 'page' : undefined} data-release-target onclick={show}
 				><Icon name="more" /><span>More</span></button
 			>
 		</li>

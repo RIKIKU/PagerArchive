@@ -1846,7 +1846,7 @@ func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeac
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release
 `
 
 type CreateUserParams struct {
@@ -1883,6 +1883,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.TrustedAt,
 		&i.TrustedBy,
 		&i.Look,
+		&i.SeenRelease,
 	)
 	return i, err
 }
@@ -5834,6 +5835,29 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 	return items, nil
 }
 
+const seeRelease = `-- name: SeeRelease :one
+UPDATE users u SET seen_release = $1::text
+FROM (SELECT id, seen_release FROM users WHERE id = $2::bigint FOR UPDATE) AS before
+WHERE u.id = before.id AND u.status <> 'deleted' AND u.seen_release IS DISTINCT FROM $1::text
+RETURNING before.seen_release
+`
+
+type SeeReleaseParams struct {
+	Version string
+	ID      int64
+}
+
+// R77b: records the version as the last release the user was told of, and
+// answers with the one before (NULL: none was recorded yet). No row when it
+// was already recorded: they were told, here or in another tab or browser.
+// The row lock makes two asks at once take turns, so only one gets a row.
+func (q *Queries) SeeRelease(ctx context.Context, arg SeeReleaseParams) (*string, error) {
+	row := q.db.QueryRow(ctx, seeRelease, arg.Version, arg.ID)
+	var seen_release *string
+	err := row.Scan(&seen_release)
+	return seen_release, err
+}
+
 const selectCapcodeInsteadOfAlias = `-- name: SelectCapcodeInsteadOfAlias :exec
 INSERT INTO integration_capcodes (integration_id, capcode)
 SELECT integration_id, $1::text FROM integration_aliases WHERE alias_id = $2
@@ -5853,7 +5877,7 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
@@ -5873,6 +5897,7 @@ type SessionUserRow struct {
 	TrustedAt     *time.Time
 	TrustedBy     *int64
 	Look          string
+	SeenRelease   *string
 	SessionUsedAt time.Time
 }
 
@@ -5894,6 +5919,7 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.TrustedAt,
 		&i.TrustedBy,
 		&i.Look,
+		&i.SeenRelease,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -6766,7 +6792,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -6787,12 +6813,13 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.TrustedAt,
 		&i.TrustedBy,
 		&i.Look,
+		&i.SeenRelease,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -6813,13 +6840,14 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.TrustedAt,
 		&i.TrustedBy,
 		&i.Look,
+		&i.SeenRelease,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -6841,6 +6869,7 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.TrustedAt,
 		&i.TrustedBy,
 		&i.Look,
+		&i.SeenRelease,
 	)
 	return i, err
 }

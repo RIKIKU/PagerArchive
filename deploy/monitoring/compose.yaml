@@ -30,7 +30,7 @@ name: pagerarchive-monitoring
 
 services:
   alloy:
-    image: grafana/alloy:v1.21.3
+    image: grafana/alloy:v1.22.0
     restart: unless-stopped
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:

@@ -3370,6 +3370,194 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 	console.log(`R77/R81: ${tag} at the foot of the side menu (open and shrunk) and of More, for the user and the admin; none signed out; axe clean`);
 });
 
+// A125 (R77b; owner, 2026-11-18): "New release! Check out the release log",
+// for 3 seconds, then into the version's tag (More on a phone), which lights
+// up. The server's answer is stood in for a new release, 1.10.0; whether a
+// user is told once is A125's API half (internal/acceptance/a125_test.go).
+const NEW_RELEASE = '1.10.0';
+type Landing = { how: string; at: number; x: number; y: number; width: number; height: number; transform: string; target: string; box: { left: number; top: number; right: number; bottom: number } };
+
+/** A page signed in as the user, told by the stand-in that NEW_RELEASE is new to them. */
+async function newReleasePage(browser: Browser, width: number, opts: BrowserContextOptions = {}) {
+	const ctx = await signedIn(browser, 'user', { viewport: { width, height: width < 768 ? 740 : 900 }, hasTouch: width < 768, ...opts });
+	const page = await ctx.newPage();
+	let asked = 0;
+	await page.route('**/api/v1/me/release-seen', (r) => (asked++, r.fulfill({ json: { version: NEW_RELEASE, show: true } })));
+	await page.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), version: NEW_RELEASE } }));
+	// When it was shown, by the page's own clock.
+	await page.addInitScript(() => {
+		const w = window as unknown as { noticeShownAt?: number };
+		new MutationObserver((_, obs) => {
+			if (!document.querySelector('[data-testid="release-notice"]')) return;
+			w.noticeShownAt = performance.now();
+			obs.disconnect();
+		}).observe(document, { childList: true, subtree: true });
+	});
+	await page.goto('/');
+	await waitLive(page);
+	const notice = page.getByTestId('release-notice');
+	await expect(notice).toBeVisible();
+	expect(asked, 'asked once').toBe(1);
+	return { page, notice, shownAt: await page.evaluate(() => (window as unknown as { noticeShownAt: number }).noticeShownAt) };
+}
+
+/** Waits for the notice to go, and stops its leaving at its last moment to measure where it ended, then lets it finish. */
+function landing(page: Page): Promise<Landing> {
+	return page.evaluate(
+		() =>
+			new Promise<Landing>((resolve) => {
+				const el = document.querySelector<HTMLElement>('[data-testid="release-notice"]')!;
+				const measure = () => {
+					const a = el.getAnimations()[0];
+					a.pause();
+					a.currentTime = Number(a.effect!.getComputedTiming().duration) - 1;
+					const r = el.getBoundingClientRect();
+					const to = [...document.querySelectorAll<HTMLElement>('[data-release-target]')].find((t) => t.getClientRects().length > 0)!;
+					const b = to.getBoundingClientRect();
+					const out = {
+						how: el.dataset.leaving!,
+						at: performance.now(),
+						x: r.left + r.width / 2,
+						y: r.top + r.height / 2,
+						width: r.width,
+						height: r.height,
+						transform: getComputedStyle(el).transform,
+						target: to.textContent!.trim(),
+						box: { left: b.left, top: b.top, right: b.right, bottom: b.bottom }
+					};
+					a.play();
+					resolve(out);
+				};
+				if (el.dataset.leaving) return measure();
+				new MutationObserver((_, obs) => {
+					if (!el.dataset.leaving) return;
+					obs.disconnect();
+					measure();
+				}).observe(el, { attributes: true, attributeFilter: ['data-leaving'] });
+			})
+	);
+}
+
+/** It ended in the middle of what it lands on, no bigger than it, and that lit up. */
+async function landedOn(page: Page, l: Landing, target: string) {
+	expect(l.how, 'it flew').toBe('fly');
+	expect(l.target).toBe(target);
+	const near = 2;
+	expect(l.x, 'over the target').toBeGreaterThanOrEqual(l.box.left - near);
+	expect(l.x).toBeLessThanOrEqual(l.box.right + near);
+	expect(l.y).toBeGreaterThanOrEqual(l.box.top - near);
+	expect(l.y).toBeLessThanOrEqual(l.box.bottom + near);
+	expect(l.height, 'shrunk to the target').toBeLessThanOrEqual(l.box.bottom - l.box.top + near);
+	await expect(page.getByTestId('release-notice')).toHaveCount(0);
+	const lit = page.locator('.release-landed');
+	await expect(lit).toHaveCount(1);
+	expect((await lit.textContent())!.trim()).toBe(target);
+}
+
+for (const width of [1280, 375]) {
+	test(`A125 a new release told, then into the version at ${width} px`, async ({ browser }, info) => {
+		test.setTimeout(90_000);
+		const report: string[] = [];
+		const target = width < 768 ? 'More' : `v${NEW_RELEASE}`;
+		// Shown: the words, the link, announced politely, focus left alone.
+		{
+			const { page, notice, shownAt } = await newReleasePage(browser, width);
+			const landed = landing(page);
+			await expect(notice).toHaveText('New release! Check out the release log');
+			const link = notice.getByRole('link', { name: 'Check out the release log' });
+			await expect(link).toHaveAttribute('href', `https://github.com/RIKIKU/PagerArchive/releases/tag/v${NEW_RELEASE}`);
+			await expect(link).toHaveAttribute('target', '_blank');
+			await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+			expect(await link.evaluate((a) => (a as HTMLAnchorElement).tabIndex), 'reached with Tab').toBe(0);
+			expect(await notice.evaluate((n) => n.closest('[aria-live]')?.getAttribute('aria-live')), 'a polite live region').toBe('polite');
+			expect(await notice.evaluate((n) => n.closest('[role="alert"], [aria-live="assertive"]')), 'not an alert').toBeNull();
+			expect(await notice.evaluate((n) => !n.contains(document.activeElement)), 'focus not moved to it').toBe(true);
+			// After 3 seconds, into the tag (More on a phone).
+			const l = await landed;
+			const after = l.at - shownAt;
+			expect(after, 'it stays 3 seconds').toBeGreaterThanOrEqual(2_950);
+			expect(after).toBeLessThan(4_000);
+			await landedOn(page, l, target);
+			report.push(`left after ${Math.round(after)} ms into ${target}`);
+			await page.context().close();
+		}
+		// Held while the pointer is on it: light and dark, nothing sideways, it
+		// covers none of the menu or the bottom bar, and axe passes. Then Esc
+		// sends it at once.
+		{
+			const { page, notice } = await newReleasePage(browser, width);
+			const b = (await notice.boundingBox())!;
+			await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2);
+			const frame = page.locator(width < 768 ? 'nav.bottom' : 'nav.side');
+			for (const colorScheme of ['light', 'dark'] as const) {
+				await page.emulateMedia({ colorScheme });
+				const [n, f] = [(await notice.boundingBox())!, (await frame.boundingBox())!];
+				const apart = n.x >= f.x + f.width || n.x + n.width <= f.x || n.y >= f.y + f.height || n.y + n.height <= f.y;
+				expect(apart, `${width} px, ${colorScheme}: covers none of the menu or bottom bar`).toBe(true);
+				expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll').toBe(true);
+				await page.screenshot({ path: info.outputPath(`release-notice-${width}-${colorScheme}.png`) });
+				expect(await axeOf(page), `${width} px, ${colorScheme}: axe with the notice shown`).toEqual([]);
+			}
+			await page.waitForTimeout(3_500);
+			await expect(notice, 'held while the pointer is on it').toBeVisible();
+			const landed = landing(page);
+			const sent = Date.now();
+			await page.keyboard.press('Escape');
+			await landedOn(page, await landed, target);
+			expect(Date.now() - sent, 'Esc sends it at once').toBeLessThan(2_000);
+			await page.context().close();
+		}
+		// A click on it sends it at once too.
+		{
+			const { page, notice } = await newReleasePage(browser, width);
+			const landed = landing(page);
+			const sent = Date.now();
+			await notice.click({ position: { x: 4, y: 4 } });
+			await landedOn(page, await landed, target);
+			expect(Date.now() - sent, 'a click sends it at once').toBeLessThan(2_000);
+			await page.context().close();
+		}
+		// Reduced motion: a quick fade where it is, no flight; the tag still lights up.
+		{
+			const { page, notice } = await newReleasePage(browser, width, { reducedMotion: 'reduce' });
+			const start = (await notice.boundingBox())!;
+			const l = await landing(page);
+			expect(l.how, 'it fades').toBe('fade');
+			expect(l.transform, 'it moves nowhere').toBe('none');
+			expect(Math.abs(l.x - (start.x + start.width / 2)), 'where it was').toBeLessThanOrEqual(1);
+			expect(Math.abs(l.y - (start.y + start.height / 2))).toBeLessThanOrEqual(1);
+			await expect(notice).toHaveCount(0);
+			await expect(page.locator('.release-landed')).toHaveText(target);
+			await page.context().close();
+		}
+		// Keyboard: held while focus is in it; Esc then leaves focus where it landed.
+		{
+			const { page, notice } = await newReleasePage(browser, width);
+			await notice.getByRole('link').focus();
+			await page.waitForTimeout(3_500);
+			await expect(notice, 'held while focus is in it').toBeVisible();
+			await page.keyboard.press('Escape');
+			await expect(notice).toHaveCount(0);
+			const nav = page.getByRole('navigation', { name: 'Main' });
+			await expect(width < 768 ? nav.getByRole('button', { name: 'More' }) : nav.getByTestId('version')).toBeFocused();
+			await page.context().close();
+		}
+		console.log(`A125 at ${width} px: ${report.join('; ')}; held by pointer and focus; Esc and a click send it; reduced motion fades; axe clean, light and dark`);
+	});
+}
+
+test('A125 no notice for a build that is not a release', async ({ page, request }) => {
+	// This build (0.0.0-dev, or <next>-dev+<commit> in CI) isn't a release.
+	const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
+	expect(meta.version).not.toMatch(/^\d+\.\d+\.\d+$/);
+	const asked = page.waitForResponse('**/api/v1/me/release-seen');
+	await page.goto('/');
+	await waitLive(page);
+	expect(await (await asked).json()).toEqual({ version: meta.version, show: false });
+	await page.waitForTimeout(500);
+	await expect(page.getByTestId('release-notice')).toHaveCount(0);
+});
+
 // WCAG 2.1 AA: 4.5:1 for text (1.4.3), 3:1 for focus rings, control borders
 // and the marks that show priority (1.4.11), each token as the browser
 // resolves it, in each look (R82d), light and dark. Priorities carry their

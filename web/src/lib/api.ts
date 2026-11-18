@@ -484,6 +484,12 @@ export interface Me {
 	look: Look;
 }
 
+/** R77b: the version running, and whether to tell the user of it now (the server records it as told). */
+export interface ReleaseSeen {
+	version: string;
+	show: boolean;
+}
+
 export interface Invitation {
 	id: number;
 	email: string;
@@ -875,6 +881,8 @@ export const api = {
 	deleteMe: () => request<void>('DELETE', '/api/v1/me'),
 	/** R82d: saves the user's look on their account. */
 	setLook: (look: Look) => request<Me>('PATCH', '/api/v1/me', { look }).then((m) => ((mePromise = Promise.resolve(m)), m)),
+	/** R77b: whether to show the "New release" notice; asking records it as told. */
+	releaseSeen: () => request<ReleaseSeen>('POST', '/api/v1/me/release-seen'),
 	invitations: () => get<Invitation[]>('/api/v1/invitations'),
 	invite: (email: string) => request<Invitation>('POST', '/api/v1/invitations', { email }),
 	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),

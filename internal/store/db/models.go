@@ -411,4 +411,5 @@ type User struct {
 	TrustedAt     *time.Time
 	TrustedBy     *int64
 	Look          string
+	SeenRelease   *string
 }

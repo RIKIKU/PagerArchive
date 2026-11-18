@@ -549,6 +549,16 @@ UPDATE users SET name = $2 WHERE id = $1 AND status <> 'deleted';
 -- R82d: the look the user chose in the account menu.
 UPDATE users SET look = $2 WHERE id = $1 AND status <> 'deleted';
 
+-- name: SeeRelease :one
+-- R77b: records the version as the last release the user was told of, and
+-- answers with the one before (NULL: none was recorded yet). No row when it
+-- was already recorded: they were told, here or in another tab or browser.
+-- The row lock makes two asks at once take turns, so only one gets a row.
+UPDATE users u SET seen_release = sqlc.arg(version)::text
+FROM (SELECT id, seen_release FROM users WHERE id = sqlc.arg(id)::bigint FOR UPDATE) AS before
+WHERE u.id = before.id AND u.status <> 'deleted' AND u.seen_release IS DISTINCT FROM sqlc.arg(version)::text
+RETURNING before.seen_release;
+
 -- name: ClearUserSubject :exec
 UPDATE users SET subject = NULL WHERE id = $1;
 
