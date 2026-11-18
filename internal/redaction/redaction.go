@@ -360,12 +360,15 @@ func (w *Worker) Run(ctx context.Context) {
 	}
 }
 
+// listen waits for notifications on a connection of its own, outside the
+// pool: the pool is small (4 connections on a small host), and the re-parse's
+// worker already keeps one of its connections listening.
 func (w *Worker) listen(ctx context.Context) error {
-	conn, err := w.Store.Pool.Acquire(ctx)
+	conn, err := pgx.ConnectConfig(ctx, w.Store.Pool.Config().ConnConfig.Copy())
 	if err != nil {
 		return err
 	}
-	defer conn.Release()
+	defer conn.Close(context.WithoutCancel(ctx))
 	if _, err := conn.Exec(ctx, "LISTEN "+channel); err != nil {
 		return err
 	}
@@ -380,7 +383,7 @@ func (w *Worker) listen(ctx context.Context) error {
 			}
 		}
 		wait, cancel := context.WithTimeout(ctx, w.Poll)
-		_, err = conn.Conn().WaitForNotification(wait)
+		_, err = conn.WaitForNotification(wait)
 		cancel()
 		if err != nil && ctx.Err() != nil {
 			return nil

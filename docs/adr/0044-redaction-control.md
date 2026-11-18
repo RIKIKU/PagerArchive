@@ -38,7 +38,7 @@ The nightly run still does it, in the same place (after retention, before the re
 
 It returns when the run finishes or an admin pauses or stops it, and the nightly run goes on to the report counts and the vacuum.
 
-Outside the nightly run, a background worker (`redaction.Worker.Run`, woken by `pagerarchive_redaction` and polling each minute) carries on a running run as soon as the API starts, without waiting for a night, and runs one an admin resumes or starts again; when it finishes one, it vacuums `messages` and `receptions`, as the nightly run would. One walk runs at a time (a mutex in the worker). At start-up, `CheckRules` starts an unfinished run under other rules again from the beginning, in its state, as the re-parse's profile check does (ADR 0043 §3); a new run for changed rules still waits for the nightly run, as P1 says.
+Outside the nightly run, a background worker (`redaction.Worker.Run`, woken by `pagerarchive_redaction` and polling each minute) carries on a running run as soon as the API starts, without waiting for a night, and runs one an admin resumes or starts again; when it finishes one, it vacuums `messages` and `receptions`, as the nightly run would. It listens on a connection of its own, outside the pool: the pool has 4 connections on a small host, the re-parse's worker keeps one listening, and a second there left the nightly run and the API's start-up waiting for one. One walk runs at a time (a mutex in the worker). At start-up, `CheckRules` starts an unfinished run under other rules again from the beginning, in its state, as the re-parse's profile check does (ADR 0043 §3); a new run for changed rules still waits for the nightly run, as P1 says.
 
 ### 4. An admin's controls
 
