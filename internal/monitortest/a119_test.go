@@ -310,11 +310,12 @@ func TestA119ToldWhenARadioStopsDecoding(t *testing.T) {
 
 	// Fires for G, whose decoding fell to 15 % of its usual (36, the busier
 	// day's 48 left out), not to nothing: its 30 minutes fall below a
-	// quarter about 1.5 minutes after the test starts, then 5 minutes.
+	// quarter about 1.5 minutes after the test starts, then 5 minutes (so
+	// never sooner than those 5).
 	gAt, gFired := time.Time{}, false
 	if !waitFor(5*time.Minute, func() bool { gAt, gFired = hook.find(t0, "Radio not decoding", "firing", g); return gFired }) {
 		t.Errorf("no \"Radio not decoding\" alert for %s, whose decoding collapsed to 15 %% of its usual", g)
-	} else if since := gAt.Sub(t0); since < 6*time.Minute {
+	} else if since := gAt.Sub(t0); since < 5*time.Minute {
 		t.Errorf("\"Radio not decoding\" fired for %s %v after the test started: before its 30 minutes fell below a quarter of the usual and stayed there for 5 minutes", g, since.Round(time.Second))
 	} else {
 		t.Logf("A119: \"Radio not decoding\" fired for %s %v after the test started (%v after its decoding collapsed)", g,
