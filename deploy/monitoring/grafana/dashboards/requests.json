@@ -11,7 +11,7 @@
     {
       "id": 12, "type": "text", "title": "How to read this",
       "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "**Prometheus** counts every request the API answers, by route and status (never the real path). **Tempo** keeps each request's trace, with the signed-in user's numeric ID and role, nothing else about them (R70). Each panel's **i** says what normal looks like. In short, worry when **errors** appear, when the **slowest 10 %** stays up, when the **database pool** runs out (in use at max, waits climbing), or when **memory** or **goroutines** keep rising without falling back. At the bottom, **Re-parse** says Idle, or, after an alias, template or profile change, how far re-parsing the stored messages has got, how fast it goes and about how long it has left, or that an admin paused or stopped it.\n\nThe graphs from traces: click a line to pin its tooltip, then **Open in Explore (this time range)** lists that user's requests or that query's runs, in this dashboard's time range. A dot is a sample request: click it for its trace. A trace opens whatever time range Explore shows."}
+      "options": {"mode": "markdown", "content": "**Prometheus** counts every request the API answers, by route and status (never the real path). **Tempo** keeps each request's trace, with the signed-in user's numeric ID and role, nothing else about them (R70). Each panel's **i** says what normal looks like. In short, worry when **errors** appear, when the **slowest 10 %** stays up, when the **database pool** runs out (in use at max, waits climbing), or when **memory** or **goroutines** keep rising without falling back. At the bottom, **Re-parse** says Idle, or, after an alias, template or profile change, how far re-parsing the stored messages has got, how fast it goes and about how long it has left, or that an admin paused or stopped it. Below it, **Retroactive redaction** does the same for the nightly run's check of every stored message after the redaction rules change.\n\nThe graphs from traces: click a line to pin its tooltip, then **Open in Explore (this time range)** lists that user's requests or that query's runs, in this dashboard's time range. A dot is a sample request: click it for its trace. A trace opens whatever time range Explore shows."}
     },
     {
       "id": 1, "type": "timeseries", "title": "Requests per second, by route and status",
@@ -172,6 +172,54 @@
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(pagerarchive_reparse_run_messages{job=\"pagerarchive\"})", "legendFormat": "to do"},
         {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(pagerarchive_reparse_run_messages_done{job=\"pagerarchive\"})", "legendFormat": "done"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 18, "type": "stat", "title": "Retroactive redaction",
+      "description": "Retroactive redaction's state (P1, R45a): when the network profile's redaction rules change, the nightly run checks every stored message against them, and writes each changed message's new text and its re-parse together. On a large archive that takes hours. Running; Paused or Stopped when an admin paused or stopped it (Administration, Retroactive redaction, or the PowerShell module). A restart or upgrade carries a running one on from where it got to, at once; the next nightly run starts a stopped one again. Normal: Idle, or Running for a while after the rules changed. Worry: Paused and forgotten: the messages it hasn't reached still hold what the new rules remove.",
+      "gridPos": {"h": 5, "w": 6, "x": 0, "y": 99},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_redaction_state{job=\"pagerarchive\"})"}],
+      "fieldConfig": {"defaults": {"noValue": "The API isn't scraped", "mappings": [{"type": "value", "options": {"0": {"text": "Idle", "color": "green"}, "1": {"text": "Running", "color": "blue"}, "2": {"text": "Paused", "color": "yellow"}, "3": {"text": "Stopped", "color": "orange"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "blue", "value": 1}, {"color": "yellow", "value": 2}, {"color": "orange", "value": 3}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 19, "type": "stat", "title": "Retroactive redaction progress",
+      "description": "How much of this run is done: messages checked so far against the number stored when it started. Messages that arrive meanwhile are checked too, so it can sit at 100 % for a moment; then it drops the imported source IDs the rules match and rebuilds the large events around the messages it changed, until Retroactive redaction says Idle. Paused or stopped, it stays where it got to. Normal: climbing steadily. Worry: stuck at the same number for many minutes: the API's log has \"retroactive redaction progress\" every 30 s (done, total, percent, per_minute, eta_seconds).",
+      "gridPos": {"h": 5, "w": 6, "x": 6, "y": 99},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "clamp_max(100 * max(pagerarchive_redaction_run_messages_done{job=\"pagerarchive\"}) / max(pagerarchive_redaction_run_messages{job=\"pagerarchive\"} > 0), 100) and on() (max(pagerarchive_redaction_state{job=\"pagerarchive\"}) > 0)"}],
+      "fieldConfig": {"defaults": {"unit": "percent", "decimals": 1, "min": 0, "max": 100, "noValue": "Idle", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 20, "type": "stat", "title": "Redaction checked per minute",
+      "description": "How fast this run is going: messages checked a minute, over the last 5 minutes. Messages the rules don't change are quick; each one they change is re-parsed too, at about the re-parse's rate. Normal: steady while it runs. Worry: falling towards 0 while Retroactive redaction says Running: something is holding it up (the database, or the host's CPU).",
+      "gridPos": {"h": 5, "w": 6, "x": 12, "y": 99},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "60 * sum(rate(pagerarchive_redaction_messages_total{job=\"pagerarchive\"}[5m])) and on() (max(pagerarchive_redaction_running{job=\"pagerarchive\"}) == 1)"}],
+      "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "noValue": "Not running", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 21, "type": "stat", "title": "Redaction time left",
+      "description": "About how long this run has left: the messages still to check at the last 5 minutes' rate. Normal: going down. Worry: going up: it's slowing down (see Redaction checked per minute).",
+      "gridPos": {"h": 5, "w": 6, "x": 18, "y": 99},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "clamp_min(max(pagerarchive_redaction_run_messages{job=\"pagerarchive\"}) - max(pagerarchive_redaction_run_messages_done{job=\"pagerarchive\"}), 0) / (sum(rate(pagerarchive_redaction_messages_total{job=\"pagerarchive\"}[5m])) > 0) and on() (max(pagerarchive_redaction_running{job=\"pagerarchive\"}) == 1)"}],
+      "fieldConfig": {"defaults": {"unit": "dtdurations", "noValue": "Not running", "color": {"mode": "fixed", "fixedColor": "blue"}}, "overrides": []},
+      "options": {"colorMode": "value", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 22, "type": "timeseries", "title": "Retroactive redaction: messages to check and checked",
+      "description": "Each run's messages to check (counted when it started) and checked so far, over the dashboard's time range. While none runs, both stay at the last run's numbers. Normal: checked climbing in a straight line up to to check. Worry: checked flat while Retroactive redaction says Running. A restart carries a run on from where it got to, so checked doesn't drop then; an admin's Start again, changed rules at start-up, or the nightly run starting a stopped run again, start from 0; while Paused or Stopped, it stays flat.",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 104},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(pagerarchive_redaction_run_messages{job=\"pagerarchive\"})", "legendFormat": "to check"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max(pagerarchive_redaction_run_messages_done{job=\"pagerarchive\"})", "legendFormat": "checked"}
       ],
       "fieldConfig": {"defaults": {"unit": "short", "min": 0}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}

@@ -792,3 +792,69 @@ Describe 'Re-parse: Get-, Suspend-, Resume-, Stop- and Start-PagerArchiveReparse
         { Stop-PagerArchiveReparse -Confirm:$false -ErrorAction Continue } | Should -Throw -ErrorId 'not_connected,Stop-PagerArchiveReparse'
     }
 }
+
+Describe 'Retroactive redaction: Get-, Suspend-, Resume-, Stop- and Start-PagerArchiveRedaction (R45a)' {
+    BeforeAll {
+        # The API's status, as GET /api/v1/admin/redaction and its actions send it.
+        function New-ApiRedaction([string] $State = 'running', [object] $Eta = 3600) {
+            [pscustomobject]@{
+                state = $State; total = 3200; done = 1499; percent = 46; redacted = 750; per_minute = 25; eta_seconds = $Eta
+                started_at = '2026-11-18T00:00:00Z'; changed_at = '2026-11-18T00:00:00Z'; finished_at = $null
+                reason = 'rules_changed'; pending = $true
+            }
+        }
+    }
+    BeforeEach {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'GET' -and $Path -eq '/api/v1/admin/redaction' } -MockWith { New-ApiRedaction }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/redaction/pause' } -MockWith { New-ApiRedaction -State paused -Eta $null }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/redaction/resume' } -MockWith { New-ApiRedaction }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/redaction/stop' } -MockWith { New-ApiRedaction -State stopped -Eta $null }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq '/api/v1/admin/redaction/start' } -MockWith { New-ApiRedaction }
+    }
+
+    It 'Get-PagerArchiveRedaction outputs the state, counts, time left as [timespan] and times as [datetimeoffset]' {
+        $r = Get-PagerArchiveRedaction
+        $r.PSObject.TypeNames[0] | Should -Be 'PagerArchive.Redaction'
+        $r.State | Should -Be 'running'
+        $r.Done | Should -Be 1499
+        $r.Total | Should -Be 3200
+        $r.Percent | Should -Be 46
+        $r.Redacted | Should -Be 750
+        $r.TimeLeft | Should -Be ([timespan]::FromHours(1))
+        $r.StartedAt | Should -BeOfType [datetimeoffset]
+        $r.FinishedAt | Should -BeNullOrEmpty
+        $r.Reason | Should -Be 'rules_changed'
+        $r.Pending | Should -BeTrue
+        ($r | Format-Table | Out-String) | Should -Match 'State\s+Done\s+Total\s+Percent\s+Redacted\s+PerMinute\s+TimeLeft\s+StartedAt'
+    }
+    It '<Command> posts <Action>, outputs nothing unless -PassThru, and nothing at all with -WhatIf' -ForEach @(
+        @{ Command = 'Suspend-PagerArchiveRedaction'; Action = 'pause'; State = 'paused' }
+        @{ Command = 'Resume-PagerArchiveRedaction'; Action = 'resume'; State = 'running' }
+        @{ Command = 'Stop-PagerArchiveRedaction'; Action = 'stop'; State = 'stopped' }
+        @{ Command = 'Start-PagerArchiveRedaction'; Action = 'start'; State = 'running' }
+    ) {
+        @(& $Command -WhatIf -PassThru) | Should -BeNullOrEmpty
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -Times 0 -Exactly
+        @(& $Command -Confirm:$false) | Should -BeNullOrEmpty
+        $r = & $Command -PassThru -Confirm:$false
+        $r.State | Should -Be $State
+        $r.PSObject.TypeNames[0] | Should -Be 'PagerArchive.Redaction'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' -and $Path -eq "/api/v1/admin/redaction/$Action" } -Times 2 -Exactly
+    }
+    It 'refused when its state doesn''t allow it: an error with the API''s code, and nothing output' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'redaction_stopped' -Status 409 -Message 'Retroactive redaction was stopped, so it can''t carry on.' })
+        }
+        $r = Split-Output @(Resume-PagerArchiveRedaction -PassThru -Confirm:$false 2>&1)
+        $r.Out | Should -BeNullOrEmpty
+        $r.Errors | Should -HaveCount 1
+        $r.Errors[0].FullyQualifiedErrorId | Should -Be 'redaction_stopped,Resume-PagerArchiveRedaction'
+        $r.Errors[0].CategoryInfo.Category | Should -Be 'InvalidOperation'
+    }
+    It 'stops when not signed in' {
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'POST' } -MockWith {
+            throw (& (Get-Module PagerArchive) { New-PaErrorRecord -ErrorId 'not_connected' -Category AuthenticationError -Message 'Not signed in to PagerArchive.' })
+        }
+        { Stop-PagerArchiveRedaction -Confirm:$false -ErrorAction Continue } | Should -Throw -ErrorId 'not_connected,Stop-PagerArchiveRedaction'
+    }
+}

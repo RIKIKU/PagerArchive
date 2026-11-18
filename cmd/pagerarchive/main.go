@@ -40,6 +40,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
+	"github.com/RIKIKU/PagerArchive/internal/redaction"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
 	"github.com/RIKIKU/PagerArchive/internal/reports"
 	"github.com/RIKIKU/PagerArchive/internal/server"
@@ -325,6 +326,14 @@ func serve(stderr io.Writer) error {
 		return fmt.Errorf("profile change check: %s", store.SafeError(err))
 	}
 	go worker.Run(ctx)
+	// Retroactive redaction (P1, R45a, ADR 0044): the nightly run starts and
+	// does it; this carries a run cut short by a restart or upgrade on from
+	// its last batch, and one an admin resumed or started again.
+	redactor := &redaction.Worker{Store: st, Network: net, Reparse: worker, Log: log, Poll: time.Minute, Tracer: tracer}
+	if err := redactor.CheckRules(ctx); err != nil {
+		return fmt.Errorf("redaction rules check: %s", store.SafeError(err))
+	}
+	go redactor.Run(ctx)
 
 	hub := live.NewHub()
 	dir := &authentik.Client{URL: auth.authentikURL, Token: auth.apiToken, HTTP: auth.http}
@@ -348,7 +357,7 @@ func serve(stderr io.Writer) error {
 	// M24's reports (R38a-R38i, ADR 0031): built in the background on the
 	// first start, then kept in step as pages change, and by the nightly run.
 	go rep.Run(ctx)
-	job := &nightly.Job{Store: st, Network: net, Reparse: worker, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer, Reports: rep}
+	job := &nightly.Job{Store: st, Redaction: redactor, Location: loc, At: at, Now: time.Now, Log: log, Tracer: tracer, Reports: rep}
 	go job.Run(ctx)
 
 	// Integrations (R47-R51c, ADR 0006). Without a key they're off, and the
@@ -445,6 +454,7 @@ func serve(stderr io.Writer) error {
 		AccountURL:            auth.authentikURL.JoinPath("/if/user/").String() + "#/settings",
 		Nightly:               job,
 		Reparse:               &worker.Progress,
+		Redaction:             redactor,
 		BackupStatusFile:      os.Getenv("BACKUP_STATUS_FILE"),
 		BackupRequestFile:     os.Getenv("BACKUP_REQUEST_FILE"),
 		AutoUpgradeStatusFile: os.Getenv("AUTO_UPGRADE_STATUS_FILE"),

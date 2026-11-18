@@ -164,7 +164,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 		created := false
 		if r.State == finished {
 			if r.ID != 0 && w.Progress.Snapshot().Run == 0 {
-				w.Progress.hold(Idle, r.ID, r.Total, r.Done, r.StartedAt) // the last run's, after a restart
+				w.Progress.Hold(Idle, r.ID, r.Total, r.Done, r.StartedAt) // the last run's, after a restart
 			}
 			var ok bool
 			if r, ok, err = claim(ctx, w.Store); err != nil || !ok {
@@ -178,7 +178,7 @@ func (w *Worker) RunOnce(ctx context.Context) (int, error) {
 					return n, err
 				}
 			}
-			w.Progress.hold(st, r.ID, r.Total, r.Done, r.StartedAt)
+			w.Progress.Hold(st, r.ID, r.Total, r.Done, r.StartedAt)
 			return n, nil
 		}
 		k, again, err := w.walk(ctx, r, created)
@@ -204,7 +204,7 @@ func (w *Worker) walk(ctx context.Context, r db.ReparseRun, created bool) (n int
 	if err != nil {
 		return 0, false, err
 	}
-	w.Progress.begin(r.ID, r.Total, r.Done, r.StartedAt, time.Now())
+	w.Progress.Begin(r.ID, r.Total, r.Done, r.StartedAt, time.Now())
 	if created {
 		w.Log.InfoContext(ctx, "re-parse started", "reasons", r.Reasons, "requests", r.Requests, "patterns", len(pats), "total", r.Total)
 	} else {
@@ -218,7 +218,7 @@ func (w *Worker) walk(ctx context.Context, r db.ReparseRun, created bool) (n int
 		}
 		after := p.AfterID
 		for {
-			if w.Progress.interrupted() {
+			if w.Progress.Interrupted() {
 				return n, true, nil
 			}
 			rows, err := w.Store.MessagesToReparse(ctx, db.MessagesToReparseParams{Pattern: p.CapcodePattern, AfterID: after, Batch: batchSize})
@@ -260,7 +260,7 @@ func (w *Worker) walk(ctx context.Context, r db.ReparseRun, created bool) (n int
 	if err != nil || changed {
 		return n, changed, err
 	}
-	w.Progress.finish()
+	w.Progress.Finish()
 	span.SetAttributes(attribute.Int("pagerarchive.reparse.messages", n))
 	perMin, _ := w.Progress.Snapshot().Rate(time.Now())
 	w.Log.InfoContext(ctx, "re-parsed messages", "count", n, "requests", r.Requests, "seconds", int64(time.Since(r.StartedAt).Seconds()), "per_minute", int64(perMin))
@@ -288,7 +288,7 @@ func (w *Worker) batch(ctx context.Context, r db.ReparseRun, cands []ingest.Cand
 		b = batchResult{last: after}
 		var days events.Affected
 		for _, m := range rows {
-			if w.Progress.interrupted() {
+			if w.Progress.Interrupted() {
 				b.cut = true
 				break
 			}
@@ -297,7 +297,7 @@ func (w *Worker) batch(ctx context.Context, r db.ReparseRun, cands []ingest.Cand
 			}
 			b.n++
 			b.last = m.ID
-			w.Progress.add()
+			w.Progress.Add()
 		}
 		cur, err := q.LockReparseRun(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -327,7 +327,7 @@ func (w *Worker) batch(ctx context.Context, r db.ReparseRun, cands []ingest.Cand
 		return nil
 	})
 	if err != nil {
-		w.Progress.undo(b.n)
+		w.Progress.Undo(b.n)
 		b.n = 0
 	}
 	return b, err
@@ -365,27 +365,23 @@ func (w *Worker) candidates(ctx context.Context) ([]ingest.Candidate, error) {
 	return cands, nil
 }
 
-// ReparseIDs re-parses (and re-places) the given messages now, e.g. after
-// retroactive redaction changed their text (P1).
-func (w *Worker) ReparseIDs(ctx context.Context, ids []int64) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	cands, err := w.candidates(ctx)
-	if err != nil {
-		return err
-	}
-	rows, err := w.Store.MessagesByIDs(ctx, ids)
-	if err != nil {
-		return err
-	}
-	var aff events.Affected
-	for _, m := range rows {
-		if err := w.reparse(ctx, w.Store.Queries, cands, db.MessagesToReparseRow(m), &aff); err != nil {
-			return err
-		}
-	}
-	return w.regroup(ctx, &aff)
+// Candidates are every alias, for picking each message's best one: read
+// once for a batch of ReparseInTx.
+func (w *Worker) Candidates(ctx context.Context) ([]ingest.Candidate, error) {
+	return w.candidates(ctx)
+}
+
+// ReparseInTx re-parses (and re-places) message m in q's transaction, with
+// the text it has in that transaction: retroactive redaction (P1, ADR 0044)
+// writes a page's new text and the fields parsed from it in one. A page the
+// large events are rebuilt around (R87f) is added to aff, for RebuildEvents.
+func (w *Worker) ReparseInTx(ctx context.Context, q *db.Queries, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) error {
+	return w.reparse(ctx, q, cands, m, aff)
+}
+
+// RebuildEvents rebuilds the large events around the pages aff holds (R87f).
+func (w *Worker) RebuildEvents(ctx context.Context, aff *events.Affected) error {
+	return w.regroup(ctx, aff)
 }
 
 // regroup rebuilds the large events around the re-parsed pages that aff
@@ -409,8 +405,31 @@ func (w *Worker) regroup(ctx context.Context, aff *events.Affected) error {
 
 // reparse re-parses one message. A page in a large event, or a live page
 // that now counts and has a job or a code, is added to aff: the events around
-// it are rebuilt afterwards (Worker.regroup).
+// it are rebuilt afterwards (Worker.regroup). Its fields are written only
+// beside the text they were parsed from (P1): if retroactive redaction
+// changed the text after it was read, the page is read again and parsed
+// from what it has now.
 func (w *Worker) reparse(ctx context.Context, q *db.Queries, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) error {
+	for range 3 {
+		ok, err := w.reparseAs(ctx, q, cands, m, aff)
+		if err != nil || ok {
+			return err
+		}
+		rows, err := q.MessagesByIDs(ctx, []int64{m.ID})
+		if err != nil {
+			return err
+		}
+		if len(rows) == 0 {
+			return nil // deleted meanwhile (retention)
+		}
+		m = db.MessagesToReparseRow(rows[0])
+	}
+	return errors.New("a page's text kept changing while it was re-parsed")
+}
+
+// reparseAs re-parses message m as read. ok is false, and nothing is
+// written, when its text is no longer m's.
+func (w *Worker) reparseAs(ctx context.Context, q *db.Queries, cands []ingest.Candidate, m db.MessagesToReparseRow, aff *events.Affected) (ok bool, err error) {
 	var matching []ingest.Candidate
 	for _, c := range cands {
 		if ingest.LikeMatch(c.Pattern, m.Capcode) {
@@ -433,19 +452,20 @@ func (w *Worker) reparse(ctx context.Context, q *db.Queries, cands []ingest.Cand
 	}
 	f, err := ingest.FieldsOf(pipeline.Parse(w.Network, agency, w.Streets, prep))
 	if err != nil {
-		return err
+		return false, err
 	}
-	if err := q.UpdateParsed(ctx, db.UpdateParsedParams{
+	written, err := q.UpdateParsed(ctx, db.UpdateParsedParams{
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		CallSign: f.CallSign, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
-		LargeEventField: f.LargeEventField,
-	}); err != nil {
-		return err
+		LargeEventField: f.LargeEventField, Text: m.Text,
+	})
+	if err != nil || written == 0 {
+		return false, err
 	}
 	p := events.Page{ID: m.ID, SentAt: m.SentAt, Text: m.Text, Priority: m.Priority, AliasID: aliasID, Ignored: ignored, Heartbeat: m.Heartbeat, Job: f.JobNumber}
 	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || f.LargeEventField || events.HasCode(w.Network, m.Text))) {
 		aff.Add(m.SentAt)
 	}
-	return ingest.Locate(ctx, w.Geo, q, m.ID, f)
+	return true, ingest.Locate(ctx, w.Geo, q, m.ID, f)
 }

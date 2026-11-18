@@ -211,6 +211,25 @@ After an alias, template or profile change, the server re-parses the stored mess
 
 Each asks with `-Confirm` and does nothing with `-WhatIf`; `-PassThru` outputs the state after. A change its state doesn't allow is refused: `reparse_not_running` (nothing to pause or stop), `reparse_not_paused`, `reparse_stopped` (a stopped one only starts again) and `reparse_none` (there has never been one). Changes made while one runs, is paused or is stopped wait for the next.
 
+## Retroactive redaction
+
+```powershell
+Get-PagerArchiveRedaction
+Suspend-PagerArchiveRedaction
+Resume-PagerArchiveRedaction
+Stop-PagerArchiveRedaction
+Start-PagerArchiveRedaction
+```
+
+When the network profile's redaction rules change, the nightly run checks every stored message against them in the background, and writes each changed message's new text and its re-parse together; on a large archive that takes hours (SPEC.md R45a). A restart or an upgrade carries it on from where it got to. These commands do what **Administration → Retroactive redaction** does:
+
+- `Get-PagerArchiveRedaction` (`Get-PaRedaction`) says how it's going: `State` is `idle` (`Done` and `Total` are then the last run's), `running`, `paused` or `stopped`; `Done` of `Total` (messages checked) and `Percent`; `Redacted`, the messages whose text it changed; while it runs, `PerMinute` and `TimeLeft`; `StartedAt`, `ChangedAt` and `FinishedAt`; `Reason` (`rules_changed` or `started_again`); and `Pending`, true while the rules in use aren't yet applied to every stored message. Counts and codes only, never a message, a rule or a capcode.
+- `Suspend-PagerArchiveRedaction` (`Suspend-PaRedaction`) pauses it after the message in hand. It stays paused across a restart and the nightly run, until `Resume-PagerArchiveRedaction` (`Resume-PaRedaction`) carries it on from there. Until then, the messages it hasn't reached keep what the rules remove.
+- `Stop-PagerArchiveRedaction` (`Stop-PaRedaction`) cancels it: the messages it did stay done (each one's text and what's parsed from it together, never one without the other), and the next nightly run starts it again from the beginning.
+- `Start-PagerArchiveRedaction` (`Start-PaRedaction`) checks every stored message again from the beginning now, whatever its state.
+
+Each asks with `-Confirm` and does nothing with `-WhatIf`; `-PassThru` outputs the state after. A change its state doesn't allow is refused: `redaction_not_running` (nothing to pause or stop), `redaction_not_paused` and `redaction_stopped` (a stopped one only starts again).
+
 ## Errors
 
 A refusal from PagerArchive is an error whose `ErrorId` is the API's code (e.g. `duplicate_alias`, `template_in_use`, `powershell_admins_only`) and whose message is the API's. A failure on one item doesn't stop the rest of the pipeline; not being signed in, or the server being unreachable, does.

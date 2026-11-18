@@ -245,6 +245,31 @@ type Reception struct {
 	ReceivedAt time.Time
 }
 
+type RedactionRun struct {
+	ID          int64
+	State       string
+	Reason      string
+	RulesHash   string
+	Total       int64
+	Done        int64
+	Redacted    int64
+	AfterID     int64
+	PagesDone   bool
+	SourceAfter string
+	SourcesDone bool
+	Epoch       int32
+	StartedAt   time.Time
+	ChangedAt   time.Time
+	FinishedAt  *time.Time
+}
+
+type RedactionRunDay struct {
+	RunID  int64
+	Day    int64
+	FromAt time.Time
+	ToAt   time.Time
+}
+
 type ReparseRequest struct {
 	ID             int64
 	CapcodePattern string

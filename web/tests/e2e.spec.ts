@@ -1118,7 +1118,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		const main = page.getByRole('navigation', { name: 'Main' });
 		await expect(main.getByRole('link', { name: 'Integrations' })).toBeVisible();
 		await expect(main.getByRole('link', { name: 'Admin' })).toHaveCount(0);
-		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/integration-hosts']) {
+		for (const path of ['/admin', '/admin/users', '/admin/users/1', '/admin/aliases', '/admin/aliases/1', '/admin/templates', '/admin/templates/1', '/admin/requests', '/admin/clients', '/admin/retention', '/admin/backups', '/admin/upgrades', '/admin/reparse', '/admin/redaction', '/admin/integration-hosts']) {
 			await page.goto(path);
 			await expect(page.getByRole('alert'), path).toContainText('admins only');
 			await expect(page.locator('main'), path).not.toContainText(aName);
@@ -1133,7 +1133,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 		await nav.getByRole('link', { name: 'Admin' }).click();
 		await expect(admin.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
 		const screens = admin.getByTestId('admin-screens');
-		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Re-parse', 'Integration addresses', 'Large event settings']);
+		await expect(screens.getByRole('link')).toHaveText(['Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Upgrades', 'Re-parse', 'Retroactive redaction', 'Integration addresses', 'Large event settings']);
 		for (const [link, heading] of [
 			['Users', 'Users'],
 			['Aliases', 'Aliases'],
@@ -1144,6 +1144,7 @@ test('A41 Administration area', async ({ page, browser, request }) => {
 			['Backups', 'Backups'],
 			['Upgrades', 'Upgrades'],
 			['Re-parse', 'Re-parse'],
+			['Retroactive redaction', 'Retroactive redaction'],
 			['Integration addresses', 'Integration addresses'],
 			['Large event settings', 'Large event settings']
 		]) {
@@ -6017,6 +6018,156 @@ test('A123 re-parse controls in Administration', async ({ browser }, info) => {
 		await page.context().close();
 	}
 	console.log(`A123 ${info.project.name}: running at 1,499 of 3,000, paused at 1,500, resumed to Idle, stopped and started again; 1280 and 375 px, axe clean`);
+});
+
+/** Holds retroactive redaction (R45a) right after page id's new text is
+ * written, before its re-parse: a trigger on the page waits for an advisory
+ * lock that a psql session keeps until it's let go. */
+async function holdRedaction(id: number): Promise<() => Promise<void>> {
+	sqlOut(`SET client_min_messages = warning; CREATE TABLE IF NOT EXISTS a124e2e_held (id bigint);
+		DELETE FROM a124e2e_held; INSERT INTO a124e2e_held VALUES (${id});
+		CREATE OR REPLACE FUNCTION a124e2e_hold() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER AS $$ BEGIN
+			IF NEW.id IN (SELECT id FROM a124e2e_held) THEN PERFORM pg_advisory_xact_lock(124125); END IF;
+			RETURN NULL;
+		END $$;
+		DROP TRIGGER IF EXISTS a124e2e_hold ON messages;
+		CREATE TRIGGER a124e2e_hold AFTER UPDATE OF text ON messages FOR EACH ROW EXECUTE FUNCTION a124e2e_hold();`);
+	const url = process.env.PA_E2E_DATABASE_URL;
+	const p = url
+		? spawn('psql', [url, '-q', '-At'])
+		: spawn('docker', ['exec', '-i', process.env.PA_E2E_DB ?? '', 'psql', '-q', '-At', '-U', 'postgres']);
+	let out = '';
+	let closed = false;
+	p.stdout.on('data', (d) => (out += d.toString()));
+	p.on('close', () => (closed = true));
+	p.stdin.write(`SELECT 'held', pg_advisory_lock(124125);\n`);
+	for (const until = Date.now() + 30_000; !out.includes('held'); await new Promise((r) => setTimeout(r, 100))) {
+		if (Date.now() > until || closed) throw new Error('the lock that holds the run was not taken');
+	}
+	return async () => {
+		if (closed) return;
+		p.stdin.end('SELECT pg_advisory_unlock(124125);\n');
+		await new Promise((r) => p.on('close', r));
+	};
+}
+
+// A124 (R45a): an admin's retroactive redaction controls in Administration,
+// desktop and phone. A run over 3,000 made-up pages, every other one with a
+// made-up number the example's rules remove, held at the 1,500th right after
+// its new text is written, shows Running with done of total, its rate and
+// time left, and a tag on the start page; Pause holds it (Resume, not Pause,
+// then), Resume carries it on to the end (Idle, the run's numbers); Stop
+// shows Stopped, with no Resume, and Start again runs it from the beginning.
+// Axe on each state.
+test('A124 retroactive redaction controls in Administration', async ({ browser }, info) => {
+	test.setTimeout(240_000);
+	const n = projectN(info);
+	const capcode = `091240${n}`;
+	const put = () =>
+		sqlOut(`UPDATE messages m SET text = 'MADE-UP A124 E2E PAGE ' || x.g || CASE WHEN x.g % 2 = 0 THEN ' CALL 0412 345 678' ELSE '' END
+			FROM (SELECT id, row_number() OVER (ORDER BY id) AS g FROM messages WHERE capcode = '${capcode}') x WHERE m.id = x.id`);
+	sqlOut(`INSERT INTO messages (capcode, text, sent_at, dedup_key)
+		SELECT '${capcode}', 'MADE-UP A124 E2E PAGE ' || g, now() - interval '400 days' + g * interval '1 second', sha256(('a124 e2e ${n} ' || g)::bytea)
+		FROM generate_series(1, 3000) g`);
+	put();
+	const first = Number(sqlOut(`SELECT min(id) FROM messages WHERE capcode = '${capcode}'`));
+	const held = Number(sqlOut(`SELECT id FROM messages WHERE capcode = '${capcode}' ORDER BY id OFFSET 1499 LIMIT 1`));
+	const withNumber = () => sqlOut(`SELECT count(*) FROM messages WHERE capcode = '${capcode}' AND strpos(text, '0412 345 678') > 0`);
+	// A run as the nightly run starts one, with the API's rules, placed just
+	// before the made-up pages so it checks those.
+	const startRun = () =>
+		sqlOut(`DELETE FROM redaction_runs;
+			INSERT INTO redaction_runs (state, reason, rules_hash, total, after_id)
+			SELECT 'running', 'rules_changed', value, 3000, ${first - 1} FROM settings WHERE key = 'redaction_hash';
+			SELECT pg_notify('pagerarchive_redaction', '')`);
+	const page = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	page.on('dialog', (d) => d.accept());
+	const noSideways = async (where: string) =>
+		expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), `no sideways scroll, ${where}`).toBe(true);
+	const redactionState = async () => (await (await page.request.get('/api/v1/admin/redaction')).json()).state as string;
+	// The API's first nightly run has applied its rules, and no run an
+	// earlier try left is under way.
+	await expect.poll(() => sqlOut(`SELECT count(*) FROM settings WHERE key = 'redaction_hash'`), { timeout: 60_000 }).toBe('1');
+	if ((await redactionState()) !== 'idle') {
+		await page.request.post('/api/v1/admin/redaction/start');
+		await expect.poll(redactionState, { timeout: 60_000 }).toBe('idle');
+	}
+
+	let release = await holdRedaction(held);
+	try {
+		startRun();
+		await expect.poll(redactionState, { timeout: 30_000 }).toBe('running');
+		await page.goto('/admin');
+		await expect(page.getByTestId('redaction-tag')).toHaveText(/running, \d+ %/, { timeout: 30_000 });
+		await page.getByTestId('admin-screens').getByRole('link', { name: 'Retroactive redaction' }).click();
+		await expect(page).toHaveURL(/\/admin\/redaction$/);
+		const state = page.getByTestId('redaction-state');
+		const done = page.getByTestId('redaction-done');
+		await expect(state).toHaveText('Running');
+		await expect(done).toContainText('1,499 of 3,000 messages (49 %)', { timeout: 30_000 });
+		await expect(page.getByTestId('redaction-status')).toContainText('the redaction rules changed');
+		await expect(page.getByTestId('redaction-rate')).toContainText(/a minute|Working it out/);
+		await expect(page.getByTestId('redaction-eta')).toBeVisible();
+		const controls = page.getByRole('group', { name: 'Retroactive redaction controls' });
+		await expect(controls.getByRole('button')).toHaveText(['Pause', 'Stop', 'Start again']);
+		expect(await axeOf(page), 'axe: redaction running, 1280px').toEqual([]);
+		await page.setViewportSize({ width: 375, height: 800 });
+		await noSideways('running, 375px');
+		expect(await axeOf(page), 'axe: redaction running, 375px').toEqual([]);
+		await page.screenshot({ path: info.outputPath('redaction-running-375.png'), fullPage: true });
+		await page.setViewportSize({ width: 1280, height: 900 });
+
+		// Pause: it stops after the page in hand.
+		await controls.getByRole('button', { name: 'Pause' }).click();
+		await expect(state).toHaveText('Paused');
+		await expect(controls.getByRole('button')).toHaveText(['Resume', 'Stop', 'Start again']);
+		await release();
+		await page.reload();
+		await expect(done).toContainText('1,500 of 3,000 messages (50 %)', { timeout: 15_000 });
+		await expect(page.getByTestId('redaction-rate')).toHaveCount(0);
+		expect(await axeOf(page), 'axe: redaction paused').toEqual([]);
+		await page.goto('/admin');
+		await expect(page.getByTestId('redaction-tag')).toHaveText('paused');
+		await page.goto('/admin/redaction');
+
+		// Resume: on to the end, and Idle with the run's numbers.
+		await controls.getByRole('button', { name: 'Resume' }).click();
+		await expect(state).toHaveText('Idle', { timeout: 60_000 });
+		await expect(done).toContainText('3,000 of 3,000 messages (100 %)');
+		await expect(page.getByTestId('redaction-changed')).toHaveText('1,500 messages');
+		await expect(controls.getByRole('button')).toHaveText(['Start again']);
+		expect(await axeOf(page), 'axe: redaction idle').toEqual([]);
+		expect(withNumber()).toBe('0');
+
+		// Stop, then Start again from the beginning.
+		put();
+		release = await holdRedaction(held);
+		startRun();
+		await expect(state).toHaveText('Running', { timeout: 30_000 });
+		await expect(done).toContainText('1,499 of 3,000', { timeout: 30_000 });
+		await controls.getByRole('button', { name: 'Stop' }).click();
+		await expect(state).toHaveText('Stopped');
+		await expect(controls.getByRole('button')).toHaveText(['Start again']);
+		await page.setViewportSize({ width: 375, height: 800 });
+		await noSideways('stopped, 375px');
+		expect(await axeOf(page), 'axe: redaction stopped, 375px').toEqual([]);
+		await page.goto('/admin');
+		await expect(page.getByTestId('redaction-tag')).toHaveText('stopped');
+		await page.goto('/admin/redaction');
+		await page.setViewportSize({ width: 1280, height: 900 });
+		await controls.getByRole('button', { name: 'Start again' }).click();
+		await expect(state).toHaveText('Running');
+		await expect(page.getByTestId('redaction-status')).toContainText('an admin started it again');
+		await release();
+		await expect(state).toHaveText('Idle', { timeout: 60_000 });
+		await expect(done).toContainText('(100 %)');
+		expect(withNumber()).toBe('0');
+	} finally {
+		await release();
+		sqlOut(`SET client_min_messages = warning; DROP TRIGGER IF EXISTS a124e2e_hold ON messages; DELETE FROM a124e2e_held`);
+		await page.context().close();
+	}
+	console.log(`A124 ${info.project.name}: running at 1,499 of 3,000, paused at 1,500, resumed to Idle with 1,500 changed, stopped and started again; 1280 and 375 px, axe clean`);
 });
 
 // A126 (R49a; owner, 2026-11-18): the integration form offers the example

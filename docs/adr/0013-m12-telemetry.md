@@ -88,7 +88,7 @@ Everything exported passes `internal/telemetry/filter.go`. It isn't a list of th
   | `pagerarchive.delivery.kind`, `.result` | code | integration.deliver |
   | `pagerarchive.delivery.attempt` | number | integration.deliver |
   | `pagerarchive.stream.caught_up` | number | the stream's span |
-  | `pagerarchive.nightly.deleted`, `.redacted`, `pagerarchive.reparse.messages` | number | nightly, reparse |
+  | `pagerarchive.nightly.deleted`, `.redacted`, `pagerarchive.reparse.messages`, `pagerarchive.redaction.pages` | number | nightly, reparse, redaction |
 
 - **Codes** pass only as a kind: a snake_case code (`clock_ahead`), a SQLSTATE, a Go type name (`*url.Error`), an HTTP status (`HTTP 503`) or one of a few fixed messages the code makes ("connection refused"); anything else becomes `other`, so an error's text can't carry a request's values.
 - **Span events are dropped** (they're where libraries put exception messages) and **status descriptions are emptied**; the status code stays.

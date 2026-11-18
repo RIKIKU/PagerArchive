@@ -67,6 +67,8 @@ LONG DESCRIPTION
                               Error, and the last good backup's size and times
     PagerArchive.Reparse      State, Done, Total, Percent, PerMinute,
                               TimeLeft, StartedAt, and its reasons as codes
+    PagerArchive.Redaction    State, Done, Total, Percent, Redacted,
+                              PerMinute, TimeLeft, StartedAt, and its reason
 
     An alias's properties are the import's parameters, so
 
@@ -165,6 +167,22 @@ LONG DESCRIPTION
     the beginning. A change its state doesn't allow is refused
     (reparse_not_running, reparse_not_paused, reparse_stopped, reparse_none).
 
+  RETROACTIVE REDACTION
+    When the redaction rules change, the nightly run checks every stored
+    message against them, writing each changed message's new text and its
+    re-parse together. A restart or upgrade carries it on from where it got
+    to. To see how it is going:
+
+        Get-PagerArchiveRedaction
+
+    Suspend-PagerArchiveRedaction pauses it, even across a restart and the
+    nightly run, and Resume-PagerArchiveRedaction carries it on.
+    Stop-PagerArchiveRedaction cancels it: the messages it did stay done,
+    and the next nightly run starts it again from the beginning.
+    Start-PagerArchiveRedaction runs it again from the beginning now. A
+    change its state doesn't allow is refused (redaction_not_running,
+    redaction_not_paused, redaction_stopped).
+
   ERRORS
     A refusal from PagerArchive is an error whose ErrorId is the API's
     code (e.g. duplicate_alias, template_in_use, powershell_admins_only)
@@ -180,7 +198,8 @@ SEE ALSO
     Watch-PagerArchiveMessage
     Start-PagerArchiveBackup
     Get-PagerArchiveReparse
+    Get-PagerArchiveRedaction
     https://github.com/RIKIKU/PagerArchive/blob/main/docs/powershell.md
 
 KEYWORDS
-    PagerArchive POCSAG pager alias template backup reparse
+    PagerArchive POCSAG pager alias template backup reparse redaction

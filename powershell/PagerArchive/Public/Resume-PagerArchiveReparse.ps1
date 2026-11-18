@@ -41,6 +41,6 @@ function Resume-PagerArchiveReparse {
         [switch] $PassThru
     )
     if ($PSCmdlet.ShouldProcess('the re-parse of stored messages', 'Resume')) {
-        Invoke-PaReparseChange -Cmdlet $PSCmdlet -Action resume -PassThru:$PassThru
+        Invoke-PaJobChange -Cmdlet $PSCmdlet -Job reparse -Action resume -PassThru:$PassThru
     }
 }

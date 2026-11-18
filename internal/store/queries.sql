@@ -239,12 +239,15 @@ SELECT count(*) FROM reparse_requests;
 -- Wakes the API's re-parse worker (R23a).
 SELECT pg_notify('pagerarchive_reparse', '');
 
--- name: UpdateParsed :exec
+-- name: UpdateParsed :execrows
+-- A page's parsed fields, written only beside the text they were parsed
+-- from (P1): 0 rows when its text changed meanwhile (retroactive redaction,
+-- in its own transaction), and the caller parses it again.
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
-WHERE id = $1;
+WHERE id = $1 AND text = $16;
 
 -- name: SetLocation :exec
 -- R24-R26: where a message is placed, set after parsing (ingest and re-parse).
@@ -820,18 +823,94 @@ ORDER BY id
 LIMIT sqlc.arg(batch)::int;
 
 -- name: UpdateRedactedText :exec
--- P1: retroactive redaction replaces the text and its dedup hash; the
--- caller then re-parses the message so parsed fields follow.
+-- P1: retroactive redaction replaces the text and its dedup hash, and
+-- re-parses the message in the same transaction, so parsed fields follow (R45a).
 UPDATE messages SET text = $2, dedup_key = $3 WHERE id = $1;
 
 -- name: MessagesByIDs :many
--- As MessagesToReparse, for the messages retroactive redaction changed.
+-- As MessagesToReparse, for the given messages: one whose text changed while it was re-parsed.
 SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
        EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
        EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
 FROM messages m
 WHERE m.id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY m.id;
+
+-- name: MessagesToRedactLocked :many
+-- P1, R45a: the pages of a batch whose text the rules change, locked until
+-- the batch commits, with what their re-parse needs (as MessagesByIDs).
+SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id) AS live
+FROM messages m
+WHERE m.id = ANY(sqlc.arg(ids)::bigint[])
+ORDER BY m.id
+FOR NO KEY UPDATE OF m;
+
+-- name: CountMessagesToRedact :one
+-- R45a: the pages a retroactive redaction run checks, counted when it starts.
+SELECT count(*) FROM messages;
+
+-- name: GetRedactionRun :one
+-- R45a (ADR 0044): retroactive redaction's run, the latest; there's at most one.
+SELECT id, state, reason, rules_hash, total, done, redacted, after_id, pages_done, source_after, sources_done, epoch,
+       started_at, changed_at, finished_at FROM redaction_runs;
+
+-- name: LockRedactionRun :one
+-- As GetRedactionRun, locked until the transaction ends: a batch's end, an
+-- admin's change or the nightly run's start, one at a time.
+SELECT id, state, reason, rules_hash, total, done, redacted, after_id, pages_done, source_after, sources_done, epoch,
+       started_at, changed_at, finished_at FROM redaction_runs FOR UPDATE;
+
+-- name: DeleteRedactionRuns :exec
+-- Before a new run: the last one, with its days, goes.
+DELETE FROM redaction_runs;
+
+-- name: CreateRedactionRun :one
+INSERT INTO redaction_runs (state, reason, rules_hash, total) VALUES ('running', $1, $2, $3) RETURNING id;
+
+-- name: RestartRedactionRun :exec
+-- From the beginning again (Start again, the rules changed, or the nightly
+-- run starting a stopped one): its days go with it.
+UPDATE redaction_runs SET state = sqlc.arg(state)::text, reason = sqlc.arg(reason)::text, rules_hash = sqlc.arg(rules_hash)::text,
+    total = sqlc.arg(total)::bigint, done = 0, redacted = 0, after_id = 0, pages_done = false, source_after = '', sources_done = false,
+    epoch = epoch + 1, started_at = now(), changed_at = now(), finished_at = NULL
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: SetRedactionRunState :exec
+UPDATE redaction_runs SET state = sqlc.arg(state)::text, changed_at = now() WHERE id = sqlc.arg(id)::bigint;
+
+-- name: AdvanceRedactionRun :exec
+-- Where the walk over the pages has got: written with the batch it ends.
+UPDATE redaction_runs SET after_id = sqlc.arg(after_id)::bigint, done = done + sqlc.arg(checked)::bigint,
+    redacted = redacted + sqlc.arg(changed)::bigint, pages_done = sqlc.arg(pages_done)::bool
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: AdvanceRedactionRunSources :exec
+-- Where the walk over the imported source IDs has got: written with the batch it ends.
+UPDATE redaction_runs SET source_after = sqlc.arg(source_after)::text, sources_done = sqlc.arg(sources_done)::bool
+WHERE id = sqlc.arg(id)::bigint;
+
+-- name: FinishRedactionRun :exec
+-- Pages stored while it ran are checked by it too, so its total is then
+-- what it did.
+UPDATE redaction_runs SET state = 'finished', changed_at = now(), finished_at = now(), total = GREATEST(total, done)
+WHERE id = $1;
+
+-- name: AddRedactionRunDay :exec
+INSERT INTO redaction_run_days (run_id, day, from_at, to_at) VALUES ($1, $2, $3, $4)
+ON CONFLICT (run_id, day) DO UPDATE SET from_at = LEAST(redaction_run_days.from_at, EXCLUDED.from_at),
+    to_at = GREATEST(redaction_run_days.to_at, EXCLUDED.to_at);
+
+-- name: RedactionRunDays :many
+SELECT from_at, to_at FROM redaction_run_days WHERE run_id = $1 ORDER BY day;
+
+-- name: DeleteRedactionRunDays :exec
+DELETE FROM redaction_run_days WHERE run_id = $1;
+
+-- name: NotifyRedaction :exec
+-- Wakes the API's retroactive redaction worker (R45a).
+SELECT pg_notify('pagerarchive_redaction', '');
 
 -- name: CapcodeReport :many
 -- R38: Emergency messages to one capcode in a date range, by event type.

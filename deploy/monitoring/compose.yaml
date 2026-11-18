@@ -34,7 +34,7 @@ services:
     restart: unless-stopped
     command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:
-      pagerarchive.config: "468e5722cd8d16fc"
+      pagerarchive.config: "fdd3843f3ee98900"
     environment:
       # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
       PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
@@ -97,7 +97,7 @@ services:
     image: grafana/grafana:13.3
     restart: unless-stopped
     labels:
-      pagerarchive.config: "e85c50438f7b3441"
+      pagerarchive.config: "512c1272ccc20608"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}

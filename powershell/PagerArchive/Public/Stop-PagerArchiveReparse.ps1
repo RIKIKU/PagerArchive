@@ -44,6 +44,6 @@ function Stop-PagerArchiveReparse {
         [switch] $PassThru
     )
     if ($PSCmdlet.ShouldProcess('the re-parse of stored messages', 'Stop')) {
-        Invoke-PaReparseChange -Cmdlet $PSCmdlet -Action stop -PassThru:$PassThru
+        Invoke-PaJobChange -Cmdlet $PSCmdlet -Job reparse -Action stop -PassThru:$PassThru
     }
 }

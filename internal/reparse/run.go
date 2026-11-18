@@ -21,14 +21,6 @@ import (
 // done again, whole. There's at most one run: the latest, kept once it's
 // finished so its numbers can still be shown.
 
-// Refusal is an admin's change the re-parse's state doesn't allow (R23c),
-// with a code and a message for the API.
-type Refusal struct {
-	Code, Message string
-}
-
-func (r *Refusal) Error() string { return r.Message }
-
 // The refusals' codes.
 const (
 	CodeNotRunning = "reparse_not_running"
@@ -102,7 +94,7 @@ func GetStatus(ctx context.Context, st *store.Store, p *Progress) (Status, error
 func Pause(ctx context.Context, st *store.Store, p *Progress) (Status, error) {
 	return change(ctx, st, p, func(q *db.Queries, r db.ReparseRun) (State, error) {
 		if stateOf(r.State) != Running {
-			return "", &Refusal{CodeNotRunning, "No re-parse is running, so there's nothing to pause."}
+			return "", &Refusal{Code: CodeNotRunning, Message: "No re-parse is running, so there's nothing to pause."}
 		}
 		return Paused, q.SetReparseRunState(ctx, db.SetReparseRunStateParams{State: string(Paused), ID: r.ID})
 	})
@@ -115,9 +107,9 @@ func Resume(ctx context.Context, st *store.Store, p *Progress) (Status, error) {
 		case Paused:
 			return Running, q.SetReparseRunState(ctx, db.SetReparseRunStateParams{State: string(Running), ID: r.ID})
 		case Stopped:
-			return "", &Refusal{CodeStopped, "The re-parse was stopped, so it can't carry on: Start again runs it from the beginning."}
+			return "", &Refusal{Code: CodeStopped, Message: "The re-parse was stopped, so it can't carry on: Start again runs it from the beginning."}
 		}
-		return "", &Refusal{CodeNotPaused, "The re-parse isn't paused."}
+		return "", &Refusal{Code: CodeNotPaused, Message: "The re-parse isn't paused."}
 	})
 }
 
@@ -130,9 +122,9 @@ func Stop(ctx context.Context, st *store.Store, p *Progress) (Status, error) {
 		case Running, Paused:
 			return Stopped, q.SetReparseRunState(ctx, db.SetReparseRunStateParams{State: string(Stopped), ID: r.ID})
 		case Stopped:
-			return "", &Refusal{CodeNotRunning, "The re-parse is already stopped."}
+			return "", &Refusal{Code: CodeNotRunning, Message: "The re-parse is already stopped."}
 		}
-		return "", &Refusal{CodeNotRunning, "No re-parse is running or paused, so there's nothing to stop."}
+		return "", &Refusal{Code: CodeNotRunning, Message: "No re-parse is running or paused, so there's nothing to stop."}
 	})
 }
 
@@ -153,7 +145,7 @@ func change(ctx context.Context, st *store.Store, p *Progress, fn func(*db.Queri
 	err := st.InTx(ctx, func(q *db.Queries) error {
 		r, err := q.LockReparseRun(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
-			return &Refusal{CodeNone, "There's no re-parse yet: one starts when an alias, template or profile changes."}
+			return &Refusal{Code: CodeNone, Message: "There's no re-parse yet: one starts when an alias, template or profile changes."}
 		} else if err != nil {
 			return err
 		}
