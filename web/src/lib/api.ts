@@ -38,6 +38,8 @@ export interface Message {
 	grid_ref: string | null;
 	call_sign: string | null;
 	units: string[] | null;
+	// R8, ADR 0047: the call signs and roles a page names, apart from its appliances.
+	call_signs: string[] | null;
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
 	location: Location | null;

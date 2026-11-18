@@ -57,10 +57,10 @@ LIMIT 1;
 INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
-    call_sign, units, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
+    call_sign, units, call_signs, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
     location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
     CASE WHEN sqlc.narg(lon)::float8 IS NULL THEN NULL
          ELSE ST_SetSRID(ST_MakePoint(sqlc.narg(lon)::float8, sqlc.narg(lat)::float8), 4326)::geography END,
     sqlc.narg(location_source)::text,
@@ -246,7 +246,7 @@ SELECT pg_notify('pagerarchive_reparse', '');
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
-    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15
+    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17
 WHERE id = $1 AND text = $16;
 
 -- name: SetLocation :exec
@@ -337,7 +337,7 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 -- not empty, keeps just those messages (a live update, a catch-up batch).
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
-       m.call_sign, m.units, m.extra, m.parse_failed, m.address_unsplit,
+       m.call_sign, m.units, m.call_signs, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source

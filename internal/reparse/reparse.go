@@ -457,7 +457,7 @@ func (w *Worker) reparseAs(ctx context.Context, q *db.Queries, cands []ingest.Ca
 	written, err := q.UpdateParsed(ctx, db.UpdateParsedParams{
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
-		CallSign: f.CallSign, Units: f.Units, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
+		CallSign: f.CallSign, Units: f.Units, CallSigns: f.CallSigns, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
 		LargeEventField: f.LargeEventField, Text: m.Text,
 	})
 	if err != nil || written == 0 {

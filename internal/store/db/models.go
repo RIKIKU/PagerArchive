@@ -226,6 +226,7 @@ type Message struct {
 	Lon              *float64
 	Lat              *float64
 	LargeEventField  bool
+	CallSigns        []string
 }
 
 type MessageArea struct {

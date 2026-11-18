@@ -11,7 +11,11 @@
       "priorities": ["Emergency"],
       "match": "^(?P<job_number>EX[0-9]{7}) (?P<event_type>[A-Z]+[0-9]) (?P<description>.+?) @ (?P<address>.+?), (?P<locality>[A-Z][A-Z ]*?)(?: ALARM (?P<alarm_level>[1-9]))?(?: GRID (?P<grid_ref>[0-9]{6}))?(?: UNITS (?P<units>[^#]+?))? #(?P<call_sign>\\S+)$",
       "fields": {
-        "units": { "split": " " }
+        "units": {
+          "split": " ",
+          "_comment": "Made up (ADR 0047): the known call signs STN1 to STN4, alone, and duty-officer roles (DO and two digits) are call signs, not appliances. STN2T, a known call sign with a suffix, stays an appliance.",
+          "into": { "field": "call_signs", "values_file": "example-call-signs.txt", "match": "DO[0-9]{2}" }
+        }
       }
     },
     {

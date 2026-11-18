@@ -104,6 +104,9 @@ function ConvertTo-PaMessage {
             Locality         = $Row.locality
             GridRef          = $Row.grid_ref
             Units            = @($Row.units | Where-Object -FilterScript { $_ })
+            # R8, ADR 0047: the call signs and roles it names, apart from its
+            # appliances. An API from before them has none.
+            CallSigns        = @(($Row.PSObject.Properties['call_signs'] ? $Row.call_signs : @()) | Where-Object -FilterScript { $_ })
             Fields           = [pscustomobject]$fields
             Location         = $location
             ParseFailed      = if ($flags) { [bool]$Row.flags.parse_failed } else { $false }

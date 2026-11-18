@@ -114,7 +114,7 @@ On a public ntfy server, anyone who knows the topic can read it: pick a long ran
 
 ## Payload
 
-The same JSON goes to webhooks and MQTT. This is version 2: version 1, before 2026-11-17, called `fields.call_sign` `fields.group` (SPEC.md R8, ADR 0040). A receiver that reads `fields.group` should read `fields.call_sign` from version 2.
+The same JSON goes to webhooks and MQTT. This is version 2: version 1, before 2026-11-17, called `fields.call_sign` `fields.group` (SPEC.md R8, ADR 0040). A receiver that reads `fields.group` should read `fields.call_sign` from version 2. Since 2026-11-19 version 2 also carries `fields.call_signs` (SPEC.md R8, ADR 0047): only a key was added, so the version stays 2, and a receiver that doesn't read it can ignore it.
 
 ```json
 {
@@ -142,6 +142,7 @@ The same JSON goes to webhooks and MQTT. This is version 2: version 1, before 20
     "locality": "MADEUPTON",
     "grid_ref": "123456",
     "units": ["T1", "T2"],
+    "call_signs": null,
     "call_sign": "STN1"
   },
   "extra": {},
@@ -160,7 +161,7 @@ The same JSON goes to webhooks and MQTT. This is version 2: version 1, before 20
 | `text` | The page as a pager shows it: without its priority marker |
 | `priority` | `Emergency`, `Non-emergency`, `Admin` or `null` |
 | `category`, `event_label` | The event type's report category and display label, from the profiles |
-| `fields`, `extra`, `labels` | The parsed fields, the profile's extra fields and their display labels. Missing values are `null`. `fields.units` is the appliances the page names, shown in the app as Appliances; its key stays `units` |
+| `fields`, `extra`, `labels` | The parsed fields, the profile's extra fields and their display labels. Missing values are `null`. `fields.units` is the appliances the page names, shown in the app as Appliances; its key stays `units`. `fields.call_signs` is the call signs of the units a page dispatches and the roles it names, apart from its appliances, shown as Call signs: a list, or `null` when the agency profile moves none there (`into`, docs/profiles.md). For a profile that moves them, `fields.units` holds only the appliances, so it has fewer tokens than before the change; `fields.call_sign` is still the paged unit's own |
 | `location` | Where the page is placed (`address`, `street`, which is approximate, or `grid`), or `null` |
 | `flags` | Only for admins' integrations: `parse_failed`, `address_unsplit`, `location_mismatch` |
 

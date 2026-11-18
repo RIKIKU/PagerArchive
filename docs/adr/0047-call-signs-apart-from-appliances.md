@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-18). Design only: no code until the owner decides. The owner's rules (2026-11-17/18): a listed call sign alone is a call sign, not an appliance; a call sign with a number or a suffix is an appliance; the roles a person holds go with the call signs ("a bit more like a callsign than an appliance"), with no Roles list of their own. The network's list of call signs is private reference data, so the engine takes it from the profile and never has it built in. The owner chose to batch the private profile's `group` to `call_sign` rename (ADR 0040) with this, so production re-parses once. SPEC.md R7, R8, R23a, R38h, the glossary, section 7.13, section 10 (proposed), A128 and M27. The pull request is a draft, labelled `feature`.
+Accepted (2026-11-19). The owner chose option (b) and decided the four questions below (see "The owner's decisions"); built as decided. Proposed on 2026-11-18, design only. The owner's rules (2026-11-17/18): a listed call sign alone is a call sign, not an appliance; a call sign with a number or a suffix is an appliance; the roles a person holds go with the call signs ("a bit more like a callsign than an appliance"), with no Roles list of their own. The network's list of call signs is private reference data, so the engine takes it from the profile and never has it built in. The owner chose to batch the private profile's `group` to `call_sign` rename (ADR 0040) with this, so production re-parses once. SPEC.md R7, R8, R23a, R38h, the glossary, section 7.13, section 10 (proposed), A128 and M27. The pull request is labelled `feature`.
 
 ## Context
 
@@ -58,7 +58,7 @@ Cheapest, but every network names the list differently, so the app can't build a
 
 Dispatching units by call sign isn't one network's habit: any paging network can name the units it sends, and the spec already has the concept (Call sign). (b) gives the moved tokens one generic home that the API, payload, module and any later feature can rely on, with additive changes only (a nullable column, a new key, a new property), while (a) breaks the API, the module and every golden row and needs a backfill, and (c) leaves the data where nothing generic can use it. The routing option is the same in (b) and (c), and (b)'s version of it can still aim at an extra field, so a network that wants a list of its own isn't stopped.
 
-## Decisions (proposed)
+## Decisions
 
 ### 1. The standard field `call_signs`
 
@@ -102,18 +102,19 @@ One quick migration: `ALTER TABLE messages ADD COLUMN call_signs text[]` (nullab
 
 ### 6. Shown by A128
 
-SPEC.md A128, on section 10's proposed example: the made-up call signs `STN1` to `STN4` in `example-call-signs.txt`, the role pattern `DO[0-9]{2}`, and a proposed golden row whose list `T1 STN2 STN2T DO01` gives units `[T1, STN2T]` and call_signs `[STN2, DO01]`. The example's golden rows are the owner's: the row is proposed, and no existing row changes.
+SPEC.md A128, on section 10's example: the made-up call signs `STN1` to `STN4` in `example-call-signs.txt`, the role pattern `DO[0-9]{2}`, and a proposed golden row whose list `T1 STN2 STN2T DO01` gives units `[T1, STN2T]` and call_signs `[STN2, DO01]`. The example's golden rows are the owner's: the row is proposed, and no existing row changes.
 
-## For the owner to decide
+## The owner's decisions (2026-11-19)
 
-1. **Option**: (b), as recommended, or (c) (or (a)).
-2. **Names**: the machine name `call_signs` and the display name "Call signs". It reads close to "Call sign"; another display name ("Call signs named", "Units dispatched") changes no design.
-3. **Search and integrations**: no key now (recommended), or `callsign:` widened to match the list too (an integration on a call sign would then be told once per copy naming it, so twice or more for one page sent to several capcodes), or a separate key for the list.
-4. **Payload version**: stays 2 (recommended, a key only added), or 3, so a receiver can tell that `fields.units` lost tokens.
+1. **Option**: (b), a new standard list field `call_signs` beside `units`. `call_sign` stays the paged unit's own call sign.
+2. **Names**: `call_signs`, shown as "Call signs": agreed.
+3. **Search and integrations**: no new search key and no integration filter on it ("I doubt anyone is going to want to search for the call sign or trigger an integration on it"). Text search finds its tokens in the page's text, as it does today; `callsign:` and the integrations' call-sign filter keep matching `call_sign` only.
+4. **Payload version**: stays 2, as the field is only added.
 
 ## Consequences
 
-- **Code to come** (after the owner decides): `internal/profile` (the field, `into`, validation, values files, the hash), the parser, a migration, the store and its queries, the API's message, the payload, the web app's detail view, the module's object and format, the golden-table schema, the example profile and the docs (docs/profiles.md, docs/integrations.md, docs/powershell.md), with A128.
+- **The code**: `internal/profile` (the field, `into`, its validation, values files, the hash), the parser, migration 00033 (`messages.call_signs`), the store and its queries, the API's message, the payload, the web app's detail view, the module's object, list view and help (`CallSigns`, ModuleVersion 0.19.0), the profile and golden-table schemas, the example profile (`example-call-signs.txt` and a proposed golden row) and the docs (docs/profiles.md, docs/integrations.md, docs/powershell.md), with A128.
+- **The schema**: a field's options may now hold `split` with `into` (and comments); `split` and `address_split` together are refused by validate-profile rather than by the schema's old one-key limit.
 - **The private profile repository** needs, by key and shape only: in each agency profile whose format splits the appliance list, an `into` on that field's options: `{"field": "call_signs", "values_file": "<file of the network's call signs>", "match": "<RE2 pattern for the roles that follow a shape>"}`, with the fixed role codes (a duty officer's, say) either in that file or in `values`; the file of call signs itself, one per line, beside the profiles; golden rows whose lists name call signs or roles, proposed with those tokens moved from `units` to `call_signs`; and, in the same change, ADR 0040's rename (`group` to `call_sign` in captures, `fields`, `labels`, `large_event_fields` and golden rows). Then `validate-profile` passes with no warning, and one change of the hash means one re-parse.
 - **The re-parse**: one full re-parse of the private profile's pages, hours to about a day on production, as a long job (R91): observable, pauseable, resumable. It sends nothing to integrations and rebuilds large events and report counts as any re-parse does. Until it reaches a page, the page keeps its old `units` and no `call_signs`.
 - **Integration receivers** that read `fields.units` for a network that moves call signs see fewer tokens there and the rest in `fields.call_signs`; the release notes say so.

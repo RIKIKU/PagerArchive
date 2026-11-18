@@ -68,7 +68,8 @@ function Watch-PagerArchiveMessage {
     PagerArchive.Message. The same as Get-PagerArchiveMessage's: Id, SentAt,
     Capcode, Alias, Agency, Priority, Text (as a pager shows it, in full),
     RawText, CallSign, JobNumber, EventType, Category, Description, Address,
-    Locality, GridRef, Units (the appliances), Fields, Location, ParseFailed,
+    Locality, GridRef, Units (the appliances), CallSigns (the call signs and
+    roles, apart from the appliances), Fields, Location, ParseFailed,
     AddressUnsplit, LocationMismatch, Heartbeat, Ignored and Receptions.
     Receptions holds the receive times known when the message arrived,
     usually the first client's; Get-PagerArchiveMessage shows any later

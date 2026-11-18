@@ -117,6 +117,25 @@
         "call_sign": "STN2",
         "opens_large_event": true
       }
+    },
+    {
+      "name": "emergency whose units name call signs and a role moves them to call_signs",
+      "status": "proposed",
+      "_comment": "Proposed for the owner (2026-11-19, R7, R8, ADR 0047): STN2 is a known call sign and DO01 a duty-officer role, so they're call signs; STN2T, a known call sign with a suffix, is an appliance.",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000006 HSF1 SMOKE FROM SHED @ 3 FICTION ST, MADEUPTON UNITS T1 STN2 STN2T DO01 #STN1",
+      "expect": {
+        "capcode": "0100001",
+        "priority": "Emergency",
+        "format": "emergency",
+        "job_number": "EX0000006",
+        "event_type": "HSF1",
+        "description": "SMOKE FROM SHED",
+        "address": "3 FICTION ST",
+        "locality": "MADEUPTON",
+        "units": ["T1", "STN2T"],
+        "call_signs": ["STN2", "DO01"],
+        "call_sign": "STN1"
+      }
     }
   ]
 }

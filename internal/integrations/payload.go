@@ -47,6 +47,7 @@ type Fields struct {
 	Locality    *string  `json:"locality"`
 	GridRef     *string  `json:"grid_ref"`
 	Units       []string `json:"units"`
+	CallSigns   []string `json:"call_signs"` // R8, ADR 0047: added in version 2
 	CallSign    *string  `json:"call_sign"`
 }
 
@@ -73,7 +74,7 @@ func (s *Service) pageOf(m db.SearchMessagesRow, admin bool) page {
 		ID: &id, SentAt: m.SentAt.UTC(), Capcode: m.Capcode, Alias: m.AliasName, Agency: m.Agency,
 		Priority: m.Priority, Heartbeat: m.Heartbeat, JobNumber: m.JobNumber, Text: m.Text,
 		Fields: Fields{EventType: m.EventType, Description: m.Description, Address: m.Address, Locality: m.Locality,
-			GridRef: m.GridRef, Units: m.Units, CallSign: m.CallSign},
+			GridRef: m.GridRef, Units: m.Units, CallSigns: m.CallSigns, CallSign: m.CallSign},
 		Extra: map[string]any{}, Labels: map[string]string{},
 	}
 	if m.Priority != nil {

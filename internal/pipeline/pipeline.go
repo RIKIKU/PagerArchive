@@ -168,14 +168,25 @@ func extract(res *Parsed, f profile.Format, ix *streets.Index, body string, m []
 			if _, done := res.Fields[name]; done {
 				continue
 			}
-			var list []string
+			var list, moved []string
+			in := f.Into[name]
 			for _, part := range re.Split(v, -1) {
-				if part = strings.TrimSpace(part); part != "" {
+				switch part = strings.TrimSpace(part); {
+				case part == "":
+				case in != nil && in.Moves(part):
+					moved = append(moved, part)
+				default:
 					list = append(list, part)
 				}
 			}
 			if len(list) > 0 {
 				res.Fields[name] = list
+			}
+			// R7, ADR 0047: the tokens into names go to its list, in order,
+			// after any that another split field of this format moved there.
+			if len(moved) > 0 {
+				prev, _ := res.Fields[in.Field].([]string)
+				res.Fields[in.Field] = append(prev, moved...)
 			}
 			continue
 		}

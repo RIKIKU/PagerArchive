@@ -286,7 +286,7 @@ func TestA111Areas(t *testing.T) {
 	// the regions aren't touched. The network profile's parse hash doesn't
 	// change, so nothing is re-parsed.
 	dir := t.TempDir()
-	for _, f := range []string{"example-network.json", "example-addresses.json", "example-fire.json", "example-regions.geojson"} {
+	for _, f := range []string{"example-network.json", "example-addresses.json", "example-fire.json", "example-call-signs.txt", "example-regions.geojson"} {
 		copyFile(t, filepath.Join("../../profiles/example", f), filepath.Join(dir, f))
 	}
 	geo, err := os.ReadFile("../../profiles/example/example-areas.geojson")
@@ -427,7 +427,7 @@ func TestA114AreasThatDontLoad(t *testing.T) {
 	e := setup(t)
 	id := e.mustPost("a", "0100001", "@@EX0000991 HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN1", e.now).MessageID
 	dir := t.TempDir()
-	for _, f := range []string{"example-network.json", "example-addresses.json", "example-fire.json", "example-areas.geojson"} {
+	for _, f := range []string{"example-network.json", "example-addresses.json", "example-fire.json", "example-call-signs.txt", "example-areas.geojson"} {
 		copyFile(t, filepath.Join("../../profiles/example", f), filepath.Join(dir, f))
 	}
 	if err := os.WriteFile(filepath.Join(dir, "example-areas.geojson"), []byte(`{"type": "FeatureCollection", "features": []}`), 0o644); err != nil {

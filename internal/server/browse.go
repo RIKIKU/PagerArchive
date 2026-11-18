@@ -71,6 +71,7 @@ type Message struct {
 	GridRef     *string           `json:"grid_ref"`
 	CallSign    *string           `json:"call_sign"`
 	Units       []string          `json:"units"`
+	CallSigns   []string          `json:"call_signs"` // R8, ADR 0047: apart from units
 	Extra       map[string]any    `json:"extra"`
 	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
 
@@ -117,7 +118,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
 		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, CallSign: m.CallSign,
-		Units: m.Units, Extra: map[string]any{}, Labels: map[string]string{},
+		Units: m.Units, CallSigns: m.CallSigns, Extra: map[string]any{}, Labels: map[string]string{},
 	}
 	if m.Priority != nil {
 		out.DisplayText = pipeline.Body(pipeline.Prepared{Text: m.Text, Priority: profile.Priority(*m.Priority)})

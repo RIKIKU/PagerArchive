@@ -1,0 +1,7 @@
+# Made-up call signs of the example network (SPEC.md section 10, ADR 0047),
+# one a line: a token of the emergency format's UNITS list that is one of
+# these, alone, moves from units (Appliances) to call_signs (Call signs).
+STN1
+STN2
+STN3
+STN4
