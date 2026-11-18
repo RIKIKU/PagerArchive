@@ -168,16 +168,18 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		m.sample("pagerarchive_pages_received_total", labels{"outcome", o}, float64(s.pages.get(o)))
 	}
 
-	flags, err := s.Store.CountFlagged(ctx)
-	if err != nil {
-		s.Log.Error("metrics: flags", "error", store.SafeError(err))
-		problem(w, http.StatusInternalServerError, "metrics failed")
-		return
+	// R52: counted in the background (FlagCounts), never by a scrape; left
+	// out until the first count has worked.
+	if s.Flagged != nil {
+		if flags, at, ok := s.Flagged.Last(); ok {
+			m.family("pagerarchive_messages_flagged", "gauge", "Stored messages with each admin flag now.")
+			m.sample("pagerarchive_messages_flagged", labels{"flag", "parse_failed"}, float64(flags.ParseFailed))
+			m.sample("pagerarchive_messages_flagged", labels{"flag", "address_unsplit"}, float64(flags.AddressUnsplit))
+			m.sample("pagerarchive_messages_flagged", labels{"flag", "location_mismatch"}, float64(flags.LocationMismatch))
+			m.family("pagerarchive_messages_flagged_counted_timestamp_seconds", "gauge", "When pagerarchive_messages_flagged was last counted, in the background, every minute (R52).")
+			m.sample("pagerarchive_messages_flagged_counted_timestamp_seconds", nil, float64(at.UnixMilli())/1000)
+		}
 	}
-	m.family("pagerarchive_messages_flagged", "gauge", "Stored messages with each admin flag now.")
-	m.sample("pagerarchive_messages_flagged", labels{"flag", "parse_failed"}, float64(flags.ParseFailed))
-	m.sample("pagerarchive_messages_flagged", labels{"flag", "address_unsplit"}, float64(flags.AddressUnsplit))
-	m.sample("pagerarchive_messages_flagged", labels{"flag", "location_mismatch"}, float64(flags.LocationMismatch))
 
 	m.family("pagerarchive_integration_deliveries_total", "counter", "Integration deliveries since the API started, by destination kind and result.")
 	var counts map[[2]string]uint64

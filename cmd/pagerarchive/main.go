@@ -467,6 +467,12 @@ func serve(stderr io.Writer) error {
 		Locks:                 locks,
 		Version:               version,
 	}
+	// R52: the flagged counts are counted in the background, once a minute,
+	// and only while the metrics are on: a scrape never counts them.
+	if srv.MetricsToken != "" {
+		srv.Flagged = &server.FlagCounts{Store: st, Log: log}
+		go srv.Flagged.Run(ctx)
+	}
 	// R64: template names from before they had to differ by more than letter
 	// case (migration 00022), on every start until an admin sorts them out.
 	if dups, err := srv.Catalog.CaseDuplicates(ctx); err != nil {
