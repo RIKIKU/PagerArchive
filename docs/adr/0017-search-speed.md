@@ -4,6 +4,8 @@
 
 Proposed (2026-11-02). The owner's brief for M13a: SPEC.md R33b and A75 (owner, 2026-11-02), a fix after M13, on the branch `m13a` from main at abbebe7 (v0.13.0). Resized the same day to 10 years at 1,250 pages a day, 4,562,500 pages, the default retention and the archive being migrated (main e7aa98c, merged into `m13a`). Released as 0.13.1. The PowerShell module, the client, the UI and the search syntax don't change. Revised after the review of e9aad34 (2026-11-02): see "The owner's answers". Decision 5's order of tries was replaced for the first search after a cold start (m16a, 2026-11-03): see that section. A busy alias and short terms were added after production's first install (fix-search, 2026-11-08; 0.16.2): see "A busy alias and short terms". A map reference with a page number was added after production ran 0.16.2 (fix-search-2, 2026-11-08; 0.17.2): see "A map reference with a page number". A cold run over 1 second in CI gets one more cold start, and the better counts (fix-a75-cold, 2026-11-09; 1.0.2): see "A75's cold runs on CI's runners".
 
+Since 2026-11-18, CI enforces this check's correctness in every gate and only reports its times there; a weekly benchmark fails a time over twice its limit (ADR 0046).
+
 ## Context
 
 ADR 0015 found that a search whose terms are in few or no pages reads every page: about 5 s on 1,642,500 pages. The trigram index on the text (`messages_text_trgm_idx`, ADR 0001) wasn't used. Each term was matched in the text and in each extra field in one condition (`m.text ILIKE p OR EXISTS (… jsonb_each_text(m.extra) …)`), inside a subquery over the array of terms, and the planner can't use an index for that. On 4,562,500 pages such searches take 2 to 29 s (see "Evidence").

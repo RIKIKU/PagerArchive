@@ -7,13 +7,21 @@
 # import, the API's peak is <= 256 MiB and api + db peaks sum to <= 1 GiB. The
 # API's figure includes the import, which runs in its container.
 #
+# The memory budget and speed.go's correctness checks fail the run. Its
+# timings (OUT/a76-timings.tsv) are reported by scripts/speed-report.sh, in
+# the job's summary and as "slow: …" warnings: in a gate a slow step never
+# fails, and in the weekly benchmark (PAGERARCHIVE_SPEED=benchmark) a step over
+# twice its limit does (ADR 0046).
+#
 # usage: scripts/a76.sh [-s SEED] [-n PAGES] [-l LOCALITIES] [-r] [-o OUT]
 #   -r  the file in random order, the import's hardest read
 #   CI:       scripts/a76.sh -r                     (seed 4,562,500, import 200,000)
 #   full run: scripts/a76.sh -s 0 -n 4562500 -l 3000 -r (a real-size address dataset:
 #             1.5 hours on a spinning disk, and 1 GB of the host's memory for the file)
 # needs: Docker with compose, Go, curl, awk. Uses 127.0.0.1:8080 and :55439, and
-# port 14321 on every address for the test webhook.
+# port 14321 on every address for the test webhook; API_BIND, PA_A76_DB_PORT
+# and PA_A76_HOOK_PORT choose others, and PAGERARCHIVE_VERSION the image's tag
+# (pagerarchive:a76).
 set -eu
 cd "$(dirname "$0")/.."
 
@@ -27,7 +35,7 @@ mkdir -p "$OUT"
 OUT=$(cd "$OUT" && pwd)
 
 export COMPOSE_PROJECT_NAME="pa-a76-$$"
-export PAGERARCHIVE_VERSION=a76
+export PAGERARCHIVE_VERSION="${PAGERARCHIVE_VERSION:-a76}"
 export STACK_API_WAIT=1800
 export STACK_OVERLAYS="-f deploy/test/import.yaml"
 . ./scripts/stack-lib.sh
@@ -46,6 +54,8 @@ if [ "$LOCALITIES" -gt 0 ]; then
 	export PROFILES_DIR="$WORK/profiles"
 	SAMPLE="-sample $WORK/sample.txt"
 fi
+API=${API_BIND:-127.0.0.1:8080}
+HOOK_PORT=${PA_A76_HOOK_PORT:-14321}
 
 SAMPLER=""
 cleanup() {
@@ -99,7 +109,7 @@ SAMPLER=$!
 status=0
 # shellcheck disable=SC2086
 go run scripts/a76/speed.go -db "postgres://postgres:$POSTGRES_PASSWORD@127.0.0.1:${PA_A76_DB_PORT:-55439}/postgres?sslmode=disable" \
-	-key "$KEY" -seed "$SEED" -pages "$PAGES" -o "$OUT" -phase "$PHASE_FILE" $SHUFFLE $SAMPLE -- \
+	-api "http://$API" -hook "0.0.0.0:$HOOK_PORT" -hook-url "http://host.docker.internal:$HOOK_PORT/hook" 	-key "$KEY" -seed "$SEED" -pages "$PAGES" -o "$OUT" -phase "$PHASE_FILE" $SHUFFLE $SAMPLE -- \
 	docker compose -f compose.yaml -f deploy/test/compose.yaml $STACK_OVERLAYS exec -T api pagerarchive import-messages - 2>&1 | tee "$OUT/a76-speed.txt" || status=1
 grep -q '^A76 speed: PASS$' "$OUT/a76-speed.txt" || status=1
 kill "$SAMPLER" 2>/dev/null || true
@@ -116,10 +126,12 @@ awk -F, '
 		printf "api + db peaks:    %.1f MiB (limit 1024) %s\n", sum, (sum <= 1024 ? "PASS" : "FAIL")
 		if (api > 256 || sum > 1024 || api == 0) exit 1
 	}' "$OUT/a76-stats.csv" >"$OUT/a76-summary.txt" || status=1
-cat "$OUT/a76-summary.txt"
+# The timings, with the memory peaks under them: a slow step fails only the
+# benchmark.
+sh scripts/speed-report.sh "A76, importing messages" "$OUT/a76-timings.tsv" "$OUT/a76-summary.txt" || status=1
 stack_compose logs --no-color api db >"$OUT/a76-logs.txt" 2>&1 || true
 if grep -qE 'FICTION|MADEUPTON|HEARTBEAT|0412 345|AGE: |SEX: ' "$OUT/a76-logs.txt"; then
 	echo "page text found in the logs" >&2
 	status=1
 fi
-[ "$status" -eq 0 ] && echo "A76 speed and budget: PASS" || { echo "A76 speed and budget: FAIL"; exit 1; }
+[ "$status" -eq 0 ] && echo "A76 correctness, budget and timings (${PAGERARCHIVE_SPEED:-gate}): PASS" || { echo "A76 correctness, budget and timings (${PAGERARCHIVE_SPEED:-gate}): FAIL"; exit 1; }

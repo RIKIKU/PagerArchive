@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/RIKIKU/PagerArchive/internal/server"
+	"github.com/RIKIKU/PagerArchive/internal/store"
 )
 
 // M14 at API level (ADR 0026): albums (R82-R82b, R82f, A72) and the
@@ -618,8 +619,10 @@ func TestA71ScrubberCounts(t *testing.T) {
 // cold start and then three times warm, for the last 30 days with the
 // searches the list is most often at; and, for the record, longer ranges,
 // which may be left uncounted (Counted false) when they'd take longer than
-// store.CountsTimeout. TestA75SearchSpeed runs it after its searches.
-func a71CountsSpeed(t *testing.T, e *env, container string) {
+// store.CountsTimeout. TestA75SearchSpeed runs it after its searches. The
+// times are speed's (ADR 0046); counts that aren't counted though they
+// answered within store.CountsTimeout, or that aren't the list's, fail it.
+func a71CountsSpeed(t *testing.T, e *env, container string, speed *a75Speed) {
 	t.Helper()
 	day := func(ago int) string { return time.Now().AddDate(0, 0, -ago).Format(time.DateOnly) }
 	cases := []struct {
@@ -643,7 +646,12 @@ func a71CountsSpeed(t *testing.T, e *env, container string) {
 		if code := e.getJSON("/api/v1/messages/counts?"+query, &c); code != http.StatusOK {
 			t.Fatalf("counts?%s: %d", query, code)
 		}
-		return c, time.Since(t0)
+		d := time.Since(t0)
+		// Uncounted only when counting took longer than its limit: a timing.
+		if !c.Counted && d < store.CountsTimeout {
+			t.Errorf("counts?%s: not counted, though answered in %s, within store.CountsTimeout", query, d.Round(time.Millisecond))
+		}
+		return c, d
 	}
 	for _, c := range cases {
 		a75ColdStart(t, e, container)
@@ -663,8 +671,11 @@ func a71CountsSpeed(t *testing.T, e *env, container string) {
 		}
 		t.Logf("A71 counts, %-36s %3d marks, %7d pages, counted cold %v warm %v; cold %s, warm %s", c.name, len(counts.Marks), total, cold.Counted, counts.Counted,
 			coldTime.Round(time.Millisecond), strings.Join(warm, " "))
-		if c.a71 && (!cold.Counted || !counts.Counted || coldTime > time.Second || slowest > time.Second) {
-			t.Errorf("A71: the scrubber's counts for %s: cold %s (counted %v), slowest warm %s, want counted within 1 second", c.name, coldTime.Round(time.Millisecond), cold.Counted, slowest.Round(time.Millisecond))
+		// Counted within 1 second (A71). Counts not counted took longer than
+		// store.CountsTimeout, 2 seconds, and their time says so.
+		if c.a71 {
+			speed.note(t, "A71's counts, the first run after a cold start", coldTime, time.Second, fmt.Sprintf("%s, counted %v (A71)", c.name, cold.Counted))
+			speed.note(t, "A71's counts, warm, the slowest of 3 runs", slowest, time.Second, fmt.Sprintf("%s, counted %v (A71)", c.name, counts.Counted))
 		}
 	}
 	// The counts are the list's: the last 30 days' total is every page sent

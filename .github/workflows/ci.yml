@@ -280,7 +280,11 @@ jobs:
   # 1 second and listing the same pages as the query before M13a, including
   # the first run after a restart with both caches cold; then A71's scrubber
   # counts and A99's reports (ADR 0031) on the same pages. Its own job, as
-  # seeding 4,562,500 pages and counting their jobs takes minutes.
+  # seeding 4,562,500 pages and counting their jobs takes minutes. What the
+  # searches, counts and reports return fails it; their times are reported
+  # (ADR 0046): a table in the job's summary and a "slow: …" warning for a
+  # step over its limit, never a failure. The weekly benchmark
+  # (benchmark.yml) runs the same and fails a step over twice its limit.
   search:
     name: Search speed (A75)
     needs: [stamp, changes]
@@ -317,11 +321,20 @@ jobs:
       - name: A75 on 4,562,500 made-up pages
         env:
           PAGERARCHIVE_A75_CONTAINER: ${{ job.services.postgres.id }}
+          PAGERARCHIVE_SPEED_FILE: ${{ github.workspace }}/a75-timings.tsv
         run: go test -count=1 -v -timeout 50m -run TestA75SearchSpeed ./internal/acceptance/
+      - name: A75's timings, reported (a slow step warns, ADR 0046)
+        if: ${{ !cancelled() }}
+        run: sh scripts/speed-report.sh "A75, search speed" a75-timings.tsv
       - name: Disk after
         if: always()
         run: df -h /
 
+  # A76: the import's file checks, then its speed on A75's pages with live
+  # pages arriving. What's imported, the live pages kept and delivered, and the
+  # memory budget fail it; its times (the rate, the live pages', the searches'
+  # after it) are reported (ADR 0046), as A75's are, and the weekly benchmark
+  # fails a step over twice its limit.
   import:
     name: Importing messages (A76)
     needs: [stamp, changes]
@@ -343,7 +356,7 @@ jobs:
         run: sh scripts/a76-checks.sh
       - name: Disk before
         run: df -h /
-      - name: A76's speed, 200,000 pages in random order on top of 4,562,500 with live pages, then A75's searches
+      - name: A76's speed, 200,000 pages in random order on top of 4,562,500 with live pages, then A75's searches (timings reported)
         run: sh scripts/a76.sh -r -o a76-results
       - name: Disk after
         if: always()

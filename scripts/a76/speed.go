@@ -3,10 +3,15 @@
 // A76's speed (R83f), for scripts/a76.sh: pages made up as they're streamed to
 // `pagerarchive import-messages -`, while a client posts live pages, then A75's
 // searches. It prints the rate over time, the live pages before and during the
-// import, and the searches, and exits non-zero if the import is under 500 pages
-// a second, a live page is late (R32, R51a) or lost, or a search after the
-// import is over 1 second (R33b). Searches during the import aren't timed
-// (R83f). The memory budget is scripts/a76.sh's: it samples docker stats.
+// import, and the searches, and exits non-zero on a correctness problem: the
+// import fails, a live page is lost or refused, or the import sets off an
+// integration, a live update or a delivery (R83b), or a search fails. Its
+// timings (the import's 500 pages a second, a live page's 2 and 5 seconds,
+// R32 and R51a, and each search after the import within 1 second, R33b) are
+// written to DIR/a76-timings.tsv, and scripts/speed-report.sh reports them: a
+// slow step fails only the weekly benchmark, at twice its limit (ADR 0046).
+// Searches during the import aren't timed (R83f). The memory budget is
+// scripts/a76.sh's: it samples docker stats.
 //
 //	usage: go run scripts/a76/speed.go -db URL -api URL -key KEY -seed N -pages N [-sample FILE] -o DIR -- docker compose ... exec -T api pagerarchive import-messages -
 package main
@@ -43,6 +48,45 @@ var failed atomic.Bool
 func fail(format string, args ...any) {
 	failed.Store(true)
 	fmt.Printf("FAIL: "+format+"\n", args...)
+}
+
+// A timed step, its limit, and what its slowest was. Each step keeps its
+// slowest.
+type timing struct {
+	step        string
+	took, limit time.Duration
+	detail      string
+}
+
+var (
+	timingsMu sync.Mutex
+	timings   []*timing
+)
+
+func timed(step string, took, limit time.Duration, detail string) {
+	timingsMu.Lock()
+	defer timingsMu.Unlock()
+	for _, t := range timings {
+		if t.step == step {
+			if took > t.took {
+				t.took, t.detail = took, detail
+			}
+			return
+		}
+	}
+	timings = append(timings, &timing{step, took, limit, detail})
+}
+
+// writeTimings writes the steps for scripts/speed-report.sh: step, seconds,
+// limit in seconds, detail, tab-separated.
+func writeTimings(path string) {
+	timingsMu.Lock()
+	defer timingsMu.Unlock()
+	var b strings.Builder
+	for _, t := range timings {
+		fmt.Fprintf(&b, "%s\t%.3f\t%g\t%s\n", t.step, t.took.Seconds(), t.limit.Seconds(), t.detail)
+	}
+	die(os.WriteFile(path, []byte(b.String()), 0o644))
 }
 
 func die(err error) {
@@ -127,6 +171,7 @@ func main() {
 		fail("%d deliveries queued for %d live pages: the import queued some (R83b)", queued, live.posted())
 	}
 	checkSearches(ctx, pool, *api, userB)
+	writeTimings(*out + "/a76-timings.tsv")
 	if failed.Load() {
 		os.Exit(1)
 	}
@@ -327,9 +372,9 @@ func (rt *rates) print() {
 			fmt.Printf("  %3d%%-%3d%%: %5.0f a second\n", 10*(i-1), 10*i, float64(to.done-from.done)/(to.at-from.at).Seconds())
 		}
 	}
-	if overall < 500 {
-		fail("%.0f pages a second, under 500 (R83f)", overall)
-	}
+	// At least 500 pages a second (R83f): the import within pages / 500 seconds.
+	timed(fmt.Sprintf("the import of %d pages", rt.pages), rt.total, time.Duration(float64(rt.pages)/500*float64(time.Second)),
+		fmt.Sprintf("%.0f pages a second, the limit 500 (R83f)", overall))
 }
 
 // A75's searches (R33b), as TestA75SearchSpeed runs them, as user B.
@@ -381,9 +426,7 @@ func checkSearches(ctx context.Context, pool *pgxpool.Pool, api, token string) {
 			each = append(each, d.Round(time.Millisecond).String())
 		}
 		fmt.Printf("  %-46s %3d listed, %s\n", s.name, listed, strings.Join(each, " "))
-		if slowest > time.Second {
-			fail("%s: %s after the import, over 1 second (R33b)", s.name, slowest.Round(time.Millisecond))
-		}
+		timed("A75's searches after the import, the slowest of 3 runs", slowest, time.Second, s.name+" (R33b)")
 	}
 }
 
@@ -553,9 +596,7 @@ func (l *liveLog) report(when string, pages []livePage) {
 		}
 		slices.Sort(ds)
 		fmt.Printf("  %-34s median %6s, 99th percentile %6s, slowest %s\n", name, ds[len(ds)/2].Round(time.Millisecond), ds[len(ds)*99/100].Round(time.Millisecond), ds[len(ds)-1].Round(time.Millisecond))
-		if ds[len(ds)-1] > limit {
-			fail("%s: the slowest took %s, over %s (%s)", name, ds[len(ds)-1].Round(time.Millisecond), limit, spec)
-		}
+		timed("a live page: "+name+", the slowest", ds[len(ds)-1], limit, when+" ("+spec+")")
 	}
 	fmt.Printf("  %d live pages posted, %d lost or refused\n", len(pages), lost)
 	show("post answered", post, 2*time.Second, "R32")

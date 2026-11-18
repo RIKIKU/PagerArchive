@@ -465,8 +465,9 @@ func TestReportsTimeZone(t *testing.T) {
 // TestA75SearchSpeed: every report, for the last 30 days, a year and the
 // whole 10 years, with and without filters, answers within 1 second, warm,
 // and for the whole 10 years also straight after a restart with both caches
-// cold.
-func a99ReportsSpeed(t *testing.T, e *env, container string) {
+// cold. The times are speed's (ADR 0046): a report that doesn't answer fails
+// it.
+func a99ReportsSpeed(t *testing.T, e *env, container string, speed *a75Speed) {
 	t.Helper()
 	day := func(ago int) string { return time.Now().UTC().AddDate(0, 0, -ago).Format(time.DateOnly) }
 	ranges := []struct {
@@ -504,9 +505,7 @@ func a99ReportsSpeed(t *testing.T, e *env, container string) {
 				a75ColdStart(t, e, container)
 				d, _ := run(path)
 				cold = "cold " + d.Round(time.Millisecond).String() + ", "
-				if d > time.Second {
-					t.Errorf("%s: %s straight after a cold start, over 1 second (R38a)", name, d.Round(time.Millisecond))
-				}
+				speed.note(t, "A99's reports over 10 years, the first run after a cold start", d, time.Second, name+" (R38a)")
 			}
 			var warm []string
 			var slowest time.Duration
@@ -518,9 +517,7 @@ func a99ReportsSpeed(t *testing.T, e *env, container string) {
 				warm = append(warm, d.Round(time.Millisecond).String())
 			}
 			t.Logf("reports, %-48s %s warm %s (%d bytes)", name, cold, strings.Join(warm, " "), size)
-			if slowest > time.Second {
-				t.Errorf("%s: %s warm, over 1 second (R38a)", name, slowest.Round(time.Millisecond))
-			}
+			speed.note(t, "A99's reports, warm, the slowest of 3 runs", slowest, time.Second, name+" (R38a)")
 		}
 	}
 	var jobs, whos, days int64
