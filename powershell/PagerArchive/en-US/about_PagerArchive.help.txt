@@ -28,6 +28,14 @@ LONG DESCRIPTION
 
     shows a code to enter at Authentik's /device page on any device.
 
+    A tool connects as a read-only service account, made on the server
+    with pagerarchive service-account create, without a browser:
+
+        Connect-PagerArchive -Uri https://pager.example.org -ServiceAccount (Get-Credential -UserName report-bot)
+
+    Paste its credential as the password. It reads what an admin reads,
+    except people's details, and changes nothing.
+
     The module renews its access automatically, and the sign-in is saved so
     new PowerShell windows use it:
 

@@ -521,6 +521,8 @@ export interface UserRow {
 	integrations_failing: number;
 	// R42c: null unless trusted.
 	trusted: TrustedMark | null;
+	// R62a: a read-only service account, a tool rather than a person.
+	service_account: boolean;
 }
 
 // Invite trees (R42a-R42d, ADR 0008). Admins only.
@@ -547,6 +549,7 @@ export interface TreeNode {
 	joined: string;
 	trusted: boolean;
 	invitations: number; // unused invitations that still work
+	service_account: boolean; // R62a
 	tick?: Tick; // previews only
 	children: TreeNode[];
 }

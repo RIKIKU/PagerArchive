@@ -99,6 +99,22 @@ func (d *fakeDir) SetActive(_ context.Context, subject string, active bool) erro
 	return nil
 }
 
+// CreateServiceAccount makes a service-account user (R62a) with a made-up
+// app password.
+func (d *fakeDir) CreateServiceAccount(_ context.Context, username string, _ time.Time) (string, string, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for _, u := range d.users {
+		if u.username == username {
+			return "", "", fmt.Errorf("username taken")
+		}
+	}
+	d.next++
+	sub := strconv.Itoa(1000 + d.next)
+	d.users[sub] = &fakeUser{username: username, active: true}
+	return sub, fmt.Sprintf("made-up-app-password-%d", d.next), nil
+}
+
 func (d *fakeDir) DeleteUser(_ context.Context, subject string) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()

@@ -8,6 +8,9 @@ function Disconnect-PagerArchive {
     the saved copy, wherever it's saved (the DPAPI file on Windows, or the
     vault). The next command asks you to run Connect-PagerArchive.
 
+    For a service account, it deletes the saved credential; the credential
+    itself ends only when it's revoked or rotated on the server.
+
     If Authentik can't be reached, the saved copy is still deleted, and a
     warning says the sign-in couldn't be revoked: it ends by itself after
     30 days unused.
@@ -68,6 +71,20 @@ function Disconnect-PagerArchive {
                 }
             }
             $saved = Read-PaSignIn -Origin $origin
+
+            # A service account (R62a): its credential is ended only on the
+            # server (pagerarchive service-account revoke), so disconnecting
+            # deletes the saved copy and this session's access.
+            if (($connection -and $connection['ServiceAccount']) -or ($saved -and $saved['serviceAccount'])) {
+                if ($connection -and $connection.AccessToken) {
+                    $null = Revoke-PaToken -Settings $connection -Token $connection.AccessToken -Hint 'access_token'
+                }
+                Remove-PaSignIn -Origin $origin -WhatIf:$false -Confirm:$false
+                if ($script:Connection -and $script:Connection.Uri -eq $origin) {
+                    $script:Connection = $null
+                }
+                return
+            }
 
             # The refresh token: this session's, or the saved one.
             $refresh = $null

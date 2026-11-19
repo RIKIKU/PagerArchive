@@ -1,7 +1,7 @@
 #!/bin/sh
 # Mutation proof for the security checks (M8, M9, M10), the print sheet
 # (M11), the favicon (R82e), telemetry (M12), search (M13a), the import (M16), installing and
-# upgrading (M17) and backups (M19): break one check
+# upgrading (M17), backups (M19) and service accounts (R62a): break one check
 # at a time in a throwaway copy of the repository, run the test that guards it, and show
 # the test failing. Every mutation must fail its test; the unmutated copy
 # must pass.
@@ -614,6 +614,23 @@ mutate "an error quotes the address" internal/authentik/authentik.go unit:intern
 mutate "enrolment makes the duplicate" internal/accounts/accounts.go go:TestR44cFirstAdminAddressAlreadyHeld \
 	'if holders.Count > 0' 'if false && holders.Count > 0'
 
+# R62a, A130 (ADR 0048): a service account reads, changes nothing, never
+# sees people's details, and ends at once when expired, rotated or revoked.
+mutate "a service account may write" internal/server/service_accounts.go unit:internal/server:TestServiceAccountGate \
+	'if !readMethod(r.Method) {' 'if false && !readMethod(r.Method) {'
+mutate "a service account may write (A130)" internal/server/service_accounts.go go:TestA130ServiceAccounts \
+	'if !readMethod(r.Method) {' 'if false && !readMethod(r.Method) {'
+mutate "a service account reads the user list" internal/server/service_accounts.go go:TestA130ServiceAccounts \
+	'"GET /api/v1/admin/users":                           true,' ''
+mutate "a service account sees who changed an alias" internal/server/service_accounts.go unit:internal/server:TestHidePeople \
+	'		history[i].MadeBy = hiddenPerson' ''
+mutate "an expired credential still works" internal/server/powershell.go go:TestA130ServiceAccounts \
+	'if u.CredentialExpiresAt == nil || !s.Now().Before(*u.CredentialExpiresAt) {' 'if false {'
+mutate "the service client admits people" internal/server/powershell.go go:TestA130ServiceAccounts \
+	'if service != accounts.IsServiceAccount(u) {' 'if false {'
+mutate "a service account signs in with a browser" internal/accounts/accounts.go go:TestA130ServiceAccounts \
+	'case err == nil && IsServiceAccount(u):' 'case false:'
+
 # M19: backups (R86-R86c, A80).
 mutate "a dump is written straight to its final name" deploy/backup/backup.sh a80: \
 	'_db=$1 _partial=$DIR/$3.$2.dump.partial' '_db=$1 _partial=$DIR/$3.$2.dump'
@@ -634,8 +651,8 @@ fi
 
 echo "=== unmutated"
 go test -count=1 -run 'TestR84|TestR44c|TestA79|TestVersion' . 2>&1 | tail -3
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
-go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery' ./internal/accounts/ ./internal/authentik/ 2>&1 | tail -3
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestA130|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
+go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery|TestServiceAccountGate|TestHidePeople' ./internal/accounts/ ./internal/authentik/ ./internal/server/ 2>go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery' ./internal/accounts/ ./internal/authentik/ 2>&1 | tail -31 | tail -4
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/a80.sh -o "$work/a80-results" --project=chromium 2>&1 | grep -E '^(ok|FAIL|=== A80 (passed|FAILED)|--- (PASS|FAIL))'

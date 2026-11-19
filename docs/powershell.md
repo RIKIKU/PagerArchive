@@ -58,6 +58,14 @@ SecretStore asks for its password when first used, and again after 15 minutes (`
 
 A sign-in not used for **30 days** ends. `Disconnect-PagerArchive` revokes it in Authentik and deletes the saved copy. Deactivating, deleting or demoting someone in PagerArchive takes effect on their next command.
 
+**As a service account.** A tool connects as a read-only service account (R62a) that the server's operator made with `pagerarchive service-account create` ([deploying](deploy.md)), with no browser:
+
+```powershell
+Connect-PagerArchive -Uri https://pager.example.org -ServiceAccount (Get-Credential -UserName report-bot)
+```
+
+Paste the credential `create` printed as the password. It's saved as a sign-in is (the table above), and traded with Authentik for a new 5-minute access token whenever one's needed. `Get-` commands, `Get-PagerArchiveMessage` and `Watch-PagerArchiveMessage` work; a command that changes anything is refused with `service_account_read_only` and the reason. The credential expires after 90 days, and ends at once when the operator rotates or revokes it, or an admin deactivates the account: the module then says `service_account_refused` and deletes its saved copy. `Disconnect-PagerArchive` deletes the saved copy; only the operator ends the credential itself.
+
 **Plain HTTP.** A copy on your own network without HTTPS needs `-AllowUnencryptedAuthentication`, and the module warns each time, because the sign-in is sent unencrypted:
 
 ```powershell
@@ -232,8 +240,8 @@ Each asks with `-Confirm` and does nothing with `-WhatIf`; `-PassThru` outputs t
 
 ## Errors
 
-A refusal from PagerArchive is an error whose `ErrorId` is the API's code (e.g. `duplicate_alias`, `template_in_use`, `powershell_admins_only`) and whose message is the API's. A failure on one item doesn't stop the rest of the pipeline; not being signed in, or the server being unreachable, does.
+A refusal from PagerArchive is an error whose `ErrorId` is the API's code (e.g. `duplicate_alias`, `template_in_use`, `powershell_admins_only`, `service_account_read_only`) and whose message is the API's. A failure on one item doesn't stop the rest of the pipeline; not being signed in, or the server being unreachable, does.
 
 ## What the server needs
 
-Nothing to set: the PowerShell client (`pagerarchive-powershell`) is part of the Authentik blueprint, and the API finds it from `AUTHENTIK_URL` (`POWERSHELL_CLIENT_ID` changes its ID). `GET /auth/powershell` tells the module where to sign in. A remote admin needs to reach both the app's URL and Authentik's.
+Nothing to set: the PowerShell client (`pagerarchive-powershell`) is part of the Authentik blueprint, as is the service accounts' client (`pagerarchive-service`), and the API finds it from `AUTHENTIK_URL` (`POWERSHELL_CLIENT_ID` changes its ID). `GET /auth/powershell` tells the module where to sign in. A remote admin needs to reach both the app's URL and Authentik's.

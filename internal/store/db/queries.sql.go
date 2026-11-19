@@ -1772,6 +1772,51 @@ func (q *Queries) CreateReparseRun(ctx context.Context, arg CreateReparseRunPara
 	return id, err
 }
 
+const createServiceAccount = `-- name: CreateServiceAccount :one
+
+INSERT INTO users (kind, subject, name, role, invited_by, credential_expires_at)
+VALUES ('service', $1, $2::text, 'user', $3::bigint, $4)
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at
+`
+
+type CreateServiceAccountParams struct {
+	Subject   *string
+	Name      string
+	Owner     int64
+	ExpiresAt *time.Time
+}
+
+// Service accounts (R62a, ADR 0048).
+func (q *Queries) CreateServiceAccount(ctx context.Context, arg CreateServiceAccountParams) (User, error) {
+	row := q.db.QueryRow(ctx, createServiceAccount,
+		arg.Subject,
+		arg.Name,
+		arg.Owner,
+		arg.ExpiresAt,
+	)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
+		&i.Look,
+		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
+	)
+	return i, err
+}
+
 const createSession = `-- name: CreateSession :exec
 INSERT INTO sessions (token_hash, user_id, expires_at, id_token) VALUES ($1, $2, $3, $4)
 `
@@ -1846,7 +1891,7 @@ func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeac
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at
 `
 
 type CreateUserParams struct {
@@ -1884,6 +1929,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.TrustedBy,
 		&i.Look,
 		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
 	)
 	return i, err
 }
@@ -3219,7 +3266,7 @@ WITH RECURSIVE tree AS (
     FROM users c JOIN tree t ON c.invited_by = t.id
     WHERE c.id <> $2::bigint
 )
-SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status,
+SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status, u.kind,
        u.created_at, u.trusted_at,
        -- Unused invitations that still work (ADR 0008 §3).
        (SELECT count(*) FROM invitations i
@@ -3241,6 +3288,7 @@ type InviteTreeRow struct {
 	Name        *string
 	Role        string
 	Status      string
+	Kind        string
 	CreatedAt   time.Time
 	TrustedAt   *time.Time
 	Invitations int64
@@ -3268,6 +3316,7 @@ func (q *Queries) InviteTree(ctx context.Context, arg InviteTreeParams) ([]Invit
 			&i.Name,
 			&i.Role,
 			&i.Status,
+			&i.Kind,
 			&i.CreatedAt,
 			&i.TrustedAt,
 			&i.Invitations,
@@ -3856,6 +3905,59 @@ func (q *Queries) ListLargeEvents(ctx context.Context, arg ListLargeEventsParams
 	return items, nil
 }
 
+const listServiceAccounts = `-- name: ListServiceAccounts :many
+SELECT u.id, u.name, u.status, u.created_at, u.credential_expires_at, u.deactivated_at, u.deleted_at,
+       o.id AS owner_id, o.email AS owner_email, o.status AS owner_status
+FROM users u JOIN users o ON o.id = u.invited_by
+WHERE u.kind = 'service'
+ORDER BY u.created_at, u.id
+`
+
+type ListServiceAccountsRow struct {
+	ID                  int64
+	Name                *string
+	Status              string
+	CreatedAt           time.Time
+	CredentialExpiresAt *time.Time
+	DeactivatedAt       *time.Time
+	DeletedAt           *time.Time
+	OwnerID             int64
+	OwnerEmail          *string
+	OwnerStatus         string
+}
+
+// Every service account, revoked ones too, with its owning admin.
+func (q *Queries) ListServiceAccounts(ctx context.Context) ([]ListServiceAccountsRow, error) {
+	rows, err := q.db.Query(ctx, listServiceAccounts)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListServiceAccountsRow
+	for rows.Next() {
+		var i ListServiceAccountsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Status,
+			&i.CreatedAt,
+			&i.CredentialExpiresAt,
+			&i.DeactivatedAt,
+			&i.DeletedAt,
+			&i.OwnerID,
+			&i.OwnerEmail,
+			&i.OwnerStatus,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTemplates = `-- name: ListTemplates :many
 SELECT t.id, t.name, t.agency, t.icon_sha256, t.colour, t.agency_profile,
        (SELECT count(*) FROM aliases a WHERE a.template_id = t.id) AS alias_count
@@ -3902,7 +4004,7 @@ func (q *Queries) ListTemplates(ctx context.Context) ([]ListTemplatesRow, error)
 }
 
 const listUsers = `-- name: ListUsers :many
-SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
+SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, u.kind,
        u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
        -- R44b: how many integrations, and how many paused for failing.
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
@@ -3924,6 +4026,7 @@ type ListUsersRow struct {
 	Status              string
 	CreatedAt           time.Time
 	DeactivatedAt       *time.Time
+	Kind                string
 	InvitedBy           *int64
 	InviterStatus       *string
 	InviterEmail        *string
@@ -3953,6 +4056,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.Status,
 			&i.CreatedAt,
 			&i.DeactivatedAt,
+			&i.Kind,
 			&i.InvitedBy,
 			&i.InviterStatus,
 			&i.InviterEmail,
@@ -5175,6 +5279,26 @@ func (q *Queries) RehomeEventDeliveries(ctx context.Context, arg RehomeEventDeli
 	return result.RowsAffected(), nil
 }
 
+const rekeyServiceAccount = `-- name: RekeyServiceAccount :execrows
+UPDATE users SET subject = $1, credential_expires_at = $2
+WHERE id = $3 AND kind = 'service' AND status = 'active'
+`
+
+type RekeyServiceAccountParams struct {
+	Subject   *string
+	ExpiresAt *time.Time
+	ID        int64
+}
+
+// A new credential: a new Authentik user (so a new subject) and expiry.
+func (q *Queries) RekeyServiceAccount(ctx context.Context, arg RekeyServiceAccountParams) (int64, error) {
+	result, err := q.db.Exec(ctx, rekeyServiceAccount, arg.Subject, arg.ExpiresAt, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const relinkUser = `-- name: RelinkUser :exec
 UPDATE users SET subject = $2, name = $3, invited_by = $4, status = 'active', deactivated_at = NULL
 WHERE id = $1
@@ -5431,6 +5555,52 @@ func (q *Queries) RevokeClient(ctx context.Context, id string) (int64, error) {
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const revokeServiceAccount = `-- name: RevokeServiceAccount :execrows
+UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, deactivated_at = NULL
+WHERE id = $1 AND kind = 'service' AND status <> 'deleted'
+`
+
+func (q *Queries) RevokeServiceAccount(ctx context.Context, id int64) (int64, error) {
+	result, err := q.db.Exec(ctx, revokeServiceAccount, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const revokeServiceAccountsOf = `-- name: RevokeServiceAccountsOf :many
+UPDATE users s SET status = 'deleted', deleted_at = now(), deactivated_at = NULL, subject = NULL
+FROM (SELECT id, subject FROM users WHERE kind = 'service' AND invited_by = $1::bigint AND status <> 'deleted' FOR UPDATE) old
+WHERE s.id = old.id
+RETURNING s.id, old.subject
+`
+
+type RevokeServiceAccountsOfRow struct {
+	ID      int64
+	Subject *string
+}
+
+// An owner deleting their account takes their service accounts with it.
+func (q *Queries) RevokeServiceAccountsOf(ctx context.Context, owner int64) ([]RevokeServiceAccountsOfRow, error) {
+	rows, err := q.db.Query(ctx, revokeServiceAccountsOf, owner)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RevokeServiceAccountsOfRow
+	for rows.Next() {
+		var i RevokeServiceAccountsOfRow
+		if err := rows.Scan(&i.ID, &i.Subject); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const scrubInvitationsTo = `-- name: ScrubInvitationsTo :exec
@@ -5880,29 +6050,61 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 	return err
 }
 
+const serviceAccountByName = `-- name: ServiceAccountByName :one
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE kind = 'service' AND name = $1::text AND status <> 'deleted'
+`
+
+// The live one (active or deactivated) with that name.
+func (q *Queries) ServiceAccountByName(ctx context.Context, name string) (User, error) {
+	row := q.db.QueryRow(ctx, serviceAccountByName, name)
+	var i User
+	err := row.Scan(
+		&i.ID,
+		&i.Subject,
+		&i.Email,
+		&i.EmailKey,
+		&i.Name,
+		&i.Role,
+		&i.Status,
+		&i.InvitedBy,
+		&i.CreatedAt,
+		&i.DeactivatedAt,
+		&i.DeletedAt,
+		&i.TrustedAt,
+		&i.TrustedBy,
+		&i.Look,
+		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
+	)
+	return i, err
+}
+
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, u.kind, u.credential_expires_at, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
 
 type SessionUserRow struct {
-	ID            int64
-	Subject       *string
-	Email         *string
-	EmailKey      *string
-	Name          *string
-	Role          string
-	Status        string
-	InvitedBy     *int64
-	CreatedAt     time.Time
-	DeactivatedAt *time.Time
-	DeletedAt     *time.Time
-	TrustedAt     *time.Time
-	TrustedBy     *int64
-	Look          string
-	SeenRelease   *string
-	SessionUsedAt time.Time
+	ID                  int64
+	Subject             *string
+	Email               *string
+	EmailKey            *string
+	Name                *string
+	Role                string
+	Status              string
+	InvitedBy           *int64
+	CreatedAt           time.Time
+	DeactivatedAt       *time.Time
+	DeletedAt           *time.Time
+	TrustedAt           *time.Time
+	TrustedBy           *int64
+	Look                string
+	SeenRelease         *string
+	Kind                string
+	CredentialExpiresAt *time.Time
+	SessionUsedAt       time.Time
 }
 
 func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUserRow, error) {
@@ -5924,6 +6126,8 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.TrustedBy,
 		&i.Look,
 		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -6798,7 +7002,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -6820,12 +7024,14 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.TrustedBy,
 		&i.Look,
 		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -6847,13 +7053,15 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.TrustedBy,
 		&i.Look,
 		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -6876,6 +7084,8 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.TrustedBy,
 		&i.Look,
 		&i.SeenRelease,
+		&i.Kind,
+		&i.CredentialExpiresAt,
 	)
 	return i, err
 }
