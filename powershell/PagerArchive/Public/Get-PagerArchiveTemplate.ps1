@@ -47,6 +47,7 @@ function Get-PagerArchiveTemplate {
         [Parameter(Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string[]] $Name
     )
     begin {

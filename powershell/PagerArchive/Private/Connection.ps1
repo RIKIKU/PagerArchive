@@ -286,7 +286,11 @@ function Invoke-PaApi {
         [byte[]] $RawBody,
 
         # Statuses that aren't errors, besides 2xx (e.g. 409 for the import).
-        [int[]] $Accept = @()
+        [int[]] $Accept = @(),
+
+        # How long to wait for the server, in seconds. Tab completion waits
+        # less.
+        [int] $TimeoutSec = 120
     )
     $connection = Get-PaConnection
     for ($try = 1; $try -le 2; $try++) {
@@ -304,7 +308,7 @@ function Invoke-PaApi {
             AllowUnencryptedAuthentication = [bool]$connection.AllowUnencrypted
             SkipHttpErrorCheck             = $true
             StatusCodeVariable             = 'status'
-            TimeoutSec                     = 120
+            TimeoutSec                     = $TimeoutSec
             Verbose                        = $false
             Debug                          = $false
             ErrorAction                    = 'Stop'

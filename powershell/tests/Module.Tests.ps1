@@ -873,3 +873,100 @@ Describe 'Retroactive redaction: Get-, Suspend-, Resume-, Stop- and Start-PagerA
         { Stop-PagerArchiveRedaction -Confirm:$false -ErrorAction Continue } | Should -Throw -ErrorId 'not_connected,Stop-PagerArchiveRedaction'
     }
 }
+
+Describe 'Bulk rename, and Set- with nothing to change (R63, owner 2026-11-19)' {
+    BeforeAll {
+        # What -WhatIf wrote to the host, read back from a transcript.
+        function Get-WhatIfText([scriptblock] $Script) {
+            $path = Join-Path -Path $TestDrive -ChildPath "whatif-$([guid]::NewGuid()).txt"
+            $null = Start-Transcript -Path $path
+            try { $null = & $Script } finally { $null = Stop-Transcript }
+            @(Get-Content -Path $path | Where-Object -FilterScript { $_ -like 'What if:*' })
+        }
+    }
+    BeforeEach {
+        $script:aliasRows = @(
+            [pscustomobject]@{ id = 1; pattern = '0100001'; name = 'Old Station 1'; template_id = 7; template = 'Example Fire'; colour = $null; ignored = $false }
+            [pscustomobject]@{ id = 2; pattern = '0100002'; name = 'Old Station 2'; template_id = 7; template = 'Example Fire'; colour = $null; ignored = $true }
+            [pscustomobject]@{ id = 3; pattern = '0100003'; name = 'Old Station 3'; template_id = $null; template = $null; colour = $null; ignored = $false }
+            [pscustomobject]@{ id = 4; pattern = '0300001'; name = 'Brigade'; template_id = 7; template = 'Example Fire'; colour = $null; ignored = $false }
+        )
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/aliases' } -MockWith {
+            [pscustomobject]@{ more = $false; aliases = $script:aliasRows }
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -like '/api/v1/admin/aliases/*' -and $Method -eq 'GET' } -MockWith {
+            $id = [long]($Path -replace '^.*/', '')
+            $script:aliasRows | Where-Object -FilterScript { $_.id -eq $id }
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -like '/api/v1/admin/aliases/*' -and $Method -eq 'PUT' } -MockWith { $null }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -eq '/api/v1/admin/templates' -and $Method -eq 'GET' } -MockWith {
+            @([pscustomobject]@{ id = 7; name = 'Old Fire'; agency = 'Example Fire Service'; colour = $null; agency_profile = $null; icon = $null; aliases = 3 }
+                [pscustomobject]@{ id = 8; name = 'Old Rescue'; agency = 'Example Rescue Service'; colour = $null; agency_profile = $null; icon = $null; aliases = 0 }
+                [pscustomobject]@{ id = 9; name = 'Spare'; agency = 'Spare'; colour = $null; agency_profile = $null; icon = $null; aliases = 0 })
+        }
+        Mock -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -like '/api/v1/admin/templates/*' } -MockWith { $null }
+    }
+
+    It '-NewName takes pipeline input by property name, so a script block works' {
+        foreach ($command in 'Rename-PagerArchiveAlias', 'Rename-PagerArchiveTemplate') {
+            (Get-Command -Name $command).Parameters['NewName'].ParameterSets.Values.ValueFromPipelineByPropertyName | Should -Not -Contain $false -Because $command
+        }
+    }
+    It 'renames several piped aliases, each by a script block, keeping their other settings' {
+        Get-PagerArchiveAlias -Name 'Old *' | Rename-PagerArchiveAlias -NewName { $_.Name -replace '^Old\s+' } -Confirm:$false
+        foreach ($row in $script:aliasRows | Where-Object -FilterScript { $_.name -like 'Old *' }) {
+            Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter {
+                $Method -eq 'PUT' -and $Path -eq "/api/v1/admin/aliases/$($row.id)" -and $Body.name -eq ($row.name -replace '^Old ') -and
+                $Body.pattern -eq $row.pattern -and $Body.template_id -eq $row.template_id -and $Body.ignored -eq $row.ignored
+            } -Times 1 -Exactly
+        }
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PUT' } -Times 3 -Exactly
+    }
+    It 'renames alias names piped as text, each by a script block' {
+        'Old Station 1', 'Old Station 2' | Rename-PaAlias -NewName { $_ -replace '^Old\s+' }
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PUT' -and $Path -eq '/api/v1/admin/aliases/1' -and $Body.name -eq 'Station 1' } -Times 1 -Exactly
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PUT' -and $Path -eq '/api/v1/admin/aliases/2' -and $Body.name -eq 'Station 2' } -Times 1 -Exactly
+    }
+    It 'renames several piped templates, each by a script block' {
+        Get-PagerArchiveTemplate -Name 'Old *' | Rename-PagerArchiveTemplate -NewName { $_.Name -replace '^Old\s+' }
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/7' -and $Body.name -eq 'Fire' } -Times 1 -Exactly
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/8' -and $Body.name -eq 'Rescue' } -Times 1 -Exactly
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' } -Times 2 -Exactly
+    }
+    It 'names each record and its own new name under -WhatIf, and changes nothing' {
+        $text = Get-WhatIfText -Script {
+            Get-PagerArchiveAlias -Name 'Old *' | Rename-PagerArchiveAlias -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+            Get-PagerArchiveTemplate -Name 'Old *' | Rename-PagerArchiveTemplate -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+        }
+        $text | Should -Be @(
+            'What if: Performing the operation "Rename alias to ''Station 1''" on target "0100001 (Old Station 1, Id 1)".'
+            'What if: Performing the operation "Rename alias to ''Station 2''" on target "0100002 (Old Station 2, Id 2)".'
+            'What if: Performing the operation "Rename alias to ''Station 3''" on target "0100003 (Old Station 3, Id 3)".'
+            'What if: Performing the operation "Rename template to ''Fire''" on target "Old Fire (Id 7)".'
+            'What if: Performing the operation "Rename template to ''Rescue''" on target "Old Rescue (Id 8)".'
+        )
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -ne 'GET' } -Times 0 -Exactly
+    }
+
+    It 'Set-PagerArchiveAlias with nothing to change is an error that points at Rename-, and changes nothing' {
+        # The owner's case: new names piped into Set-, which chooses aliases by name.
+        $thrown = { 'Old Station 1', 'Old Station 2' | Set-PagerArchiveAlias } | Should -Throw -ErrorId 'nothing_to_change,Set-PagerArchiveAlias' -PassThru
+        $thrown.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $thrown.Exception.Message | Should -BeLike '*Nothing was changed*Rename-PagerArchiveAlias*'
+        { Get-PagerArchiveAlias -Name 'Old *' | Set-PagerArchiveAlias -ErrorAction Stop } | Should -Throw -ErrorId 'nothing_to_change,Set-PagerArchiveAlias'
+        { Set-PagerArchiveAlias -Id 1 -Ignored $null -ErrorAction Stop } | Should -Throw -ErrorId 'nothing_to_change,Set-PagerArchiveAlias'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Path -ne '/api/v1/admin/aliases' } -Times 0 -Exactly
+        # Something to change still works, and '' still removes the template.
+        Set-PagerArchiveAlias -Id 1 -Template ''
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PUT' -and $Path -eq '/api/v1/admin/aliases/1' -and $null -eq $Body.template_id } -Times 1 -Exactly
+    }
+    It 'Set-PagerArchiveTemplate with nothing to change is an error that points at Rename-, and changes nothing' {
+        $thrown = { 'Old Fire' | Set-PagerArchiveTemplate } | Should -Throw -ErrorId 'nothing_to_change,Set-PagerArchiveTemplate' -PassThru
+        $thrown.CategoryInfo.Category | Should -Be 'InvalidArgument'
+        $thrown.Exception.Message | Should -BeLike '*Nothing was changed*Rename-PagerArchiveTemplate*'
+        { Get-PagerArchiveTemplate -Name 'Old *' | Set-PagerArchiveTemplate -ErrorAction Stop } | Should -Throw -ErrorId 'nothing_to_change,Set-PagerArchiveTemplate'
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -ne 'GET' } -Times 0 -Exactly
+        Set-PagerArchiveTemplate -Id 9 -Colour ''
+        Should -Invoke -ModuleName PagerArchive Invoke-PaApi -ParameterFilter { $Method -eq 'PATCH' -and $Path -eq '/api/v1/admin/templates/9' } -Times 1 -Exactly
+    }
+}

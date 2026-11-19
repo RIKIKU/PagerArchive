@@ -26,6 +26,12 @@ function Rename-PagerArchiveTemplate {
 
     What if: Performing the operation "Rename template to 'Example Fire South'" on target "example fire (Id 49)".
 
+    .EXAMPLE
+    Get-PagerArchiveTemplate -Name 'Old *' | Rename-PagerArchiveTemplate -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+
+    Renames several templates at once: the script block works out each
+    one's new name from the template ($_). -WhatIf shows each new name.
+
     .INPUTS
     PagerArchive.Template, or an object with an Id property, chosen by Id.
     System.String. A template name, by value or by the Name property of an
@@ -46,6 +52,7 @@ function Rename-PagerArchiveTemplate {
         # The template to rename, matched case-insensitively. No wildcards.
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'Name')]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Name,
 
         # The Id of the template to rename, exactly. A piped object's Id
@@ -56,8 +63,11 @@ function Rename-PagerArchiveTemplate {
         [PSDefaultValue(Help = 'none')]
         [long] $Id,
 
-        # The new name, 1 to 100 characters. No wildcards.
-        [Parameter(Mandatory, Position = 1)]
+        # The new name, 1 to 100 characters. No wildcards. A script block
+        # works out each piped item's new name from the item ($_), e.g.
+        # { $_.Name -replace '^Old\s+' }. A piped object's NewName property
+        # binds here too.
+        [Parameter(Mandatory, Position = 1, ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
         [string] $NewName,
 

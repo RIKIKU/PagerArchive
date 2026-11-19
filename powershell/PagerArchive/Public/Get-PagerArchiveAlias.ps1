@@ -69,6 +69,7 @@ function Get-PagerArchiveAlias {
         # Default: any template, or none.
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string[]] $Template
     )
     begin {
