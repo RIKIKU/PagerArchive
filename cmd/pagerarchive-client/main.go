@@ -1,8 +1,8 @@
 // Command pagerarchive-client receives POCSAG pages and posts them to a
 // PagerArchive server. With RADIO_FREQUENCY set it runs rtl_fm and
 // multimon-ng itself (R13), passing the audio from one to the other and
-// measuring it on the way (R74a, internal/radio; rtl_fm runs without
-// squelch); otherwise it reads multimon-ng output on stdin.
+// measuring it on the way (R74a, internal/radio; rtl_fm runs with
+// squelch deliberately off); otherwise it reads multimon-ng output on stdin.
 //
 // Settings (environment):
 //

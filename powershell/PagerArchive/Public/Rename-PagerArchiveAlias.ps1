@@ -31,6 +31,16 @@ function Rename-PagerArchiveAlias {
 
     Of the aliases called 'Brigade', renames only the one for 0300002.
 
+    .EXAMPLE
+    Get-PagerArchiveAlias -Name 'Old *' | Rename-PagerArchiveAlias -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+
+    What if: Performing the operation "Rename alias to 'Station 1'" on target "0100001 (Old Station 1, Id 1)".
+    What if: Performing the operation "Rename alias to 'Station 2'" on target "0100002 (Old Station 2, Id 2)".
+
+    Renames several aliases at once: the script block works out each
+    alias's new name from the alias ($_). Set-PagerArchiveAlias doesn't
+    rename.
+
     .INPUTS
     PagerArchive.Alias, or objects with an Id property, chosen by Id;
     objects with a Pattern property and no Id, by Pattern. System.String
@@ -72,8 +82,11 @@ function Rename-PagerArchiveAlias {
         [ValidateNotNullOrEmpty()]
         [string] $Name,
 
-        # The new name, 1 to 100 characters. No wildcards.
-        [Parameter(Mandatory, Position = 1)]
+        # The new name, 1 to 100 characters. No wildcards. A script block
+        # works out each piped item's new name from the item ($_), e.g.
+        # { $_.Name -replace '^Old\s+' }. A piped object's NewName property
+        # binds here too.
+        [Parameter(Mandatory, Position = 1, ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
         [string] $NewName,
 

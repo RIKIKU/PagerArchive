@@ -254,11 +254,11 @@ A client that runs `rtl_fm` and `multimon-ng` itself (`RADIO_FREQUENCY` set) pas
 | Number | Metric | What it means |
 |---|---|---|
 | **Audio** per second | `pagerarchive_client_radio_audio_bytes_total` (its rate) | How much audio came from `rtl_fm`. At its 22,050 samples a second that's **44,100 bytes a second** while the dongle works; anything much less means it's dropping out |
-| **Audio level** | `pagerarchive_client_radio_level` | The audio's loudness (RMS) in dBFS since the last report, 0 being full scale. An FM receiver without squelch hears loud hiss, so expect roughly −20 to −10 dBFS; a level stuck far lower suggests the dongle is giving silence |
+| **Audio level** | `pagerarchive_client_radio_level` | The audio's loudness (RMS) in dBFS since the last report, 0 being full scale. With squelch deliberately off, the receiver hears loud hiss, so expect roughly −20 to −10 dBFS; a level stuck far lower suggests the dongle is giving silence |
 | **Radio silent for** | `pagerarchive_client_radio_silent_seconds` | Seconds since audio last came. A few hundredths of a second while it works |
 | **rtl_fm messages by kind** | `pagerarchive_client_radio_messages_total{kind}` | `rtl_fm`'s messages, counted: `no_device`, `open_failed`, `usb_transfer_failed`, `tuner_not_locked`, and `other` for anything else, its normal start-up lines included (about 13 each time it starts). Their text goes to the client's own log as before (`docker logs`), never to the stack |
 
-`rtl_fm` runs **without squelch** (no `-l`), and that matters: a working dongle then always produces audio, hiss included, even when the network sends nothing. With squelch on, a quiet channel would be silence too, and the numbers couldn't tell it from a stuck dongle. Don't add squelch to the client.
+The client deliberately runs `rtl_fm` **with squelch off** (no `-l`), and that matters: a working dongle then always produces audio, hiss included, even when the network sends nothing. With squelch on, a quiet channel would be silence too, and the numbers couldn't tell it from a stuck dongle. Paging decoders usually run without squelch anyway, as it can clip the start of a transmission. Don't add squelch to the client.
 
 Measuring never slows or changes what `multimon-ng` gets: the client copies each chunk to `multimon-ng` first and only then adds it to a few counters, with no locks and nothing waiting on the exporter.
 
