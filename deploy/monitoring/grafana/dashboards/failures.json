@@ -154,7 +154,7 @@
       "description": "Whether the database image provides a newer version of an extension (PostGIS's, or pg_trgm) than the database has registered, as the \"Database extension update pending\" alert (R84c). The API checks at start and every hour. Normal: OK. Worry: UPDATE PENDING: the API's own role can't run the update, so run it by hand as the superuser, as the alert says: docker compose exec db psql -U postgres -c 'ALTER EXTENSION postgis UPDATE;' (docs/deploy.md, \"Upgrading\"). \"Not checked\" while /metrics has no check yet.",
       "gridPos": {"h": 4, "w": 8, "x": 16, "y": 27},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max(pagerarchive_db_extension_update_pending{job=\"pagerarchive\"})"}],
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_db_extension_update_pending{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"noValue": "Not checked", "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "UPDATE PENDING", "color": "red"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
