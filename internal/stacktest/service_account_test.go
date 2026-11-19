@@ -27,11 +27,17 @@ func serviceAccountCmd(t *testing.T, args ...string) (string, error) {
 	return string(out), err
 }
 
-// credential is the last line of create's or rotate's output.
+// credential is the line after "The credential:" in create's or rotate's
+// output (its log lines, on stderr, can come before or after it).
 func credential(t *testing.T, out string) string {
 	t.Helper()
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	c := strings.TrimSpace(lines[len(lines)-1])
+	c := ""
+	for i, l := range lines {
+		if strings.HasSuffix(strings.TrimSpace(l), "The credential:") && i+1 < len(lines) {
+			c = strings.TrimSpace(lines[i+1])
+		}
+	}
 	if len(c) < 32 || strings.Contains(c, " ") {
 		t.Fatalf("no credential in the output (%d lines)", len(lines))
 	}
