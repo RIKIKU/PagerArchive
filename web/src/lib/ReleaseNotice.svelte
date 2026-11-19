@@ -47,15 +47,24 @@
 		};
 	});
 
-	// Its countdown starts when it's shown, and Esc sends it at once.
+	// Its countdown starts when it's shown, and Esc sends it at once, as does a
+	// tap or click on it. That listener is on the box itself, not left to
+	// Svelte's delegation at the root: WebKit moves a tap to the nearest
+	// thing that takes clicks (its touch adjustment), and with no listener of
+	// its own the box isn't one, so a tap on it went to a message row behind.
 	$effect(() => {
-		if (!box || !line) return;
+		const el = box;
+		if (!el || !line) return;
 		run();
 		const key = (e: KeyboardEvent) => {
 			if (e.key === 'Escape') leave();
 		};
+		el.addEventListener('click', leave);
 		window.addEventListener('keydown', key);
-		return () => window.removeEventListener('keydown', key);
+		return () => {
+			el.removeEventListener('click', leave);
+			window.removeEventListener('keydown', key);
+		};
 	});
 
 	// The line shrinks from what it shows to nothing over the time left, at a
@@ -161,7 +170,6 @@
 			class:shrunk={menu.shrunk}
 			data-testid="release-notice"
 			bind:this={box}
-			onclick={leave}
 			onpointerenter={() => hold({ pointer: true })}
 			onpointerdown={() => hold({ pointer: true })}
 			onpointerleave={() => hold({ pointer: false })}

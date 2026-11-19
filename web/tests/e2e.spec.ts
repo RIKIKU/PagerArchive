@@ -3507,7 +3507,7 @@ async function landedOn(page: Page, l: Landing, target: string) {
 }
 
 for (const width of [1280, 375]) {
-	test(`A125 a new release told, then into the version at ${width} px`, async ({ browser }, info) => {
+	test(`A125 a new release told, then into the version at ${width} px`, async ({ browser, request }, info) => {
 		test.setTimeout(180_000);
 		const report: string[] = [];
 		const target = width < 768 ? 'More' : `v${NEW_RELEASE}`;
@@ -3572,8 +3572,12 @@ for (const width of [1280, 375]) {
 			await page.context().close();
 		}
 		// On a phone: a finger held on it holds it, and lifting it is a tap, which
-		// sends it at once (owner, 2026-11-19: accepted).
+		// sends it at once (owner, 2026-11-19: accepted). Rows of the list lie
+		// behind it, so a tap that went to them (WebKit moves a tap to the
+		// nearest thing that takes clicks) would open a message instead.
 		if (width < 768) {
+			const job = uniqueJob();
+			for (let i = 0; i < 8; i++) await post(request, '0100001', `@@${job} A125 ROW BEHIND THE NOTICE ${i}`);
 			const { page, notice } = await newReleasePage(browser, width);
 			const touch = { pointerType: 'touch', isPrimary: true, pointerId: 2 };
 			for (const type of ['pointerover', 'pointerenter', 'pointerdown']) await notice.dispatchEvent(type, touch);
@@ -3583,6 +3587,7 @@ for (const width of [1280, 375]) {
 			await notice.tap({ position: { x: 4, y: 4 } });
 			await landedOn(page, await landed, target);
 			expect(Date.now() - sent, 'a tap sends it at once').toBeLessThan(2_000);
+			expect(await page.evaluate(() => location.pathname),'the tap opened nothing behind it').toBe('/');
 			await page.context().close();
 		}
 		// Reduced motion: a quick fade where it is, no flight; the tag still lights up.
