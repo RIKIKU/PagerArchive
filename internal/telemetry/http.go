@@ -2,6 +2,7 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -37,9 +38,10 @@ type stateKey struct{}
 
 // request is one request's span, until it ends.
 type request struct {
-	start time.Time
-	span  trace.Span // nil until started
-	ended bool
+	start     time.Time
+	span      trace.Span // nil until started
+	ended     bool
+	abandoned bool // Abandon: the client went away (R73a)
 }
 
 // Handler wraps next, which must be the router (or wrap it without
@@ -106,6 +108,9 @@ func (h *HTTP) EndRequest(r *http.Request, status int) {
 func (h *HTTP) finish(tracer trace.Tracer, st *request, r *http.Request, status int, end time.Time) {
 	st.ended = true
 	route := Route(r)
+	if st.abandoned {
+		status = StatusClientClosedRequest
+	}
 	if st.span == nil {
 		_, st.span = tracer.Start(r.Context(), "HTTP "+method(r), trace.WithNewRoot(), trace.WithSpanKind(trace.SpanKindServer), trace.WithTimestamp(st.start))
 	}
@@ -123,6 +128,29 @@ func (h *HTTP) finish(tracer trace.Tracer, st *request, r *http.Request, status 
 			traceID = sc.TraceID().String()
 		}
 		h.Metrics.Observe(route, status, end.Sub(st.start), traceID)
+	}
+}
+
+// StatusClientClosedRequest is the status an abandoned request is answered
+// and counted with (R73a): 499, nginx's "client closed request". It isn't a
+// server error.
+const StatusClientClosedRequest = 499
+
+// Abandoned says whether err means only that the request was abandoned: the
+// client went away mid-request, so the request's own context, ctx, was
+// cancelled (R73a). A time limit of our own ends in
+// context.DeadlineExceeded, never this.
+func Abandoned(ctx context.Context, err error) bool {
+	return errors.Is(err, context.Canceled) && ctx.Err() != nil
+}
+
+// Abandon records that r was abandoned (R73a): its span and metrics then
+// have status 499 whatever was written, and it's counted once among its
+// route's abandoned requests. A live-update stream already set up was
+// counted then (EndRequest), and isn't again.
+func Abandon(r *http.Request) {
+	if st, _ := r.Context().Value(stateKey{}).(*request); st != nil {
+		st.abandoned = true
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -77,7 +76,7 @@ func (s *Service) now() time.Time {
 	return time.Now()
 }
 
-func dbErr(op string, err error) error { return fmt.Errorf("%s: %s", op, store.SafeError(err)) }
+func dbErr(op string, err error) error { return store.SafeErr(op, err) }
 
 // Enabled reports whether integrations can be used: the server has a key.
 func (s *Service) Enabled() bool { return s != nil && s.Box != nil }

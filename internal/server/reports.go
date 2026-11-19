@@ -71,7 +71,7 @@ func (s *Server) reportFilter(w http.ResponseWriter, r *http.Request) (reports.F
 	if a := strings.TrimSpace(q.Get("agency")); a != "" {
 		ids, err := s.Reports.Templates(r.Context(), a)
 		if err != nil {
-			s.reportFailed(w, err)
+			s.reportFailed(w, r, err)
 			return f, base, false
 		}
 		f.Templates, base.Agency = append([]int64{}, ids...), a
@@ -94,9 +94,12 @@ func (s *Server) reportReady(r *http.Request, base *ReportBase) error {
 	return err
 }
 
-func (s *Server) reportFailed(w http.ResponseWriter, err error) {
+func (s *Server) reportFailed(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, errReportNotFound) {
 		problem(w, http.StatusNotFound, "there's no alias with that name")
+		return
+	}
+	if s.abandoned(w, r, err) {
 		return
 	}
 	s.Log.Error("report", "error", store.SafeError(err))
@@ -140,12 +143,12 @@ type ReportOptions struct {
 func (s *Server) reportOptions(w http.ResponseWriter, r *http.Request) {
 	// The event types of the jobs counted so far, after those just changed.
 	if err := s.Reports.CatchUp(r.Context(), reportCatchUp); err != nil && !errors.Is(err, reports.ErrBusy) {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	o, err := s.Reports.FilterOptions(r.Context())
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	out := ReportOptions{Agencies: o.Agencies, EventTypes: []EventType{}}
@@ -203,7 +206,7 @@ func (s *Server) busiestReport(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := r.Context()
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	prev := f.Previous()
@@ -216,7 +219,7 @@ func (s *Server) busiestReport(w http.ResponseWriter, r *http.Request) {
 		out.PreviousJobs, err = s.Reports.Total(ctx, prev)
 	}
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	// The aliases' names, for the order: most jobs, then by name (a capcode
@@ -229,7 +232,7 @@ func (s *Server) busiestReport(w http.ResponseWriter, r *http.Request) {
 	}
 	aliases, err := s.Reports.Aliases(ctx, ids)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	rows := make([]BusiestRow, 0, len(whos))
@@ -280,7 +283,7 @@ func (s *Server) busiestReport(w http.ResponseWriter, r *http.Request) {
 	}
 	before, err := s.Reports.Whos(ctx, prev, keys)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	was := map[string]int64{}
@@ -315,13 +318,13 @@ func (s *Server) localitiesReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	ctx := r.Context()
 	counts, err := s.Reports.Localities(ctx, f)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	names := []string{}
@@ -333,7 +336,7 @@ func (s *Server) localitiesReport(w http.ResponseWriter, r *http.Request) {
 	}
 	points, err := s.Reports.LocalityPoints(ctx, names)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	out := LocalitiesReport{ReportBase: base, Rows: []LocalityRow{}}
@@ -384,7 +387,7 @@ func (s *Server) reportWhoOf(w http.ResponseWriter, r *http.Request) (reportWho,
 	if a := strings.TrimSpace(q.Get("alias")); a != "" {
 		named, err := s.Store.AliasesNamed(ctx, a)
 		if err != nil {
-			s.reportFailed(w, err)
+			s.reportFailed(w, r, err)
 			return out, false
 		}
 		if len(named) == 0 {
@@ -425,12 +428,12 @@ func (s *Server) busyTimesReport(w http.ResponseWriter, r *http.Request) {
 	out := BusyTimesReport{Alias: who.Alias, Capcode: who.Capcode, Aliases: who.Aliases}
 	whos := who.Whos
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	cells, err := s.Reports.Hours(ctx, f, whos)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	if len(whos) > 0 {
@@ -474,12 +477,12 @@ func (s *Server) eventTypesReport(w http.ResponseWriter, r *http.Request) {
 	}
 	base.EventType = "" // every event type is counted
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	counts, err := s.Reports.EventTypeMonths(r.Context(), f)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	totals := map[string]int64{}
@@ -585,12 +588,12 @@ func (s *Server) jobSizeReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	sizes, err := s.Reports.Sizes(r.Context(), f)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	type hists struct{ p, c, n map[int64]int64 }
@@ -676,7 +679,7 @@ func (s *Server) longJobsReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	ctx := r.Context()
@@ -685,7 +688,7 @@ func (s *Server) longJobsReport(w http.ResponseWriter, r *http.Request) {
 		base.Jobs, err = s.Reports.Total(ctx, f)
 	}
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	out := LongJobsReport{ReportBase: base, Limit: limit, Rows: []LongJob{}}
@@ -720,7 +723,7 @@ func (s *Server) appliancesReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	ctx := r.Context()
@@ -729,7 +732,7 @@ func (s *Server) appliancesReport(w http.ResponseWriter, r *http.Request) {
 		base.Jobs, err = s.Reports.Total(ctx, f)
 	}
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	out := AppliancesReport{ReportBase: base, Rows: []ApplianceRow{}}
@@ -809,12 +812,12 @@ func (s *Server) jobsReport(w http.ResponseWriter, r *http.Request) {
 		out.Page = *page
 	}
 	if err := s.reportReady(r, &base); err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	n, jobs, err := s.Reports.Jobs(r.Context(), f, cut, out.Page)
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	if len(cut.Whos) > 0 {
@@ -897,7 +900,7 @@ func (s *Server) largeEventsReport(w http.ResponseWriter, r *http.Request) {
 	local := func(d time.Time) time.Time { return time.Date(d.Year(), d.Month(), d.Day(), 0, 0, 0, 0, loc) }
 	events, err := s.Reports.LargeEvents(r.Context(), local(from), local(to.AddDate(0, 0, 1)))
 	if err != nil {
-		s.reportFailed(w, err)
+		s.reportFailed(w, r, err)
 		return
 	}
 	start := func(d time.Time) time.Time {

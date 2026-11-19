@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -139,6 +141,9 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 
 	clients, err := s.Store.ListClients(ctx)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("metrics: clients", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "metrics failed")
 		return
@@ -193,6 +198,9 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	}
 	byStatus, err := s.Store.CountIntegrationsByStatus(ctx)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("metrics: integrations", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "metrics failed")
 		return
@@ -289,6 +297,12 @@ func (s *Server) loadMetrics(m *exposition) {
 		m.bucket("pagerarchive_http_request_duration_seconds", l, "+Inf", r.Buckets[len(telemetry.Buckets)], r.Exemplars[len(telemetry.Buckets)])
 		m.sample("pagerarchive_http_request_duration_seconds_sum", l, r.Sum)
 		m.sample("pagerarchive_http_request_duration_seconds_count", l, float64(r.Count))
+	}
+	// R73a: requests the browser or client gave up on, answered 499.
+	abandoned := s.Requests.Abandoned()
+	m.family("pagerarchive_http_requests_abandoned_total", "counter", "API requests abandoned since the API started (the client went away before the answer), by route pattern.")
+	for _, route := range slices.Sorted(maps.Keys(abandoned)) {
+		m.sample("pagerarchive_http_requests_abandoned_total", labels{"route", route}, float64(abandoned[route]))
 	}
 
 	if s.Store != nil && s.Store.Pool != nil {

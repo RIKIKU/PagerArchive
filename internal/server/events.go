@@ -56,6 +56,9 @@ func (s *Server) listLargeEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.Store.ListLargeEvents(r.Context(), p)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("large events", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -94,6 +97,9 @@ func (s *Server) getLargeEvent(w http.ResponseWriter, r *http.Request) {
 		pages, err = s.Store.LargeEventPages(ctx, id)
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("large event", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -123,6 +129,9 @@ func (s *Server) eventParam(w http.ResponseWriter, r *http.Request) (*int64, boo
 		problem(w, http.StatusNotFound, "no such large event")
 		return nil, false
 	case err != nil:
+		if s.abandoned(w, r, err) {
+			return nil, false
+		}
 		s.Log.Error("large event", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return nil, false
@@ -156,6 +165,9 @@ type LargeEventSettings struct {
 func (s *Server) getLargeEventSettings(w http.ResponseWriter, r *http.Request) {
 	n, err := events.Threshold(r.Context(), s.Store.Queries)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("large event settings", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -172,6 +184,9 @@ func (s *Server) putLargeEventSettings(w http.ResponseWriter, r *http.Request) {
 	if err := events.SetThreshold(r.Context(), s.Store.Queries, req.JobPages); err != nil {
 		if errors.Is(err, events.ErrThreshold) {
 			problem(w, http.StatusUnprocessableEntity, fmt.Sprintf("The number of Emergency pages must be a whole number from %d to %d.", events.MinPages, events.MaxPages))
+			return
+		}
+		if s.abandoned(w, r, err) {
 			return
 		}
 		s.Log.Error("large event settings", "error", store.SafeError(err))

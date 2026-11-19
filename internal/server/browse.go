@@ -188,6 +188,9 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	m.Categories = append(m.Categories, "Other")
 	if first, last, err := s.Store.PageSpan(r.Context()); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("meta: page span", "error", store.SafeError(err))
 	} else if first != nil && last != nil {
 		m.FirstPage, m.LastPage = first.In(s.Location).Format(time.DateOnly), last.In(s.Location).Format(time.DateOnly)
@@ -195,6 +198,9 @@ func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	if s.isAdmin(r) {
 		n, err := s.Store.CountWaitingRequests(r.Context())
 		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("meta: waiting requests", "error", store.SafeError(err))
 		} else {
 			m.WaitingRequests = &n
@@ -224,7 +230,7 @@ func (s *Server) search(ctx context.Context, f search.Filter, before *search.Cur
 	}
 	rows, err := s.Store.SearchMessages(ctx, p)
 	if err != nil {
-		return nil, fmt.Errorf("search: %s", store.SafeError(err))
+		return nil, store.SafeErr("search", err)
 	}
 	return rows, nil
 }
@@ -238,7 +244,7 @@ func (s *Server) searchNewer(ctx context.Context, f search.Filter, after search.
 	p.AfterSent, p.AfterID = &after.SentAt, &after.ID
 	rows, err := s.Store.SearchNewer(ctx, p)
 	if err != nil {
-		return nil, fmt.Errorf("search: %s", store.SafeError(err))
+		return nil, store.SafeErr("search", err)
 	}
 	return rows, nil
 }
@@ -334,6 +340,9 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("list messages", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
 		return
@@ -342,12 +351,18 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 		page.Messages = append(page.Messages, s.toMessage(m, admin))
 	}
 	if err := s.addAreas(r.Context(), page.Messages); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("areas", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
 	if f.Album != nil {
 		if err := s.addNotes(r, *f.Album, page.Messages); err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("album notes", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return
@@ -355,6 +370,9 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	}
 	if q.Get("receptions") == "true" {
 		if err := s.addReceptions(r.Context(), page.Messages, admin); err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("receptions", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return
@@ -375,7 +393,7 @@ func (s *Server) addReceptions(ctx context.Context, msgs []Message, admin bool) 
 	}
 	recs, err := s.Store.ReceptionsForMessages(ctx, ids)
 	if err != nil {
-		return errors.New(store.SafeError(err))
+		return store.SafeErr("", err)
 	}
 	byMessage := map[int64][]db.MessageReceptionsRow{}
 	for _, rc := range recs {
@@ -416,6 +434,9 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 	// A detail view shows the message whatever the list's filters (ignored included).
 	rows, err := s.search(r.Context(), search.Filter{Ignored: true}, nil, 1, []int64{id})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("get message", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -426,6 +447,9 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	msgs := []Message{s.toMessage(rows[0], admin)}
 	if err := s.addAreas(r.Context(), msgs); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("areas", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -433,6 +457,9 @@ func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
 	msg := msgs[0]
 	recs, err := s.Store.MessageReceptions(r.Context(), id)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("receptions", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -476,6 +503,9 @@ func (s *Server) messagesByID(w http.ResponseWriter, r *http.Request) {
 	admin := s.isAdmin(r)
 	rows, err := s.search(r.Context(), search.Filter{Ignored: true}, nil, len(ids), ids)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("messages by id", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -485,6 +515,9 @@ func (s *Server) messagesByID(w http.ResponseWriter, r *http.Request) {
 		listed[i] = s.toMessage(m, admin)
 	}
 	if err := s.addAreas(r.Context(), listed); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("areas", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -515,6 +548,9 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 	admin := s.isAdmin(r)
 	rows, err := s.search(r.Context(), search.Filter{Job: []string{job}, Ignored: true}, nil, jobLimit, nil)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("job", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -524,6 +560,9 @@ func (s *Server) getJob(w http.ResponseWriter, r *http.Request) {
 		out.Messages = append(out.Messages, s.toMessage(m, admin))
 	}
 	if err := s.addAreas(r.Context(), out.Messages); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("areas", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -542,6 +581,9 @@ type UnaliasedCapcode struct {
 func (s *Server) unaliased(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.UnaliasedCapcodes(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("unaliased", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -576,6 +618,9 @@ func (s *Server) searchValues(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("search values", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -600,6 +645,9 @@ type ClientStatus struct {
 func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.ListClients(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("clients", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -699,6 +747,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	// after this finds the subscription (ADR 0010 §4).
 	if now, err := s.Store.UserByID(ctx, u.ID); err != nil || now.Status != "active" || now.Role != u.Role {
 		if err != nil {
+			if s.noteAbandoned(r, err) {
+				return
+			}
 			s.Log.Error("stream: user", "error", store.SafeError(err))
 		}
 		reconnect(live.Account)
@@ -722,6 +773,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	count := 0
 	if after == nil {
 		if covered, err = s.Store.LastMessageID(ctx); err != nil {
+			if s.noteAbandoned(r, err) {
+				return
+			}
 			s.Log.Error("stream: last message", "error", store.SafeError(err))
 			return
 		}
@@ -732,6 +786,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		for covered = *after; ; {
 			ids, err := s.Store.MessageIDsAfter(ctx, db.MessageIDsAfterParams{ID: covered, MaxRows: catchUpBatch})
 			if err != nil {
+				if s.noteAbandoned(r, err) {
+					return
+				}
 				s.Log.Error("stream: catch-up", "error", store.SafeError(err))
 				return
 			}
@@ -740,6 +797,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			}
 			rows, err := s.search(ctx, f, nil, len(ids), ids)
 			if err != nil {
+				if s.noteAbandoned(r, err) {
+					return
+				}
 				s.Log.Error("stream: catch-up", "error", err.Error())
 				return
 			}
@@ -760,6 +820,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				err = send(rows)
 			}
 			if err != nil {
+				if s.noteAbandoned(r, err) {
+					return
+				}
 				s.Log.Error("stream: catch-up", "error", err.Error())
 				return
 			}
@@ -801,6 +864,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				err = send(rows)
 			}
 			if err != nil {
+				if s.noteAbandoned(r, err) {
+					return
+				}
 				s.Log.Error("stream", "error", err.Error())
 				return
 			}
@@ -838,7 +904,7 @@ func (s *Server) aliasView(r *http.Request, id int64, admin bool) (AliasView, bo
 		return AliasView{}, false, nil
 	}
 	if err != nil {
-		return AliasView{}, false, fmt.Errorf("alias: %s", store.SafeError(err))
+		return AliasView{}, false, store.SafeErr("alias", err)
 	}
 	v := AliasView{ID: a.ID, Pattern: a.Pattern, Name: a.Name, TemplateID: a.TemplateID, Template: a.TemplateName,
 		Agency: a.Agency, Icon: iconURL(a.IconSha256), Colour: a.Colour, Ignored: a.Ignored}
@@ -866,6 +932,9 @@ func (s *Server) getAlias(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("alias", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -911,12 +980,18 @@ func (s *Server) getCapcode(w http.ResponseWriter, r *http.Request) {
 		rows, err = s.Store.UnaliasedCapcode(r.Context(), capcode)
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("capcode", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
 	if s.isAdmin(r) {
 		if out.History, err = s.Catalog.History(r.Context(), nil, capcode); err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("capcode history", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return

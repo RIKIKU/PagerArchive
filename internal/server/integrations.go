@@ -19,6 +19,9 @@ func (s *Server) integrationsError(w http.ResponseWriter, r *http.Request, op st
 		problem(w, refusal.Status, refusal.Msg)
 		return
 	}
+	if s.abandoned(w, r, err) {
+		return
+	}
 	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong")
 }
@@ -207,6 +210,9 @@ func (s *Server) adminUser(w http.ResponseWriter, r *http.Request) {
 	}
 	users, err := s.userRows(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("users", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return

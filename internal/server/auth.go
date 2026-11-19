@@ -144,6 +144,9 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			if err != nil {
+				if s.abandoned(w, r, err) {
+					return
+				}
 				problem(w, http.StatusServiceUnavailable, "couldn't check the sign-in")
 				return
 			}
@@ -161,6 +164,9 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.ErrorContext(r.Context(), "session", "error", err.Error())
 			problem(w, http.StatusInternalServerError, "couldn't check the session")
 			return
@@ -320,6 +326,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("sign-in", "error", err.Error())
 		signInFailed(w, r, "error")
 		return
@@ -328,6 +337,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	// sent to the browser's pages or logged.
 	token, err := s.Accounts.NewSession(r.Context(), u.ID, raw)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("sign-in", "error", err.Error())
 		signInFailed(w, r, "error")
 		return
@@ -377,6 +389,9 @@ func (s *Server) logout(w http.ResponseWriter, r *http.Request) {
 	idToken := ""
 	if c, err := r.Cookie(sessionCookie); err == nil {
 		if idToken, err = s.Accounts.EndSession(r.Context(), c.Value); err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("sign-out", "error", err.Error())
 		}
 	}
@@ -493,6 +508,9 @@ type AuthStatus struct {
 func (s *Server) authStatus(w http.ResponseWriter, r *http.Request) {
 	ok, err := s.Accounts.FirstAdminAvailable(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("auth status", "error", err.Error())
 	}
 	writeJSON(w, http.StatusOK, AuthStatus{FirstAdminSetup: ok})
@@ -509,6 +527,9 @@ func (s *Server) firstAdmin(w http.ResponseWriter, r *http.Request) {
 	case errors.As(err, &refusal):
 		link = "/signin?error=" + url.QueryEscape(refusal.Code)
 	case err != nil:
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("first admin", "error", err.Error())
 		link = "/signin?error=error"
 	}

@@ -24,6 +24,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 const (
@@ -144,7 +145,7 @@ func (s *Service) closeLive(ids []int64) {
 }
 
 func dbErr(op string, err error) error {
-	return fmt.Errorf("%s: %s", op, store.SafeError(err))
+	return store.SafeErr(op, err)
 }
 
 func (s *Service) allowed(domain string) bool { return slices.Contains(s.AllowedDomains, domain) }
@@ -540,7 +541,8 @@ func (s *Service) Session(ctx context.Context, token string) (db.User, error) {
 		return db.User{}, dbErr("session", err)
 	}
 	if now := s.now(); now.Sub(r.SessionUsedAt) > sessionRenewAfter {
-		if err := s.Store.TouchSession(ctx, db.TouchSessionParams{TokenHash: hash, ExpiresAt: now.Add(SessionLifetime)}); err != nil {
+		// An abandoned request (R73a) is told of where the request ends.
+		if err := s.Store.TouchSession(ctx, db.TouchSessionParams{TokenHash: hash, ExpiresAt: now.Add(SessionLifetime)}); err != nil && !telemetry.Abandoned(ctx, err) {
 			s.Log.Error("renew session", "error", store.SafeError(err))
 		}
 	}
