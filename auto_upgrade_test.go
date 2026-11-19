@@ -1,6 +1,7 @@
 package pagerarchive
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -141,5 +142,72 @@ cd "$HOME_AU" && back_up || echo "failed: $REASON"`
 		if _, err := os.Stat(filepath.Join(au, d)); (err == nil) != want {
 			t.Errorf("%s: there %v, want %v", d, err == nil, want)
 		}
+	}
+}
+
+// R84h (owner, 2026-11-20: "we should make that dashboard reflect in progress
+// upgrades too"): during a run, the status has when it started and, once it
+// knows, the release it's upgrading to; the last check is the run's start,
+// which the run's end doesn't move; at the end both go. Each step stubbed, by
+// a clock that moves 100 s each time it's read.
+func TestAutoUpgradeRunInProgress(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("needs jq")
+	}
+	dir := installDir(t)
+	script := `PA_DIR=$PWD HOME_AU=$PWD/au STATUS_DIR=$PWD/au/status STATUS=$PWD/au/status/status.json LOG=$PWD/au/status/auto-upgrade.log
+JQ=jq MON_DIR= RELEASES=$PWD/au/releases.json
+mkdir -p "$STATUS_DIR"; echo 1000 >"$PWD/clock"
+now() { local n; n=$(cat "$PA_DIR/clock"); echo $((n + 100)) >"$PA_DIR/clock"; echo "$n"; }
+snap() { jq -c "{state, running_since, target_version, last_check_at, last_check_result}" "$STATUS"; }
+running_version() { echo "$FROM_V"; }
+latest_release() { echo v1.19.0; }
+release_field() { echo ""; }
+backup_busy() { return 1; }
+verify() { echo "verifying: $(snap)"; }
+back_up() { echo "backing-up: $(snap)"; NIGHT=2026-11-20; }
+fingerprint() { echo fp; }
+images_of() { :; }
+docker() { :; }
+dc() { :; }
+dbq() { echo 0; }
+upgrade() { echo "upgrading: $(snap)"; }
+health() { echo "health-check: $(snap)"; PAGE_NOTE=skipped; }
+echo '{"enabled":true,"state":"idle","running_since":0,"last_check_at":5,"failures":0,"rollbacks":0,"failed_versions":[],"history":[]}' >"$STATUS"
+run >"$PA_DIR/out" 2>&1; grep -E '^(verifying|backing-up|upgrading|health-check):' "$PA_DIR/out"
+echo "end: $(snap)"
+FROM_V=1.19.0
+run >/dev/null 2>&1
+echo "up-to-date: $(snap)"`
+	out, ok := autoUpgrade(t, dir, "FROM_V=1.18.0\n"+script)
+	if !ok {
+		t.Fatalf("the run: %s", out)
+	}
+	t.Log(out)
+	// The run's start is the clock's value when it became checking.
+	lines := map[string]string{}
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		if k, v, found := strings.Cut(l, ": "); found {
+			lines[k] = v
+		}
+	}
+	v := lines["verifying"]
+	i := strings.Index(v, `"running_since":`)
+	if i < 0 {
+		t.Fatalf("no running_since while verifying: %s", out)
+	}
+	start := strings.SplitN(v[i+len(`"running_since":`):], ",", 2)[0]
+	for _, step := range []string{"verifying", "backing-up", "upgrading", "health-check"} {
+		want := fmt.Sprintf(`{"state":"%s","running_since":%s,"target_version":"1.19.0","last_check_at":%s,"last_check_result":"in-progress"}`, step, start, start)
+		if lines[step] != want {
+			t.Errorf("%s: %s, want %s", step, lines[step], want)
+		}
+	}
+	if want := fmt.Sprintf(`{"state":"idle","running_since":0,"target_version":"","last_check_at":%s,"last_check_result":"upgraded"}`, start); lines["end"] != want {
+		t.Errorf("after the upgrade: %s, want %s", lines["end"], want)
+	}
+	if !strings.Contains(lines["up-to-date"], `"state":"idle","running_since":0,"target_version":"","last_check_at":`) ||
+		strings.Contains(lines["up-to-date"], `"last_check_at":`+start+",") || !strings.Contains(lines["up-to-date"], `"last_check_result":"up-to-date"`) {
+		t.Errorf("a run that found nothing: %s", lines["up-to-date"])
 	}
 }

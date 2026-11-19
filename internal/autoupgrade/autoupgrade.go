@@ -37,6 +37,7 @@ type file struct {
 	DisabledAt      int64    `json:"disabled_at"`
 	State           string   `json:"state"`
 	RunningSince    int64    `json:"running_since"`
+	TargetVersion   string   `json:"target_version"`
 	LastCheckAt     int64    `json:"last_check_at"`
 	LastCheckResult string   `json:"last_check_result"`
 	LastCheckNote   string   `json:"last_check_note"`
@@ -100,9 +101,14 @@ type Done struct {
 type Status struct {
 	State string `json:"state"`
 	// What the script is doing now: "idle", "checking", "verifying",
-	// "backing-up", "upgrading", "health-check" or "rolling-back".
+	// "backing-up", "upgrading", "health-check" or "rolling-back". While it
+	// isn't idle, RunningSince is when the run started (its check) and
+	// TargetVersion, once it knows, the release it's upgrading to. LastCheckAt
+	// is when a run last checked: its start, so during a run it's that run's,
+	// and LastCheckResult is "in-progress" until it ends.
 	Run             string     `json:"run"`
 	RunningSince    *time.Time `json:"running_since"`
+	TargetVersion   string     `json:"target_version,omitempty"`
 	EnabledAt       *time.Time `json:"enabled_at"`
 	DisabledAt      *time.Time `json:"disabled_at"`
 	LastCheckAt     *time.Time `json:"last_check_at"`
@@ -160,6 +166,11 @@ func Read(path string, now time.Time) Status {
 	}
 	if s.Run = oneOf(f.State, Runs); s.Run == "" {
 		s.Run = "idle"
+	}
+	if s.Run == "idle" {
+		s.RunningSince = nil
+	} else {
+		s.TargetVersion = version(f.TargetVersion)
 	}
 	s.FailedVersions = []string{}
 	for _, v := range f.FailedVersions {

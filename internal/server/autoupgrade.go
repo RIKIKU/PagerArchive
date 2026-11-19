@@ -31,7 +31,7 @@ func (s *Server) autoUpgradeMetrics(m *exposition) {
 		return
 	}
 	if u.LastCheckAt != nil {
-		m.family("pagerarchive_auto_upgrade_last_check_timestamp_seconds", "gauge", "When automatic upgrades last checked for a release (R84h).")
+		m.family("pagerarchive_auto_upgrade_last_check_timestamp_seconds", "gauge", "When automatic upgrades last checked for a release: when a run started, so during a run it's that run's start (R84h).")
 		m.sample("pagerarchive_auto_upgrade_last_check_timestamp_seconds", nil, float64(u.LastCheckAt.Unix()))
 	}
 	if u.LastUpgrade != nil {
@@ -55,5 +55,15 @@ func (s *Server) autoUpgradeMetrics(m *exposition) {
 	m.family("pagerarchive_auto_upgrade_run", "gauge", "What an automatic upgrade run is doing now, 1 for the current step (R84h).")
 	for _, run := range autoupgrade.Runs {
 		m.sample("pagerarchive_auto_upgrade_run", labels{"step", run}, b2f(u.Run == run))
+	}
+	// While a run is going: when it started and, once it knows, the release
+	// it's upgrading to, one series each. None while idle.
+	if u.Run != "idle" && u.RunningSince != nil {
+		m.family("pagerarchive_auto_upgrade_run_start_timestamp_seconds", "gauge", "When the automatic upgrade run going now started; none while idle (R84h).")
+		m.sample("pagerarchive_auto_upgrade_run_start_timestamp_seconds", nil, float64(u.RunningSince.Unix()))
+		if u.TargetVersion != "" {
+			m.family("pagerarchive_auto_upgrade_target_info", "gauge", "The release the automatic upgrade run going now is upgrading to, as its label; none while idle (R84h).")
+			m.sample("pagerarchive_auto_upgrade_target_info", labels{"to", u.TargetVersion}, 1)
+		}
 	}
 }
