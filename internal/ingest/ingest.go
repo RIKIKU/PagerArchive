@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -78,7 +77,7 @@ type Service struct {
 func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome, int64, error) {
 	// Every page, ignored ones included, updates the client's last-seen time (R16).
 	if err := s.Store.TouchClient(ctx, db.TouchClientParams{ID: clientID, SeenAt: pg.ReceivedAt}); err != nil {
-		return "", 0, fmt.Errorf("touch client: %s", store.SafeError(err))
+		return "", 0, store.SafeErr("touch client", err)
 	}
 	tr := telemetry.Or(s.Tracer)
 	_, span := tr.Start(ctx, "ingest.redact") // control tokens, redaction, priority
@@ -92,7 +91,7 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 	defer span.End()                            // already ended, unless it failed
 	cands, err := s.Candidates(pctx, s.Store.Queries, pg.Capcode)
 	if err != nil {
-		return "", 0, fmt.Errorf("aliases: %s", store.SafeError(err))
+		return "", 0, store.SafeErr("aliases", err)
 	}
 	draft, err := s.Draft(prep, cands, pg)
 	if err != nil {
@@ -112,7 +111,7 @@ func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome
 		return err
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("store page: %s", store.SafeError(err))
+		return "", 0, store.SafeErr("store page", err)
 	}
 	return outcome, id, nil
 }

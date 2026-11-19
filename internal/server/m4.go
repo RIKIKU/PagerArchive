@@ -51,6 +51,9 @@ func (s *Server) mapMessages(w http.ResponseWriter, r *http.Request) {
 	f.Located = true
 	rows, err := s.search(r.Context(), f, nil, mapLimit+1, nil)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("map", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
 		return
@@ -63,6 +66,9 @@ func (s *Server) mapMessages(w http.ResponseWriter, r *http.Request) {
 		out.Messages = append(out.Messages, s.toMessage(m, admin))
 	}
 	if err := s.addAreas(r.Context(), out.Messages); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("map", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "search failed")
 		return
@@ -184,6 +190,9 @@ func (s *Server) capcodeReport(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("report", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "report failed")
 		return
@@ -257,6 +266,9 @@ func (s *Server) retentionState(r *http.Request) (Retention, error) {
 func (s *Server) getRetention(w http.ResponseWriter, r *http.Request) {
 	st, err := s.retentionState(r)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("retention", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -295,6 +307,9 @@ func (s *Server) putRetention(w http.ResponseWriter, r *http.Request) {
 	}
 	cur, err := s.retentionState(r)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("retention", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -311,6 +326,9 @@ func (s *Server) putRetention(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if err := s.Nightly.SetDays(r.Context(), req.Days); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("retention", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't save")
 		return

@@ -109,6 +109,9 @@ func (s *Server) getIcon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("icon", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return

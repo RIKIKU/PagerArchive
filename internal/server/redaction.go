@@ -21,6 +21,9 @@ func (s *Server) getRedaction(w http.ResponseWriter, r *http.Request) {
 	}
 	st, err := s.Redaction.GetStatus(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "retroactive redaction status", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong")
 		return
@@ -72,6 +75,9 @@ func (s *Server) redactionAction(w http.ResponseWriter, r *http.Request, op stri
 	case errors.As(err, &refusal):
 		writeJSON(w, http.StatusConflict, Problem{Code: refusal.Code, Error: refusal.Message})
 	case err != nil:
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "retroactive redaction change", "op", op, "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 	default:

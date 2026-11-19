@@ -36,6 +36,9 @@ func (s *Server) catalogError(w http.ResponseWriter, r *http.Request, op string,
 		return
 	}
 	// Catalog errors carry SQLSTATEs and capcodes, never names (store.SafeError).
+	if s.abandoned(w, r, err) {
+		return
+	}
 	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 }
@@ -57,6 +60,9 @@ type TemplateChoice struct {
 func (s *Server) listTemplates(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.ListTemplates(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("templates", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -224,6 +230,9 @@ func (s *Server) adminAliases(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.Store.AdminAliases(r.Context(), db.AdminAliasesParams{Q: q, After: r.URL.Query().Get("after"), MaxRows: int32(limit + 1)})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("admin aliases", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -270,7 +279,7 @@ func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if out.Integrations, err = s.Store.CountIntegrationsSelectingAlias(r.Context(), id); err != nil {
-		s.catalogError(w, r, "admin alias", fmt.Errorf("integrations: %s", store.SafeError(err)))
+		s.catalogError(w, r, "admin alias", store.SafeErr("integrations", err))
 		return
 	}
 	if out.SameNameAs, err = s.Catalog.SameNameAs(r.Context(), id, v.Name); err != nil {
@@ -354,6 +363,9 @@ func (s *Server) exportAliases(w http.ResponseWriter, r *http.Request) {
 	n, err := s.Catalog.ExportCSV(r.Context(), w)
 	if err != nil {
 		// Usually the query, before anything was written.
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("export aliases", "error", err.Error())
 		problem(w, http.StatusInternalServerError, "export failed")
 		return

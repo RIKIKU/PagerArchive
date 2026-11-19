@@ -56,10 +56,12 @@ type env struct {
 	posts []string // every page text posted, for the log check
 	now   time.Time
 
-	srv    *server.Server
-	cat    *catalog.Catalog
-	worker *reparse.Worker
-	job    *nightly.Job
+	srv *server.Server
+	// handler is srv's, for requests a test makes without a connection (A129).
+	handler http.Handler
+	cat     *catalog.Catalog
+	worker  *reparse.Worker
+	job     *nightly.Job
 	// redactor is retroactive redaction (R45a), which the nightly run does.
 	redactor *redaction.Worker
 	// queries records the SQL of queries made for requests, when asked (A127).
@@ -243,7 +245,8 @@ func setup(t *testing.T, with ...traced) *env {
 	srv.Redaction = e.redactor
 	e.job = &nightly.Job{Store: st, Redaction: e.redactor, Location: melbourne, At: 3 * time.Hour, Now: time.Now, Log: log, Tracer: tr, Reports: srv.Reports}
 	srv.Nightly = e.job
-	hs := httptest.NewServer(srv.Handler())
+	e.handler = srv.Handler()
+	hs := httptest.NewServer(e.handler)
 	t.Cleanup(hs.Close)
 	e.url = hs.URL
 	e.admin = e.newMember("admin@example.com", accounts.RoleAdmin, nil)

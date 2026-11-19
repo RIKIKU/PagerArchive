@@ -112,6 +112,34 @@ func SafeError(err error) string {
 	return fmt.Sprintf("%T", err)
 }
 
+// SafeErr is SafeError as an error, after prefix and ": " unless prefix is
+// "": "search: SQLSTATE 57014". A cancelled or timed-out context stays in
+// its chain, so errors.Is still tells an abandoned request (R73a) or a
+// timeout from other failures; nothing else does, so the database error's
+// text never comes out through it (P1).
+func SafeErr(prefix string, err error) error {
+	msg := SafeError(err)
+	if prefix != "" {
+		msg = prefix + ": " + msg
+	}
+	e := &safeErr{msg: msg}
+	switch {
+	case errors.Is(err, context.Canceled):
+		e.ctx = context.Canceled
+	case errors.Is(err, context.DeadlineExceeded):
+		e.ctx = context.DeadlineExceeded
+	}
+	return e
+}
+
+type safeErr struct {
+	msg string
+	ctx error
+}
+
+func (e *safeErr) Error() string { return e.msg }
+func (e *safeErr) Unwrap() error { return e.ctx }
+
 // HashKey hashes a client API key. Keys are 256-bit random, so a plain
 // SHA-256 is enough.
 func HashKey(key string) []byte {

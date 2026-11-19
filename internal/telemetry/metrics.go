@@ -17,6 +17,9 @@ var Buckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
 type RequestMetrics struct {
 	mu     sync.Mutex
 	series map[routeKey]*RouteSeries
+	// abandoned counts requests answered StatusClientClosedRequest, by
+	// route (R73a).
+	abandoned map[string]uint64
 }
 
 type routeKey struct {
@@ -54,6 +57,12 @@ func (m *RequestMetrics) Observe(route string, status int, d time.Duration, trac
 	if m.series == nil {
 		m.series = map[routeKey]*RouteSeries{}
 	}
+	if status == StatusClientClosedRequest {
+		if m.abandoned == nil {
+			m.abandoned = map[string]uint64{}
+		}
+		m.abandoned[route]++
+	}
 	k := routeKey{route, status}
 	s := m.series[k]
 	if s == nil {
@@ -88,5 +97,19 @@ func (m *RequestMetrics) Snapshot() []RouteSeries {
 	slices.SortFunc(out, func(a, b RouteSeries) int {
 		return cmp.Or(cmp.Compare(a.Route, b.Route), cmp.Compare(a.Status, b.Status))
 	})
+	return out
+}
+
+// Abandoned is how many requests were abandoned (R73a), by route.
+func (m *RequestMetrics) Abandoned() map[string]uint64 {
+	if m == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make(map[string]uint64, len(m.abandoned))
+	for r, n := range m.abandoned {
+		out[r] = n
+	}
 	return out
 }

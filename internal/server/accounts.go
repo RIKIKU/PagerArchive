@@ -25,6 +25,9 @@ func (s *Server) accountsError(w http.ResponseWriter, r *http.Request, op string
 		writeJSON(w, refusal.Status, Problem{Error: refusal.Msg, Code: refusal.Code})
 		return
 	}
+	if s.abandoned(w, r, err) {
+		return
+	}
 	s.Log.ErrorContext(r.Context(), "request failed", "op", op, "error", err.Error())
 	problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 }
@@ -78,6 +81,9 @@ func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
 	if u.InvitedBy != nil {
 		inv, err := s.Store.UserByID(r.Context(), *u.InvitedBy)
 		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("inviter", "error", store.SafeError(err))
 		} else {
 			d := accounts.Display(inv.Name, inv.Email, inv.Status)
@@ -140,6 +146,9 @@ func (s *Server) invitationStatus(status string, expires time.Time, linkLost *ti
 func (s *Server) listInvitations(w http.ResponseWriter, r *http.Request, inviter *int64, showInviter bool) {
 	rows, err := s.Store.ListInvitations(r.Context(), inviter)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("invitations", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -257,6 +266,9 @@ type TrustedMark struct {
 func (s *Server) listUsers(w http.ResponseWriter, r *http.Request) {
 	out, err := s.userRows(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("users", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -369,6 +381,9 @@ func (s *Server) patchMe(w http.ResponseWriter, r *http.Request) {
 	}
 	u := currentUser(r)
 	if _, err := s.Store.SetUserLook(r.Context(), db.SetUserLookParams{ID: u.ID, Look: req.Look}); err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "set look", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 		return

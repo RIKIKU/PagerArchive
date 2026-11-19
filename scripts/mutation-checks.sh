@@ -323,6 +323,18 @@ mutate "a span key added to the app's allowlist but not to Alloy's" $T/filter.go
 	'	"pagerarchive.reparse.messages": intKind,' \
 	'	"pagerarchive.reparse.messages": intKind,
 	"pagerarchive.reparse.batches":  intKind,'
+# R73a, A129: an abandoned request is INFO and 499, counted once; our own
+# time limits and cancellations stay errors.
+mutate "an abandoned request logged as an ERROR" internal/server/server.go go:TestA129AbandonedRequests \
+	's.Log.InfoContext(r.Context(), "request abandoned"' 's.Log.ErrorContext(r.Context(), "request abandoned"'
+mutate "any cancellation taken as abandoned, the request's own context not checked" $T/http.go telemetry:TestAbandoned \
+	'return errors.Is(err, context.Canceled) && ctx.Err() != nil' 'return errors.Is(err, context.Canceled)'
+mutate "a database error's cancellation dropped from its chain" internal/store/store.go go:TestA129AbandonedRequests \
+	'		e.ctx = context.Canceled' '		e.ctx = nil'
+mutate "an abandoned request counted with the status it wrote" $T/http.go telemetry:TestAbandonCountsOnce \
+	'	if st.abandoned {
+		status = StatusClientClosedRequest
+	}' ''
 if command -v docker >/dev/null; then
 	mutate "the \"client not receiving\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA65 \
 		'(pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})' '(pagerarchive_client_last_seen_seconds{job="pagerarchive"})'

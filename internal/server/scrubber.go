@@ -54,6 +54,9 @@ func (s *Server) messageCounts(w http.ResponseWriter, r *http.Request) {
 			// R87c: a large event's view covers its own days.
 			var err error
 			if from, to, err = s.eventRange(r, *f.Event); err != nil {
+				if s.abandoned(w, r, err) {
+					return
+				}
 				s.Log.Error("message counts", "error", store.SafeError(err))
 				problem(w, http.StatusInternalServerError, "counting failed")
 				return
@@ -75,6 +78,9 @@ func (s *Server) messageCounts(w http.ResponseWriter, r *http.Request) {
 		case errors.Is(err, store.ErrCountsTimedOut):
 			out.Counted = false
 		case err != nil:
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("message counts", "error", store.SafeError(err))
 			problem(w, http.StatusInternalServerError, "counting failed")
 			return

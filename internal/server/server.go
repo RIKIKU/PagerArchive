@@ -351,6 +351,9 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		s.pages.add("clock_ahead")
 		s.Log.WarnContext(ctx, "page rejected: client clock ahead", "client", clientID)
 		if err := s.Store.MarkClockAhead(ctx, clientID); err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.ErrorContext(ctx, "mark clock ahead", "client", clientID, "error", store.SafeError(err))
 		}
 		writeJSON(w, http.StatusUnprocessableEntity, Problem{
@@ -378,6 +381,9 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		span.SetAttributes(attribute.String("error.type", "store_failed"))
 		span.SetStatus(codes.Error, "")
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(ctx, "ingest failed", "client", clientID, "error", err.Error())
 		problem(w, http.StatusInternalServerError, "couldn't store the page")
 		return
@@ -407,6 +413,9 @@ func (s *Server) authenticate(ctx context.Context, w http.ResponseWriter, r *htt
 		return "", false
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return "", false
+		}
 		s.Log.ErrorContext(ctx, "authenticate", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't check the API key")
 		return "", false
@@ -424,6 +433,31 @@ type Problem struct {
 // CodeClockAhead: the receive time is more than MaxFuture ahead of the
 // server's clock (ADR 0002).
 const CodeClockAhead = "clock_ahead"
+
+// abandoned says whether err is only r being abandoned (R73a): the browser
+// or client went away mid-request, so its context was cancelled and the
+// work stopped. If so, that's logged at INFO with the route pattern (never
+// the path or query, R70), r is answered and counted as 499
+// (telemetry.Abandon), and the caller only returns. Any other error, our
+// own time limits included, is the caller's to log as before.
+func (s *Server) abandoned(w http.ResponseWriter, r *http.Request, err error) bool {
+	if !s.noteAbandoned(r, err) {
+		return false
+	}
+	problem(w, telemetry.StatusClientClosedRequest, "request abandoned")
+	return true
+}
+
+// noteAbandoned is abandoned for a live-update stream, whose status was
+// written when it started: it logs and counts, but writes nothing.
+func (s *Server) noteAbandoned(r *http.Request, err error) bool {
+	if !telemetry.Abandoned(r.Context(), err) {
+		return false
+	}
+	telemetry.Abandon(r)
+	s.Log.InfoContext(r.Context(), "request abandoned", "route", telemetry.Route(r))
+	return true
+}
 
 func problem(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, Problem{Error: msg})

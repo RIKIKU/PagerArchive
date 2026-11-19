@@ -48,6 +48,9 @@ func (s *Server) releaseSeen(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, pgx.ErrNoRows):
 		// Already told: here, or in another tab or browser.
 	case err != nil:
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "release seen", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 		return

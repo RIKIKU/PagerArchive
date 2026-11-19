@@ -105,7 +105,7 @@ func dbErr(op string, err error) error {
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%s: %w", op, ErrNotFound)
 	}
-	return fmt.Errorf("%s: %s", op, store.SafeError(err))
+	return store.SafeErr(op, err)
 }
 
 // templateName looks up a template by id for the browser's requests and
