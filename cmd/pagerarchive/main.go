@@ -61,6 +61,14 @@ commands:
   client add <id> [name]      add a receiving client and print its API key
   client revoke <id>          revoke a client's API key
   client list                 list clients
+  service-account create <name> --owner <admin>
+                              create a read-only service account owned by an admin
+                              (user ID or email) and print its credential once
+  service-account list        list service accounts
+  service-account revoke <name>
+                              end a service account at once
+  service-account rotate <name>
+                              give it a new credential, ending the old one at once
   import-messages [--dry-run] F
                               import pages from an existing archive, from a JSON
                               Lines file or - for standard input (docs/import.md)
@@ -126,6 +134,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = validateProfile(args, stdout, stderr)
 	case "client":
 		err = clientCmd(args, stdout)
+	case "service-account":
+		err = serviceAccountCmd(args, stdout)
 	case "import-messages":
 		err = importMessages(args, os.Stdin, stdout, stderr)
 	case "version", "--version":
@@ -448,6 +458,11 @@ func serve(stderr io.Writer) error {
 		PowerShell: &server.PowerShell{
 			Issuer:   auth.authentikURL.JoinPath("/application/o/pagerarchive-powershell/").String(),
 			ClientID: getenv("POWERSHELL_CLIENT_ID", "pagerarchive-powershell"),
+			HTTP:     auth.http,
+		},
+		ServiceAccounts: &server.PowerShell{
+			Issuer:   auth.authentikURL.JoinPath("/application/o/pagerarchive-service/").String(),
+			ClientID: "pagerarchive-service",
 			HTTP:     auth.http,
 		},
 		AppURL:                auth.appURL,

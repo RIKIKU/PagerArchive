@@ -47,13 +47,22 @@ function Get-PaServerSetting {
         [string] $Origin,
 
         # Allow http://.
-        [switch] $AllowUnencryptedAuthentication
+        [switch] $AllowUnencryptedAuthentication,
+
+        # The service accounts' client (R62a) instead of the module's.
+        [switch] $ServiceAccount
     )
     try {
         Write-Verbose -Message 'GET /auth/powershell'
         $settings = Invoke-RestMethod -Uri "$Origin/auth/powershell" -Method Get -TimeoutSec 30 -Verbose:$false -ErrorAction Stop
     } catch {
         throw (New-PaErrorRecord -ErrorId 'server_unreachable' -Category ConnectionError -Message "PagerArchive can't be reached at ${Origin}, or it doesn't offer PowerShell sign-in: $($_.Exception.Message)")
+    }
+    if ($ServiceAccount) {
+        if (-not $settings.PSObject.Properties['service_issuer'] -or -not $settings.service_issuer) {
+            throw (New-PaErrorRecord -ErrorId 'service_accounts_off' -Category NotImplemented -Message "PagerArchive at $Origin doesn't offer service accounts: upgrade it.")
+        }
+        $settings = [pscustomobject]@{ issuer = $settings.service_issuer; client_id = $settings.service_client_id; scope = $settings.service_scope }
     }
     $issuerOrigin = Get-PaOrigin -Uri $settings.issuer -AllowUnencryptedAuthentication:$AllowUnencryptedAuthentication -What 'Authentik'
     try {
@@ -122,8 +131,11 @@ function Open-PaSavedSignIn {
     if ($allow -and $origin.StartsWith('http:')) {
         Write-Warning -Message "Using your saved sign-in to $origin over plain HTTP, unencrypted."
     }
-    $settings = Get-PaServerSetting -Origin $origin -AllowUnencryptedAuthentication:$allow
+    $service = [string]$Record['serviceAccount']
+    $settings = Get-PaServerSetting -Origin $origin -AllowUnencryptedAuthentication:$allow -ServiceAccount:([bool]$service)
     $connection = @{
+        ServiceAccount   = $service
+        Secret           = $null
         Uri              = $origin
         Issuer           = $settings.Issuer
         ClientId         = $settings.ClientId
@@ -162,6 +174,9 @@ function Request-PaToken {
         [Parameter(Mandatory)]
         [hashtable] $Connection
     )
+    if ($Connection['ServiceAccount']) {
+        return Request-PaServiceToken -Connection $Connection
+    }
     for ($attempt = 1; $attempt -le 3; $attempt++) {
         if ($Connection.Store -ne 'session') {
             $saved = Read-PaRefreshToken -Origin $Connection.Uri

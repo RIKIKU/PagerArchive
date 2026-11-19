@@ -151,7 +151,11 @@ func (s *Server) signedIn(h http.HandlerFunc) http.HandlerFunc {
 				return
 			}
 			ctx := context.WithValue(context.WithValue(r.Context(), userKey{}, u), tokenExpiryKey{}, expires)
-			telemetry.SetUser(ctx, u.ID, u.Role)
+			role := u.Role
+			if accounts.IsServiceAccount(u) {
+				role = "service_account"
+			}
+			telemetry.SetUser(ctx, u.ID, role)
 			h(w, r.WithContext(ctx))
 			return
 		}

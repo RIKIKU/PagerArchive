@@ -156,11 +156,18 @@ function Save-PaSignIn {
         version                        = [guid]::NewGuid().Guid
         allowUnencryptedAuthentication = [bool]$Connection.AllowUnencrypted
     }
+    # A service account (R62a) saves its credential where a person's refresh
+    # token goes, and its name.
+    $secret = $Connection.RefreshToken
+    if ($Connection['ServiceAccount']) {
+        $record.serviceAccount = $Connection['ServiceAccount']
+        $secret = $Connection['Secret']
+    }
     if ($Connection.Store -eq 'dpapi') {
-        $record.refreshToken = Protect-PaToken -Token $Connection.RefreshToken
+        $record.refreshToken = Protect-PaToken -Token $secret
     } else {
         try {
-            Microsoft.PowerShell.SecretManagement\Set-Secret -Name ('PagerArchive:' + $Connection.Uri) -SecureStringSecret $Connection.RefreshToken -Vault $Connection.Vault -ErrorAction Stop
+            Microsoft.PowerShell.SecretManagement\Set-Secret -Name ('PagerArchive:' + $Connection.Uri) -SecureStringSecret $secret -Vault $Connection.Vault -ErrorAction Stop
         } catch {
             throw (New-PaErrorRecord -ErrorId 'vault_failed' -Category WriteError -Message "The sign-in couldn't be saved in the vault '$($Connection.Vault)': $($_.Exception.Message) If it's locked, unlock it (for SecretStore: Unlock-SecretStore).")
         }

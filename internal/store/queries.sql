@@ -563,7 +563,7 @@ RETURNING before.seen_release;
 UPDATE users SET subject = NULL WHERE id = $1;
 
 -- name: ListUsers :many
-SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at,
+SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, u.kind,
        u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
        -- R44b: how many integrations, and how many paused for failing.
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
@@ -601,7 +601,7 @@ WITH RECURSIVE tree AS (
     FROM users c JOIN tree t ON c.invited_by = t.id
     WHERE c.id <> sqlc.arg(root)::bigint
 )
-SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status,
+SELECT u.id, u.invited_by, u.subject, u.email, u.name, u.role, u.status, u.kind,
        u.created_at, u.trusted_at,
        -- Unused invitations that still work (ADR 0008 §3).
        (SELECT count(*) FROM invitations i
@@ -670,6 +670,41 @@ UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email =
     email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
     look = 'harbour'
 WHERE id = $1;
+
+-- Service accounts (R62a, ADR 0048).
+
+-- name: CreateServiceAccount :one
+INSERT INTO users (kind, subject, name, role, invited_by, credential_expires_at)
+VALUES ('service', sqlc.arg(subject), sqlc.arg(name)::text, 'user', sqlc.arg(owner)::bigint, sqlc.arg(expires_at))
+RETURNING *;
+
+-- name: ServiceAccountByName :one
+-- The live one (active or deactivated) with that name.
+SELECT * FROM users WHERE kind = 'service' AND name = sqlc.arg(name)::text AND status <> 'deleted';
+
+-- name: ListServiceAccounts :many
+-- Every service account, revoked ones too, with its owning admin.
+SELECT u.id, u.name, u.status, u.created_at, u.credential_expires_at, u.deactivated_at, u.deleted_at,
+       o.id AS owner_id, o.email AS owner_email, o.status AS owner_status
+FROM users u JOIN users o ON o.id = u.invited_by
+WHERE u.kind = 'service'
+ORDER BY u.created_at, u.id;
+
+-- name: RekeyServiceAccount :execrows
+-- A new credential: a new Authentik user (so a new subject) and expiry.
+UPDATE users SET subject = sqlc.arg(subject), credential_expires_at = sqlc.arg(expires_at)
+WHERE id = sqlc.arg(id) AND kind = 'service' AND status = 'active';
+
+-- name: RevokeServiceAccount :execrows
+UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, deactivated_at = NULL
+WHERE id = sqlc.arg(id) AND kind = 'service' AND status <> 'deleted';
+
+-- name: RevokeServiceAccountsOf :many
+-- An owner deleting their account takes their service accounts with it.
+UPDATE users s SET status = 'deleted', deleted_at = now(), deactivated_at = NULL, subject = NULL
+FROM (SELECT id, subject FROM users WHERE kind = 'service' AND invited_by = sqlc.arg(owner)::bigint AND status <> 'deleted' FOR UPDATE) old
+WHERE s.id = old.id
+RETURNING s.id, old.subject;
 
 -- name: ScrubInvitationsTo :exec
 -- The invitation that enrolled a deleted user names them: forget the address.

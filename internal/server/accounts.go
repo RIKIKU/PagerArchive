@@ -60,6 +60,8 @@ type Me struct {
 	InvitedBy *string `json:"invited_by"` // name, or "deleted user"; null for the first admin
 	// Look is the look they chose (R82d): one of Looks.
 	Look string `json:"look"`
+	// ServiceAccount: this is a read-only service account (R62a).
+	ServiceAccount bool `json:"service_account,omitempty"`
 }
 
 // Looks are the looks a user can choose (R82d, ADR 0028), the default
@@ -77,7 +79,7 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
-	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Look: u.Look}
+	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Look: u.Look, ServiceAccount: accounts.IsServiceAccount(u)}
 	if u.InvitedBy != nil {
 		inv, err := s.Store.UserByID(r.Context(), *u.InvitedBy)
 		if err != nil {
@@ -85,6 +87,10 @@ func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
 				return
 			}
 			s.Log.Error("inviter", "error", store.SafeError(err))
+		} else if accounts.IsServiceAccount(u) {
+			// Its owner is a person: their name and address are hidden (R62a).
+			h := hiddenPerson
+			me.InvitedBy = &h
 		} else {
 			d := accounts.Display(inv.Name, inv.Email, inv.Status)
 			me.InvitedBy = &d
@@ -255,6 +261,8 @@ type UserRow struct {
 	IntegrationsFailing int64 `json:"integrations_failing"`
 	// R42c: null unless trusted. Admins only.
 	Trusted *TrustedMark `json:"trusted"`
+	// ServiceAccount marks a service account (R62a): a tool, not a person.
+	ServiceAccount bool `json:"service_account"`
 }
 
 // TrustedMark is who marked a user trusted, and when (R42c).
@@ -286,7 +294,7 @@ func (s *Server) userRows(ctx context.Context) ([]UserRow, error) {
 	for _, u := range rows {
 		row := UserRow{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Status: u.Status,
 			CreatedAt: u.CreatedAt.UTC(), DeactivatedAt: u.DeactivatedAt, InvitedByID: u.InvitedBy,
-			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing}
+			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing, ServiceAccount: u.Kind == accounts.KindService}
 		if u.InvitedBy != nil {
 			status := "active"
 			if u.InviterStatus != nil {

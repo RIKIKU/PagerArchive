@@ -33,7 +33,13 @@ const (
 	jobLimit    = 500
 )
 
-func (s *Server) isAdmin(r *http.Request) bool { return currentUser(r).Role == accounts.RoleAdmin }
+// isAdmin reports whether the request sees what admins see: an admin's, or a
+// service account's, which reads as an admin does but changes nothing and
+// is refused personal details (serviceGate, R62a).
+func (s *Server) isAdmin(r *http.Request) bool {
+	u := currentUser(r)
+	return u.Role == accounts.RoleAdmin || accounts.IsServiceAccount(u)
+}
 
 func (s *Server) adminOnly(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -679,7 +685,7 @@ const catchUpBatch = 200
 func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	u := currentUser(r)
-	admin := u.Role == accounts.RoleAdmin
+	admin := s.isAdmin(r)
 	q := r.URL.Query()
 	f, err := search.Parse(q, admin, s.Location)
 	if err == nil {
@@ -912,6 +918,7 @@ func (s *Server) aliasView(r *http.Request, id int64, admin bool) (AliasView, bo
 		if v.History, err = s.Catalog.History(r.Context(), &a.ID, a.Pattern); err != nil {
 			return v, true, err
 		}
+		hidePeople(r, v.History)
 	}
 	return v, true, nil
 }
@@ -996,6 +1003,7 @@ func (s *Server) getCapcode(w http.ResponseWriter, r *http.Request) {
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return
 		}
+		hidePeople(r, out.History)
 	}
 	if len(rows) > 0 {
 		first, last := rows[0].FirstSeen.UTC(), rows[0].LastSeen.UTC()

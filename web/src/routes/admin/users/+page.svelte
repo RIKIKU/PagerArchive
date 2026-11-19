@@ -33,7 +33,7 @@
 	}
 	load();
 
-	const label = (u: UserRow) => (u.name ? `${u.name} (${u.email})` : u.email);
+	const label = (u: UserRow) => (u.service_account ? `${u.name} (service account)` : u.name ? `${u.name} (${u.email})` : u.email);
 
 	// run does an action and shows what it did.
 	async function run(what: () => Promise<string>) {
@@ -97,6 +97,7 @@
 		<li class:off={u.status === 'deactivated'}>
 			<div class="head">
 				<a class="who" href="/admin/users/{u.id}">{label(u)}</a>
+				{#if u.service_account}<span class="tag" data-testid="service-account">Service account</span>{/if}
 				{#if u.role === 'admin'}<span class="tag">Admin</span>{/if}
 				{#if u.status === 'deactivated'}<span class="tag warn">Deactivated</span>{/if}
 				{#if u.trusted}<span class="tag">Trusted</span>{/if}
@@ -123,12 +124,14 @@
 						{#if u.status === 'active'}
 							<button class="secondary" type="button" onclick={() => (confirming = u.id)} aria-label="Deactivate: {label(u)}">Deactivate</button>
 							<a class="button secondary" href="/admin/users/{u.id}/deactivate-tree" aria-label="Deactivate with invite tree: {label(u)}">Deactivate with invite tree</a>
-							{#if u.role === 'user'}
+							{#if u.service_account}
+								<!-- R62a: made, revoked and re-keyed only on the server. -->
+							{:else if u.role === 'user'}
 								<button class="secondary" type="button" disabled={busy} onclick={() => setRole(u, 'admin')} aria-label="Make admin: {label(u)}">Make admin</button>
 							{:else}
 								<button class="secondary" type="button" disabled={busy} onclick={() => setRole(u, 'user')} aria-label="Remove admin: {label(u)}">Remove admin</button>
 							{/if}
-						{:else}
+						{:else if !u.service_account}
 							<button class="secondary" type="button" disabled={busy} onclick={() => reactivate(u)} aria-label="Reactivate: {label(u)}">Reactivate</button>
 						{/if}
 					</div>

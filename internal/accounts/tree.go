@@ -41,6 +41,8 @@ type TreePerson struct {
 	Joined      time.Time
 	Trusted     bool
 	Invitations int64 // unused invitations that still work
+	// ServiceAccount marks a service account (R62a), shown as one in previews.
+	ServiceAccount bool
 	// For previews (R42b): whether they can be ticked, why not, and
 	// whether they start ticked.
 	CanTick bool
@@ -72,7 +74,7 @@ func (s *Service) loadTree(ctx context.Context, q *db.Queries, root int64) ([]Tr
 	people := make([]TreePerson, len(rows))
 	for i, r := range rows {
 		people[i] = TreePerson{ID: r.ID, Email: r.Email, Name: r.Name, Role: r.Role, Status: r.Status,
-			Joined: r.CreatedAt, Trusted: r.TrustedAt != nil, Invitations: r.Invitations, subject: r.Subject}
+			Joined: r.CreatedAt, Trusted: r.TrustedAt != nil, Invitations: r.Invitations, ServiceAccount: r.Kind == KindService, subject: r.Subject}
 		if i > 0 {
 			people[i].Parent = r.InvitedBy
 		}
@@ -302,6 +304,8 @@ func (s *Service) SetTrusted(ctx context.Context, actor db.User, targetID int64,
 		return refuse(http.StatusNotFound, "no_user", "No such user.")
 	case err != nil:
 		return dbErr("user", err)
+	case IsServiceAccount(u):
+		return errServiceShellOnly
 	case (u.TrustedAt != nil) == trusted:
 		return nil // already so: keep who set it and when
 	}
