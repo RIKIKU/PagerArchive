@@ -13,6 +13,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
+	"github.com/RIKIKU/PagerArchive/internal/catalog"
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
@@ -152,6 +153,34 @@ func TestA130ServiceAccounts(t *testing.T) {
 		if code, p := e.bearerJSON(http.MethodGet, path, tok, nil); code != http.StatusForbidden || p.Code != server.CodeServicePersonal {
 			t.Errorf("GET %s: %d %+v", path, code, p)
 		}
+	}
+
+	// Reads it may make hide the people in them: its owner on /me, and an
+	// alias's waiting request (who asked, and their note).
+	if me.InvitedBy == nil || strings.Contains(*me.InvitedBy, "@") || strings.Contains(*me.InvitedBy, e.admin.email) {
+		t.Errorf("/me names its owner: %v", me.InvitedBy)
+	}
+	aliasID := e.addAlias("1234567", "A130 Station")
+	e.request(e.user, catalog.RequestInput{Kind: catalog.KindChange, AliasID: &aliasID, Name: ptr("A130 Station 2"), Note: "A130 note from the user"})
+	var alias struct {
+		Requests []catalog.RequestView `json:"requests"`
+	}
+	if code, p := e.bearerJSON(http.MethodGet, fmt.Sprintf("/api/v1/admin/aliases/%d", aliasID), tok, &alias); code != http.StatusOK || len(alias.Requests) != 1 {
+		t.Fatalf("admin alias: %d %+v %d", code, p, len(alias.Requests))
+	}
+	if b, _ := json.Marshal(alias); strings.Contains(string(b), e.user.email) || strings.Contains(string(b), "A130 note") {
+		t.Errorf("a service account sees who asked, or their note: %s", b)
+	}
+	// An admin still sees them.
+	if code, p := e.admin.call(http.MethodGet, fmt.Sprintf("/api/v1/admin/aliases/%d", aliasID), nil, &alias); code != http.StatusOK || len(alias.Requests) != 1 ||
+		!strings.Contains(alias.Requests[0].RequestedBy, e.user.email) {
+		t.Errorf("the admin's view: %d %+v %+v", code, p, alias.Requests)
+	}
+	// Every signed-in read is classified for service accounts, as allowed or
+	// personal; one that wasn't would be refused (fails closed:
+	// TestServiceAccountReadsClassified).
+	if missing := e.srv.UnclassifiedServiceReads(); len(missing) > 0 {
+		t.Errorf("reads not classified for service accounts: %v", missing)
 	}
 
 	// Each client is for its own kind of account.

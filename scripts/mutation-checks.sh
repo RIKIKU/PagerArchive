@@ -644,7 +644,13 @@ mutate "a service account may write" internal/server/service_accounts.go unit:in
 mutate "a service account may write (A130)" internal/server/service_accounts.go go:TestA130ServiceAccounts \
 	'if !readMethod(r.Method) {' 'if false && !readMethod(r.Method) {'
 mutate "a service account reads the user list" internal/server/service_accounts.go go:TestA130ServiceAccounts \
-	'"GET /api/v1/admin/users":                           true,' ''
+	'"GET /api/v1/admin/users":                           servicePersonal,' '"GET /api/v1/admin/users":                           serviceAllowed,'
+mutate "an unclassified read is open to service accounts" internal/server/service_accounts.go unit:internal/server:TestServiceAccountReadsClassified \
+	'if serviceReads[pattern] != serviceAllowed {' 'if serviceReads[pattern] == servicePersonal {'
+mutate "a service account sees who asked for an alias change" internal/server/aliases.go go:TestA130ServiceAccounts \
+	'	hideRequestPeople(r, out.Requests)' ''
+mutate "a service account sees its owner on /me" internal/server/accounts.go go:TestA130ServiceAccounts \
+	'} else if accounts.IsServiceAccount(u) {' '} else if false {'
 mutate "a service account sees who changed an alias" internal/server/service_accounts.go unit:internal/server:TestHidePeople \
 	'		history[i].MadeBy = hiddenPerson' ''
 mutate "an expired credential still works" internal/server/powershell.go go:TestA130ServiceAccounts \
@@ -675,7 +681,7 @@ fi
 echo "=== unmutated"
 go test -count=1 -run 'TestR84|TestR44c|TestA79|TestVersion' . 2>&1 | tail -3
 go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestA83|TestA130|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
-go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery|TestServiceAccountGate|TestHidePeople' ./internal/accounts/ ./internal/authentik/ ./internal/server/ 2>&1 | tail -4
+go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery|TestServiceAccountGate|TestServiceAccountReadsClassified|TestHidePeople|TestHideRequestPeople' ./internal/accounts/ ./internal/authentik/ ./internal/server/ 2>&1 | tail -4
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'
 ! command -v docker >/dev/null || sh scripts/a80.sh -o "$work/a80-results" --project=chromium 2>&1 | grep -E '^(ok|FAIL|=== A80 (passed|FAILED)|--- (PASS|FAIL))'

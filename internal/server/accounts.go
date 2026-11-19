@@ -87,6 +87,10 @@ func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
 				return
 			}
 			s.Log.Error("inviter", "error", store.SafeError(err))
+		} else if accounts.IsServiceAccount(u) {
+			// Its owner is a person: their name and address are hidden (R62a).
+			h := hiddenPerson
+			me.InvitedBy = &h
 		} else {
 			d := accounts.Display(inv.Name, inv.Email, inv.Status)
 			me.InvitedBy = &d

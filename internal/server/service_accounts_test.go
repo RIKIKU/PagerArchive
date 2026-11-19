@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -50,7 +51,7 @@ func TestServiceAccountGate(t *testing.T) {
 			if reached || w.Code != http.StatusForbidden || p.Code != CodeServiceReadOnly {
 				t.Errorf("%s: reached %v, %d %q", pattern, reached, w.Code, p.Code)
 			}
-		case servicePersonal[pattern]:
+		case serviceReads[pattern] != serviceAllowed:
 			personal++
 			if reached || w.Code != http.StatusForbidden || p.Code != CodeServicePersonal {
 				t.Errorf("%s: reached %v, %d %q", pattern, reached, w.Code, p.Code)
@@ -71,12 +72,7 @@ func TestServiceAccountGate(t *testing.T) {
 			t.Errorf("%s: a person's request didn't reach its handler", pattern)
 		}
 	}
-	for pattern := range servicePersonal {
-		if _, ok := routes[pattern]; !ok {
-			t.Errorf("servicePersonal names %s, which isn't a route", pattern)
-		}
-	}
-	if writes < 50 || reads < 40 || personal != len(servicePersonal) {
+	if writes < 50 || reads < 40 || personal != 8 {
 		t.Errorf("writes %d, reads %d, personal %d", writes, reads, personal)
 	}
 	if !strings.Contains(logs.String(), `"service_account":"report-bot"`) {
@@ -132,5 +128,50 @@ func TestTokenClient(t *testing.T) {
 	s.ServiceAccounts = nil
 	if c, service := s.tokenClient(jwt(sa.Issuer)); c != ps || service {
 		t.Error("with service accounts off, a token went to their client")
+	}
+}
+
+// R62a: the personal-details rule fails closed. Every signed-in read is
+// classified for service accounts, as allowed or personal, so a new read
+// can't land without a decision; nothing classified is missing from the
+// routes; and a read that isn't classified is refused.
+func TestServiceAccountReadsClassified(t *testing.T) {
+	s := &Server{Log: slog.New(slog.NewJSONHandler(io.Discard, nil))}
+	routes := s.apiRoutes()
+	for pattern := range routes {
+		method, _, _ := strings.Cut(pattern, " ")
+		if readMethod(method) {
+			if a := serviceReads[pattern]; a != serviceAllowed && a != servicePersonal {
+				t.Errorf("%s isn't classified for service accounts: add it to serviceReads as serviceAllowed (it shows no person but the account, or hides them) or servicePersonal", pattern)
+			}
+		}
+	}
+	for pattern := range serviceReads {
+		if _, ok := routes[pattern]; !ok {
+			t.Errorf("serviceReads names %s, which isn't a signed-in read", pattern)
+		}
+	}
+	// Unclassified: refused as personal, before its handler.
+	reached := false
+	w := httptest.NewRecorder()
+	s.serviceGate("GET /api/v1/admin/new-thing", func(http.ResponseWriter, *http.Request) { reached = true })(w,
+		asUser(httptest.NewRequest(http.MethodGet, "/api/v1/admin/new-thing", nil), serviceAccount()))
+	var p Problem
+	_ = json.NewDecoder(w.Body).Decode(&p)
+	if reached || w.Code != http.StatusForbidden || p.Code != CodeServicePersonal {
+		t.Errorf("an unclassified read: reached %v, %d %q", reached, w.Code, p.Code)
+	}
+}
+
+func TestHideRequestPeople(t *testing.T) {
+	note, feedback := "Sam asked: call 0400 000 000", "No, Alex"
+	reqs := []catalog.RequestView{{RequestedBy: "Sam (sam@example.test)", ReviewedBy: "Alex (alex@example.test)", Note: &note, Feedback: &feedback}}
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	hideRequestPeople(asUser(r, serviceAccount()), reqs)
+	b, _ := json.Marshal(reqs)
+	for _, s := range []string{"Sam", "Alex", "example.test", "0400"} {
+		if strings.Contains(string(b), s) {
+			t.Errorf("a service account sees %q: %s", s, b)
+		}
 	}
 }
