@@ -242,7 +242,18 @@ attest "$N" pagerarchive-config.tar.gz monitoring-compose.yaml
 echo "$N_DIGEST" >>"$REL/attested"
 poster_start
 before=$(q "SELECT count(*) FROM messages")
+# While it runs, the status as the API reads it, twice a second: a run in
+# progress has its start and, once it knows, N as its target (R84h).
+(while :; do st '[.state, .running_since, (.target_version // ""), .last_check_at] | @tsv' 2>/dev/null || true; sleep 0.5; done) >"$WORK/run-states.tsv" &
+WATCHER=$!
 au run || fail "the upgrade to $N failed"
+kill "$WATCHER" 2>/dev/null || true
+wait "$WATCHER" 2>/dev/null || true
+backing=$(awk -F '\t' -v n="$N" '$1 == "backing-up" && $2 > 0 && $3 == n && $4 == $2 { print; exit }' "$WORK/run-states.tsv")
+[ -n "$backing" ] || fail "the status never had the run backing up with its start and $N as its target: $(sort -u "$WORK/run-states.tsv" | tr '\t\n' ' ;')"
+echo "--- while backing up: $backing"
+[ "$(st .last_check_at)" = "$(printf '%s' "$backing" | cut -f2)" ] || fail "the last check ($(st .last_check_at)) isn't the run's start"
+[ "$(st .running_since)" = 0 ] && [ -z "$(st '.target_version // empty')" ] || fail "the run's start or target is still there after it ended"
 [ "$(version_now)" = "$N" ] || fail "the API is $(version_now), not $N"
 for step in "check newer" "verify ok" "backup ok" "upgrade ok" "health ok"; do
 	log_has $step || fail "no '$step' in the log"

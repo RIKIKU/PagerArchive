@@ -1,7 +1,7 @@
 {
   "uid": "pa-backups",
   "title": "Backups and upgrades",
-  "description": "The nightly backups (R86-R86d): how long since the last good one, whether the last one failed, and each night's dump size, dump time and check time, so the check's growth with the archive can be seen. Automatic upgrades (R84h): the last one, the version history, failures and rollbacks, and how long since the last check.",
+  "description": "The nightly backups (R86-R86d): how long since the last good one, whether the last one failed, and each night's dump size, dump time and check time, so the check's growth with the archive can be seen. Automatic upgrades (R84h): a run going now (its target release, step and time), the last one, the version history, failures and rollbacks, and how long since the last check.",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -9,14 +9,42 @@
   "time": {"from": "now-30d", "to": "now"},
   "panels": [
     {
+      "id": 13, "type": "stat", "title": "Automatic upgrade running now",
+      "description": "While an automatic upgrade run is going: the release it's upgrading to, the step it's on (checking, verifying, backing-up, upgrading, health-check, rolling-back) and how long since the run started. Idle: \"No upgrade running\". Normal: a run checks for a minute each hour; one that upgrades spends most of its time backing up: on a big archive (millions of pages) the pre-upgrade backup and its check take tens of minutes, as the nightly backup does (the dump and check times below). Worry: orange after 2 hours. A step that stays put while nothing else moves: a run stopped part way (the host restarted), and **Last upgrade** says so after the next hourly run.",
+      "gridPos": {"h": 4, "w": 16, "x": 0, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance, step) (pagerarchive_auto_upgrade_run{job=\"pagerarchive\", step!=\"idle\"} == 1) * on (instance) group_left (to) max by (instance, to) (pagerarchive_auto_upgrade_target_info{job=\"pagerarchive\"}) * on (instance) group_left () (time() - max by (instance) (pagerarchive_auto_upgrade_run_start_timestamp_seconds{job=\"pagerarchive\"}))", "legendFormat": "Upgrading to {{to}}: {{step}}"},
+        {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "(max by (instance, step) (pagerarchive_auto_upgrade_run{job=\"pagerarchive\", step!=\"idle\"} == 1) unless on (instance) pagerarchive_auto_upgrade_target_info{job=\"pagerarchive\"}) * on (instance) group_left () (time() - max by (instance) (pagerarchive_auto_upgrade_run_start_timestamp_seconds{job=\"pagerarchive\"}))", "legendFormat": "Automatic upgrade: {{step}}"}
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "dtdurations",
+          "thresholds": {"mode": "absolute", "steps": [{"color": "blue", "value": null}, {"color": "orange", "value": 7200}]},
+          "noValue": "No upgrade running"
+        },
+        "overrides": []
+      },
+      "options": {"colorMode": "background", "graphMode": "none", "textMode": "value_and_name", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 14, "type": "stat", "title": "Upgrade run started",
+      "description": "When the automatic upgrade run going now started, which is when it checked for a release. Idle, it says \"Idle\", and **Since the last upgrade check**, below, has the last run.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 0},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_run_start_timestamp_seconds{job=\"pagerarchive\"}) * 1000", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"unit": "dateTimeAsIsoNoDateIfToday", "noValue": "Idle"}, "overrides": []},
+      "options": {"colorMode": "none", "graphMode": "none", "textMode": "value", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
       "id": 1, "type": "text", "title": "How to read this",
-      "gridPos": {"h": 5, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "A backup is **good** once both databases are dumped and the check has restored the dumps into a throwaway database and compared every table's rows (R86a). **Since the last good backup** turns orange after 26 hours (a night missed) and red after 36, when the \"Backup failing\" alert fires and Administration says so. **Last backup** is red while the last one failed: Administration's Backups page says why.\n\nThe three graphs are each good night's numbers: the size of both dumps, how long the dumps took, and how long the check took. The check restores everything, so it grows with the archive. A backup whose check takes more than 12 hours fails."}
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 4},
+      "options": {"mode": "markdown", "content": "**Automatic upgrade running now**, at the top, says plainly when an automatic upgrade is going: the release it's upgrading to, its step and how long since it started (orange after 2 hours). It spends most of its time **backing-up**: the same backup and check as the nightly one, so on a big archive (millions of pages) tens of minutes is normal. Idle, it says \"No upgrade running\", and the panels under **Automatic upgrades** have the last check and what it did.\n\nA backup is **good** once both databases are dumped and the check has restored the dumps into a throwaway database and compared every table's rows (R86a). **Since the last good backup** turns orange after 26 hours (a night missed) and red after 36, when the \"Backup failing\" alert fires and Administration says so. **Last backup** is red while the last one failed: Administration's Backups page says why.\n\nThe three graphs are each good night's numbers: the size of both dumps, how long the dumps took, and how long the check took. The check restores everything, so it grows with the archive. A backup whose check takes more than 12 hours fails."}
     },
     {
       "id": 2, "type": "stat", "title": "Since the last good backup",
       "description": "Time since the last backup that dumped both databases and passed its check. Normal: under a day (green). Worry: orange after 26 hours (a night missed), red after 36, when \"Backup failing\" fires.",
-      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 5},
+      "gridPos": {"h": 6, "w": 12, "x": 0, "y": 11},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "time() - max by (instance) (pagerarchive_backup_last_good_timestamp_seconds{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
       "fieldConfig": {
@@ -32,7 +60,7 @@
     {
       "id": 3, "type": "stat", "title": "Last backup",
       "description": "Whether the last nightly backup failed. Normal: OK. Worry: FAILING: Administration's Backups page says why.",
-      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 5},
+      "gridPos": {"h": 6, "w": 12, "x": 12, "y": 11},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_backup_failing{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
       "fieldConfig": {
@@ -48,7 +76,7 @@
     {
       "id": 4, "type": "timeseries", "title": "Dump size, each night",
       "description": "The size of both dumps, from each good night. Normal: growing slowly with the archive. Worry: a sudden jump (an import, or a table filling up) or a drop you can't explain by retention deleting old pages.",
-      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 11},
+      "gridPos": {"h": 8, "w": 8, "x": 0, "y": 17},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_bytes{job=\"pagerarchive\"})", "legendFormat": "both dumps"}],
       "fieldConfig": {"defaults": {"unit": "bytes", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
@@ -57,7 +85,7 @@
     {
       "id": 5, "type": "timeseries", "title": "Dump time, each night",
       "description": "How long dumping both databases took, each good night. Normal: minutes, growing slowly with the archive. Worry: a sudden jump: the disk or the database is slow.",
-      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 11},
+      "gridPos": {"h": 8, "w": 8, "x": 8, "y": 17},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_dump_seconds{job=\"pagerarchive\"})", "legendFormat": "both dumps"}],
       "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
@@ -66,7 +94,7 @@
     {
       "id": 6, "type": "timeseries", "title": "Check time, each night",
       "description": "How long the check took: restoring the dumps into a throwaway database and comparing every table's rows. Normal: growing slowly with the archive. Worry: nearing 12 hours: a check that takes longer fails the backup.",
-      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 11},
+      "gridPos": {"h": 8, "w": 8, "x": 16, "y": 17},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_backup_last_good_check_seconds{job=\"pagerarchive\"})", "legendFormat": "restore and compare"}],
       "fieldConfig": {"defaults": {"unit": "s", "min": 0, "custom": {"lineInterpolation": "stepAfter", "fillOpacity": 10}}, "overrides": []},
@@ -74,13 +102,13 @@
     },
     {
       "id": 7, "type": "text", "title": "Automatic upgrades",
-      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 19},
-      "options": {"mode": "markdown", "content": "Only when automatic upgrades are switched on (docs/deploy.md, \"Automatic upgrades\"). **Since the last upgrade check** turns orange after 2 hours and red after 3, when Administration says the checks have stopped. **Last upgrade** is red while the last one failed: it was rolled back, or needs you, and the \"Upgrade failed\" alert fires. Administration's Upgrades page says why, and each step's log line is in Loki: `{service_name=\"pagerarchive-auto-upgrade\"}`. **Version history** is the version the API reported over time."}
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 25},
+      "options": {"mode": "markdown", "content": "Only when automatic upgrades are switched on (docs/deploy.md, \"Automatic upgrades\"). A run going now is at the top (**Automatic upgrade running now**). **Since the last upgrade check** is the time since a run last checked for a release, which is when it started, so during a run it counts from that run's start; it turns orange after 2 hours and red after 3, when Administration says the checks have stopped. **Last upgrade** is red while the last one failed: it was rolled back, or needs you, and the \"Upgrade failed\" alert fires. Administration's Upgrades page says why, and each step's log line is in Loki: `{service_name=\"pagerarchive-auto-upgrade\"}`. **Version history** is the version the API reported over time."}
     },
     {
       "id": 8, "type": "stat", "title": "Since the last upgrade check",
-      "description": "Time since the upgrade script last checked for a new release; it runs every hour. Normal: under an hour (green). Worry: orange after 2 hours, red after 3: the checks have stopped (the host's cron or timer, or the script failing to start).",
-      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 23},
+      "description": "Time since the upgrade script last checked for a new release: when its last run started (during a run, that run's start). It runs every hour. Normal: under an hour (green), or longer while a run that upgrades is going (see the top). Worry: orange after 2 hours, red after 3: the checks have stopped (the host's cron or timer, or the script failing to start).",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "time() - max by (instance) (pagerarchive_auto_upgrade_last_check_timestamp_seconds{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
       "fieldConfig": {
@@ -96,7 +124,7 @@
     {
       "id": 9, "type": "stat", "title": "Last upgrade",
       "description": "Whether the last automatic upgrade failed. Normal: OK. Worry: FAILED: it was rolled back, or needs you; Administration's Upgrades page says why.",
-      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 23},
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_failing{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
       "fieldConfig": {
@@ -112,7 +140,7 @@
     {
       "id": 10, "type": "stat", "title": "Last successful upgrade",
       "description": "The last automatic upgrade that worked, with the versions it went from and to.",
-      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 23},
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance, from, to) (pagerarchive_auto_upgrade_last_success_timestamp_seconds{job=\"pagerarchive\"}) * 1000", "legendFormat": "{{from}} to {{to}}"}],
       "fieldConfig": {"defaults": {"unit": "dateTimeFromNow", "noValue": "None yet"}, "overrides": []},
@@ -121,7 +149,7 @@
     {
       "id": 11, "type": "stat", "title": "Upgrades failed and rolled back",
       "description": "How many automatic upgrades failed, and how many of those were rolled back to the version before. Normal: 0. Worry: any rise; Administration's Upgrades page lists them.",
-      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 23},
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 29},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_auto_upgrade_failures_total{job=\"pagerarchive\"})", "legendFormat": "failed"},
@@ -133,7 +161,7 @@
     {
       "id": 12, "type": "state-timeline", "title": "Version history",
       "description": "The version the API reported over time: each new bar is an upgrade. Worry: a step back to an older version you didn't choose: a rollback.",
-      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 29},
+      "gridPos": {"h": 7, "w": 24, "x": 0, "y": 35},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (version) (pagerarchive_build_info{job=\"pagerarchive\"})", "legendFormat": "{{version}}"}],
       "fieldConfig": {"defaults": {"mappings": [{"type": "value", "options": {"1": {"text": "running"}}}], "custom": {"fillOpacity": 70}}, "overrides": []},
