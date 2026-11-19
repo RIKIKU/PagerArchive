@@ -302,9 +302,14 @@
 	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
 	/* R35g: the map credits' line, at most this wide (it wraps). */
 	--map-credits-width: 16rem;
-	/* R77b: the "New release" notice, lifted off the page, at most this wide. */
+	/* R77b: the "New release" notice, lifted off the page, at most this wide.
+	   Its fill is --highlight; its amber edge and countdown line are at least
+	   4.5:1 against --bg (and 3:1 against --surface, where the landing's ring
+	   sits), measured by A125 in every look and theme. */
 	--notice-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
 	--notice-width: 22rem;
+	--notice-edge: light-dark(#8a5a00, #e0a526);
+	--notice-countdown-height: 0.1875rem;
 }
 
 /* Console (ADR 0015's second prototype, built in M15, R82d; ADR 0028): ink
@@ -563,9 +568,14 @@
 	--map-layers-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
 	/* R35g: the map credits' line, at most this wide (it wraps). */
 	--map-credits-width: 16rem;
-	/* R77b: the "New release" notice, lifted off the page, at most this wide. */
+	/* R77b: the "New release" notice, lifted off the page, at most this wide.
+	   Its fill is --highlight; its amber edge and countdown line are at least
+	   4.5:1 against --bg (and 3:1 against --surface, where the landing's ring
+	   sits), measured by A125 in every look and theme. */
 	--notice-shadow: 0 0.125rem 0.5rem color-mix(in srgb, var(--fg) 25%, transparent);
 	--notice-width: 22rem;
+	--notice-edge: light-dark(#8a5a00, #e0a526);
+	--notice-countdown-height: 0.1875rem;
 }
 
 @media (pointer: coarse) {
@@ -889,7 +899,9 @@ table {
 }
 
 /* R77b: what the "New release" notice landed on (the version's tag, or More
-   on a phone) lights up briefly. Colour only, so reduced motion keeps it. */
+   on a phone) lights up briefly, as the notice looked: the highlight in an
+   amber ring, the ring at least 3:1 against the menu or bar it sits on (A125).
+   Colour only, so reduced motion keeps it. */
 .release-landed {
 	border-radius: var(--radius-small);
 	animation: release-landed 1.5s ease-out;
@@ -897,8 +909,8 @@ table {
 @keyframes release-landed {
 	from,
 	30% {
-		background-color: var(--accent-soft);
-		color: var(--accent-soft-fg);
-		box-shadow: 0 0 0 var(--focus-offset) var(--accent-soft);
+		background-color: var(--highlight);
+		color: var(--fg);
+		box-shadow: 0 0 0 var(--focus-offset) var(--notice-edge);
 	}
 }

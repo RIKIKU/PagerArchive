@@ -3400,8 +3400,8 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 	console.log(`R77/R81: ${tag} at the foot of the side menu (open and shrunk) and of More, for the user and the admin; none signed out; axe clean`);
 });
 
-// A125 (R77b; owner, 2026-11-18): "New release! Check out the release log",
-// for 3 seconds, then into the version's tag (More on a phone), which lights
+// A125 (R77b; owner, 2026-11-18, 2026-11-19): "New release! Check out the
+// release log", for 8 seconds counted down by a line along its foot, then into the version's tag (More on a phone), which lights
 // up. The server's answer is stood in for a new release, 1.10.0; whether a
 // user is told once is A125's API half (internal/acceptance/a125_test.go).
 const NEW_RELEASE = '1.10.0';
@@ -3468,6 +3468,28 @@ function landing(page: Page): Promise<Landing> {
 	);
 }
 
+/** How much of its line the countdown still shows (1 when shown, 0 at the end). */
+function countdownLeft(page: Page) {
+	return page.getByTestId('release-countdown').evaluate((el) => new DOMMatrix(getComputedStyle(el).transform).a);
+}
+
+/** Its line shrinks over a moment. */
+async function counting(page: Page, what: string) {
+	const before = await countdownLeft(page);
+	await page.waitForTimeout(500);
+	const after = await countdownLeft(page);
+	expect(after, `${what}: the countdown line shrinks`).toBeLessThan(before - 0.02);
+	return after;
+}
+
+/** Held for longer than it would have been shown: still there, its line no shorter. */
+async function heldFor(page: Page, what: string) {
+	const before = await countdownLeft(page);
+	await page.waitForTimeout(8_500);
+	await expect(page.getByTestId('release-notice'), what).toBeVisible();
+	expect(Math.abs((await countdownLeft(page)) - before), `${what}: its line waits too`).toBeLessThan(0.01);
+}
+
 /** It ended in the middle of what it lands on, no bigger than it, and that lit up. */
 async function landedOn(page: Page, l: Landing, target: string) {
 	expect(l.how, 'it flew').toBe('fly');
@@ -3486,7 +3508,7 @@ async function landedOn(page: Page, l: Landing, target: string) {
 
 for (const width of [1280, 375]) {
 	test(`A125 a new release told, then into the version at ${width} px`, async ({ browser }, info) => {
-		test.setTimeout(90_000);
+		test.setTimeout(180_000);
 		const report: string[] = [];
 		const target = width < 768 ? 'More' : `v${NEW_RELEASE}`;
 		// Shown: the words, the link, announced politely, focus left alone.
@@ -3502,11 +3524,14 @@ for (const width of [1280, 375]) {
 			expect(await notice.evaluate((n) => n.closest('[aria-live]')?.getAttribute('aria-live')), 'a polite live region').toBe('polite');
 			expect(await notice.evaluate((n) => n.closest('[role="alert"], [aria-live="assertive"]')), 'not an alert').toBeNull();
 			expect(await notice.evaluate((n) => !n.contains(document.activeElement)), 'focus not moved to it').toBe(true);
-			// After 3 seconds, into the tag (More on a phone).
+			await expect(page.getByTestId('release-countdown'), 'a countdown line along its foot').toBeVisible();
+			const shown = await counting(page, 'shown');
+			// After 8 seconds, into the tag (More on a phone).
 			const l = await landed;
 			const after = l.at - shownAt;
-			expect(after, 'it stays 3 seconds').toBeGreaterThanOrEqual(2_950);
-			expect(after).toBeLessThan(4_000);
+			expect(after, 'it stays 8 seconds').toBeGreaterThanOrEqual(7_950);
+			expect(after).toBeLessThan(9_000);
+			report.push(`its line at ${shown.toFixed(2)} after a moment`);
 			await landedOn(page, l, target);
 			report.push(`left after ${Math.round(after)} ms into ${target}`);
 			await page.context().close();
@@ -3528,8 +3553,7 @@ for (const width of [1280, 375]) {
 				await page.screenshot({ path: info.outputPath(`release-notice-${width}-${colorScheme}.png`) });
 				expect(await axeOf(page), `${width} px, ${colorScheme}: axe with the notice shown`).toEqual([]);
 			}
-			await page.waitForTimeout(3_500);
-			await expect(notice, 'held while the pointer is on it').toBeVisible();
+			await heldFor(page, 'held while the pointer is on it');
 			const landed = landing(page);
 			const sent = Date.now();
 			await page.keyboard.press('Escape');
@@ -3547,10 +3571,25 @@ for (const width of [1280, 375]) {
 			expect(Date.now() - sent, 'a click sends it at once').toBeLessThan(2_000);
 			await page.context().close();
 		}
+		// On a phone: a finger held on it holds it, and lifting it is a tap, which
+		// sends it at once (owner, 2026-11-19: accepted).
+		if (width < 768) {
+			const { page, notice } = await newReleasePage(browser, width);
+			const touch = { pointerType: 'touch', isPrimary: true, pointerId: 2 };
+			for (const type of ['pointerover', 'pointerenter', 'pointerdown']) await notice.dispatchEvent(type, touch);
+			await heldFor(page, 'held while a finger is on it');
+			const landed = landing(page);
+			const sent = Date.now();
+			await notice.tap({ position: { x: 4, y: 4 } });
+			await landedOn(page, await landed, target);
+			expect(Date.now() - sent, 'a tap sends it at once').toBeLessThan(2_000);
+			await page.context().close();
+		}
 		// Reduced motion: a quick fade where it is, no flight; the tag still lights up.
 		{
 			const { page, notice } = await newReleasePage(browser, width, { reducedMotion: 'reduce' });
 			const start = (await notice.boundingBox())!;
+			await counting(page, 'reduced motion');
 			const l = await landing(page);
 			expect(l.how, 'it fades').toBe('fade');
 			expect(l.transform, 'it moves nowhere').toBe('none');
@@ -3564,17 +3603,81 @@ for (const width of [1280, 375]) {
 		{
 			const { page, notice } = await newReleasePage(browser, width);
 			await notice.getByRole('link').focus();
-			await page.waitForTimeout(3_500);
-			await expect(notice, 'held while focus is in it').toBeVisible();
+			await heldFor(page, 'held while focus is in it');
 			await page.keyboard.press('Escape');
 			await expect(notice).toHaveCount(0);
 			const nav = page.getByRole('navigation', { name: 'Main' });
 			await expect(width < 768 ? nav.getByRole('button', { name: 'More' }) : nav.getByTestId('version')).toBeFocused();
 			await page.context().close();
 		}
-		console.log(`A125 at ${width} px: ${report.join('; ')}; held by pointer and focus; Esc and a click send it; reduced motion fades; axe clean, light and dark`);
+		console.log(`A125 at ${width} px: ${report.join('; ')}; held by pointer, focus${width < 768 ? ' and finger' : ''}, its line waiting too; Esc, a click${width < 768 ? ' and a tap' : ''} send it; reduced motion fades, its line still counting; axe clean, light and dark`);
 	});
 }
+
+// A125, R77b (owner, 2026-11-19: "It just needs to contrast"; WCAG AA for what
+// must be noticed): the shown notice's own colours, as the browser draws them,
+// in every look and theme: its text and link at least 4.5:1 on its fill, its
+// edge at least 4.5:1 against the page; and the landing's ring at least 3:1
+// against the menu (the bottom bar on a phone) it sits on.
+test('A125 the notice and its landing contrast in every look and theme', async ({ browser, request }) => {
+	test.setTimeout(120_000);
+	const report: string[] = [];
+	const failures: string[] = [];
+	const rgb = (c: string) => c.match(/rgba?\(([^)]+)\)/)![1].split(',').slice(0, 3).map(Number);
+	const lum = (c: number[]) => c.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+	const ratio = (a: string, b: string) => {
+		const [x, y] = [lum(rgb(a)), lum(rgb(b))].sort((p, q) => q - p);
+		return (x + 0.05) / (y + 0.05);
+	};
+	for (const look of ['harbour', 'console'] as const) {
+		await setLook(request, 'user', look);
+		try {
+			for (const colorScheme of ['light', 'dark'] as const) {
+				for (const width of [1280, 375]) {
+					const { page, notice } = await newReleasePage(browser, width, { colorScheme });
+					await expect(page.locator('html')).toHaveAttribute('data-look', look);
+					const c = await notice.evaluate((n) => {
+						const s = getComputedStyle(n);
+						return {
+							fill: s.backgroundColor,
+							text: s.color,
+							link: getComputedStyle(n.querySelector('a')!).color,
+							edge: s.borderTopColor,
+							line: getComputedStyle(n.querySelector('[data-testid="release-countdown"]')!).backgroundColor,
+							page: getComputedStyle(document.body).backgroundColor
+						};
+					});
+					// The landing, held at its brightest.
+					await page.keyboard.press('Escape');
+					const lit = page.locator('.release-landed');
+					await expect(lit).toHaveCount(1);
+					const frame = width < 768 ? 'nav.bottom' : 'nav.side';
+					const l = await lit.evaluate((el, frame) => {
+						for (const a of el.getAnimations()) (a.pause(), (a.currentTime = 0));
+						const s = getComputedStyle(el);
+						return { ring: s.boxShadow, fill: s.backgroundColor, text: s.color, on: getComputedStyle(document.querySelector(frame)!).backgroundColor };
+					}, frame);
+					const checks = [
+						{ what: 'text on its fill', r: ratio(c.text, c.fill), min: 4.5 },
+						{ what: 'link on its fill', r: ratio(c.link, c.fill), min: 4.5 },
+						{ what: 'edge against the page', r: ratio(c.edge, c.page), min: 4.5 },
+						{ what: 'countdown line on its fill', r: ratio(c.line, c.fill), min: 3 },
+						{ what: `landing ring against ${width < 768 ? 'the bottom bar' : 'the side menu'}`, r: ratio(l.ring, l.on), min: 3 },
+						{ what: 'landing text on its fill', r: ratio(l.text, l.fill), min: 4.5 }
+					];
+					const where = `${look === 'console' ? 'Console' : 'Harbour'}, ${colorScheme}, ${width} px`;
+					report.push(`${where}: ${checks.map((k) => `${k.what} ${k.r.toFixed(2)}:1`).join(', ')}`);
+					for (const k of checks) if (k.r < k.min) failures.push(`${where}: ${k.what} is ${k.r.toFixed(2)}:1, needs ${k.min}:1`);
+					await page.context().close();
+				}
+			}
+		} finally {
+			await setLook(request, 'user', 'harbour');
+		}
+	}
+	console.log(report.join('\n'));
+	expect(failures).toEqual([]);
+});
 
 // The server says whether to show the notice, and a build that isn't a release
 // never is shown and records nothing (A125's API half, for 0.0.0-dev and
