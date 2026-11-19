@@ -39,12 +39,18 @@ func (s *Server) profileNames() []string {
 func (s *Server) adminTemplates(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.ListTemplates(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("templates", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
 	dups, err := s.Catalog.CaseDuplicates(r.Context())
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("templates", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return

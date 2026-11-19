@@ -122,6 +122,9 @@ func (s *Server) myAlbum(w http.ResponseWriter, r *http.Request, id int64) (db.M
 		return a, false
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return a, false
+		}
 		s.Log.Error("album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return a, false
@@ -157,6 +160,9 @@ func duplicateName(err error) bool {
 func (s *Server) listAlbums(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.Store.MyAlbums(r.Context(), currentUser(r).ID)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("albums", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -192,6 +198,9 @@ func (s *Server) createAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("create album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't create the album")
 		return
@@ -253,6 +262,9 @@ func (s *Server) updateAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("update album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't change the album")
 		return
@@ -273,6 +285,9 @@ func (s *Server) deleteAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.Store.DeleteAlbum(r.Context(), db.DeleteAlbumParams{ID: id, OwnerID: currentUser(r).ID})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("delete album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't delete the album")
 		return
@@ -316,6 +331,9 @@ func (s *Server) addToAlbum(w http.ResponseWriter, r *http.Request) {
 		_, err = s.Store.AddToAlbum(r.Context(), db.AddToAlbumParams{AlbumID: album, OwnerID: currentUser(r).ID, MessageID: message})
 	}
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("add to album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't add it")
 		return
@@ -330,6 +348,9 @@ func (s *Server) removeFromAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.Store.RemoveFromAlbum(r.Context(), db.RemoveFromAlbumParams{AlbumID: album, OwnerID: currentUser(r).ID, MessageID: message})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("remove from album", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't remove it")
 		return
@@ -358,6 +379,9 @@ func (s *Server) setNote(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := s.Store.SetAlbumNote(r.Context(), db.SetAlbumNoteParams{AlbumID: album, OwnerID: currentUser(r).ID, MessageID: message, Note: note})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("album note", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "couldn't save the note")
 		return
@@ -379,6 +403,9 @@ func (s *Server) messageAlbums(w http.ResponseWriter, r *http.Request) {
 	}
 	ids, err := s.Store.AlbumsHolding(r.Context(), db.AlbumsHoldingParams{OwnerID: currentUser(r).ID, MessageID: id})
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.Error("message albums", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
@@ -400,7 +427,7 @@ func (s *Server) addNotes(r *http.Request, album int64, msgs []Message) error {
 	}
 	notes, err := s.Store.AlbumNotes(r.Context(), db.AlbumNotesParams{AlbumID: album, Ids: ids})
 	if err != nil {
-		return errors.New(store.SafeError(err))
+		return store.SafeErr("", err)
 	}
 	byID := map[int64]string{}
 	for _, n := range notes {

@@ -112,6 +112,7 @@ The code doesn't lean on the list: a test (`TestM12SourceSpans`) reads the spans
   |---|---|---|
   | `pagerarchive_http_requests_total` | counter | `route`, `status` |
   | `pagerarchive_http_request_duration_seconds` | histogram (5 ms to 10 s) | `route`, `status` |
+  | `pagerarchive_http_requests_abandoned_total` | counter | `route` (R73a: requests the client gave up on, also counted as status 499 above) |
   | `pagerarchive_db_pool_connections` | gauge | `state`: `in_use`, `idle`, `constructing` |
   | `pagerarchive_db_pool_max_connections`, `..._acquires_total`, `..._waited_acquires_total`, `..._acquire_seconds_total` | gauge, counters | none |
   | `pagerarchive_live_connections` | gauge | none |

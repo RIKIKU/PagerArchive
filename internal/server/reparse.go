@@ -15,6 +15,9 @@ import (
 func (s *Server) getReparse(w http.ResponseWriter, r *http.Request) {
 	st, err := reparse.GetStatus(r.Context(), s.Store, s.Reparse)
 	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "re-parse status", "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong")
 		return
@@ -53,6 +56,9 @@ func (s *Server) reparseAction(w http.ResponseWriter, r *http.Request, op string
 	case errors.As(err, &refusal):
 		writeJSON(w, http.StatusConflict, Problem{Code: refusal.Code, Error: refusal.Message})
 	case err != nil:
+		if s.abandoned(w, r, err) {
+			return
+		}
 		s.Log.ErrorContext(r.Context(), "re-parse change", "op", op, "error", store.SafeError(err))
 		problem(w, http.StatusInternalServerError, "something went wrong; nothing was changed")
 	default:

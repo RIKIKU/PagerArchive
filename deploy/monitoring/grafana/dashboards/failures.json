@@ -37,7 +37,7 @@
       "description": "Pages that clients posted and the API refused in the last hour: a bad or revoked client key, or a malformed page (4xx answers to POST /api/v1/pages). A refused page isn't stored and isn't sent again. Normal: 0. Worry: any that keep coming: a client with a wrong key, or one sending what the API can't read.",
       "gridPos": {"h": 4, "w": 8, "x": 8, "y": 11},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\"}[1h])) or vector(0))"}],
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "round(sum(increase(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\", status!=\"499\"}[1h])) or vector(0))"}],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
@@ -164,7 +164,7 @@
       "gridPos": {"h": 8, "w": 12, "x": 12, "y": 31},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
-        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\"}[$__rate_interval])) * 60", "legendFormat": "HTTP {{status}}"},
+        {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (status) (rate(pagerarchive_http_requests_total{job=\"pagerarchive\", route=\"POST /api/v1/pages\", status=~\"4..\", status!=\"499\"}[$__rate_interval])) * 60", "legendFormat": "HTTP {{status}}"},
         {"refId": "B", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum(rate(pagerarchive_pages_received_total{job=\"pagerarchive\", outcome=\"clock_ahead\"}[$__rate_interval])) * 60", "legendFormat": "clock ahead"}
       ],
       "fieldConfig": {"defaults": {"unit": "short", "custom": {"drawStyle": "bars", "fillOpacity": 60}, "noValue": "None"}, "overrides": []},

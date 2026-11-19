@@ -71,6 +71,7 @@ var LogKeys = map[string]kind{
 	"reason":          codeKind,
 	"error":           codeKind,
 	"op":              anyKind, // the name of what failed, always a constant in the code
+	"route":           anyKind, // the mux's pattern (Route), never the path: an abandoned request (R73a)
 	"kind":            codeKind,
 	"status":          codeKind,
 	"result":          codeKind,

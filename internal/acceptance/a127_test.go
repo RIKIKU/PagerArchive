@@ -26,11 +26,21 @@ type queryLog struct {
 	mu  sync.Mutex
 	on  bool
 	sql []string
+
+	// hook, if set, sees every query before it runs, and gives the context it
+	// runs with (A129).
+	hook func(ctx context.Context, sql string) context.Context
 }
 
 func (q *queryLog) TraceQueryStart(ctx context.Context, c *pgx.Conn, data pgx.TraceQueryStartData) context.Context {
 	if q.next != nil {
 		ctx = q.next.TraceQueryStart(ctx, c, data)
+	}
+	q.mu.Lock()
+	hook := q.hook
+	q.mu.Unlock()
+	if hook != nil {
+		ctx = hook(ctx, data.SQL)
 	}
 	if ctx.Value(http.ServerContextKey) != nil {
 		q.mu.Lock()

@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -91,7 +90,7 @@ func (s *Server) addAreas(ctx context.Context, msgs []Message) error {
 	}
 	rows, err := s.Store.MessageAreas(ctx, ids)
 	if err != nil {
-		return errors.New(store.SafeError(err))
+		return store.SafeErr("", err)
 	}
 	in := make(map[int64][]AreaRef, len(rows))
 	for _, r := range rows {
@@ -116,6 +115,9 @@ func (s *Server) getJobAreas(w http.ResponseWriter, r *http.Request) {
 	if len(s.shownAreas()) > 0 {
 		rows, err := s.Store.JobAreas(r.Context(), r.PathValue("job"))
 		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("job areas", "error", store.SafeError(err))
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return
@@ -195,6 +197,9 @@ func (s *Server) adminAreas(w http.ResponseWriter, r *http.Request) {
 	for _, l := range s.Areas {
 		pending, err := areas.Pending(r.Context(), s.Store, l.ID)
 		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
 			s.Log.Error("areas", "error", store.SafeError(err))
 			problem(w, http.StatusInternalServerError, "lookup failed")
 			return

@@ -14,6 +14,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/accounts"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/store/db"
+	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
 
 // PowerShellScope is what the module asks Authentik for: offline_access
@@ -138,6 +139,9 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time
 		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeNotSignedIn, "No PagerArchive account for this sign-in.", "no account"}
 	}
 	if err != nil {
+		if telemetry.Abandoned(ctx, err) {
+			return db.User{}, time.Time{}, err // the caller says so (R73a)
+		}
 		s.Log.Error("powershell token: user", "error", store.SafeError(err))
 		return db.User{}, time.Time{}, err
 	}
