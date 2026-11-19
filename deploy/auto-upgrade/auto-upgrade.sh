@@ -130,9 +130,18 @@ status() {
 
 status_get() { "$JQ" -r "$1 // empty" "$STATUS" 2>/dev/null; }
 
+# CHECKED_AT: a run's last_check_at is when it started, which is when it
+# checked (R84h): a run's end doesn't move it, so a long upgrade doesn't make
+# the last check look later than it was. Outside a run, now. run() exports
+# AU_RUN_START.
+CHECKED_AT='.last_check_at = (($ENV.AU_RUN_START // "") | if . == "" then ($t|tonumber) else tonumber end)'
+
+# DONE: a run has ended: idle, with no start and no target.
+DONE='.state = "idle" | .running_since = 0 | .target_version = ""'
+
 # checked <result> <note>: the end of a run that changed nothing.
 checked() {
-	status '.state = "idle" | .running_since = 0 | .last_check_at = ($t|tonumber) | .last_check_result = $r | .last_check_note = $n
+	status "$CHECKED_AT | $DONE"' | .last_check_result = $r | .last_check_note = $n
 		| .running_version = $v | .latest_version = $l' \
 		--arg t "$(now)" --arg r "$1" --arg n "$2" --arg v "${FROM:-}" --arg l "${TO:-}"
 }
@@ -676,7 +685,7 @@ fail_upgrade() { # <step> <reason>
 		outcome=rollback-failed
 		event error rollback failed "$ROLLBACK_FAILED"
 	fi
-	status '.state = "idle" | .running_since = 0 | .last_check_at = ($t|tonumber) | .last_check_result = $o | .last_check_note = $w
+	status "$CHECKED_AT | $DONE"' | .last_check_result = $o | .last_check_note = $w
 		| .failures += 1 | .rollbacks += (if $rb == "true" then 1 else 0 end)
 		| .failed_versions = ((.failed_versions + [$to]) | unique)
 		| .last_failure = {at: ($t|tonumber), from: $from, to: $to, step: $step, reason: $w, rolled_back: ($rb == "true"),
@@ -699,7 +708,12 @@ run() {
 		return 1
 		;;
 	esac
-	status '.state = "checking" | .running_since = ($t|tonumber)' --arg t "$(now)"
+	# The run's start is its check (R84h): the last check is now, and until the
+	# run ends its result says it's going on.
+	AU_RUN_START=$(now)
+	export AU_RUN_START
+	status '.state = "checking" | .running_since = ($t|tonumber) | .last_check_at = ($t|tonumber) | .target_version = ""
+		| .last_check_result = "in-progress" | .last_check_note = "checking for a release now"' --arg t "$AU_RUN_START"
 	FROM=$(running_version)
 	if [ -z "$FROM" ]; then
 		event warn check skipped "the API isn't running"
@@ -754,7 +768,7 @@ run() {
 	fi
 	event info check newer "$TO is out"
 
-	status '.state = "verifying"'
+	status '.state = "verifying" | .target_version = $to | .last_check_note = ($to + " is out: upgrading to it")' --arg to "$TO"
 	REASON="" NOT_READY=""
 	if ! verify "$latest"; then
 		event error verify refused "$REASON"
@@ -799,7 +813,7 @@ run() {
 		return 1
 	fi
 	event info health ok "$PAGE_NOTE"
-	status '.state = "idle" | .running_since = 0 | .last_check_at = ($t|tonumber) | .last_check_result = "upgraded"
+	status "$CHECKED_AT | $DONE"' | .last_check_result = "upgraded"
 		| .last_check_note = $n | .running_version = $to | .latest_version = $to
 		| .last_upgrade = {at: ($t|tonumber), from: $from, to: $to}
 		| .history = (.history + [{at: ($t|tonumber), from: $from, to: $to, result: "upgraded"}])[-20:]' \
@@ -890,6 +904,7 @@ main() {
 		return 2
 	}
 	load_settings
+	unset AU_RUN_START
 	mkdir -p "$HOME_AU"
 	local cmd=${1:-}
 	[ $# -eq 0 ] || shift
@@ -962,7 +977,7 @@ main() {
 		echo "${1#v} will be tried at the next run"
 		;;
 	clear)
-		status '.state = "idle" | .running_since = 0 | if .last_check_result == "interrupted" then .last_check_result = "cleared" else . end
+		status "$DONE"' | if .last_check_result == "interrupted" then .last_check_result = "cleared" else . end
 			| if .last_failure then .last_failure.cleared_at = ($t|tonumber) else . end' --arg t "$(now)"
 		echo "cleared: Administration's notice and the alert go, and the next run checks again. Check the install first: docs/deploy.md, \"Automatic upgrades\""
 		;;

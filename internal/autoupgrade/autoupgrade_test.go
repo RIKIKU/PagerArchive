@@ -79,3 +79,26 @@ func TestOnlyVersionsAndKnownWords(t *testing.T) {
 		t.Errorf("%+v %+v %+v", got, got.LastFailure, got.History)
 	}
 }
+
+// A run going now has its start and, once it knows, its target; idle has
+// neither, and a target that isn't a version is dropped (it's a label).
+func TestRunInProgress(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "status.json")
+	for _, c := range []struct {
+		json, target string
+		since        bool
+	}{
+		{`{"enabled":true,"state":"backing-up","running_since":100,"target_version":"1.19.0","last_check_at":100}`, "1.19.0", true},
+		{`{"enabled":true,"state":"checking","running_since":100,"target_version":"","last_check_at":100}`, "", true},
+		{`{"enabled":true,"state":"upgrading","running_since":100,"target_version":"1.19.0\" x","last_check_at":100}`, "", true},
+		{`{"enabled":true,"state":"idle","running_since":100,"target_version":"1.19.0","last_check_at":100}`, "", false},
+	} {
+		if err := os.WriteFile(path, []byte(c.json), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		got := Read(path, time.Unix(200, 0))
+		if got.TargetVersion != c.target || (got.RunningSince != nil) != c.since || (c.since && got.RunningSince.Unix() != 100) {
+			t.Errorf("%s: target %q since %v", c.json, got.TargetVersion, got.RunningSince)
+		}
+	}
+}

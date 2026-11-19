@@ -79,6 +79,41 @@ func TestAutoUpgradeStatus(t *testing.T) {
 			t.Errorf("metrics after an upgrade: no %q in\n%s", want, m)
 		}
 	}
+	for _, not := range []string{"pagerarchive_auto_upgrade_run_start_timestamp_seconds", "pagerarchive_auto_upgrade_target_info"} {
+		if strings.Contains(m, not) {
+			t.Errorf("metrics while idle have %s:\n%s", not, m)
+		}
+	}
+
+	// A run going now (owner, 2026-11-20: "we should make that dashboard
+	// reflect in progress upgrades too"): its start, which is its check, and
+	// the release it's upgrading to, as the script writes them.
+	started := now - 25*60
+	write(fmt.Sprintf(`{"enabled":true,"state":"backing-up","running_since":%d,"target_version":"1.11.0","last_check_at":%d,
+		"last_check_result":"in-progress","last_check_note":"1.11.0 is out: upgrading to it","running_version":"1.10.0","latest_version":"1.10.0",
+		"failures":0,"rollbacks":0,"failed_versions":[],"last_upgrade":{"at":%d,"from":"1.9.0","to":"1.10.0"},"history":[]}`, started, started, now-86400))
+	if code, _ := e.admin.call(http.MethodGet, "/api/v1/admin/auto-upgrade", nil, &st); code != http.StatusOK || st.State != autoupgrade.StateOK ||
+		st.Run != "backing-up" || st.TargetVersion != "1.11.0" || st.RunningSince == nil || st.RunningSince.Unix() != started {
+		t.Errorf("during a run: %d %+v", code, st)
+	}
+	m = scrape()
+	for _, want := range []string{
+		`pagerarchive_auto_upgrade_run{step="backing-up"} 1`,
+		fmt.Sprintf("pagerarchive_auto_upgrade_run_start_timestamp_seconds %d\n", started),
+		`pagerarchive_auto_upgrade_target_info{to="1.11.0"} 1`,
+		fmt.Sprintf("pagerarchive_auto_upgrade_last_check_timestamp_seconds %d\n", started),
+		"pagerarchive_auto_upgrade_failing 0\n",
+	} {
+		if !strings.Contains(m, want) {
+			t.Errorf("metrics during a run: no %q in\n%s", want, m)
+		}
+	}
+	// Before it knows the release (checking), only its start.
+	write(fmt.Sprintf(`{"enabled":true,"state":"checking","running_since":%d,"target_version":"","last_check_at":%d}`, now, now))
+	if m = scrape(); !strings.Contains(m, fmt.Sprintf("pagerarchive_auto_upgrade_run_start_timestamp_seconds %d\n", now)) ||
+		strings.Contains(m, "pagerarchive_auto_upgrade_target_info") {
+		t.Errorf("metrics while checking:\n%s", m)
+	}
 
 	write(fmt.Sprintf(`{"enabled":true,"state":"idle","last_check_at":%d,"last_check_result":"rolled-back","running_version":"1.10.0",
 		"latest_version":"1.11.0","failures":1,"rollbacks":1,"failed_versions":["1.11.0"],

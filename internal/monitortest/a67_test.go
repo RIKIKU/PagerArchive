@@ -66,6 +66,27 @@ func (s *stack) values(t *testing.T, promql, label string) map[string]float64 {
 // client: refId -> instance -> value.
 func (s *stack) panelValues(t *testing.T, dashboard, title string) map[string]map[string]float64 {
 	t.Helper()
+	got := map[string]map[string]float64{}
+	for ref, series := range s.panelSeries(t, dashboard, title) {
+		got[ref] = map[string]float64{}
+		for _, ps := range series {
+			got[ref][ps.labels["instance"]] = ps.value
+		}
+	}
+	return got
+}
+
+// panelSeries is one series of a panel's query: its labels (what its legend
+// shows) and its last value.
+type panelSeries struct {
+	labels map[string]string
+	value  float64
+}
+
+// panelSeries runs a panel's queries as panelValues does and returns each
+// query's series with their labels: refId -> series.
+func (s *stack) panelSeries(t *testing.T, dashboard, title string) map[string][]panelSeries {
+	t.Helper()
 	var d struct {
 		Dashboard struct {
 			Panels []struct {
@@ -124,12 +145,12 @@ func (s *stack) panelValues(t *testing.T, dashboard, title string) map[string]ma
 	if err := json.Unmarshal(b, &out); err != nil {
 		t.Fatalf("panel %q: %v: %s", title, err, b)
 	}
-	got := map[string]map[string]float64{}
+	got := map[string][]panelSeries{}
 	for ref, r := range out.Results {
 		if r.Error != "" {
 			t.Errorf("panel %q query %s: %s", title, ref, r.Error)
 		}
-		got[ref] = map[string]float64{}
+		got[ref] = nil
 		// One frame per series: its value field carries the series' labels
 		// (Grafana's browser turns these into the table's rows).
 		for _, f := range r.Frames {
@@ -138,10 +159,14 @@ func (s *stack) panelValues(t *testing.T, dashboard, title string) map[string]ma
 				if fd.Name == "Time" || inst == "" || i >= len(f.Data.Values) {
 					continue
 				}
+				ps, found := panelSeries{labels: fd.Labels}, false
 				for _, v := range f.Data.Values[i] {
 					if n, ok := v.(float64); ok {
-						got[ref][inst] = n
+						ps.value, found = n, true
 					}
+				}
+				if found {
+					got[ref] = append(got[ref], ps)
 				}
 			}
 		}

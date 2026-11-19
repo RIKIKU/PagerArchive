@@ -32,7 +32,7 @@ survived=0
 # and restore. <test> is "go:<regexp>" (the acceptance checks),
 # "telemetry:<regexp>" (internal/telemetry's tests), "unit:<package
 # dir>:<regexp>" (another package's tests), "pester:<file>", "e2e:<grep>"
-# "mon:<regexp>" (the example stack's checks: TestA65, TestA67, TestA119),
+# "mon:<regexp>" (the example stack's checks: TestA65, TestA67, TestA90, TestA119),
 # "a75:<regexp>" (an acceptance check with A75's 4,562,500 pages),
 # "a76:<regexp>" (A76's checks through the command, scripts/a76-checks.sh) or
 # "stack:<regexp>" (the account checks against Authentik, through
@@ -396,6 +396,9 @@ if command -v docker >/dev/null; then
 	mutate "the clients panel back on instant queries only" deploy/monitoring/grafana/dashboards/clients.json mon:TestA67 \
 		'last_over_time(' '(' \
 		deploy/monitoring/grafana/dashboards/clients.json '[$__range:1m])' ')'
+	# R84h (owner, 2026-11-20): the run going now, at the top of the backups dashboard, names its target release.
+	mutate "the upgrade run going now shown without the release it's upgrading to" deploy/monitoring/grafana/dashboards/backups.json mon:TestA90 \
+		'group_left (to) max by (instance, to)' 'group_left () max by (instance)'
 	# R74b: "Radio not decoding" (A119): its query, its audio check, its floor and the busiest day left out of its usual.
 	mutate "the \"radio not decoding\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA119 \
 		'(label_replace(increase(pagerarchive_client_pages_decoded_total[30m]), "client"' '(label_replace(increase(pagerarchive_client_pages_decode_total[30m]), "client"'

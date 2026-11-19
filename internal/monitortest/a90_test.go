@@ -93,7 +93,53 @@ func TestA90UpgradesInGrafana(t *testing.T) {
 	if v, ok := one("Last successful upgrade", "A"); !ok || int64(v/1000) != checked {
 		t.Errorf("dashboard: last successful upgrade %v (shown %t), want %d000", v, ok, checked)
 	}
+	running := func() (map[string][]panelSeries, map[string]map[string]float64) {
+		return s.panelSeries(t, "pa-backups", "Automatic upgrade running now"), s.panelValues(t, "pa-backups", "Upgrade run started")
+	}
+	if now, started := running(); len(now["A"])+len(now["B"])+len(started["A"]) != 0 {
+		t.Errorf("dashboard: a run shown while idle: %v %v", now, started)
+	}
 	t.Log("A90: a good upgrade: in Prometheus, and the dashboard's panels show it")
+
+	// A run going now (owner, 2026-11-20: "we should make that dashboard
+	// reflect in progress upgrades too"): 25 minutes into backing up for
+	// 1.11.0, the top of the dashboard says so, with the time since it
+	// started; the last check is the run's start. Then a run still checking,
+	// which doesn't know its target yet.
+	start := at(25 * time.Minute)
+	write("status.json", fmt.Sprintf(`{"enabled":true,"state":"backing-up","running_since":%d,"target_version":"1.11.0","last_check_at":%d,
+		"last_check_result":"in-progress","last_check_note":"1.11.0 is out: upgrading to it","running_version":"1.10.0","latest_version":"1.10.0",
+		"failures":0,"rollbacks":0,"failed_versions":[],"last_upgrade":{"at":%d,"from":"1.9.0","to":"1.10.0"},"history":[]}`, start, start, checked))
+	if !waitFor(90*time.Second, func() bool {
+		return s.query(t, `pagerarchive_auto_upgrade_target_info{job="pagerarchive", to="1.11.0"} == 1`) == 1
+	}) {
+		t.Fatal("Prometheus never had the run's target (pagerarchive_auto_upgrade_target_info)")
+	}
+	now, started := running()
+	if a := now["A"]; len(a) != 1 || a[0].labels["to"] != "1.11.0" || a[0].labels["step"] != "backing-up" || a[0].value < 25*60 || a[0].value > 30*60 || len(now["B"]) != 0 {
+		t.Errorf("dashboard: the run going now: %+v, want one series to=1.11.0 step=backing-up, about 1,500 s", now)
+	}
+	if v, ok := one("Upgrade run started", "A"); !ok || int64(v/1000) != start {
+		t.Errorf("dashboard: the run started %v (shown %t), want %d000: %v", v, ok, start, started)
+	}
+	if v, ok := one("Since the last upgrade check", "A"); !ok || v < 25*60 || v > 30*60 {
+		t.Errorf("dashboard: since the last upgrade check %v s (shown %t) during a run, want the run's start, about 1,500 s", v, ok)
+	}
+	if v, ok := one("Last upgrade", "A"); !ok || v != 0 {
+		t.Errorf("dashboard: last upgrade %v (shown %t) during a run, want 0, OK", v, ok)
+	}
+	t.Logf("A90: a run backing up: %v at the top of the dashboard", now["A"])
+	start = at(time.Minute)
+	write("status.json", fmt.Sprintf(`{"enabled":true,"state":"checking","running_since":%d,"target_version":"","last_check_at":%d,"last_check_result":"in-progress",
+		"running_version":"1.10.0","failures":0,"rollbacks":0,"failed_versions":[],"last_upgrade":{"at":%d,"from":"1.9.0","to":"1.10.0"},"history":[]}`, start, start, checked))
+	if !waitFor(90*time.Second, func() bool {
+		return s.query(t, `pagerarchive_auto_upgrade_run{job="pagerarchive", step="checking"} == 1`) == 1
+	}) {
+		t.Fatal("Prometheus never had the run checking")
+	}
+	if now, _ = running(); len(now["A"]) != 0 || len(now["B"]) != 1 || now["B"][0].labels["step"] != "checking" || now["B"][0].value > 5*60 {
+		t.Errorf("dashboard: a run checking: %+v, want one series in B, step=checking", now)
+	}
 
 	// The log in Loki: one line per step, labelled, with only the known fields.
 	var lines []lokiLine
