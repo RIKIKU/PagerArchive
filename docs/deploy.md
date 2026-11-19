@@ -340,7 +340,7 @@ scrape_configs:
       - targets: ["pager-host.lan:8080"]   # API_BIND
 ```
 
-Alerts for a quiet receiver and for backups, for example: `pagerarchive_client_receiving == 0` and `pagerarchive_backup_failing == 1`.
+Alerts for a quiet receiver, for backups and for a database extension update waiting to be run by hand (R84c), for example: `pagerarchive_client_receiving == 0`, `pagerarchive_backup_failing == 1` and `pagerarchive_db_extension_update_pending == 1`.
 
 The backups' state is there too: when the last good one was, whether they're failing, and the last good night's size and how long its dumps and check took (`pagerarchive_backup_last_good_bytes`, `_dump_seconds`, `_check_seconds`; see [Backups](#backups)).
 
@@ -388,7 +388,7 @@ It counts every table's rows; then, in one transaction, makes the role, hands it
 
 To go back to the superuser: `deploy/postgres/api-role.sh undo`. That takes the two lines out of `.env` and recreates the API; the role stays, and a superuser needs nothing from it. An automatic upgrade's rollback to a release from before the role needs no undo: that release's `compose.yaml` ignores the two lines.
 
-Once switched, the API can't update PostGIS's extensions after a newer `postgis/postgis` image (R84c): it logs a WARN naming each one and the fix, as in [Upgrading](#upgrading), and keeps working on the older version until you run it.
+Once switched, the API can't update PostGIS's extensions after a newer `postgis/postgis` image (R84c): it logs a WARN naming each one and the fix, as in [Upgrading](#upgrading), and keeps working on the older version until you run it. That stays a hand step, run as the superuser: nothing runs it for you. So you aren't relying on spotting the WARN, `/metrics` has `pagerarchive_db_extension_update_pending{extension}`, 1 while an update is waiting, checked at start and every hour, and the [example monitoring stack](monitoring.md#alerts-and-where-they-go) alerts on it with **Database extension update pending**.
 
 ## Moving from an existing archive
 
@@ -504,7 +504,7 @@ Or have the server do this every hour, with a backup first and a rollback if the
 
 That's all: `.env` and `compose.override.yaml` stay as they are, and database migrations run when the API starts. A release can change a third-party service's files: `docker compose up -d` recreates that service, and leaves the others running. If the upgrade recreates `db`, Compose restarts Authentik too (see [When the database restarts](#when-the-database-restarts)).
 
-A newer `postgis/postgis` image brings a newer PostGIS, but a database keeps the PostGIS version it was set up with until it's updated. The API does that on every start, after the migrations: each installed PostGIS extension that's behind the image is updated, and the log says so at INFO, with the old and new versions. If the log has a WARN saying it couldn't update one, usually because the API's database login doesn't own that extension, the API starts anyway on the older version: run `ALTER EXTENSION <name> UPDATE;` (the extension the WARN names) in the database as the extension's owner, for example `docker compose exec db psql -U postgres -c 'ALTER EXTENSION postgis UPDATE;'`. PostGIS 3.7 no longer ships `postgis_tiger_geocoder`, which older images installed in every new database: if a WARN says the image no longer provides it, it's left as it was. PagerArchive doesn't use it, so you can remove it the same way with `DROP EXTENSION postgis_tiger_geocoder;`.
+A newer `postgis/postgis` image brings a newer PostGIS, but a database keeps the PostGIS version it was set up with until it's updated. The API does that on every start, after the migrations: each installed PostGIS extension that's behind the image is updated, and the log says so at INFO, with the old and new versions. If the log has a WARN saying it couldn't update one, usually because the API's database login doesn't own that extension, the API starts anyway on the older version: run `ALTER EXTENSION <name> UPDATE;` (the extension the WARN names) in the database as the extension's owner, for example `docker compose exec db psql -U postgres -c 'ALTER EXTENSION postgis UPDATE;'`. This is a hand step: after a newer database image, check the log or the [example monitoring stack](monitoring.md#alerts-and-where-they-go)'s **Database extension update pending** alert, which fires while one is waiting (`pagerarchive_db_extension_update_pending` is 1) and clears within the hour after you've run it, or at once if you restart the API. PostGIS 3.7 no longer ships `postgis_tiger_geocoder`, which older images installed in every new database: if a WARN says the image no longer provides it, it's left as it was. PagerArchive doesn't use it, so you can remove it the same way with `DROP EXTENSION postgis_tiger_geocoder;`.
 
 Before version 1.0.0, a release can break the upgrade. If so, its release notes start with "Upgrade steps". Read the notes before you upgrade.
 

@@ -263,6 +263,14 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		m.family("pagerarchive_backup_failing", "gauge", "1 if the last backup failed, or the last good one is more than 36 hours old (R86a).")
 		m.sample("pagerarchive_backup_failing", nil, b2f(b.Failing()))
 	}
+	if s.Extensions != nil {
+		if pending, ok := s.Extensions.Last(); ok {
+			m.family("pagerarchive_db_extension_update_pending", "gauge", "1 if the database image provides a newer version of the extension than the database has registered: run ALTER EXTENSION ... UPDATE as the superuser (R84c). Checked at start and every hour.")
+			for _, name := range slices.Sorted(maps.Keys(pending)) {
+				m.sample("pagerarchive_db_extension_update_pending", labels{"extension", name}, b2f(pending[name]))
+			}
+		}
+	}
 	s.autoUpgradeMetrics(m)
 	s.reparseMetrics(m)
 	s.redactionMetrics(m)
