@@ -1,6 +1,6 @@
 // Writes the installable app's files from the Harbour look's tokens in
-// src/app.css (R90, ADR 0037), so their colours and sizes are tokens too
-// (R82c):
+// ArchiveUx's tokens.css (R90, ADR 0037, ADR 0049), so their colours and
+// sizes are tokens too (R82c):
 //   - static/manifest.webmanifest: the web app manifest;
 //   - static/offline.html: the page the service worker shows when a page
 //     can't be fetched (src/service-worker.ts);
@@ -14,12 +14,13 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const web = fileURLToPath(new URL('..', import.meta.url));
-const css = readFileSync(`${web}src/app.css`, 'utf8');
+// ArchiveUx's tokens (ADR 0049), at the release package.json pins.
+const css = readFileSync(fileURLToPath(import.meta.resolve('archiveux/tokens.css')), 'utf8');
 
-/** A token's value as Harbour, the default look and the first in app.css, sets it. */
+/** A token's value as Harbour, the default look and the first in tokens.css, sets it. */
 function token(name) {
 	const m = new RegExp(`^\\s*${name}:\\s*([^;]+);`, 'm').exec(css);
-	if (!m) throw new Error(`app.css has no ${name}`);
+	if (!m) throw new Error(`archiveux/tokens.css has no ${name}`);
 	return m[1].trim();
 }
 
@@ -92,7 +93,7 @@ const used = [
 	'--focus-offset'
 ];
 const offline = `<!doctype html>
-<!-- Written by scripts/pwa.mjs from src/app.css: do not edit by hand (R90). -->
+<!-- Written by scripts/pwa.mjs from ArchiveUx's tokens: do not edit by hand (R90). -->
 <html lang="en-AU">
 	<head>
 		<meta charset="utf-8" />
@@ -164,7 +165,7 @@ ${used.map((t) => `				${t}: ${token(t)};`).join('\n')}
 </html>
 `;
 
-const metaStart = '<!-- pwa: written by scripts/pwa.mjs from app.css -->';
+const metaStart = '<!-- pwa: written by scripts/pwa.mjs from the tokens -->';
 const metaEnd = '<!-- /pwa -->';
 const metas = [
 	metaStart,
@@ -195,13 +196,13 @@ if (process.argv.includes('--check')) {
 			// missing: different
 		}
 		if (have !== text) {
-			console.error(`${file} is not what scripts/pwa.mjs writes from src/app.css: run \`node scripts/pwa.mjs\``);
+			console.error(`${file} is not what scripts/pwa.mjs writes from the tokens: run \`node scripts/pwa.mjs\``);
 			bad++;
 		}
 	}
 	if (bad) process.exit(1);
-	console.log(`${outputs.map(([f]) => f).join(', ')}: as written from src/app.css`);
+	console.log(`${outputs.map(([f]) => f).join(', ')}: as written from the tokens`);
 } else {
 	for (const [file, text] of outputs) writeFileSync(`${web}${file}`, text);
-	console.log(`wrote ${outputs.map(([f]) => f).join(', ')} from src/app.css`);
+	console.log(`wrote ${outputs.map(([f]) => f).join(', ')} from the tokens`);
 }

@@ -423,9 +423,9 @@ jobs:
       - name: svelte-check
         working-directory: web
         run: npm run check
-      # R82c, A73: components style with the tokens in src/app.css only; a
-      # hard-coded colour, size, spacing, radius or type fails, naming the
-      # file, line and value.
+      # R82c, A73: components style with tokens only (ArchiveUx's, ADR 0049,
+      # and the map's in src/app.css); a hard-coded colour, size, spacing,
+      # radius or type fails, naming the file, line and value.
       - name: Style tokens only (A73)
         working-directory: web
         run: node scripts/check-tokens.mjs
@@ -434,7 +434,7 @@ jobs:
         working-directory: web
         run: node scripts/icons.mjs --check
       # R90, R82c: the manifest, the offline page and the theme-color lines
-      # are written from app.css's tokens.
+      # are written from ArchiveUx's tokens.
       - name: Installable app's files are as written from the tokens
         working-directory: web
         run: node scripts/pwa.mjs --check
