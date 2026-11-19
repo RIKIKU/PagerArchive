@@ -25,6 +25,8 @@ type TreeNode struct {
 	Joined      time.Time `json:"joined"`
 	Trusted     bool      `json:"trusted"`
 	Invitations int64     `json:"invitations"` // unused invitations that still work
+	// ServiceAccount marks a service account (R62a).
+	ServiceAccount bool `json:"service_account"`
 	// Previews only (R42b): whether they can be ticked, why not, and
 	// whether they start ticked.
 	Tick     *Tick       `json:"tick,omitempty"`
@@ -111,7 +113,7 @@ func nest(t accounts.Tree, preview bool) InviteTree {
 	nodes := map[int64]*TreeNode{}
 	for _, p := range t.People {
 		n := &TreeNode{ID: p.ID, Label: accounts.Display(p.Name, p.Email, p.Status), Name: p.Name, Email: p.Email,
-			Role: p.Role, Status: p.Status, Joined: p.Joined.UTC(), Trusted: p.Trusted, Invitations: p.Invitations,
+			Role: p.Role, Status: p.Status, Joined: p.Joined.UTC(), Trusted: p.Trusted, Invitations: p.Invitations, ServiceAccount: p.ServiceAccount,
 			Children: []*TreeNode{}}
 		if preview {
 			n.Tick = &Tick{Can: p.CanTick, Why: p.WhyNot, Start: p.Ticked}

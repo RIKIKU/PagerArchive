@@ -384,7 +384,7 @@ function New-PaConnectionObject {
         Uri        = [uri]$Connection.Uri
         Name       = if ($user -and $user.name) { $user.name } else { '' }
         Email      = if ($user) { $user.email } else { '' }
-        Role       = if ($user) { $user.role } else { '' }
+        Role       = if ($user -and $user.PSObject.Properties['service_account'] -and $user.service_account) { 'service account' } elseif ($user) { $user.role } else { '' }
         SavedIn    = switch ($Connection.Store) {
             'dpapi' { 'DPAPI file' }
             'vault' { "Vault $($Connection.Vault)" }

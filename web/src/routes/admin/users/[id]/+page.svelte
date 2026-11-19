@@ -17,7 +17,7 @@
 	let notice = $state('');
 	const id = $derived(page.params.id ?? '');
 	const tz = $derived(meta?.time_zone ?? 'UTC');
-	const label = $derived(data ? (data.user.name ? `${data.user.name} (${data.user.email})` : data.user.email) : 'User');
+	const label = $derived(data ? (data.user.service_account ? `${data.user.name} (service account)` : data.user.name ? `${data.user.name} (${data.user.email})` : data.user.email) : 'User');
 	$effect(() => {
 		if (data) setTitle(label);
 	});
@@ -62,7 +62,7 @@
 {#if data}
 	<dl>
 		<dt>Role</dt>
-		<dd>{data.user.role === 'admin' ? 'Admin' : 'User'}</dd>
+		<dd>{data.user.service_account ? 'Read-only service account (made on the server)' : data.user.role === 'admin' ? 'Admin' : 'User'}</dd>
 		<dt>Status</dt>
 		<dd>{data.user.status === 'active' ? 'Active' : 'Deactivated'}</dd>
 		<dt>Invited by</dt>
@@ -77,7 +77,9 @@
 		</dd>
 	</dl>
 	<div class="buttons">
-		{#if data.user.trusted}
+		{#if data.user.service_account}
+			<!-- R62a: no trusted mark for a service account. -->
+		{:else if data.user.trusted}
 			<button type="button" class="secondary" onclick={() => act(() => api.setTrusted(data!.user.id, false), `${label} is no longer marked trusted.`)}
 				>Remove trusted mark</button
 			>

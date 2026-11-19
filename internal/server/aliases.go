@@ -278,6 +278,7 @@ func (s *Server) adminAlias(w http.ResponseWriter, r *http.Request) {
 		s.catalogError(w, r, "admin alias", err)
 		return
 	}
+	hideRequestPeople(r, out.Requests)
 	if out.Integrations, err = s.Store.CountIntegrationsSelectingAlias(r.Context(), id); err != nil {
 		s.catalogError(w, r, "admin alias", store.SafeErr("integrations", err))
 		return

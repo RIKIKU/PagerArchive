@@ -306,3 +306,41 @@ func (c *Client) EmailHolders(ctx context.Context, address string) (accounts.Ema
 	}
 	return holders, nil
 }
+
+var _ accounts.ServiceDirectory = (*Client)(nil)
+
+// ServiceAccountAttribute marks the app's service accounts: the blueprint's
+// pagerarchive-service-only policy lets only users with it trade an app
+// password for a token (R62a, ADR 0048).
+const ServiceAccountAttribute = "pagerarchive_service_account"
+
+// CreateServiceAccount makes a service-account user with an app password
+// that expires at expires (Authentik's own service-account call), and marks
+// it as the app's. If marking it fails, the user is deleted again. The
+// password is returned, never logged.
+func (c *Client) CreateServiceAccount(ctx context.Context, username string, expires time.Time) (string, string, error) {
+	var out struct {
+		UserPK int64  `json:"user_pk"`
+		Token  string `json:"token"`
+	}
+	body := map[string]any{"name": username, "create_group": false, "expiring": true, "expires": expires.UTC().Format(time.RFC3339)}
+	status, err := c.do(ctx, "create service account", http.MethodPost, "/api/v3/core/users/service_account/", body, &out, http.StatusOK, http.StatusBadRequest)
+	if err != nil {
+		return "", "", err
+	}
+	if status == http.StatusBadRequest {
+		return "", "", fmt.Errorf("authentik already has a user called %s, or refused the name", username)
+	}
+	if out.UserPK == 0 || out.Token == "" {
+		return "", "", errors.New("create service account: Authentik's answer had no user or password")
+	}
+	subject := strconv.FormatInt(out.UserPK, 10)
+	attrs := map[string]any{"attributes": map[string]any{ServiceAccountAttribute: true, "goauthentik.io/user/token-expires": true}}
+	if _, err := c.do(ctx, "mark service account", http.MethodPatch, "/api/v3/core/users/"+subject+"/", attrs, nil, http.StatusOK); err != nil {
+		if derr := c.DeleteUser(ctx, subject); derr != nil {
+			return "", "", fmt.Errorf("%w (and deleting the half-made user %s failed: %v)", err, username, derr)
+		}
+		return "", "", err
+	}
+	return subject, out.Token, nil
+}

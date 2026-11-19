@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -20,6 +22,10 @@ import (
 // PowerShellScope is what the module asks Authentik for: offline_access
 // gives it a refresh token (ADR 0009 §1).
 const PowerShellScope = "openid email profile offline_access"
+
+// ServiceAccountScope is what a service account asks for (R62a): no refresh
+// token, since its credential gets a new access token whenever it needs one.
+const ServiceAccountScope = "openid profile"
 
 // PowerShell checks the PowerShell module's access tokens (R60-R62, ADR 0009
 // §3). Like OIDC, it's set up on first use, so the API starts while
@@ -103,15 +109,17 @@ type errTokenRefused struct {
 
 func (e *errTokenRefused) Error() string { return e.code }
 
-// bearerUser is the user a module access token belongs to, checked on every
-// request: nothing is cached, so deactivation, deletion and demotion take
-// effect on the next command (R60, A53). It also returns the token's expiry,
-// when a live stream on it must end (ADR 0010 §4).
+// bearerUser is the user a module or service-account access token belongs
+// to, checked on every request: nothing is cached, so deactivation,
+// deletion, demotion, a service account's revocation, rotation and expiry
+// take effect on the next command (R60, R62a, A53). It also returns the
+// token's expiry, when a live stream on it must end (ADR 0010 §4).
 func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time, error) {
-	if s.PowerShell == nil {
+	client, service := s.tokenClient(raw)
+	if client == nil {
 		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "PowerShell sign-in is off"}
 	}
-	v, err := s.PowerShell.tokenVerifier()
+	v, err := client.tokenVerifier()
 	if err != nil {
 		s.Log.Error("powershell token: discovery", "error", err.Error())
 		return db.User{}, time.Time{}, errors.New("directory unavailable")
@@ -129,12 +137,14 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time
 		Scope string `json:"scope"`
 		JTI   string `json:"jti"`
 	}
-	if err := tok.Claims(&c); err != nil || c.Azp != s.PowerShell.ClientID || c.Scope == "" {
+	if err := tok.Claims(&c); err != nil || c.Azp != client.ClientID || c.Scope == "" {
 		s.Log.Info("powershell token refused", "reason", "not an access token for this client")
 		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "not an access token"}
 	}
 	u, err := s.Store.UserBySubject(ctx, &tok.Subject)
 	if errors.Is(err, pgx.ErrNoRows) {
+		// Also a service account's token from before it was rotated or
+		// revoked: its old Authentik user is gone (R62a).
 		s.Log.Info("powershell token refused", "reason", CodeNotSignedIn)
 		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeNotSignedIn, "No PagerArchive account for this sign-in.", "no account"}
 	}
@@ -145,11 +155,28 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time
 		s.Log.Error("powershell token: user", "error", store.SafeError(err))
 		return db.User{}, time.Time{}, err
 	}
+	// The service accounts' client is for service accounts only, and the
+	// module's for people only.
+	if service != accounts.IsServiceAccount(u) {
+		s.Log.Info("powershell token refused", "reason", "account of the wrong kind for this client", "user", u.ID)
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeInvalidToken, msgInvalidToken, "wrong client"}
+	}
 	if u.Status != "active" {
 		s.Log.Info("powershell token refused", "reason", CodeDeactivated, "user", u.ID)
-		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeDeactivated, "Your account has been deactivated. Ask an admin if you think this is a mistake.", "deactivated"}
+		msg := "Your account has been deactivated. Ask an admin if you think this is a mistake."
+		if service {
+			msg = "This service account has been deactivated by an admin."
+		}
+		return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeDeactivated, msg, "deactivated"}
 	}
-	if u.Role != accounts.RoleAdmin {
+	if service {
+		// Authentik doesn't check an app password's expiry when it's traded
+		// for a token, so the app does, on every request (ADR 0048).
+		if u.CredentialExpiresAt == nil || !s.Now().Before(*u.CredentialExpiresAt) {
+			s.Log.Info("powershell token refused", "reason", CodeServiceExpired, "user", u.ID, "service_account", deref(u.Name))
+			return db.User{}, time.Time{}, &errTokenRefused{http.StatusUnauthorized, CodeServiceExpired, msgServiceExpired, "expired"}
+		}
+	} else if u.Role != accounts.RoleAdmin {
 		s.Log.Info("powershell token refused", "reason", CodeAdminsOnly, "user", u.ID)
 		return db.User{}, time.Time{}, &errTokenRefused{http.StatusForbidden, CodeAdminsOnly, msgPowerShellAdmins, ""}
 	}
@@ -157,10 +184,44 @@ func (s *Server) bearerUser(ctx context.Context, raw string) (db.User, time.Time
 	if id == "" {
 		id = tok.Subject + " " + tok.IssuedAt.String()
 	}
-	if s.PowerShell.firstUse(id, tok.Expiry, s.Now()) {
-		s.Log.Info("signed in with PowerShell", "user", u.ID)
+	if client.firstUse(id, tok.Expiry, s.Now()) {
+		if service {
+			s.Log.Info("signed in as a service account", "user", u.ID, "service_account", deref(u.Name))
+		} else {
+			s.Log.Info("signed in with PowerShell", "user", u.ID)
+		}
 	}
 	return u, tok.Expiry, nil
+}
+
+// tokenClient is the client whose tokens raw claims to be: the service
+// accounts' when it names their issuer, and otherwise the module's. The
+// issuer is read unchecked only to choose; the chosen client's verifier
+// then checks the whole token, the issuer included.
+func (s *Server) tokenClient(raw string) (*PowerShell, bool) {
+	if s.ServiceAccounts != nil && unverifiedIssuer(raw) == s.ServiceAccounts.Issuer {
+		return s.ServiceAccounts, true
+	}
+	return s.PowerShell, false
+}
+
+// unverifiedIssuer is a JWT's iss claim, unchecked, or "".
+func unverifiedIssuer(raw string) string {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	b, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var c struct {
+		Iss string `json:"iss"`
+	}
+	if json.Unmarshal(b, &c) != nil {
+		return ""
+	}
+	return c.Iss
 }
 
 // bearerToken is the request's Authorization: Bearer token, if any.
@@ -189,6 +250,11 @@ type PowerShellSettings struct {
 	Issuer   string `json:"issuer"`
 	ClientID string `json:"client_id"`
 	Scope    string `json:"scope"`
+	// Service accounts' client (R62a), when it's on: where a service account
+	// trades its credential for tokens, and what it asks for.
+	ServiceIssuer   string `json:"service_issuer,omitempty"`
+	ServiceClientID string `json:"service_client_id,omitempty"`
+	ServiceScope    string `json:"service_scope,omitempty"`
 }
 
 func (s *Server) powershellSettings(w http.ResponseWriter, r *http.Request) {
@@ -196,5 +262,9 @@ func (s *Server) powershellSettings(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusNotFound, "PowerShell sign-in is off")
 		return
 	}
-	writeJSON(w, http.StatusOK, PowerShellSettings{Issuer: s.PowerShell.Issuer, ClientID: s.PowerShell.ClientID, Scope: PowerShellScope})
+	out := PowerShellSettings{Issuer: s.PowerShell.Issuer, ClientID: s.PowerShell.ClientID, Scope: PowerShellScope}
+	if s.ServiceAccounts != nil {
+		out.ServiceIssuer, out.ServiceClientID, out.ServiceScope = s.ServiceAccounts.Issuer, s.ServiceAccounts.ClientID, ServiceAccountScope
+	}
+	writeJSON(w, http.StatusOK, out)
 }

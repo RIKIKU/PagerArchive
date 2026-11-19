@@ -27,6 +27,14 @@ function Connect-PagerArchive {
     PowerShell access is for admins (R62): for anyone else the sign-in is
     refused and not saved.
 
+    A tool connects with -ServiceAccount instead: a read-only service
+    account (R62a), made on the server with `pagerarchive service-account
+    create`. Its credential is saved the same way, and traded for a new
+    access token whenever one is needed. Read commands work; a command that
+    changes something is refused with the reason. The credential expires
+    after 90 days, and ends at once when it's rotated or revoked on the
+    server.
+
     .EXAMPLE
     Connect-PagerArchive -Uri https://pager.example.org
 
@@ -38,6 +46,11 @@ function Connect-PagerArchive {
     Connect-PagerArchive -Uri https://pager.example.org -UseDeviceCode
 
     WARNING: To sign in, open https://auth.example.org/device on any device and enter the code ABCD-EFGH
+
+    .EXAMPLE
+    Connect-PagerArchive -Uri https://pager.example.org -ServiceAccount (Get-Credential -UserName report-bot)
+
+    Connects as the service account report-bot: paste its credential as the password.
 
     .EXAMPLE
     Connect-PagerArchive -Uri http://192.168.1.20:8095 -AllowUnencryptedAuthentication
@@ -59,7 +72,7 @@ function Connect-PagerArchive {
     about_PagerArchive
     #>
     [Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingAllowUnencryptedAuthentication', '', Justification = 'Only when the user passes -AllowUnencryptedAuthentication for a LAN test copy, with a warning (guidelines section 9).')]
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName = 'Browser')]
     [OutputType('PagerArchive.Connection')]
     param(
         # The PagerArchive app's URL, e.g. https://pager.example.org. No
@@ -69,7 +82,17 @@ function Connect-PagerArchive {
 
         # Sign in with a code entered on any device, for a machine with no
         # browser. Off by default.
+        [Parameter(ParameterSetName = 'Browser')]
         [switch] $UseDeviceCode,
+
+        # Connect as a read-only service account (R62a) instead of signing
+        # in: its name as the user name, and the credential that
+        # `pagerarchive service-account create` printed on the server as the
+        # password. No browser. It can read what an admin reads, except
+        # people's personal details, and change nothing.
+        [Parameter(Mandatory, ParameterSetName = 'ServiceAccount')]
+        [System.Management.Automation.Credential()]
+        [pscredential] $ServiceAccount,
 
         # The SecretManagement vault to save the sign-in in. Default: a
         # DPAPI-encrypted file on Windows, the default vault on Linux and
@@ -88,6 +111,9 @@ function Connect-PagerArchive {
             if ($origin.StartsWith('http:')) {
                 Write-Warning -Message "$origin uses plain HTTP: your sign-in is sent unencrypted."
             }
+            if ($PSBoundParameters.ContainsKey('ServiceAccount')) {
+                return Connect-PaServiceAccount -Origin $origin -Credential $ServiceAccount -Vault $Vault -AllowUnencryptedAuthentication:$AllowUnencryptedAuthentication
+            }
             $settings = Get-PaServerSetting -Origin $origin -AllowUnencryptedAuthentication:$AllowUnencryptedAuthentication
             $store = Resolve-PaStore -Vault $Vault
 
@@ -101,7 +127,7 @@ function Connect-PagerArchive {
                 } catch {
                     $script:Connection = $null
                     # Refused for who you are: signing in again won't help.
-                    if ($_.Exception.Data['PagerArchive.Code'] -in @('powershell_admins_only', 'deactivated', 'not_signed_in')) {
+                    if ($_.Exception.Data['PagerArchive.Code'] -in @('powershell_admins_only', 'deactivated', 'not_signed_in', 'service_account_expired', 'service_account_refused')) {
                         throw
                     }
                     Write-Verbose -Message "The saved sign-in didn't work ($($_.Exception.Data['PagerArchive.Code'])); signing in again."

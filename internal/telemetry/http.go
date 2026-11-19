@@ -160,6 +160,13 @@ func SetUser(ctx context.Context, id int64, role string) {
 	trace.SpanFromContext(ctx).SetAttributes(attribute.Int64("user.id", id), attribute.String("user.role", role))
 }
 
+// SetServiceAccount adds a service account's name to its request's span
+// (R62a): the account is a tool, not a person, and its name is all that
+// identifies it besides its ID and role.
+func SetServiceAccount(ctx context.Context, name string) {
+	trace.SpanFromContext(ctx).SetAttributes(attribute.String("pagerarchive.service_account", name))
+}
+
 // Route names a request by the pattern the mux matched, with its method:
 // "GET /api/v1/messages/{id}" (R70). A request nothing matched is
 // "<method> unmatched".

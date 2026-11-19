@@ -154,7 +154,12 @@ func (s *Service) allowed(domain string) bool { return slices.Contains(s.Allowed
 // user" (R43c).
 func Display(name, email *string, status string) string {
 	switch {
-	case status == "deleted" || email == nil:
+	case status == "deleted":
+		return "deleted user"
+	case email == nil && name != nil:
+		// Only a service account has a name and no email (R62a).
+		return *name + " (service account)"
+	case email == nil:
 		return "deleted user"
 	case name != nil && *name != "":
 		return *name + " (" + *email + ")"
@@ -384,6 +389,9 @@ type Claims struct {
 func (s *Service) SignIn(ctx context.Context, c Claims) (db.User, error) {
 	u, err := s.Store.UserBySubject(ctx, &c.Subject)
 	switch {
+	case err == nil && IsServiceAccount(u):
+		// A service account never signs in with a browser (R62a).
+		return db.User{}, refuse(http.StatusForbidden, "service_account", "That's a service account, which can't sign in with a browser.")
 	case err == nil:
 		if u.Status != "active" {
 			return db.User{}, refuse(http.StatusForbidden, "deactivated", "Your account has been deactivated. Ask an admin if you think this is a mistake.")
@@ -672,6 +680,9 @@ func (s *Service) Reactivate(ctx context.Context, actor db.User, targetID int64)
 	if err != nil {
 		return dbErr("user", err)
 	}
+	if IsServiceAccount(u) {
+		return errServiceShellOnly
+	}
 	if u.Status != "deactivated" {
 		return refuse(http.StatusConflict, "not_deactivated", "That user isn't deactivated.")
 	}
@@ -708,6 +719,9 @@ func (s *Service) SetRole(ctx context.Context, actor db.User, targetID int64, ro
 		if err != nil {
 			return dbErr("user", err)
 		}
+		if IsServiceAccount(u) {
+			return errServiceShellOnly
+		}
 		if u.Status != "active" {
 			return refuse(http.StatusConflict, "not_active", "Reactivate them first.")
 		}
@@ -732,6 +746,7 @@ func (s *Service) SetRole(ctx context.Context, actor db.User, targetID int64, ro
 // unused invitations are cancelled. The last active admin can't (R44).
 func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 	var cancelled []*string
+	var services []db.RevokeServiceAccountsOfRow
 	err := s.Store.InTx(ctx, func(q *db.Queries) error {
 		admins, err := q.LockActiveAdmins(ctx)
 		if err != nil {
@@ -766,6 +781,10 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 		if err := q.ClearRequestNotesOf(ctx, u.ID); err != nil {
 			return dbErr("clear request notes", err)
 		}
+		// R62a: their service accounts go with them.
+		if services, err = q.RevokeServiceAccountsOf(ctx, u.ID); err != nil {
+			return dbErr("revoke service accounts", err)
+		}
 		if err := q.DeleteUserAccount(ctx, u.ID); err != nil {
 			return dbErr("delete account", err)
 		}
@@ -774,8 +793,19 @@ func (s *Service) DeleteAccount(ctx context.Context, u db.User) error {
 	if err != nil {
 		return err
 	}
-	s.closeLive([]int64{u.ID})
-	s.Log.Info("account deleted", "user", u.ID)
+	ids := []int64{u.ID}
+	for _, sa := range services {
+		ids = append(ids, sa.ID)
+	}
+	s.closeLive(ids)
+	s.Log.Info("account deleted", "user", u.ID, "service_accounts_revoked", len(services))
+	for _, sa := range services {
+		if sa.Subject != nil {
+			if err := s.Dir.DeleteUser(ctx, *sa.Subject); err != nil {
+				s.Log.Error("authentik: delete user", "user", sa.ID, "error", err.Error())
+			}
+		}
+	}
 	if u.Subject != nil {
 		if err := s.Dir.DeleteUser(ctx, *u.Subject); err != nil {
 			// The app already refuses them; the Authentik user is left

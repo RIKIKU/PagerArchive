@@ -398,19 +398,21 @@ type TreeDeactivationPerson struct {
 }
 
 type User struct {
-	ID            int64
-	Subject       *string
-	Email         *string
-	EmailKey      *string
-	Name          *string
-	Role          string
-	Status        string
-	InvitedBy     *int64
-	CreatedAt     time.Time
-	DeactivatedAt *time.Time
-	DeletedAt     *time.Time
-	TrustedAt     *time.Time
-	TrustedBy     *int64
-	Look          string
-	SeenRelease   *string
+	ID                  int64
+	Subject             *string
+	Email               *string
+	EmailKey            *string
+	Name                *string
+	Role                string
+	Status              string
+	InvitedBy           *int64
+	CreatedAt           time.Time
+	DeactivatedAt       *time.Time
+	DeletedAt           *time.Time
+	TrustedAt           *time.Time
+	TrustedBy           *int64
+	Look                string
+	SeenRelease         *string
+	Kind                string
+	CredentialExpiresAt *time.Time
 }

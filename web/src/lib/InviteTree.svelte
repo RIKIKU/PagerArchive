@@ -59,6 +59,7 @@
 			{/if}
 			{#if !ticks && n.id === root.id}<span class="tag">This user</span>{/if}
 			{#if n.role === 'admin' && n.status !== 'deleted'}<span class="tag">Admin</span>{/if}
+			{#if n.service_account}<span class="tag">Service account</span>{/if}
 			{#if n.trusted}<span class="tag">Trusted</span>{/if}
 			{#if n.status === 'deactivated'}<span class="tag warn">Deactivated</span>{/if}
 			{#if ticks?.marks.get(n.id) === 'new'}<span class="tag warn">New</span>{/if}
