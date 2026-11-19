@@ -340,6 +340,29 @@ if command -v docker >/dev/null; then
 		'(pagerarchive_client_last_seen_timestamp_seconds{job="pagerarchive"})' '(pagerarchive_client_last_seen_seconds{job="pagerarchive"})'
 fi
 
+# R84c, ADR 0033 (owner, 2026-11-19): a PostGIS update the API can't run is
+# a hand step, alerted. The gauge follows the catalogue, the check is made
+# again while the API runs, and the alert fires on it.
+mutate "an extension update never pending" internal/store/postgis.go go:TestA83 \
+	'a.default_version IS DISTINCT FROM e.extversion' 'false'
+mutate "the extensions checked only once" internal/server/extensions.go go:TestA83UpdatePendingMetric \
+	'		case <-t.C:
+		}
+	}
+}
+
+func (c *ExtensionChecks) check' '		case <-t.C:
+			<-ctx.Done()
+		}
+	}
+}
+
+func (c *ExtensionChecks) check'
+if command -v docker >/dev/null; then
+	mutate "the \"database extension update pending\" alert rule's query broken" deploy/monitoring/grafana/provisioning/alerting/rules.yaml mon:TestA83 \
+		'(pagerarchive_db_extension_update_pending{job="pagerarchive"})' '(pagerarchive_db_extension_update_pending{job="pagerarchive"} * 0)'
+fi
+
 # M12 addition (owner, 2026-10-31): radio health (R74a), the "radio stalled"
 # alert and stopped clients on the dashboard (R76, A67), and a failed
 # delivery's cause on its span (R71).
@@ -634,7 +657,7 @@ fi
 
 echo "=== unmutated"
 go test -count=1 -run 'TestR84|TestR44c|TestA79|TestVersion' . 2>&1 | tail -3
-go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
+go test -p 1 -count=1 -run 'TestA53PowerShellTokens|TestA83|TestM9|TestA56|TestA57|TestA58|TestIconSize|TestM11|TestA62|TestA63|TestA64|TestM12|TestM16|TestM17|TestR73|TestSearchFieldBoundary|TestSearchSecondTryAliases|TestR44c|TestSearchBoundedTry|TestSearchShortTerms' ./internal/acceptance/ 2>&1 | tail -20
 go test -count=1 -run 'TestR44c|TestEmailHolders|TestErrorsLeaveOutTheQuery' ./internal/accounts/ ./internal/authentik/ 2>&1 | tail -3
 ! command -v docker >/dev/null || sh scripts/a76-checks.sh 2>&1 | grep -E '^(ok|FAIL|--- (PASS|FAIL)|API log lines)'
 ! command -v docker >/dev/null || sh scripts/a77.sh -o "$work/a77-results" 2>&1 | grep -E '^(ok|FAIL|=== A77|--- (PASS|FAIL))'

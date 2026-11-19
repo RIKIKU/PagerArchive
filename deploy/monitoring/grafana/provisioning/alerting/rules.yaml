@@ -130,6 +130,53 @@ groups:
             step: {service_name="pagerarchive-auto-upgrade"}. docs/deploy.md,
             "Automatic upgrades".
 
+      # R84c, ADR 0033: the database image provides a newer version of an
+      # extension (PostGIS's, or pg_trgm) than the database has registered.
+      # A switched API isn't the superuser, so it can't run the update: that
+      # stays a hand step (owner, 2026-11-19). The API checks at start and
+      # every hour. One alert per extension; it clears at the API's next check
+      # after the update (or at once if the API is restarted). No series (the
+      # metrics off, or the API down) is OK: that's "API unreachable"'s job.
+      - uid: pa-db-extension-update-pending
+        title: Database extension update pending
+        condition: pending
+        data:
+          - refId: state
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: state
+              instant: true
+              range: false
+              expr: max by (extension) (pagerarchive_db_extension_update_pending{job="pagerarchive"})
+          - refId: pending
+            datasourceUid: __expr__
+            model:
+              refId: pending
+              type: threshold
+              expression: state
+              conditions:
+                - evaluator:
+                    type: gt
+                    params: [0]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "The database image has a newer {{ $labels.extension }} than the database: run its update by hand"
+          description: >-
+            A newer database image brought a newer version of this extension,
+            but the database still has the old one registered, and the API's
+            own role can't update it. The API works on the old version, so
+            nothing is broken, but this is a hand step: on the server, in the
+            install's folder, run this as the superuser:
+            `docker compose exec db psql -U postgres -c 'ALTER EXTENSION {{ $labels.extension }} UPDATE;'`
+            (with several pending, postgis first).
+            It clears within the hour, or at once if you restart the API
+            (`docker compose restart api`). docs/deploy.md, "Upgrading".
+
       # R74a: a client running the radio has had no audio from rtl_fm for 2
       # minutes. The client deliberately runs rtl_fm with squelch (-l) off,
       # so a working dongle always gives audio, hiss on a quiet channel
