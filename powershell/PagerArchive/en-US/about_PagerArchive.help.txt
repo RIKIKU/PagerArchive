@@ -139,6 +139,24 @@ LONG DESCRIPTION
         Get-PagerArchiveAlias -Template 'Old Fire' |
             Set-PagerArchiveAlias -Template 'Example Fire' -WhatIf
 
+    Rename several aliases at once: -NewName takes a script block that
+    works out each one's new name from the alias ($_). Set- doesn't
+    rename, and with nothing to change it's an error (nothing_to_change):
+
+        Get-PagerArchiveAlias -Name 'Old *' |
+            Rename-PagerArchiveAlias -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+
+  TAB COMPLETION
+    Tab completes template names (-Template, and -Name on the template
+    commands), agencies (-Agency), agency profiles (-AgencyProfile) and
+    event categories (-Category) from the server you're connected to.
+    Alias names, call signs, capcodes and job numbers aren't completed:
+    there are too many. Each list is kept for 5 minutes in this session;
+    when what you've typed matches nothing in it, the server is asked once
+    more, so a template added a moment ago shows up. Values with spaces are
+    quoted. Not connected in this session, or the server can't be reached:
+    Tab offers nothing, and shows no error.
+
   BACKING UP NOW
     The server backs up both databases each night, and checks each backup.
     Before a change you might want to undo, such as an upgrade, back up now:

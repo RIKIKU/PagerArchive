@@ -5,10 +5,12 @@ function Set-PagerArchiveAlias {
 
     .DESCRIPTION
     Changes the template or the ignored flag of aliases chosen by capcode
-    or pattern, or by name. Only the settings given change. To rename an
-    alias, use Rename-PagerArchiveAlias. Changes take effect at once, are
-    recorded in each alias's history as yours (R57), and a new template
-    re-parses the alias's pages (R23a).
+    or pattern, or by name. Only the settings given change, and giving
+    none is an error (nothing_to_change). To rename an alias, use
+    Rename-PagerArchiveAlias, which takes a script block for several at
+    once. Changes take effect at once, are recorded in each alias's
+    history as yours (R57), and a new template re-parses the alias's pages
+    (R23a).
 
     An alias piped from Get-PagerArchiveAlias, or any object with an Id, is
     chosen by its Id: exactly that alias, even when other aliases have the
@@ -73,6 +75,7 @@ function Set-PagerArchiveAlias {
         # The template's name; '' removes the template (text only). Default:
         # unchanged. No wildcards.
         [AllowEmptyString()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Template,
 
         # $true hides the aliases' pages from the default message list,
@@ -83,6 +86,10 @@ function Set-PagerArchiveAlias {
         [switch] $PassThru
     )
     begin {
+        if (-not $PSBoundParameters.ContainsKey('Template') -and $null -eq $Ignored) {
+            $message = 'Nothing was changed: give -Template or -Ignored. To rename an alias, use Rename-PagerArchiveAlias.'
+            $PSCmdlet.ThrowTerminatingError((New-PaErrorRecord -ErrorId 'nothing_to_change' -Category InvalidArgument -Message $message))
+        }
         $templateId = $null
         try {
             if ($Template) {

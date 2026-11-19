@@ -52,6 +52,7 @@ function New-PagerArchiveTemplate {
         # text alternative. No wildcards.
         [Parameter(Mandatory, ValueFromPipelineByPropertyName)]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Agency,
 
         # A colour name like red, or a hex value like #b3261e. Default:
@@ -65,6 +66,7 @@ function New-PagerArchiveTemplate {
         # Default: none (text only).
         [Parameter(ValueFromPipelineByPropertyName)]
         [AllowEmptyString()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $AgencyProfile,
 
         # The icon file: PNG, ICO, GIF, JPEG or WebP, at most 100 KB.

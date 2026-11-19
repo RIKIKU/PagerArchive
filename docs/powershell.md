@@ -102,6 +102,25 @@ Alias names are unique, ignoring letter case (SPEC R27b): `New-` and `Rename-Pag
 
 `-WhatIf` and `-Confirm` work as for built-in commands. Removing asks for confirmation.
 
+### Renaming several at once
+
+`Set-` doesn't rename: `Rename-PagerArchiveAlias` and `Rename-PagerArchiveTemplate` do. Their `-NewName` takes a script block, which works out each piped record's new name from the record (`$_`), so one line renames many:
+
+```powershell
+Get-PagerArchiveAlias -Name 'Old *' | Rename-PagerArchiveAlias -NewName { $_.Name -replace '^Old\s+' } -WhatIf
+Get-PagerArchiveTemplate -Name 'Old *' | Rename-PagerArchiveTemplate -NewName { $_.Name -replace '^Old\s+' }
+```
+
+`-WhatIf` and `-Confirm` name each record with its own new name (`Rename alias to 'Station 1'` on `0100001 (Old Station 1, Id 1)`). `Set-PagerArchiveAlias` or `Set-PagerArchiveTemplate` with nothing to change is an error (`nothing_to_change`, category `InvalidArgument`) that says so and points at the `Rename-` command, and changes nothing (owner, 2026-11-19).
+
+### Tab completion
+
+Tab completes the short lists from the server you're connected to: template names (`-Template`, and `-Name` on the template commands), agencies (`-Agency`), agency profiles (`-AgencyProfile`) and event categories (`-Category`); `-Priority` completes its fixed list. Alias names, call signs, capcodes and job numbers aren't completed: there are too many (owner, 2026-11-19).
+
+- Each list is kept for 5 minutes in this PowerShell session, then fetched again. When what you've typed matches nothing in the list, the server is asked once more, so a template added a moment ago shows up.
+- Values with spaces are quoted. Only real values are offered; where a parameter takes wildcards, a typed wildcard narrows them (`-Name *Fire` then Tab), and the pattern you typed still works if you run it as it is.
+- Completion uses this session's connection only. Before `Connect-PagerArchive` (or the first command that opens a saved sign-in), or when the server can't be reached within 5 seconds, Tab offers nothing and shows no error.
+
 ### Choosing records
 
 A template or alias piped from `Get-PagerArchiveTemplate` or `Get-PagerArchiveAlias` (or any object with an `Id`) is chosen by its **Id**: the `Remove-`, `Set-` and `Rename-` commands act on exactly that record. This matters when two templates' names differ only in case, or when several aliases share a name from before names were unique:

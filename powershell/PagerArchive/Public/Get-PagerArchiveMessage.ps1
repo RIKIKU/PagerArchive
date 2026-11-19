@@ -114,6 +114,7 @@ function Get-PagerArchiveMessage {
         # Default: any.
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string[]] $Agency,
 
         # Call signs: the paged unit's call sign, often a short code at the
@@ -130,17 +131,7 @@ function Get-PagerArchiveMessage {
 
         # Event categories, as the network profile names them, or Other.
         # Default: any. No wildcards.
-        [ArgumentCompleter({
-                param($commandName, $parameterName, $wordToComplete)
-                $null = $commandName, $parameterName
-                try {
-                    (Invoke-PaApi -Method GET -Path '/api/v1/meta').categories |
-                        Where-Object -FilterScript { $_ -like "$wordToComplete*" } |
-                        ForEach-Object -Process { [System.Management.Automation.CompletionResult]::new("'$_'", $_, 'ParameterValue', $_) }
-                } catch {
-                    $null = $_
-                }
-            })]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [ValidateNotNullOrEmpty()]
         [string[]] $Category,
 
