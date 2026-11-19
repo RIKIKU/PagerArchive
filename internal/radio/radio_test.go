@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-// rtl_fm runs without squelch, so a working dongle always produces audio
+// rtl_fm runs with squelch deliberately off, so a working dongle always produces audio
 // and silence means it's stuck (R74a).
 func TestNoSquelch(t *testing.T) {
 	for _, s := range []Settings{{Frequency: "148.8125M", PPM: "0"}, {Frequency: "148.8125M", PPM: "-3", Gain: "40"}} {
