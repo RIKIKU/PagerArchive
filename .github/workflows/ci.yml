@@ -255,10 +255,13 @@ jobs:
         # flaky, reported below; one that fails again fails the step.
         # (GitHub runs bash with -e and pipefail: the status is kept, so the
         # flaky ones are reported when another test failed too.)
+        # -timeout 30m: internal/acceptance takes 8-10 minutes on a runner,
+        # up against go test's default of 10 minutes, which ends the whole
+        # package with a panic that no rerun can recover.
         run: |
           status=0
           go run gotest.tools/gotestsum@v1.13.0 --format standard-verbose --packages ./... \
-            --rerun-fails=1 --rerun-fails-max-failures=5 --rerun-fails-report rerun.txt -- -count=1 2>&1 | tee test.log || status=$?
+            --rerun-fails=1 --rerun-fails-max-failures=5 --rerun-fails-report rerun.txt -- -count=1 -timeout 30m 2>&1 | tee test.log || status=$?
           # One line per test run again: "<package>.<test>: <runs> runs, <failures> failures".
           if [ -s rerun.txt ]; then
             while IFS= read -r line; do
