@@ -62,6 +62,9 @@ type Me struct {
 	Look string `json:"look"`
 	// ServiceAccount: this is a read-only service account (R62a).
 	ServiceAccount bool `json:"service_account,omitempty"`
+	// CredentialExpiresAt is when a service account's credential expires
+	// (R62a: 90 days after create or rotate). Absent for a person.
+	CredentialExpiresAt *time.Time `json:"credential_expires_at,omitempty"`
 }
 
 // Looks are the looks a user can choose (R82d, ADR 0028), the default
@@ -80,6 +83,10 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
 	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Look: u.Look, ServiceAccount: accounts.IsServiceAccount(u)}
+	if me.ServiceAccount && u.CredentialExpiresAt != nil {
+		at := u.CredentialExpiresAt.UTC()
+		me.CredentialExpiresAt = &at
+	}
 	if u.InvitedBy != nil {
 		inv, err := s.Store.UserByID(r.Context(), *u.InvitedBy)
 		if err != nil {

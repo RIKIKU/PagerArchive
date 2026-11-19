@@ -58,13 +58,15 @@ SecretStore asks for its password when first used, and again after 15 minutes (`
 
 A sign-in not used for **30 days** ends. `Disconnect-PagerArchive` revokes it in Authentik and deletes the saved copy. Deactivating, deleting or demoting someone in PagerArchive takes effect on their next command.
 
+`Connect-PagerArchive` outputs the connection: `Uri`, `Name`, `Email`, `Role`, `SavedIn`, and `ExpiresAt` (`Format-List *` shows it). When you sign in as yourself, `ExpiresAt` is when the current access token expires; the module renews it as it goes, so it isn't when your sign-in ends.
+
 **As a service account.** A tool connects as a read-only service account (R62a) that the server's operator made with `pagerarchive service-account create` ([deploying](deploy.md)), with no browser:
 
 ```powershell
 Connect-PagerArchive -Uri https://pager.example.org -ServiceAccount (Get-Credential -UserName report-bot)
 ```
 
-Paste the credential `create` printed as the password. It's saved as a sign-in is (the table above), and traded with Authentik for a new 5-minute access token whenever one's needed. `Get-` commands, `Get-PagerArchiveMessage` and `Watch-PagerArchiveMessage` work; a command that changes anything is refused with `service_account_read_only` and the reason. The credential expires after 90 days, and ends at once when the operator rotates or revokes it, or an admin deactivates the account: the module then says `service_account_refused` and deletes its saved copy. `Disconnect-PagerArchive` deletes the saved copy; only the operator ends the credential itself.
+Paste the credential `create` printed as the password. It's saved as a sign-in is (the table above), and traded with Authentik for a new 5-minute access token whenever one's needed. `Get-` commands, `Get-PagerArchiveMessage` and `Watch-PagerArchiveMessage` work; a command that changes anything is refused with `service_account_read_only` and the reason. The credential expires after 90 days: the connection's `ExpiresAt` is when, and the 5-minute access tokens, which renew themselves, aren't shown. It ends at once when the operator rotates or revokes it, or an admin deactivates the account: the module then says `service_account_refused` and deletes its saved copy. `Disconnect-PagerArchive` deletes the saved copy; only the operator ends the credential itself.
 
 **Plain HTTP.** A copy on your own network without HTTPS needs `-AllowUnencryptedAuthentication`, and the module warns each time, because the sign-in is sent unencrypted:
 

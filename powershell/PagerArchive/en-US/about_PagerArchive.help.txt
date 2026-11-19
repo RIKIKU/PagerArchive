@@ -71,6 +71,9 @@ LONG DESCRIPTION
     PagerArchive.Message      SentAt, Capcode, Alias, Agency, Priority, Text,
                               and everything the detail view shows
     PagerArchive.Connection   Uri, Name, Email, Role, SavedIn, ExpiresAt
+                              (a person: when the current access token
+                              expires, renewed as it goes; a service
+                              account: when its credential expires)
     PagerArchive.Backup       State, Run, LastGoodAt, LastRunAt, Nights,
                               Error, and the last good backup's size and times
     PagerArchive.Reparse      State, Done, Total, Percent, PerMinute,
