@@ -53,6 +53,7 @@ function New-PagerArchiveAlias {
         # The template's name. Default: none (text only). No wildcards.
         [Parameter(ValueFromPipelineByPropertyName)]
         [AllowEmptyString()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Template,
 
         # Hide its pages from the default message list (R27). Off by

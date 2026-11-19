@@ -85,3 +85,40 @@ WHERE e.extname = ANY($1)`, PostGISExtensions)
 		log.Info("PostGIS extension updated", "extension", name, "from", e.from, "to", *e.to)
 	}
 }
+
+// WatchedExtensions are the extensions whose pending updates /metrics
+// reports (R84c): PostGIS's, and pg_trgm, which the migrations create too.
+var WatchedExtensions = append(append([]string(nil), PostGISExtensions...), "pg_trgm")
+
+// ExtensionUpdatesPending is, for each installed watched extension the image
+// provides, whether its registered version differs from the image's default
+// one: an ALTER EXTENSION ... UPDATE still to run, which a switched API can't
+// (ADR 0033), so an operator must, as the superuser. One the image no longer
+// provides is left out: there's nothing to update it to. It only reads the
+// catalogue, which any role can.
+func ExtensionUpdatesPending(ctx context.Context, conn Conn) (map[string]bool, error) {
+	rows, err := conn.Query(ctx, `
+SELECT e.extname, a.default_version IS DISTINCT FROM e.extversion
+FROM pg_extension e JOIN pg_available_extensions a ON a.name = e.extname
+WHERE e.extname = ANY($1) AND a.default_version IS NOT NULL`, WatchedExtensions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	pending := map[string]bool{}
+	for rows.Next() {
+		var name string
+		var p bool
+		if err := rows.Scan(&name, &p); err != nil {
+			return nil, err
+		}
+		pending[name] = p
+	}
+	return pending, rows.Err()
+}
+
+// ExtensionUpdatesPending is the package's ExtensionUpdatesPending on the
+// store's pool.
+func (s *Store) ExtensionUpdatesPending(ctx context.Context) (map[string]bool, error) {
+	return ExtensionUpdatesPending(ctx, s.Pool)
+}

@@ -1,7 +1,7 @@
 {
   "uid": "pa-failures",
   "title": "Failures",
-  "description": "Is anything failing, and what? One place for every failure the stack can see (R89): the alerts firing now, the API's server errors, refused pages, clients that can't send, failed integration deliveries, the nightly run, backups, automatic upgrades, locked accounts, Authentik, and the errors and warnings in the logs.",
+  "description": "Is anything failing, and what? One place for every failure the stack can see (R89): the alerts firing now, the API's server errors, refused pages, clients that can't send, failed integration deliveries, the nightly run, backups, automatic upgrades, database extension updates, locked accounts, Authentik, and the errors and warnings in the logs.",
   "tags": ["pagerarchive"],
   "timezone": "browser",
   "schemaVersion": 41,
@@ -134,7 +134,7 @@
     {
       "id": 24, "type": "stat", "title": "Radio stalled",
       "description": "Clients running the radio that have had no audio from rtl_fm for more than 2 minutes while still reporting, as \"Radio stalled\" alerts (R74a): a stuck dongle. Normal: 0. Worry: any: reset that client's dongle; the Clients dashboard has its radio health.",
-      "gridPos": {"h": 4, "w": 12, "x": 0, "y": 27},
+      "gridPos": {"h": 4, "w": 8, "x": 0, "y": 27},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(max by (instance) (pagerarchive_client_radio_silent_seconds) > 120) or vector(0)"}],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
@@ -143,10 +143,19 @@
     {
       "id": 25, "type": "stat", "title": "Radio not decoding",
       "description": "Clients whose radio gives audio but which decoded less than a quarter of their usual pages in the last 30 minutes (the same half hour's average over the 7 days before, the busiest left out, when that's 20 pages or more), as \"Radio not decoding\" counts them (R74b). The alert itself waits 5 minutes before it fires and clears above half the usual. Normal: 0. Worry: any: the signal, not the dongle; the Clients dashboard's \"Pages decoded: the last 30 minutes against the usual\" shows it.",
-      "gridPos": {"h": 4, "w": 12, "x": 12, "y": 27},
+      "gridPos": {"h": 4, "w": 8, "x": 8, "y": 27},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "count(((sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m])) and on (instance) (sum by (instance) (rate(pagerarchive_client_radio_audio_bytes_total[5m])) > 40000)) / (((sum by (instance) (label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), \"day\", \"1\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), \"day\", \"2\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), \"day\", \"3\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), \"day\", \"4\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), \"day\", \"5\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), \"day\", \"6\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), \"day\", \"7\", \"\", \"\")) - max by (instance) (label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), \"day\", \"1\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), \"day\", \"2\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), \"day\", \"3\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), \"day\", \"4\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), \"day\", \"5\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), \"day\", \"6\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), \"day\", \"7\", \"\", \"\"))) / (count by (instance) (label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 1d)), \"day\", \"1\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 2d)), \"day\", \"2\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 3d)), \"day\", \"3\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 4d)), \"day\", \"4\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 5d)), \"day\", \"5\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 6d)), \"day\", \"6\", \"\", \"\") or label_replace(sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m] offset 7d)), \"day\", \"7\", \"\", \"\")) - 1)) >= 20)) < 0.25) or vector(0)"}],
       "fieldConfig": {"defaults": {"unit": "short", "decimals": 0, "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
+    },
+    {
+      "id": 26, "type": "stat", "title": "Database extensions",
+      "description": "Whether the database image provides a newer version of an extension (PostGIS's, or pg_trgm) than the database has registered, as the \"Database extension update pending\" alert (R84c). The API checks at start and every hour. Normal: OK. Worry: UPDATE PENDING: the API's own role can't run the update, so run it by hand as the superuser, as the alert says: docker compose exec db psql -U postgres -c 'ALTER EXTENSION postgis UPDATE;' (docs/deploy.md, \"Upgrading\"). \"Not checked\" while /metrics has no check yet.",
+      "gridPos": {"h": 4, "w": 8, "x": 16, "y": 27},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "instant": true, "expr": "max by (instance) (pagerarchive_db_extension_update_pending{job=\"pagerarchive\"})", "legendFormat": "{{instance}}"}],
+      "fieldConfig": {"defaults": {"noValue": "Not checked", "mappings": [{"type": "value", "options": {"0": {"text": "OK", "color": "green"}, "1": {"text": "UPDATE PENDING", "color": "red"}}}], "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}, {"color": "red", "value": 1}]}}, "overrides": []},
       "options": {"colorMode": "background", "graphMode": "none", "reduceOptions": {"calcs": ["lastNotNull"]}}
     },
     {

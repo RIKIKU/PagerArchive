@@ -100,6 +100,9 @@ type Server struct {
 	// Flagged has the flagged messages' counts for /metrics, counted in the
 	// background (R52); nil leaves them out.
 	Flagged *FlagCounts
+	// Extensions has the database extensions' pending updates for /metrics,
+	// checked at start and every hour (R84c); nil leaves them out.
+	Extensions *ExtensionChecks
 	// Tracer traces requests, ingest and live updates (R71, R72); nil
 	// traces nothing. Requests counts them for /metrics.
 	Tracer   trace.Tracer

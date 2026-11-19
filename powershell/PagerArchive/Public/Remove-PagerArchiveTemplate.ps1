@@ -51,6 +51,7 @@ function Remove-PagerArchiveTemplate {
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'Name')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string[]] $Name,
 
         # The Ids of the templates to delete, exactly. A piped object's Id

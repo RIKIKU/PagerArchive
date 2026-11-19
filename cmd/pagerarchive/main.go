@@ -487,6 +487,12 @@ func serve(stderr io.Writer) error {
 	if srv.MetricsToken != "" {
 		srv.Flagged = &server.FlagCounts{Store: st, Log: log}
 		go srv.Flagged.Run(ctx)
+		// R84c: an extension update the API couldn't run (a switched API isn't
+		// the superuser, ADR 0033), for the example stack to alert on: checked
+		// now, after UpdatePostGIS, and every hour, as a db container can be
+		// recreated with a newer image while the API runs.
+		srv.Extensions = &server.ExtensionChecks{Store: st, Log: log}
+		go srv.Extensions.Run(ctx)
 	}
 	// R64: template names from before they had to differ by more than letter
 	// case (migration 00022), on every start until an admin sorts them out.

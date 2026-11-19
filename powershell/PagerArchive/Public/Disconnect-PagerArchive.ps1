@@ -117,6 +117,7 @@ function Disconnect-PagerArchive {
             if ($script:Connection -and $script:Connection.Uri -eq $origin) {
                 $script:Connection = $null
             }
+            Clear-PaCompletionCache
             if (-not $revoked) {
                 Write-Warning -Message "Signed out here, but the sign-in couldn't be revoked in Authentik. It ends by itself after 30 days unused."
             }

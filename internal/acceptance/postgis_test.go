@@ -252,6 +252,20 @@ ORDER BY string_to_array(source, '.')::int[] DESC LIMIT 1`, name, v.image).Scan(
 			t.Errorf("%s changed to %s without its owner", name, v.installed)
 		}
 	}
+	// The role can still see they're behind, for /metrics (R84c).
+	pending, err := store.ExtensionUpdatesPending(ctx, other)
+	if err != nil {
+		t.Fatalf("the role can't read the extensions' versions: %v", err)
+	}
+	for name := range older {
+		if !pending[name] {
+			t.Errorf("as the role, %s isn't pending: %v", name, pending)
+		}
+	}
+	if p, ok := pending["pg_trgm"]; !ok || p {
+		t.Errorf("as the role, pg_trgm pending %t (listed %t), want listed and not pending", p, ok)
+	}
+	t.Logf("A83: as the role, pending updates: %v", pending)
 	if err := other.Ping(ctx); err != nil {
 		t.Errorf("the connection didn't survive the failed updates: %v", err)
 	}

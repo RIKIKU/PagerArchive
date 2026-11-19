@@ -5,9 +5,10 @@ function Set-PagerArchiveTemplate {
 
     .DESCRIPTION
     Changes a template's agency, colour, agency profile or icon. Only the
-    settings given change. Every alias using the template changes at once
-    (R28). A new agency profile re-parses those aliases' pages (R23a). To
-    rename a template, use Rename-PagerArchiveTemplate.
+    settings given change, and giving none is an error (nothing_to_change).
+    Every alias using the template changes at once (R28). A new agency
+    profile re-parses those aliases' pages (R23a). To rename a template,
+    use Rename-PagerArchiveTemplate.
 
     A template piped from Get-PagerArchiveTemplate, or any object with an Id,
     is chosen by its Id: exactly that template, even when another template's
@@ -72,6 +73,7 @@ function Set-PagerArchiveTemplate {
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName = 'RemoveIcon')]
         [SupportsWildcards()]
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string[]] $Name,
 
         # The Ids of the templates to change, exactly. A piped object's Id
@@ -91,6 +93,7 @@ function Set-PagerArchiveTemplate {
 
         # The agency's new name. Default: unchanged. No wildcards.
         [ValidateNotNullOrEmpty()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Agency,
 
         # The new colour, a name like red or a hex value like #b3261e; ''
@@ -102,6 +105,7 @@ function Set-PagerArchiveTemplate {
         # The new agency profile; '' makes its pages text only. Default:
         # unchanged.
         [AllowEmptyString()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $AgencyProfile,
 
         # A new icon file: PNG, ICO, GIF, JPEG or WebP, at most 100 KB.
@@ -139,6 +143,10 @@ function Set-PagerArchiveTemplate {
         [switch] $PassThru
     )
     begin {
+        if (-not ($PSBoundParameters.Keys | Where-Object -FilterScript { $_ -in 'Agency', 'Colour', 'AgencyProfile', 'Path', 'LiteralPath', 'Uri', 'RemoveIcon' })) {
+            $message = 'Nothing was changed: give -Agency, -Colour, -AgencyProfile, an icon (-Path, -LiteralPath or -Uri) or -RemoveIcon. To rename a template, use Rename-PagerArchiveTemplate.'
+            $PSCmdlet.ThrowTerminatingError((New-PaErrorRecord -ErrorId 'nothing_to_change' -Category InvalidArgument -Message $message))
+        }
         try {
             $templates = @(Get-PaTemplateList)
         } catch {

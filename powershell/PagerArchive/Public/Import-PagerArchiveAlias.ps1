@@ -102,6 +102,7 @@ function Import-PagerArchiveAlias {
         [Alias('Agency')]
         [AllowEmptyString()]
         [AllowNull()]
+        [ArgumentCompleter([PagerArchiveCompleter])]
         [string] $Template,
 
         # The colour for a new template. Binds the CSV's color column.

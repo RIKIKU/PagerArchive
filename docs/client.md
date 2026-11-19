@@ -46,7 +46,7 @@ sudo modprobe -r dvb_usb_rtl28xxu   # or reboot
 
 `rtl_test` should then find the dongle without errors.
 
-The client runs `rtl_fm` **without squelch**, on purpose: a working dongle then always produces audio (hiss, between pages), so audio stopping means the dongle has stopped. The client passes that audio to `multimon-ng` itself and measures it on the way, and with telemetry on it reports its **radio health**: audio per second, its level, how long since audio last came, and `rtl_fm`'s errors by kind (docs/monitoring.md, "Radio health"). `rtl_fm`'s messages still go to the client's log as before.
+The client deliberately runs `rtl_fm` **with squelch (`-l`) off**: a working dongle then always produces audio (hiss, between pages), so audio stopping means the dongle has stopped. With squelch on, a quiet channel would be silent too, and squelch can clip the start of a page. The client passes that audio to `multimon-ng` itself and measures it on the way, and with telemetry on it reports its **radio health**: audio per second, its level, how long since audio last came, and `rtl_fm`'s errors by kind (docs/monitoring.md, "Radio health"). `rtl_fm`'s messages still go to the client's log as before.
 
 ## Clock
 
