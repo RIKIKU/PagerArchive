@@ -1,4 +1,5 @@
-// A73, R82c: every value that styles the UI is a token in src/app.css, and
+// A73, R82c: every value that styles the UI is a token, from ArchiveUx
+// (archiveux/tokens.css, ADR 0049) or, for the map's, src/app.css, and
 // components use tokens only. This fails, naming each file, line and value,
 // when a component hard-codes a colour, a length (a size, spacing, corner
 // radius, border or target size), a type size, a font, a font weight, a
@@ -32,8 +33,9 @@
 // too. Selectors and @media, @container and @supports conditions aren't
 // values: a breakpoint can't be a token in CSS. Unitless numbers (flex: 1,
 // opacity), percentages, fr, times and angles are layout, not look.
-// And every look in src/app.css sets the same tokens as the default one
-// (R82d), so a second look leaves no default value behind.
+// And every look, in ArchiveUx's tokens and in src/app.css, sets the same
+// tokens as the default one (R82d), so a second look leaves no default
+// value behind.
 //
 // usage: node scripts/check-tokens.mjs [file …]   (default: all of src)
 import { readFileSync, readdirSync, statSync } from 'node:fs';
@@ -223,7 +225,8 @@ function checkScript(program, text, offset, report) {
 	});
 }
 
-// Tokens defined in app.css, and those a component sets itself from data
+// Tokens defined in ArchiveUx's tokens.css and app.css, and those a
+// component sets itself from data
 // (style:--agency={…}): a var() naming anything else is a mistake.
 const defined = new Set();
 const uses = [];
@@ -327,24 +330,29 @@ function checkCss(file, text, report, name) {
 }
 
 // R82d: a look is a whole set of tokens. The default look (Harbour) is the
-// top-level :root rule that sets --bg; every other look, a rule
-// :root[data-look='name'], sets exactly the same tokens, no fewer (or a
-// default value would show through) and no more.
+// top-level :root rule that sets --bg (ArchiveUx's tokens) or, in a file of
+// the app's own tokens without one (src/app.css, the map's), its one
+// top-level :root rule; every other look, a rule :root[data-look='name'],
+// sets exactly the same tokens, no fewer (or a default value would show
+// through) and no more.
 function checkLooks(file, text, name) {
 	const wrapped = `<style>${text}</style>`;
 	const ast = parse(wrapped, { modern: true, filename: file });
 	const looks = [];
+	const roots = [];
 	for (const rule of ast.css.children) {
 		if (rule.type !== 'Rule') continue;
 		const selector = wrapped.slice(rule.prelude.start, rule.prelude.end).trim();
 		const tokens = rule.block.children.filter((c) => c.type === 'Declaration' && c.property.startsWith('--')).map((c) => c.property);
-		const look = selector === ':root' && tokens.includes('--bg') ? '' : /^:root\[data-look='([a-z]+)'\]$/.exec(selector)?.[1];
-		if (look !== undefined) looks.push({ look, tokens: new Set(tokens), line: lineOf(text, rule.start - '<style>'.length) });
+		const line = lineOf(text, rule.start - '<style>'.length);
+		if (selector === ':root' && tokens.length) roots.push({ look: '', tokens: new Set(tokens), line });
+		const look = /^:root\[data-look='([a-z]+)'\]$/.exec(selector)?.[1];
+		if (look !== undefined) looks.push({ look, tokens: new Set(tokens), line });
 	}
 	const problems = [];
-	const base = looks.find((l) => l.look === '');
-	if (!base) return [`${name}: no default look (a :root rule setting --bg)`];
-	for (const l of looks.filter((l) => l.look !== '')) {
+	const base = roots.find((l) => l.tokens.has('--bg')) ?? (roots.length === 1 ? roots[0] : undefined);
+	if (!base) return [`${name}: no default look (a :root rule setting --bg, or the file's only :root rule)`];
+	for (const l of looks) {
 		for (const t of base.tokens) if (!l.tokens.has(t)) problems.push(`${name}:${l.line}: look ${l.look} doesn't set ${t}, which the default look sets`);
 		for (const t of l.tokens) if (!base.tokens.has(t)) problems.push(`${name}:${l.line}: look ${l.look} sets ${t}, which the default look doesn't`);
 	}
@@ -361,9 +369,11 @@ function files(dir) {
 const args = process.argv.slice(2);
 const targets = args.length ? args.map((a) => join(process.cwd(), a)) : files(src);
 const tokenFile = join(src, 'app.css');
+// ArchiveUx's tokens (ADR 0049), at the release package.json pins.
+const sharedFile = fileURLToPath(import.meta.resolve('archiveux/tokens.css'));
 const found = [];
-// The token file first, so its tokens are known, even when not a target.
-for (const file of [tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
+// The token files first, so their tokens are known, even when not a target.
+for (const file of [sharedFile, tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
 	const text = readFileSync(file, 'utf8');
 	const name = relative(web, file).replaceAll('\\', '/');
 	const target = targets.includes(file);
@@ -373,10 +383,13 @@ for (const file of [tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
 	else checkCss(file, text, report, name);
 }
 for (const u of uses) if (!defined.has(u.token)) found.push(`${u.name}:${u.line}: unknown token ${u.token} in ${u.where}`);
-if (targets.includes(tokenFile)) found.push(...checkLooks(tokenFile, readFileSync(tokenFile, 'utf8'), relative(web, tokenFile).replaceAll('\\', '/')));
+if (targets.includes(tokenFile)) {
+	found.push(...checkLooks(tokenFile, readFileSync(tokenFile, 'utf8'), relative(web, tokenFile).replaceAll('\\', '/')));
+	found.push(...checkLooks(sharedFile, readFileSync(sharedFile, 'utf8'), 'archiveux/tokens.css'));
+}
 if (found.length) {
 	console.error(found.join('\n'));
-	console.error(`\n${found.length} problem(s): use a token from src/app.css instead, and give every look every token (R82c, R82d, A73).`);
+	console.error(`\n${found.length} problem(s): use a token from ArchiveUx (or, for the map, src/app.css) instead, and give every look every token (R82c, R82d, A73).`);
 	process.exit(1);
 }
 console.log(`check-tokens: ${targets.length} files, no hard-coded colours, sizes, spacing, radii or type (R82c)`);

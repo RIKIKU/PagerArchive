@@ -164,21 +164,27 @@
 	.cell:focus-visible {
 		box-shadow: inset 0 0 0 calc(2 * var(--focus-width)) var(--surface);
 	}
+	/* Each shade writes its count in its own text token, at least 4.5:1 on it
+	   in every look and theme (ArchiveUx, owner 2026-11-20). */
 	.l0 {
 		background: var(--heat-0);
-		color: var(--muted);
+		color: var(--heat-0-fg);
 	}
 	.l1 {
 		background: var(--heat-1);
+		color: var(--heat-1-fg);
 	}
 	.l2 {
 		background: var(--heat-2);
+		color: var(--heat-2-fg);
 	}
 	.l3 {
 		background: var(--heat-3);
+		color: var(--heat-3-fg);
 	}
 	.l4 {
 		background: var(--heat-4);
+		color: var(--heat-4-fg);
 		font-weight: var(--weight-strong);
 	}
 </style>

@@ -3,6 +3,9 @@
 	// the top bar with the breadcrumbs, the search box and the account menu,
 	// and on phones a bottom bar instead of the side menu. The page itself
 	// uses the full width (R80).
+	// ArchiveUx's tokens and base styles (ADR 0049), then PagerArchive's own
+	// (the map's), in that order.
+	import 'archiveux/archiveux.css';
 	import '../app.css';
 	import { beforeNavigate } from '$app/navigation';
 	import { page, updated } from '$app/state';

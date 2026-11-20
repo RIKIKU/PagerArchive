@@ -183,5 +183,12 @@
       matchPackageNames: ["ghcr.io/rikiku/pagerarchive", "pagerarchive"],
       enabled: false,
     },
+    // ArchiveUx, the shared design system (ADR 0049): a new release can change
+    // the look, so the app moves to one deliberately, by hand, after reading
+    // its changelog; never in a maintenance pull request.
+    {
+      matchPackageNames: ["archiveux", "RIKIKU/ArchiveUx"],
+      enabled: false,
+    },
   ],
 }
