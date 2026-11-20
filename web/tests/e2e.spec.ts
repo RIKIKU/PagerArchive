@@ -3719,19 +3719,14 @@ test('A125 no notice for a build that is not a release', async ({ browser, reque
 	await page.context().close();
 });
 
-// An admin's alert is must-notice (ArchiveUx, ADR 0049): a
-// --border-width-strong edge in --alert-edge all round, which the contrast
-// test below measures against the page. Its edge as drawn, and as wanted.
+// An admin's alert is the --warn-bg fill only, with no edge (owner,
+// 2026-11-20: "The amber edge is very intense. I prefer it without.";
+// ArchiveUx 0.1.1, ADR 0049). Its edge as drawn, each side's width and style.
+const noEdge = ['0px none', '0px none', '0px none', '0px none'];
 async function alertEdge(alert: Locator) {
 	return alert.evaluate((a) => {
-		const probe = document.createElement('span');
-		probe.style.border = 'var(--border-width-strong) solid var(--alert-edge)';
-		document.body.append(probe);
-		const edge = (s: CSSStyleDeclaration) =>
-			['top', 'right', 'bottom', 'left'].map((k) => ['width', 'style', 'color'].map((p) => s.getPropertyValue(`border-${k}-${p}`)).join(' ')).join(', ');
-		const out = { drawn: edge(getComputedStyle(a)), wanted: edge(getComputedStyle(probe)) };
-		probe.remove();
-		return out;
+		const s = getComputedStyle(a);
+		return ['top', 'right', 'bottom', 'left'].map((k) => `${s.getPropertyValue(`border-${k}-width`)} ${s.getPropertyValue(`border-${k}-style`)}`);
 	});
 }
 
@@ -3742,7 +3737,7 @@ async function alertEdge(alert: Locator) {
 const colourTokens = [
 	...['bg', 'surface', 'surface-2', 'fg', 'muted', 'border', 'control-border', 'accent', 'accent-fg', 'accent-hover', 'accent-pressed', 'accent-soft', 'accent-soft-fg'],
 	...['hover', 'focus', 'warn-bg', 'warn-fg', 'ok-fg', 'danger', 'danger-fg', 'danger-hover', 'danger-text', 'heartbeat-fg', 'highlight'],
-	...['alert-edge', 'notice-edge', ...[0, 1, 2, 3, 4].flatMap((n) => [`heat-${n}`, `heat-${n}-fg`])],
+	...['notice-edge', ...[0, 1, 2, 3, 4].flatMap((n) => [`heat-${n}`, `heat-${n}-fg`])],
 	...['emergency', 'nonemergency', 'admin'].flatMap((p) => ['bg', 'edge', 'dot', 'row', 'row-hover', 'badge-bg', 'badge-fg', 'badge-border'].map((t) => `${p}-${t}`))
 ];
 test('M13, M15: WCAG AA contrast of every look, light and dark', async ({ browser, request }) => {
@@ -3802,7 +3797,6 @@ test('M13, M15: WCAG AA contrast of every look, light and dark', async ({ browse
 					{ what: 'Switch on', fg: 'accent', on: ['surface-2'], min: 3 },
 					// Must-notice: an edge at least 4.5:1 against the page (owner, 2026-11-19).
 					{ what: 'Release notice edge', fg: 'notice-edge', on: ['bg'], min: 4.5 },
-					{ what: "An admin's alert's edge", fg: 'alert-edge', on: ['bg'], min: 4.5 },
 					// ArchiveUx's heat rule: each step's count on its own shade.
 					...[0, 1, 2, 3, 4].map((n) => ({ what: `Heat grid step ${n}: its count`, fg: `heat-${n}-fg`, on: [`heat-${n}`], min: 4.5 }))
 				];
@@ -4854,7 +4848,7 @@ test('Back up now on the Backups page', async ({ browser }) => {
 				await expect(state, where).toContainText('Done, but it failed: the dump of pagerarchive failed.', { timeout: 10_000 });
 				await expect(page.getByTestId('backup-alert')).toContainText('The last backup failed');
 				const edge = await alertEdge(page.getByTestId('backup-alert'));
-				expect(edge.drawn, `${where}: the alert's edge`).toBe(edge.wanted);
+				expect(edge, `${where}: the alert has no edge`).toEqual(noEdge);
 				// The phone's width is used, not overflowed.
 				expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'no sideways scroll').toBe(true);
 			}
@@ -4934,7 +4928,7 @@ test('R84h automatic upgrades in Administration', async ({ browser }, info) => {
 			await expect(alert).toContainText('rolled back to 1.10.0, and the database restored from the backup made just before');
 			await expect(alert).toContainText("1.11.0 won't be tried again");
 			const edge = await alertEdge(alert);
-			expect(edge.drawn, `${where}: the alert's edge`).toBe(edge.wanted);
+			expect(edge, `${where}: the alert has no edge`).toEqual(noEdge);
 			await expect(status).toContainText('On, but the last upgrade failed.');
 			await expect(status).toContainText('1 upgrade, 1 rolled back');
 			await expect(page.getByTestId('upgrade-history').locator('tbody tr').first()).toContainText('Failed, rolled back');

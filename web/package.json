@@ -25,7 +25,7 @@
     "@tabler/icons": "3.50.0",
     "@types/geojson": "^7946.0.16",
     "@types/node": "^26.6.5",
-    "archiveux": "github:RIKIKU/ArchiveUx#v0.1.0",
+    "archiveux": "github:RIKIKU/ArchiveUx#v0.1.1",
     "pdfjs-dist": "^6.4.299",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",

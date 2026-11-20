@@ -20,8 +20,6 @@
 		border-radius: var(--radius);
 		background: var(--warn-bg);
 		color: var(--warn-fg);
-		/* Must-notice: an edge at least 4.5:1 against the page (ArchiveUx, owner 2026-11-20). */
-		border: var(--border-width-strong) solid var(--alert-edge);
 	}
 	.alert a {
 		color: inherit;
