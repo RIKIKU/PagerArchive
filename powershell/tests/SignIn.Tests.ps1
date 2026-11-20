@@ -180,3 +180,24 @@ Describe 'Saving the sign-in (R61)' {
         }
     }
 }
+
+Describe 'A person''s connection (R61)' {
+    BeforeEach {
+        $env:PAGERARCHIVE_SIGNIN_DIR = Join-Path -Path $TestDrive -ChildPath ('SignIns-' + [guid]::NewGuid().ToString('N'))
+        & (Get-Module PagerArchive) { $script:Connection = $null }
+        Mock -ModuleName PagerArchive Resolve-PaStore { @{ Store = 'session'; Vault = $null } }
+    }
+
+    AfterAll {
+        Remove-Item -Path Env:PAGERARCHIVE_SIGNIN_DIR -ErrorAction SilentlyContinue
+    }
+
+    It 'shows when the current access token expires as ExpiresAt, as before' {
+        $before = [datetimeoffset]::UtcNow
+        $connection = Connect-Fake 3>$null
+        $connection.Role | Should -Be 'admin'
+        $connection.ExpiresAt | Should -BeOfType [datetimeoffset]
+        $connection.ExpiresAt | Should -BeGreaterOrEqual $before.AddSeconds(300)
+        $connection.ExpiresAt | Should -BeLessOrEqual ([datetimeoffset]::UtcNow.AddSeconds(300))
+    }
+}

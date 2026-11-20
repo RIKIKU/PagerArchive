@@ -47,7 +47,9 @@ BeforeAll {
             @{ Status = 200; access_token = (ConvertTo-Secure -Text 'access'); expires_in = 300 }
         } -ParameterFilter { $Uri -eq 'https://auth.example.test/t' }
         Mock -ModuleName PagerArchive Invoke-PaTokenRequest { @{ Status = 200 } } -ParameterFilter { $Uri -eq 'https://auth.example.test/r' }
-        Mock -ModuleName PagerArchive Invoke-PaApi { [pscustomobject]@{ id = 7; email = ''; name = 'report-bot'; role = 'user'; service_account = $true } } -ParameterFilter { $Path -eq '/api/v1/me' }
+        # As Invoke-RestMethod reads it: an ISO 8601 time becomes a DateTime.
+        $script:credentialExpires = [datetime]::SpecifyKind([datetime]'2027-02-18T09:30:00', [System.DateTimeKind]::Utc)
+        Mock -ModuleName PagerArchive Invoke-PaApi { [pscustomobject]@{ id = 7; email = ''; name = 'report-bot'; role = 'user'; service_account = $true; credential_expires_at = $script:credentialExpires } } -ParameterFilter { $Path -eq '/api/v1/me' }
     }
 }
 
@@ -73,6 +75,25 @@ Describe 'Connect-PagerArchive -ServiceAccount (R62a)' {
         $s.username | Should -Be 'report-bot'
         $s.secure | Should -BeTrue
         $s.password | Should -Be $plain
+    }
+
+    It 'shows when the credential expires as ExpiresAt, not the 5-minute access token' {
+        $connection = Connect-PagerArchive -Uri $origin -ServiceAccount (New-Credential) -WarningAction SilentlyContinue
+        $connection.ExpiresAt | Should -BeOfType [datetimeoffset]
+        $connection.ExpiresAt | Should -Be ([datetimeoffset]'2027-02-18T09:30:00Z')
+        $connection.ExpiresAt.Offset | Should -Be ([timespan]::Zero)
+    }
+
+    It 'reads the credential''s expiry as text too' {
+        Mock -ModuleName PagerArchive Invoke-PaApi { [pscustomobject]@{ id = 7; email = ''; name = 'report-bot'; role = 'user'; service_account = $true; credential_expires_at = '2027-02-18T09:30:00Z' } } -ParameterFilter { $Path -eq '/api/v1/me' }
+        $connection = Connect-PagerArchive -Uri $origin -ServiceAccount (New-Credential) -WarningAction SilentlyContinue
+        $connection.ExpiresAt | Should -Be ([datetimeoffset]'2027-02-18T09:30:00Z')
+    }
+
+    It 'shows no ExpiresAt when the server doesn''t say when the credential expires' {
+        Mock -ModuleName PagerArchive Invoke-PaApi { [pscustomobject]@{ id = 7; email = ''; name = 'report-bot'; role = 'user'; service_account = $true } } -ParameterFilter { $Path -eq '/api/v1/me' }
+        $connection = Connect-PagerArchive -Uri $origin -ServiceAccount (New-Credential) -WarningAction SilentlyContinue
+        $connection.ExpiresAt | Should -BeNullOrEmpty
     }
 
     It 'refuses a name that isn''t a service account''s, before asking anyone' {
@@ -122,6 +143,7 @@ Describe 'Connect-PagerArchive -ServiceAccount (R62a)' {
             & (Get-Module PagerArchive) { $script:Connection = $null }
             $again = Connect-PagerArchive -Uri $origin
             $again.Role | Should -Be 'service account'
+            $again.ExpiresAt | Should -Be ([datetimeoffset]'2027-02-18T09:30:00Z')
             @($script:sent | Where-Object { $_.grant_type -eq 'client_credentials' -and $_.password -eq $plain }).Count | Should -Be 2
         }
 

@@ -379,18 +379,35 @@ function New-PaConnectionObject {
         [hashtable] $Connection
     )
     $user = $Connection.User
+    $isService = $user -and $user.PSObject.Properties['service_account'] -and $user.service_account
+    # A person: when the current access token expires (renewed as it goes;
+    # the sign-in itself ends after 30 days unused, R61). A service account:
+    # when its credential expires (R62a), from the API; its access tokens
+    # renew themselves and aren't shown. Null if the server doesn't say.
+    $expiresAt = $Connection.ExpiresAt
+    if ($isService) {
+        $expiresAt = $null
+        if ($user.PSObject.Properties['credential_expires_at'] -and $user.credential_expires_at) {
+            $value = $user.credential_expires_at
+            $expiresAt = if ($value -is [datetime]) {
+                [datetimeoffset]$value.ToUniversalTime()
+            } else {
+                [datetimeoffset]::Parse([string]$value, [cultureinfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::AssumeUniversal)
+            }
+        }
+    }
     [pscustomobject]@{
         PSTypeName = 'PagerArchive.Connection'
         Uri        = [uri]$Connection.Uri
         Name       = if ($user -and $user.name) { $user.name } else { '' }
         Email      = if ($user) { $user.email } else { '' }
-        Role       = if ($user -and $user.PSObject.Properties['service_account'] -and $user.service_account) { 'service account' } elseif ($user) { $user.role } else { '' }
+        Role       = if ($isService) { 'service account' } elseif ($user) { $user.role } else { '' }
         SavedIn    = switch ($Connection.Store) {
             'dpapi' { 'DPAPI file' }
             'vault' { "Vault $($Connection.Vault)" }
             default { 'This session only' }
         }
-        ExpiresAt  = $Connection.ExpiresAt
+        ExpiresAt  = $expiresAt
     }
 }
 
