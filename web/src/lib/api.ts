@@ -11,6 +11,9 @@ export interface Flags {
 export interface Reception {
 	client: string;
 	received_at: string;
+	/** R19a: this copy's own text, when it was a near duplicate whose text
+	 * differs from the message's (redacted as the message's is, P1). */
+	text?: string;
 }
 
 export interface Message {

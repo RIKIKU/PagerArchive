@@ -106,10 +106,16 @@ func importMessages(args []string, stdin io.Reader, stdout, stderr io.Writer) er
 	if err != nil {
 		return fmt.Errorf("retention: %s", store.SafeError(err))
 	}
+	// Near duplicates in the file are merged as live ones are (R19a, R83a).
+	ratio, err := nearRatioSetting()
+	if err != nil {
+		return err
+	}
 	im := &importer.Importer{
 		Store: st,
 		// No OnStored: nothing is queued for an integration (R83b).
-		Ingest:   &ingest.Service{Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem}},
+		Ingest: &ingest.Service{Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: &geocode.Geocoder{Index: ix, GridSystem: net.GridSystem},
+			NearRatio: ratio},
 		Network:  net,
 		Cutoff:   job.Cutoff(time.Now(), days),
 		Now:      time.Now,

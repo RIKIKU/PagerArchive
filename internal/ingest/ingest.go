@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/events"
 	"github.com/RIKIKU/PagerArchive/internal/geocode"
+	"github.com/RIKIKU/PagerArchive/internal/neardup"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -53,6 +55,39 @@ const (
 	Ignored   Outcome = "ignored"
 )
 
+// Dedup is the kind of duplicate a copy was (R19, R19a): the metric's label.
+type Dedup string
+
+const (
+	// Exact: the same text as its message's (R19).
+	Exact Dedup = "exact"
+	// Near: nearly the same text (R19a, ADR 0050).
+	Near Dedup = "near"
+)
+
+// Result is what happened to a page, in full.
+type Result struct {
+	Outcome   Outcome
+	MessageID int64 // 0 for an ignored page
+	// Dedup is a duplicate's kind; "" when the page wasn't one.
+	Dedup Dedup
+	// Kept and Shape are a near duplicate's: why its message has the text it
+	// has, and how the copies differ.
+	Kept  neardup.Kept
+	Shape neardup.Shape
+	// Swapped: the copy's text replaced its message's (R19a), which was
+	// re-parsed as a live page is: the live views show it again.
+	Swapped bool
+	// Variant: the copy was kept as its client's reception with its own text.
+	Variant bool
+	// Variants are the clients whose earlier copies now keep the message's
+	// old text, after a swap.
+	Variants []string
+	// regroup is the sent time of a swapped message in a large event: the
+	// events around it are rebuilt once the page is committed (R87f).
+	regroup *time.Time
+}
+
 // Service ingests pages.
 type Service struct {
 	Store    *store.Store
@@ -62,58 +97,92 @@ type Service struct {
 	Geo      *geocode.Geocoder // nil: messages aren't placed
 	// OnStored runs in the transaction that stores a new page (not a
 	// duplicate copy), so work it queues commits with the page: the
-	// integrations' deliveries (ADR 0006 §3).
+	// integrations' deliveries (ADR 0006 §3). It runs again when a better
+	// copy's text replaces a message's (R19a): it queues at most one
+	// delivery for each integration and page (R51b), so an integration
+	// already told isn't told again, and one the better copy now matches is.
 	OnStored func(ctx context.Context, q *db.Queries, messageID int64) error
 	// Events groups a new page into a large event, after OnStored and in the
 	// same transaction (R87, ADR 0027); nil groups nothing.
 	Events *events.Detector
+	// Regroup rebuilds the large events around a message in one whose text a
+	// better copy replaced (R19a, R87f), after the page is committed; nil
+	// rebuilds none.
+	Regroup *events.Regrouper
+	// NearRatio is how near a copy's text must be to a message's to be the
+	// same transmission (R19a, neardup.Allowed): 0 is neardup.DefaultRatio,
+	// and below 0 turns near duplicates off.
+	NearRatio float64
+	// Log logs a failure after a page was stored (never its text, P1); nil
+	// logs nothing.
+	Log *slog.Logger
 	// Tracer traces each step, under the caller's "ingest" span (R71); nil
 	// traces nothing.
 	Tracer trace.Tracer
 }
 
-// Ingest processes one page from a client. It returns the message ID, or 0
-// for an ignored page.
-func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Outcome, int64, error) {
+// Ratio is the near-duplicate ratio in use (R19a): below 0, near
+// duplicates are off.
+func (s *Service) Ratio() float64 {
+	if s.NearRatio == 0 {
+		return neardup.DefaultRatio
+	}
+	return s.NearRatio
+}
+
+// Ingest processes one page from a client.
+func (s *Service) Ingest(ctx context.Context, clientID string, pg Page) (Result, error) {
 	// Every page, ignored ones included, updates the client's last-seen time (R16).
 	if err := s.Store.TouchClient(ctx, db.TouchClientParams{ID: clientID, SeenAt: pg.ReceivedAt}); err != nil {
-		return "", 0, store.SafeErr("touch client", err)
+		return Result{}, store.SafeErr("touch client", err)
 	}
 	tr := telemetry.Or(s.Tracer)
 	_, span := tr.Start(ctx, "ingest.redact") // control tokens, redaction, priority
 	prep := pipeline.Prepare(s.Network, pg.Capcode, pg.Text)
 	span.End()
 	if prep.Dropped {
-		return Ignored, 0, nil
+		return Result{Outcome: Ignored}, nil
 	}
 
 	pctx, span := tr.Start(ctx, "ingest.parse") // alias, template, agency profile
 	defer span.End()                            // already ended, unless it failed
 	cands, err := s.Candidates(pctx, s.Store.Queries, pg.Capcode)
 	if err != nil {
-		return "", 0, store.SafeErr("aliases", err)
+		return Result{}, store.SafeErr("aliases", err)
 	}
 	draft, err := s.Draft(prep, cands, pg)
 	if err != nil {
-		return "", 0, err
+		return Result{}, err
 	}
+	draft.Client = clientID
 	span.End()
 
-	var outcome Outcome
-	var id int64
+	var res Result
 	ctx, span = tr.Start(ctx, "ingest.store")
 	defer span.End()
 	err = s.Store.InTx(ctx, func(q *db.Queries) error {
 		var err error
-		outcome, id, err = s.Save(ctx, q, draft, func(id int64) error {
-			return q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt})
+		res, err = s.Save(ctx, q, draft, func(id int64, text *string) error {
+			return q.InsertReception(ctx, db.InsertReceptionParams{MessageID: id, ClientID: clientID, ReceivedAt: pg.ReceivedAt, Text: text})
 		})
 		return err
 	})
 	if err != nil {
-		return "", 0, store.SafeErr("store page", err)
+		return Result{}, store.SafeErr("store page", err)
 	}
-	return outcome, id, nil
+	span.End()
+	if res.regroup != nil && s.Regroup != nil {
+		// The page is stored whatever this does: a failure is logged, and the
+		// next re-parse's rebuild puts the events right.
+		var aff events.Affected
+		aff.Add(*res.regroup)
+		ectx, espan := tr.Start(ctx, "ingest.events")
+		if _, err := s.Regroup.Rebuild(ectx, s.Store, &aff); err != nil && s.Log != nil {
+			s.Log.ErrorContext(ctx, "rebuild large events after a better copy", "message_id", res.MessageID, "error", store.SafeError(err))
+		}
+		espan.End()
+	}
+	return res, nil
 }
 
 // Candidates are the aliases whose pattern matches a capcode.
@@ -135,6 +204,14 @@ type Draft struct {
 	Fields     Fields
 	ReceivedAt time.Time
 	Ignored    bool // its alias is marked ignored (R27): it doesn't count towards large events
+	// Agency is the agency profile it was parsed with (nil: text only), and
+	// Quality how well it parsed: a near duplicate's stored copy is parsed
+	// with the same profile to compare them (R19a).
+	Agency  *profile.Agency
+	Quality neardup.Quality
+	// Client is the receiving client: a message it already has a copy of
+	// isn't one its near copy can be (R19a). "" for an import.
+	Client string
 }
 
 // Draft parses a prepared page with the alias that wins among cands (R3, R27).
@@ -155,75 +232,216 @@ func (s *Service) Draft(prep pipeline.Prepared, cands []Candidate, pg Page) (Dra
 	}
 	params := messageParams(prep, fields, pg)
 	params.AliasID = aliasID
-	return Draft{Params: params, Fields: fields, ReceivedAt: pg.ReceivedAt, Ignored: ignored}, nil
+	return Draft{Params: params, Fields: fields, ReceivedAt: pg.ReceivedAt, Ignored: ignored, Agency: agency, Quality: QualityOf(parsed)}, nil
 }
 
-// Save merges a page into the message it duplicates (R19, R21) or stores it
-// as a new one, in the caller's transaction. record notes who received this
-// copy: a client's reception, or an import's.
-func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(id int64) error) (Outcome, int64, error) {
+// QualityOf is how well a page parsed, for choosing between near
+// duplicates (R19a).
+func QualityOf(p pipeline.Parsed) neardup.Quality {
+	return neardup.Quality{Matched: !p.ParseFailed, Split: !p.AddressUnsplit, Fields: len(p.Fields)}
+}
+
+// Save merges a page into the message it duplicates (R19, R21), exactly or
+// nearly (R19a), or stores it as a new one, in the caller's transaction.
+// record notes who received this copy, with its own text when that isn't
+// its message's: a client's reception, or an import's.
+func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(id int64, text *string) error) (Result, error) {
 	tr := telemetry.Or(s.Tracer)
-	// Serialise copies of the same page so two clients can't both insert it.
+	// Serialise copies of pages to one capcode, so two clients can't both
+	// store one page, whether their copies are the same or nearly so.
 	dctx, dspan := tr.Start(ctx, "ingest.dedup")
 	defer dspan.End()
-	if err := q.LockDedupKey(dctx, d.Params.DedupKey); err != nil {
-		return "", 0, err
+	if err := q.LockCapcode(dctx, d.Params.Capcode); err != nil {
+		return Result{}, err
 	}
 	dup, err := q.FindDuplicate(dctx, db.FindDuplicateParams{DedupKey: d.Params.DedupKey, ReceivedAt: d.ReceivedAt})
-	dspan.End()
 	switch {
 	case err == nil:
+		dspan.End()
 		if err := q.KeepEarliestSentAt(ctx, db.KeepEarliestSentAtParams{ID: dup.ID, ReceivedAt: d.ReceivedAt}); err != nil {
-			return "", 0, err
+			return Result{}, err
 		}
-		return Duplicate, dup.ID, record(dup.ID)
-	case errors.Is(err, pgx.ErrNoRows):
-		// Placed before it's stored, in one write: an update afterwards would
-		// write the page to every index twice.
-		lctx, lspan := tr.Start(ctx, "ingest.locate")
-		res, err := place(lctx, s.Geo, q, d.Fields)
-		lspan.End()
-		if err != nil {
-			return "", 0, err
-		}
-		loc := geocode.SetLocationParams(0, res)
-		d.Params.Lon, d.Params.Lat, d.Params.LocationSource, d.Params.LocationMismatch = loc.Lon, loc.Lat, loc.Source, loc.Mismatch
-		id, err := q.InsertMessage(ctx, d.Params)
-		if err != nil {
-			return "", 0, err
-		}
-		if l := derivedLocality(d.Fields, res); l != "" {
-			if err := q.SetMessageLocality(ctx, db.SetMessageLocalityParams{ID: id, Locality: l}); err != nil {
-				return "", 0, err
-			}
-		}
-		// The area it's in (R88a), from where it was placed.
-		if loc.Lon != nil {
-			if err := q.SetMessageArea(ctx, id); err != nil {
-				return "", 0, err
-			}
-		}
-		if err := record(id); err != nil {
-			return "", 0, err
-		}
-		if s.OnStored != nil {
-			if err := s.OnStored(ctx, q, id); err != nil {
-				return "", 0, err
-			}
-		}
-		if s.Events != nil {
-			ectx, espan := tr.Start(ctx, "ingest.events")
-			err := s.Events.Stored(ectx, q, events.Page{ID: id, SentAt: d.Params.SentAt, Text: d.Params.Text, Priority: d.Params.Priority,
-				AliasID: d.Params.AliasID, Ignored: d.Ignored, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber, LargeEventField: d.Fields.LargeEventField})
-			espan.End()
-			if err != nil {
-				return "", 0, err
-			}
-		}
-		return Stored, id, nil
-	default:
-		return "", 0, err
+		return Result{Outcome: Duplicate, MessageID: dup.ID, Dedup: Exact}, record(dup.ID, nil)
+	case !errors.Is(err, pgx.ErrNoRows):
+		return Result{}, err
 	}
+	near, m, ok, err := s.nearest(dctx, q, d)
+	dspan.End()
+	if err != nil {
+		return Result{}, err
+	}
+	if ok {
+		return s.merge(ctx, q, d, near, m, record)
+	}
+
+	// Placed before it's stored, in one write: an update afterwards would
+	// write the page to every index twice.
+	lctx, lspan := tr.Start(ctx, "ingest.locate")
+	res, err := place(lctx, s.Geo, q, d.Fields)
+	lspan.End()
+	if err != nil {
+		return Result{}, err
+	}
+	loc := geocode.SetLocationParams(0, res)
+	d.Params.Lon, d.Params.Lat, d.Params.LocationSource, d.Params.LocationMismatch = loc.Lon, loc.Lat, loc.Source, loc.Mismatch
+	id, err := q.InsertMessage(ctx, d.Params)
+	if err != nil {
+		return Result{}, err
+	}
+	if l := derivedLocality(d.Fields, res); l != "" {
+		if err := q.SetMessageLocality(ctx, db.SetMessageLocalityParams{ID: id, Locality: l}); err != nil {
+			return Result{}, err
+		}
+	}
+	// The area it's in (R88a), from where it was placed.
+	if loc.Lon != nil {
+		if err := q.SetMessageArea(ctx, id); err != nil {
+			return Result{}, err
+		}
+	}
+	if err := record(id, nil); err != nil {
+		return Result{}, err
+	}
+	if err := s.stored(ctx, q, d, id, d.Params.SentAt); err != nil {
+		return Result{}, err
+	}
+	return Result{Outcome: Stored, MessageID: id}, nil
+}
+
+// stored tells the integrations and the large events of a page stored as
+// message id, or of a message that took a better copy's text (R19a).
+func (s *Service) stored(ctx context.Context, q *db.Queries, d Draft, id int64, sentAt time.Time) error {
+	if s.OnStored != nil {
+		if err := s.OnStored(ctx, q, id); err != nil {
+			return err
+		}
+	}
+	if s.Events == nil {
+		return nil
+	}
+	ectx, espan := telemetry.Or(s.Tracer).Start(ctx, "ingest.events")
+	defer espan.End()
+	return s.Events.Stored(ectx, q, events.Page{ID: id, SentAt: sentAt, Text: d.Params.Text, Priority: d.Params.Priority,
+		AliasID: d.Params.AliasID, Ignored: d.Ignored, Heartbeat: d.Params.Heartbeat, Job: d.Params.JobNumber, LargeEventField: d.Fields.LargeEventField})
+}
+
+// nearest is the message within the dedup window whose text the page's is
+// nearest to, if it's near enough to be the same transmission (R19a).
+func (s *Service) nearest(ctx context.Context, q *db.Queries, d Draft) (db.NearCandidatesRow, neardup.Match, bool, error) {
+	ratio := s.Ratio()
+	if ratio < 0 {
+		return db.NearCandidatesRow{}, neardup.Match{}, false, nil
+	}
+	rows, err := q.NearCandidates(ctx, db.NearCandidatesParams{ClientID: d.Client, Capcode: d.Params.Capcode, ReceivedAt: d.ReceivedAt})
+	if err != nil {
+		return db.NearCandidatesRow{}, neardup.Match{}, false, err
+	}
+	best := -1
+	var bm neardup.Match
+	for i, r := range rows {
+		// A receiver hears a transmission once: a message its client has a
+		// copy of already is another transmission, a repeat or a different
+		// page, and a page that differs from it (a second alarm, another
+		// station) must not be merged into it. Nor a page of another job.
+		if r.Heard || OtherJob(r.JobNumber, d.Params.JobNumber) {
+			continue
+		}
+		m := neardup.Compare(r.Text, d.Params.Text, ratio)
+		// The nearest text wins; a tie goes to the nearest in time (the
+		// rows' order).
+		if m.Near && (best < 0 || m.Distance < bm.Distance) {
+			best, bm = i, m
+		}
+	}
+	if best < 0 {
+		return db.NearCandidatesRow{}, neardup.Match{}, false, nil
+	}
+	return rows[best], bm, true, nil
+}
+
+// OtherJob reports whether two copies name different job numbers (R23):
+// then they're different pages, however near their texts (R19a, ADR 0050).
+// Two incidents paged to one capcode within seconds in one format differ
+// little but in the job, and merging them would lose the second's alert;
+// a garbled job number that's still a job number is rare, and costs only
+// a copy stored twice, as before near duplicates.
+func OtherJob(a, b *string) bool {
+	return a != nil && b != nil && *a != *b
+}
+
+// merge records a near duplicate (R19a, ADR 0050): the message keeps the
+// copy that parses better, or the longer of a truncated pair, or the one it
+// has; the other is kept as its client's reception with its own text. A
+// better copy's text replaces the message's, which is then re-parsed,
+// placed and grouped as a live page is.
+func (s *Service) merge(ctx context.Context, q *db.Queries, d Draft, c db.NearCandidatesRow, m neardup.Match, record func(id int64, text *string) error) (Result, error) {
+	prep := pipeline.Prepared{Capcode: d.Params.Capcode, Text: c.Text, Heartbeat: c.Heartbeat}
+	if c.Priority != nil {
+		prep.Priority = profile.Priority(*c.Priority)
+	}
+	storedQ := QualityOf(pipeline.Parse(s.Network, d.Agency, s.Streets, prep))
+	swap, why := neardup.Choose(neardup.Copy{Text: c.Text, Quality: storedQ}, neardup.Copy{Text: d.Params.Text, Quality: d.Quality}, m)
+	res := Result{Outcome: Duplicate, MessageID: c.ID, Dedup: Near, Kept: why, Shape: m.Shape}
+	if !swap {
+		if err := q.KeepEarliestSentAt(ctx, db.KeepEarliestSentAtParams{ID: c.ID, ReceivedAt: d.ReceivedAt}); err != nil {
+			return Result{}, err
+		}
+		text := d.Params.Text
+		res.Variant = true
+		return res, record(c.ID, &text)
+	}
+
+	// The copies that had the old text keep it as their own, before this
+	// copy's reception is written with none.
+	rows, err := q.SwapReceptionTexts(ctx, db.SwapReceptionTextsParams{OldText: c.Text, ID: c.ID, NewText: d.Params.Text})
+	if err != nil {
+		return Result{}, err
+	}
+	for _, r := range rows {
+		if r.Variant {
+			res.Variants = append(res.Variants, r.ClientID)
+		}
+	}
+	if err := q.SwapImportReceptionTexts(ctx, db.SwapImportReceptionTextsParams{OldText: c.Text, ID: c.ID, NewText: d.Params.Text}); err != nil {
+		return Result{}, err
+	}
+	p, f := d.Params, d.Fields
+	if err := q.SwapMessageText(ctx, db.SwapMessageTextParams{
+		Text: p.Text, DedupKey: p.DedupKey, Priority: p.Priority, AliasID: p.AliasID, Format: f.Format, JobNumber: f.JobNumber,
+		EventType: f.EventType, Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
+		CallSign: f.CallSign, Units: f.Units, CallSigns: f.CallSigns, Extra: f.Extra, ParseFailed: f.ParseFailed,
+		AddressUnsplit: f.AddressUnsplit, LargeEventField: f.LargeEventField, ReceivedAt: d.ReceivedAt, ID: c.ID,
+	}); err != nil {
+		return Result{}, err
+	}
+	// Where it's placed, its area and derived locality (R24, R88a), as a
+	// re-parse writes them.
+	lctx, lspan := telemetry.Or(s.Tracer).Start(ctx, "ingest.locate")
+	err = Locate(lctx, s.Geo, q, c.ID, f)
+	lspan.End()
+	if err != nil {
+		return Result{}, err
+	}
+	if err := record(c.ID, nil); err != nil {
+		return Result{}, err
+	}
+	res.Swapped = true
+	sentAt := c.SentAt
+	if d.ReceivedAt.Before(sentAt) {
+		sentAt = d.ReceivedAt
+	}
+	if c.InEvent {
+		// Already in an event: the integrations hear of the new text, and the
+		// events around it are rebuilt once it's committed, as after a
+		// re-parse (R87f), which tells no integration again (R87d).
+		res.regroup = &sentAt
+		if s.OnStored != nil {
+			return res, s.OnStored(ctx, q, c.ID)
+		}
+		return res, nil
+	}
+	// In no event: the new text may open or join one, as a live page's would.
+	return res, s.stored(ctx, q, d, c.ID, sentAt)
 }
 
 // agencyFor resolves a template's agency profile name (R3). nil means text

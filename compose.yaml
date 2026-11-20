@@ -152,6 +152,7 @@ services:
       INITIAL_ADMIN_EMAIL: ${INITIAL_ADMIN_EMAIL:-}
       INVITATION_SENDER_LIMITS: ${INVITATION_SENDER_LIMITS:-}
       NIGHTLY_AT: ${NIGHTLY_AT:-03:00}
+      DEDUP_NEAR_RATIO: ${DEDUP_NEAR_RATIO:-}
       MAP_TILES: /map/tiles.pmtiles
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
       # Integrations (docs/integrations.md) and metrics (docs/deploy.md).

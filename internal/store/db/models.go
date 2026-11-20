@@ -123,6 +123,7 @@ type ImportReception struct {
 	MessageID  int64
 	ReceivedAt time.Time
 	SourceID   *string
+	Text       *string
 }
 
 type Integration struct {
@@ -244,6 +245,7 @@ type Reception struct {
 	MessageID  int64
 	ClientID   string
 	ReceivedAt time.Time
+	Text       *string
 }
 
 type RedactionRun struct {

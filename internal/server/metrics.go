@@ -18,7 +18,9 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/authentik"
 	"github.com/RIKIKU/PagerArchive/internal/backup"
+	"github.com/RIKIKU/PagerArchive/internal/ingest"
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
+	"github.com/RIKIKU/PagerArchive/internal/neardup"
 	"github.com/RIKIKU/PagerArchive/internal/store"
 	"github.com/RIKIKU/PagerArchive/internal/telemetry"
 )
@@ -53,6 +55,76 @@ func (c *pageCounts) get(outcome string) uint64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n[outcome]
+}
+
+// dedupCounts counts duplicate copies and each client's copies since the
+// API started (R19, R19a). Labels are kinds, reasons and client IDs, which
+// are few (an admin adds each client).
+type dedupCounts struct {
+	mu       sync.Mutex
+	kind     map[ingest.Dedup]uint64
+	kept     map[neardup.Kept]uint64
+	shape    map[neardup.Shape]uint64
+	swapped  uint64
+	copies   map[string]uint64 // each client's copies recorded: new messages and duplicates
+	variants map[string]uint64 // each client's copies kept with their own text
+}
+
+func (c *dedupCounts) note(client string, r ingest.Result) {
+	if r.Outcome != ingest.Stored && r.Outcome != ingest.Duplicate {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.kind == nil {
+		c.kind, c.kept, c.shape = map[ingest.Dedup]uint64{}, map[neardup.Kept]uint64{}, map[neardup.Shape]uint64{}
+		c.copies, c.variants = map[string]uint64{}, map[string]uint64{}
+	}
+	c.copies[client]++
+	if r.Dedup != "" {
+		c.kind[r.Dedup]++
+	}
+	if r.Dedup == ingest.Near {
+		c.kept[r.Kept]++
+		c.shape[r.Shape]++
+	}
+	if r.Swapped {
+		c.swapped++
+	}
+	if r.Variant {
+		c.variants[client]++
+	}
+	for _, v := range r.Variants {
+		c.variants[v]++
+	}
+}
+
+// write adds the dedup families to m, for every client in clients.
+func (c *dedupCounts) write(m *exposition, clients []string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	m.family("pagerarchive_dedup_total", "counter", "Copies of pages merged into a message since the API started: the same text (exact, R19) or nearly (near, R19a).")
+	for _, k := range []ingest.Dedup{ingest.Exact, ingest.Near} {
+		m.sample("pagerarchive_dedup_total", labels{"kind", string(k)}, float64(c.kind[k]))
+	}
+	m.family("pagerarchive_dedup_near_total", "counter", "Near duplicates since the API started, by the copy their message kept: the first stored, the one that parses, or the longer of a truncated pair (R19a).")
+	for _, k := range neardup.Kepts {
+		m.sample("pagerarchive_dedup_near_total", labels{"kept", string(k)}, float64(c.kept[k]))
+	}
+	m.family("pagerarchive_dedup_near_shape_total", "counter", "Near duplicates since the API started, by how the copies differed (R19a).")
+	for _, s := range neardup.Shapes {
+		m.sample("pagerarchive_dedup_near_shape_total", labels{"shape", string(s)}, float64(c.shape[s]))
+	}
+	m.family("pagerarchive_dedup_near_swapped_total", "counter", "Near duplicates since the API started whose text replaced their message's, a better copy coming in after the first (R19a).")
+	m.sample("pagerarchive_dedup_near_swapped_total", nil, float64(c.swapped))
+	m.family("pagerarchive_client_receptions_total", "counter", "Copies of pages each client sent that were recorded, new messages and duplicates, since the API started.")
+	for _, id := range clients {
+		m.sample("pagerarchive_client_receptions_total", labels{"client", id}, float64(c.copies[id]))
+	}
+	m.family("pagerarchive_client_variants_total", "counter", "Copies each client sent that were kept with their own text, near duplicates differing from their message's, since the API started (R19a).")
+	for _, id := range clients {
+		m.sample("pagerarchive_client_variants_total", labels{"client", id}, float64(c.variants[id]))
+	}
 }
 
 // backupStatus is the nightly backups' state now (R86a).
@@ -172,6 +244,13 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 	for _, o := range []string{"stored", "duplicate", "ignored", "clock_ahead"} {
 		m.sample("pagerarchive_pages_received_total", labels{"outcome", o}, float64(s.pages.get(o)))
 	}
+	var active []string
+	for _, c := range clients {
+		if c.RevokedAt == nil {
+			active = append(active, c.ID)
+		}
+	}
+	s.dedup.write(m, active)
 
 	// R52: counted in the background (FlagCounts), never by a scrape; left
 	// out until the first count has worked.

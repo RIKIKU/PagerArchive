@@ -11,6 +11,7 @@
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
 	import { screen } from '#lib/screen.svelte.ts';
+	import { textDiff } from '#lib/textDiff.ts';
 
 	let meta: Meta | undefined = $state();
 	let m: Message | undefined = $state();
@@ -152,7 +153,18 @@
 					<thead><tr><th scope="col">Receiver</th><th scope="col">Received</th></tr></thead>
 					<tbody>
 						{#each m.receptions ?? [] as r, i (i)}
-							<tr><td>{r.client}</td><td><time datetime={isoAttr(r.received_at)}>{dateTime(r.received_at, tz)}</time></td></tr>
+							<tr class:heard={r.text != null}><td>{r.client}</td><td><time datetime={isoAttr(r.received_at)}>{dateTime(r.received_at, tz)}</time></td></tr>
+							<!-- R19a: a copy that differed a little from the message, as this receiver heard it, where it differs marked. -->
+							{#if r.text != null}
+								<tr class="variant">
+									<td colspan="2">
+										<span class="heard-as">Heard as</span>
+										<span class="mono" data-testid="variant"
+											>{#each textDiff(m.text, r.text) as part, j (j)}{#if part.changed}<mark>{part.text}</mark>{:else}{part.text}{/if}{/each}</span
+										>
+									</td>
+								</tr>
+							{/if}
 						{/each}
 					</tbody>
 				</table>
@@ -266,5 +278,19 @@
 	th {
 		color: var(--muted);
 		font-weight: var(--weight-strong);
+	}
+	.heard td {
+		border-bottom: none;
+	}
+	.variant td {
+		padding-top: 0;
+	}
+	.heard-as {
+		display: block;
+		color: var(--muted);
+	}
+	mark {
+		background: var(--warn-bg);
+		color: var(--warn-fg);
 	}
 </style>

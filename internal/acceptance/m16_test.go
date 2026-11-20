@@ -412,7 +412,9 @@ func TestM16ManyPagesAtOneTime(t *testing.T) {
 	at := e.now.Add(-time.Hour)
 	var lines []string
 	for i := range importer.BatchSize*2 + 50 {
-		lines = append(lines, importLine(at, "0100001", fmt.Sprintf("QDSAME TIME %04d", i), fmt.Sprintf("s%d", i)))
+		// Each its own job: pages this alike at one time would otherwise be
+		// near duplicates, one page (R19a).
+		lines = append(lines, importLine(at, "0100001", fmt.Sprintf("QDSAME TIME EX%07d", i), fmt.Sprintf("s%d", i)))
 	}
 	rand.New(rand.NewPCG(1, 76)).Shuffle(len(lines), func(i, j int) { lines[i], lines[j] = lines[j], lines[i] })
 	r := e.mustImport(lines...)

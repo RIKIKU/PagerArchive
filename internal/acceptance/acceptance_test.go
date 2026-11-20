@@ -219,7 +219,7 @@ func setup(t *testing.T, with ...traced) *env {
 		Store:  st,
 		Tracer: tr,
 		Ingest: &ingest.Service{Store: st, Network: n, Agencies: set.Agencies, Streets: ix, Geo: geocoder, OnStored: e.integ.Enqueue,
-			Events: &events.Detector{Network: n, Fire: e.integ.EnqueueEvent}, Tracer: tr},
+			Events: &events.Detector{Network: n, Fire: e.integ.EnqueueEvent}, Regroup: &events.Regrouper{Network: n}, Tracer: tr},
 		Integrations: e.integ,
 		MetricsToken: metricsToken,
 		Version:      "test",

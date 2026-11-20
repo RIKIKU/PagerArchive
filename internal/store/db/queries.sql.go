@@ -1966,6 +1966,99 @@ func (q *Queries) DeactivateUsers(ctx context.Context, ids []int64) ([]Deactivat
 	return items, nil
 }
 
+const dedupReportCloseMessages = `-- name: DedupReportCloseMessages :many
+SELECT a.text AS first_text, b.text AS second_text, a.job_number AS first_job, b.job_number AS second_job
+FROM messages a
+JOIN messages b ON b.capcode = a.capcode AND b.id <> a.id
+ AND b.sent_at BETWEEN a.sent_at AND a.sent_at + interval '10 seconds'
+ AND (b.sent_at > a.sent_at OR b.id > a.id)
+WHERE a.sent_at >= $1::timestamptz
+`
+
+type DedupReportCloseMessagesRow struct {
+	FirstText  string
+	SecondText string
+	FirstJob   *string
+	SecondJob  *string
+}
+
+// R19b: pairs of messages to one capcode sent within 10 s of each other
+// since a time: pages R19a kept apart, for the dedup-report to measure how
+// far apart they were. Neither text leaves the command (P1).
+func (q *Queries) DedupReportCloseMessages(ctx context.Context, since time.Time) ([]DedupReportCloseMessagesRow, error) {
+	rows, err := q.db.Query(ctx, dedupReportCloseMessages, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedupReportCloseMessagesRow
+	for rows.Next() {
+		var i DedupReportCloseMessagesRow
+		if err := rows.Scan(
+			&i.FirstText,
+			&i.SecondText,
+			&i.FirstJob,
+			&i.SecondJob,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dedupReportVariants = `-- name: DedupReportVariants :many
+SELECT m.capcode, m.text AS message_text, m.priority, m.heartbeat, r.text::text AS variant_text
+FROM receptions r
+JOIN messages m ON m.id = r.message_id
+WHERE m.sent_at >= $1::timestamptz AND r.text IS NOT NULL
+UNION ALL
+SELECT m.capcode, m.text, m.priority, m.heartbeat, i.text::text
+FROM import_receptions i
+JOIN messages m ON m.id = i.message_id
+WHERE m.sent_at >= $1::timestamptz AND i.text IS NOT NULL
+`
+
+type DedupReportVariantsRow struct {
+	Capcode     string
+	MessageText string
+	Priority    *string
+	Heartbeat   bool
+	VariantText string
+}
+
+// R19b: the near duplicates kept as copies with their own text, of the
+// messages sent since a time, with their messages' text, for the
+// dedup-report to count. Neither text leaves the command (P1).
+func (q *Queries) DedupReportVariants(ctx context.Context, since time.Time) ([]DedupReportVariantsRow, error) {
+	rows, err := q.db.Query(ctx, dedupReportVariants, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedupReportVariantsRow
+	for rows.Next() {
+		var i DedupReportVariantsRow
+		if err := rows.Scan(
+			&i.Capcode,
+			&i.MessageText,
+			&i.Priority,
+			&i.Heartbeat,
+			&i.VariantText,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const deleteAlbum = `-- name: DeleteAlbum :execrows
 DELETE FROM albums WHERE id = $1 AND owner_id = $2
 `
@@ -2673,7 +2766,7 @@ func (q *Queries) ImportSourceIDsAfter(ctx context.Context, arg ImportSourceIDsA
 }
 
 const importedCopyExists = `-- name: ImportedCopyExists :one
-SELECT EXISTS (
+SELECT (EXISTS (
     SELECT 1
     FROM messages m
     JOIN import_receptions i ON i.message_id = m.id
@@ -2681,22 +2774,41 @@ SELECT EXISTS (
       AND m.sent_at BETWEEN $2::timestamptz - interval '1 day' AND $2::timestamptz
       AND i.received_at = $2::timestamptz
       AND i.source_id IS NULL
-)
+      AND i.text IS NULL
+) OR EXISTS (
+    SELECT 1
+    FROM messages m
+    JOIN import_receptions i ON i.message_id = m.id
+    WHERE m.capcode = $3::text
+      AND m.sent_at BETWEEN $2::timestamptz - interval '1 minute' AND $2::timestamptz
+      AND i.received_at = $2::timestamptz
+      AND i.source_id IS NULL
+      AND i.text = $4::text
+))::boolean AS found
 `
 
 type ImportedCopyExistsParams struct {
 	DedupKey   []byte
 	ReceivedAt time.Time
+	Capcode    string
+	Text       string
 }
 
 // R83c: whether an earlier import stored this copy of a page with no source
 // ID, by its dedup key and receive time. A message's sent time is its earliest
 // copy's (R21), and copies are seconds apart (R19): a day bounds the search.
+// A near duplicate (R19a) is a copy kept with its own text: it was merged
+// within seconds of its message's sent time, so a minute bounds that search.
 func (q *Queries) ImportedCopyExists(ctx context.Context, arg ImportedCopyExistsParams) (bool, error) {
-	row := q.db.QueryRow(ctx, importedCopyExists, arg.DedupKey, arg.ReceivedAt)
-	var exists bool
-	err := row.Scan(&exists)
-	return exists, err
+	row := q.db.QueryRow(ctx, importedCopyExists,
+		arg.DedupKey,
+		arg.ReceivedAt,
+		arg.Capcode,
+		arg.Text,
+	)
+	var found bool
+	err := row.Scan(&found)
+	return found, err
 }
 
 const importedSourceIDs = `-- name: ImportedSourceIDs :many
@@ -2810,7 +2922,7 @@ func (q *Queries) InsertEventDelivery(ctx context.Context, arg InsertEventDelive
 }
 
 const insertImportReception = `-- name: InsertImportReception :exec
-INSERT INTO import_receptions (message_id, received_at, source_id) VALUES ($1, $2, $3)
+INSERT INTO import_receptions (message_id, received_at, source_id, text) VALUES ($1, $2, $3, $4)
 ON CONFLICT DO NOTHING
 `
 
@@ -2818,11 +2930,17 @@ type InsertImportReceptionParams struct {
 	MessageID  int64
 	ReceivedAt time.Time
 	SourceID   *string
+	Text       *string
 }
 
 // R83b: a copy read from an import file. Running a file again adds nothing.
 func (q *Queries) InsertImportReception(ctx context.Context, arg InsertImportReceptionParams) error {
-	_, err := q.db.Exec(ctx, insertImportReception, arg.MessageID, arg.ReceivedAt, arg.SourceID)
+	_, err := q.db.Exec(ctx, insertImportReception,
+		arg.MessageID,
+		arg.ReceivedAt,
+		arg.SourceID,
+		arg.Text,
+	)
 	return err
 }
 
@@ -2908,8 +3026,8 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 }
 
 const insertReception = `-- name: InsertReception :exec
-INSERT INTO receptions (message_id, client_id, received_at)
-VALUES ($1, $2, $3)
+INSERT INTO receptions (message_id, client_id, received_at, text)
+VALUES ($1, $2, $3, $4)
 ON CONFLICT DO NOTHING
 `
 
@@ -2917,10 +3035,18 @@ type InsertReceptionParams struct {
 	MessageID  int64
 	ClientID   string
 	ReceivedAt time.Time
+	Text       *string
 }
 
+// text is the copy's own, redacted (P1), when it's a near duplicate whose
+// text isn't its message's (R19a); NULL otherwise.
 func (q *Queries) InsertReception(ctx context.Context, arg InsertReceptionParams) error {
-	_, err := q.db.Exec(ctx, insertReception, arg.MessageID, arg.ClientID, arg.ReceivedAt)
+	_, err := q.db.Exec(ctx, insertReception,
+		arg.MessageID,
+		arg.ClientID,
+		arg.ReceivedAt,
+		arg.Text,
+	)
 	return err
 }
 
@@ -4126,12 +4252,14 @@ func (q *Queries) LockActiveAdmins(ctx context.Context) ([]int64, error) {
 	return items, nil
 }
 
-const lockDedupKey = `-- name: LockDedupKey :exec
-SELECT pg_advisory_xact_lock(hashtextextended(encode($1::bytea, 'hex'), 0))
+const lockCapcode = `-- name: LockCapcode :exec
+SELECT pg_advisory_xact_lock(hashtextextended('dedup ' || $1::text, 0))
 `
 
-func (q *Queries) LockDedupKey(ctx context.Context, dedupKey []byte) error {
-	_, err := q.db.Exec(ctx, lockDedupKey, dedupKey)
+// R19, R19a: copies of pages to one capcode wait for each other, so two
+// copies of one page, exact or near, can't both be stored as messages.
+func (q *Queries) LockCapcode(ctx context.Context, capcode string) error {
+	_, err := q.db.Exec(ctx, lockCapcode, capcode)
 	return err
 }
 
@@ -4416,12 +4544,12 @@ func (q *Queries) MessageIDsAfter(ctx context.Context, arg MessageIDsAfterParams
 }
 
 const messageReceptions = `-- name: MessageReceptions :many
-SELECT r.client_id, c.name AS client_name, r.received_at
+SELECT r.client_id, c.name AS client_name, r.received_at, r.text
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = $1
 UNION ALL
-SELECT DISTINCT '', 'import', i.received_at
+SELECT DISTINCT '', 'import', i.received_at, i.text
 FROM import_receptions i
 WHERE i.message_id = $1
 ORDER BY received_at, client_id
@@ -4431,9 +4559,11 @@ type MessageReceptionsRow struct {
 	ClientID   string
 	ClientName string
 	ReceivedAt time.Time
+	Text       *string
 }
 
-// An empty client_id is a copy from an import file (R83b, ADR 0018).
+// An empty client_id is a copy from an import file (R83b, ADR 0018). text
+// is the copy's own when it isn't the message's (R19a).
 func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]MessageReceptionsRow, error) {
 	rows, err := q.db.Query(ctx, messageReceptions, messageID)
 	if err != nil {
@@ -4443,7 +4573,12 @@ func (q *Queries) MessageReceptions(ctx context.Context, messageID int64) ([]Mes
 	var items []MessageReceptionsRow
 	for rows.Next() {
 		var i MessageReceptionsRow
-		if err := rows.Scan(&i.ClientID, &i.ClientName, &i.ReceivedAt); err != nil {
+		if err := rows.Scan(
+			&i.ClientID,
+			&i.ClientName,
+			&i.ReceivedAt,
+			&i.Text,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -4777,6 +4912,68 @@ func (q *Queries) NameDuplicateAliases(ctx context.Context) ([]NameDuplicateAlia
 	return items, nil
 }
 
+const nearCandidates = `-- name: NearCandidates :many
+SELECT m.id, m.text, m.priority, m.heartbeat, m.sent_at, m.job_number,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id AND r.client_id = $1::text) AS heard
+FROM messages m
+WHERE m.capcode = $2::text
+  AND m.sent_at BETWEEN $3::timestamptz - interval '10 seconds'
+                    AND $3::timestamptz + interval '10 seconds'
+ORDER BY abs(extract(epoch FROM m.sent_at - $3::timestamptz)), m.id
+LIMIT 20
+`
+
+type NearCandidatesParams struct {
+	ClientID   string
+	Capcode    string
+	ReceivedAt time.Time
+}
+
+type NearCandidatesRow struct {
+	ID        int64
+	Text      string
+	Priority  *string
+	Heartbeat bool
+	SentAt    time.Time
+	JobNumber *string
+	InEvent   bool
+	Heard     bool
+}
+
+// R19a: the messages to a capcode sent within 10 s of a copy's receive
+// time, either side, nearest first, with what a near duplicate's choice and
+// the swap need (ADR 0050). heard says the copy's client has a copy of it
+// already (” for an import: never).
+func (q *Queries) NearCandidates(ctx context.Context, arg NearCandidatesParams) ([]NearCandidatesRow, error) {
+	rows, err := q.db.Query(ctx, nearCandidates, arg.ClientID, arg.Capcode, arg.ReceivedAt)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []NearCandidatesRow
+	for rows.Next() {
+		var i NearCandidatesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Text,
+			&i.Priority,
+			&i.Heartbeat,
+			&i.SentAt,
+			&i.JobNumber,
+			&i.InEvent,
+			&i.Heard,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const nextDeliveryDue = `-- name: NextDeliveryDue :one
 SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending'
 `
@@ -4995,13 +5192,64 @@ func (q *Queries) RecentDeliveries(ctx context.Context, integrationID int64) ([]
 	return items, nil
 }
 
+const receptionVariantsBetween = `-- name: ReceptionVariantsBetween :many
+SELECT r.message_id, r.client_id, r.received_at, r.text::text AS text
+FROM receptions r
+WHERE r.message_id > $1::bigint AND r.message_id <= $2::bigint AND r.text IS NOT NULL
+UNION ALL
+SELECT i.message_id, '', i.received_at, i.text::text
+FROM import_receptions i
+WHERE i.message_id > $1::bigint AND i.message_id <= $2::bigint AND i.text IS NOT NULL
+ORDER BY message_id
+`
+
+type ReceptionVariantsBetweenParams struct {
+	AfterID int64
+	LastID  int64
+}
+
+type ReceptionVariantsBetweenRow struct {
+	MessageID  int64
+	ClientID   string
+	ReceivedAt time.Time
+	Text       string
+}
+
+// P1, R19a: the copies with their own text (near duplicates) of the
+// messages a retroactive redaction batch checked, after after_id up to
+// last_id. An empty client_id is a copy from an import file.
+func (q *Queries) ReceptionVariantsBetween(ctx context.Context, arg ReceptionVariantsBetweenParams) ([]ReceptionVariantsBetweenRow, error) {
+	rows, err := q.db.Query(ctx, receptionVariantsBetween, arg.AfterID, arg.LastID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ReceptionVariantsBetweenRow
+	for rows.Next() {
+		var i ReceptionVariantsBetweenRow
+		if err := rows.Scan(
+			&i.MessageID,
+			&i.ClientID,
+			&i.ReceivedAt,
+			&i.Text,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const receptionsForMessages = `-- name: ReceptionsForMessages :many
-SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
+SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at, r.text
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = ANY($1::bigint[])
 UNION ALL
-SELECT DISTINCT i.message_id, '', 'import', i.received_at
+SELECT DISTINCT i.message_id, '', 'import', i.received_at, i.text
 FROM import_receptions i
 WHERE i.message_id = ANY($1::bigint[])
 ORDER BY message_id, received_at, client_id
@@ -5012,10 +5260,12 @@ type ReceptionsForMessagesRow struct {
 	ClientID   string
 	ClientName string
 	ReceivedAt time.Time
+	Text       *string
 }
 
 // R63a: each message's receive times, for a page of messages at once. An
-// empty client_id is a copy from an import file (R83b, ADR 0018).
+// empty client_id is a copy from an import file (R83b, ADR 0018). text is
+// the copy's own when it isn't the message's (R19a).
 func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]ReceptionsForMessagesRow, error) {
 	rows, err := q.db.Query(ctx, receptionsForMessages, ids)
 	if err != nil {
@@ -5030,6 +5280,7 @@ func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]Rec
 			&i.ClientID,
 			&i.ClientName,
 			&i.ReceivedAt,
+			&i.Text,
 		); err != nil {
 			return nil, err
 		}
@@ -5039,6 +5290,56 @@ func (q *Queries) ReceptionsForMessages(ctx context.Context, ids []int64) ([]Rec
 		return nil, err
 	}
 	return items, nil
+}
+
+const redactImportVariant = `-- name: RedactImportVariant :exec
+UPDATE import_receptions i SET text = NULLIF($1::text, (SELECT m.text FROM messages m WHERE m.id = i.message_id))
+WHERE i.message_id = $2 AND i.received_at = $3 AND i.text = $4::text
+`
+
+type RedactImportVariantParams struct {
+	NewText    string
+	MessageID  int64
+	ReceivedAt time.Time
+	OldText    string
+}
+
+// As RedactReceptionVariant, for a copy from an import file.
+func (q *Queries) RedactImportVariant(ctx context.Context, arg RedactImportVariantParams) error {
+	_, err := q.db.Exec(ctx, redactImportVariant,
+		arg.NewText,
+		arg.MessageID,
+		arg.ReceivedAt,
+		arg.OldText,
+	)
+	return err
+}
+
+const redactReceptionVariant = `-- name: RedactReceptionVariant :exec
+UPDATE receptions r SET text = NULLIF($1::text, (SELECT m.text FROM messages m WHERE m.id = r.message_id))
+WHERE r.message_id = $2 AND r.client_id = $3 AND r.received_at = $4
+  AND r.text = $5::text
+`
+
+type RedactReceptionVariantParams struct {
+	NewText    string
+	MessageID  int64
+	ClientID   string
+	ReceivedAt time.Time
+	OldText    string
+}
+
+// P1, R45a: a copy's own text, as the rules now redact it; none when that's
+// now its message's text.
+func (q *Queries) RedactReceptionVariant(ctx context.Context, arg RedactReceptionVariantParams) error {
+	_, err := q.db.Exec(ctx, redactReceptionVariant,
+		arg.NewText,
+		arg.MessageID,
+		arg.ClientID,
+		arg.ReceivedAt,
+		arg.OldText,
+	)
+	return err
 }
 
 const redactionRunDays = `-- name: RedactionRunDays :many
@@ -6511,6 +6812,129 @@ func (q *Queries) StreetPoint(ctx context.Context, arg StreetPointParams) (Stree
 	var i StreetPointRow
 	err := row.Scan(&i.Lon, &i.Lat)
 	return i, err
+}
+
+const swapImportReceptionTexts = `-- name: SwapImportReceptionTexts :exec
+UPDATE import_receptions SET text = CASE WHEN text IS NULL THEN $1::text END
+WHERE message_id = $2 AND (text IS NULL OR text = $3::text)
+`
+
+type SwapImportReceptionTextsParams struct {
+	OldText string
+	ID      int64
+	NewText string
+}
+
+// As SwapReceptionTexts, for the copies from import files (R83a).
+func (q *Queries) SwapImportReceptionTexts(ctx context.Context, arg SwapImportReceptionTextsParams) error {
+	_, err := q.db.Exec(ctx, swapImportReceptionTexts, arg.OldText, arg.ID, arg.NewText)
+	return err
+}
+
+const swapMessageText = `-- name: SwapMessageText :exec
+UPDATE messages SET
+    text = $1, dedup_key = $2, priority = $3,
+    alias_id = $4, format = $5, job_number = $6,
+    event_type = $7, description = $8, address = $9,
+    locality = $10, grid_ref = $11, call_sign = $12,
+    units = $13, call_signs = $14, extra = $15,
+    parse_failed = $16, address_unsplit = $17,
+    large_event_field = $18,
+    sent_at = LEAST(sent_at, $19::timestamptz)
+WHERE id = $20
+`
+
+type SwapMessageTextParams struct {
+	Text            string
+	DedupKey        []byte
+	Priority        *string
+	AliasID         *int64
+	Format          *string
+	JobNumber       *string
+	EventType       *string
+	Description     *string
+	Address         *string
+	Locality        *string
+	GridRef         *string
+	CallSign        *string
+	Units           []string
+	CallSigns       []string
+	Extra           []byte
+	ParseFailed     bool
+	AddressUnsplit  bool
+	LargeEventField bool
+	ReceivedAt      time.Time
+	ID              int64
+}
+
+// R19a (ADR 0050): a better copy of a page came in after the first was
+// stored: the message takes its text (redacted, P1), dedup hash, priority
+// and what it parsed to, and its sent time stays the earliest (R21). Where
+// it's placed is written after, as a re-parse writes it.
+func (q *Queries) SwapMessageText(ctx context.Context, arg SwapMessageTextParams) error {
+	_, err := q.db.Exec(ctx, swapMessageText,
+		arg.Text,
+		arg.DedupKey,
+		arg.Priority,
+		arg.AliasID,
+		arg.Format,
+		arg.JobNumber,
+		arg.EventType,
+		arg.Description,
+		arg.Address,
+		arg.Locality,
+		arg.GridRef,
+		arg.CallSign,
+		arg.Units,
+		arg.CallSigns,
+		arg.Extra,
+		arg.ParseFailed,
+		arg.AddressUnsplit,
+		arg.LargeEventField,
+		arg.ReceivedAt,
+		arg.ID,
+	)
+	return err
+}
+
+const swapReceptionTexts = `-- name: SwapReceptionTexts :many
+UPDATE receptions SET text = CASE WHEN text IS NULL THEN $1::text END
+WHERE message_id = $2 AND (text IS NULL OR text = $3::text)
+RETURNING client_id, (text IS NOT NULL)::boolean AS variant
+`
+
+type SwapReceptionTextsParams struct {
+	OldText string
+	ID      int64
+	NewText string
+}
+
+type SwapReceptionTextsRow struct {
+	ClientID string
+	Variant  bool
+}
+
+// R19a: when a message takes a better copy's text, the copies that had its
+// old text keep that as their own, and a copy whose text is the new one's
+// needs none. variant says which a row became.
+func (q *Queries) SwapReceptionTexts(ctx context.Context, arg SwapReceptionTextsParams) ([]SwapReceptionTextsRow, error) {
+	rows, err := q.db.Query(ctx, swapReceptionTexts, arg.OldText, arg.ID, arg.NewText)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []SwapReceptionTextsRow
+	for rows.Next() {
+		var i SwapReceptionTextsRow
+		if err := rows.Scan(&i.ClientID, &i.Variant); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const templateByID = `-- name: TemplateByID :one
