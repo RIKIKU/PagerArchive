@@ -109,6 +109,7 @@ type Server struct {
 	Requests *telemetry.RequestMetrics
 
 	pages pageCounts
+	dedup dedupCounts
 	http  *telemetry.HTTP
 	// ingest stores one page at a time and announces it before the next, so
 	// message IDs reach live connections in increasing order (ADR 0010 §3).
@@ -249,18 +250,24 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.ingest.Lock()
-	outcome, id, err := s.Ingest.Ingest(ctx, clientID, ingest.Page{
+	res, err := s.Ingest.Ingest(ctx, clientID, ingest.Page{
 		Capcode:    decoder.PadCapcode(req.Capcode),
 		Text:       req.Text,
 		ReceivedAt: req.ReceivedAt.UTC(),
 		Function:   req.Function,
 		Baud:       req.Baud,
 	})
-	if err == nil && outcome == ingest.Stored && s.Hub != nil {
+	outcome, id := res.Outcome, res.MessageID
+	if err == nil && (outcome == ingest.Stored || res.Swapped) && s.Hub != nil {
 		// The live update: the open lists and watches it reached (R71). No
-		// span per viewer, so no trace ties a user to a message (R70).
+		// span per viewer, so no trace ties a user to a message (R70). A
+		// message that took a better copy's text is shown again (R19a).
 		_, span := telemetry.Or(s.Tracer).Start(ctx, "live.publish")
-		span.SetAttributes(attribute.Int("pagerarchive.live.connections", s.Hub.Publish(id)))
+		if res.Swapped {
+			span.SetAttributes(attribute.Int("pagerarchive.live.connections", s.Hub.PublishChange(id)))
+		} else {
+			span.SetAttributes(attribute.Int("pagerarchive.live.connections", s.Hub.Publish(id)))
+		}
 		span.End()
 	}
 	s.ingest.Unlock()
@@ -278,9 +285,19 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 	if id != 0 {
 		span.SetAttributes(attribute.Int64("pagerarchive.message.id", id))
 	}
-	s.Log.InfoContext(ctx, "page", "client", clientID, "outcome", string(outcome), "message_id", id)
+	if res.Dedup != "" {
+		span.SetAttributes(attribute.String("pagerarchive.ingest.dedup", string(res.Dedup)))
+	}
+	if res.Dedup == ingest.Near {
+		// Counts and codes only (P1): never either copy's text.
+		s.Log.InfoContext(ctx, "page", "client", clientID, "outcome", string(outcome), "message_id", id,
+			"dedup", string(res.Dedup), "kept", string(res.Kept), "shape", string(res.Shape), "swapped", res.Swapped)
+	} else {
+		s.Log.InfoContext(ctx, "page", "client", clientID, "outcome", string(outcome), "message_id", id)
+	}
 	s.pages.add(string(outcome))
-	if outcome == ingest.Stored {
+	s.dedup.note(clientID, res)
+	if outcome == ingest.Stored || res.Swapped {
 		// Its deliveries were queued with it; send them now (R51a: within 5 s).
 		s.Integrations.Wake()
 	}

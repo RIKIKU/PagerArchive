@@ -4,6 +4,7 @@
 //	validate-profile  check profiles and run golden tables, without a database
 //	client            add, revoke or list receiving clients
 //	import-messages   import pages from an existing archive
+//	dedup-report      count how near duplicates differ, to tune R19a's threshold
 //	version           print the version
 package main
 
@@ -72,6 +73,9 @@ commands:
   import-messages [--dry-run] F
                               import pages from an existing archive, from a JSON
                               Lines file or - for standard input (docs/import.md)
+  dedup-report [--since 7d]   count how near-duplicate copies of pages differed,
+                              and how far apart close pages were: counts only,
+                              never text (R19b)
   version                     print the version
 
 Templates and aliases are managed in the browser or with the PagerArchive
@@ -97,6 +101,9 @@ serve reads its settings from the environment:
   INITIAL_ADMIN_EMAIL     may enrol as the first admin while there is no admin
                           (must differ from Authentik.s administrator.s: R44c)
   NIGHTLY_AT              local time of the nightly retention and redaction run (default 03:00)
+  DEDUP_NEAR_RATIO        edits a copy of a page may differ by, per character, and still be
+                          the same transmission (R19a; default 0.1, at most 0.5; 0 turns
+                          near duplicates off); import-messages and dedup-report read it too
   BACKUP_STATUS_FILE      the backup service's status file (default: no backups to report)
   BACKUP_REQUEST_FILE     where Back up now asks the backup service for a backup (default: it can't)
   AUTO_UPGRADE_STATUS_FILE  what automatic upgrades last did (default: they are off)
@@ -138,6 +145,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		err = serviceAccountCmd(args, stdout)
 	case "import-messages":
 		err = importMessages(args, os.Stdin, stdout, stderr)
+	case "dedup-report":
+		err = dedupReport(args, stdout, stderr)
 	case "version", "--version":
 		fmt.Fprintln(stdout, "pagerarchive", version)
 	case "help", "-h", "--help":
@@ -428,17 +437,24 @@ func serve(stderr io.Writer) error {
 		}
 	}
 
+	nearRatio, err := nearRatioSetting()
+	if err != nil {
+		return err
+	}
 	srv := &server.Server{
 		Store: st,
 		Ingest: &ingest.Service{
-			Store:    st,
-			Network:  net,
-			Agencies: set.Agencies,
-			Streets:  ix,
-			Geo:      geocoder,
-			OnStored: integ.Enqueue,
-			Events:   &events.Detector{Network: net, Fire: integ.EnqueueEvent},
-			Tracer:   tracer,
+			Store:     st,
+			Network:   net,
+			Agencies:  set.Agencies,
+			Streets:   ix,
+			Geo:       geocoder,
+			OnStored:  integ.Enqueue,
+			Events:    &events.Detector{Network: net, Fire: integ.EnqueueEvent},
+			Regroup:   &events.Regrouper{Network: net},
+			NearRatio: nearRatio,
+			Log:       log,
+			Tracer:    tracer,
 		},
 		Tracer:   tracer,
 		Log:      log,

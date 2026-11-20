@@ -29,6 +29,7 @@ import (
 
 	"github.com/RIKIKU/PagerArchive/internal/decoder"
 	"github.com/RIKIKU/PagerArchive/internal/ingest"
+	"github.com/RIKIKU/PagerArchive/internal/neardup"
 	"github.com/RIKIKU/PagerArchive/internal/pipeline"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/store"
@@ -73,6 +74,7 @@ type Report struct {
 	Lines           int64 // lines read
 	Stored          int64 // new messages
 	Duplicates      int64 // copies merged into a message (R19)
+	NearDuplicates  int64 // of Duplicates, those nearly the same as their message (R19a)
 	AlreadyImported int64 // lines an earlier run stored (R83c)
 	ParseFailed     int64 // of Stored, flagged parse_failed (R4)
 	TooOld          int64 // older than the retention period (R83d)
@@ -83,7 +85,7 @@ type Report struct {
 
 // Write prints the report. A dry run says what a real run would do.
 func (r Report) Write(w io.Writer) {
-	stored, merged := "pages stored", "duplicates merged"
+	stored, merged, near := "pages stored", "duplicates merged", "of which near duplicates (R19a)"
 	if r.DryRun {
 		fmt.Fprintln(w, "dry run: nothing was stored")
 		stored, merged = "pages that would be stored", "duplicates that would be merged"
@@ -95,6 +97,7 @@ func (r Report) Write(w io.Writer) {
 		{"lines read", r.Lines},
 		{stored, r.Stored},
 		{merged, r.Duplicates},
+		{near, r.NearDuplicates},
 		{"already imported", r.AlreadyImported},
 		{"parse failures", r.ParseFailed},
 		{"skipped by retention", r.TooOld},
@@ -403,7 +406,7 @@ func (im *Importer) store(ctx context.Context, conn *pgxpool.Conn, total int64, 
 	var done int64
 	after := time.Date(1, 1, 1, 0, 0, 0, 0, time.UTC)
 	started, last := time.Now(), time.Now()
-	dry := &dryRun{first: map[[32]byte]time.Time{}, copies: map[copyID]bool{}}
+	dry := &dryRun{first: map[[32]byte]time.Time{}, copies: map[copyID]bool{}, recent: map[string][]recentPage{}}
 	for {
 		pages, err := nextPages(ctx, conn, after)
 		if err != nil {
@@ -462,11 +465,12 @@ func nextPages(ctx context.Context, conn *pgxpool.Conn, after time.Time) ([]stag
 }
 
 // counts is what one batch did, added to the report once it's committed.
-type counts struct{ stored, duplicates, already, parseFailed int64 }
+type counts struct{ stored, duplicates, near, already, parseFailed int64 }
 
 func (r *Report) add(c counts) {
 	r.Stored += c.stored
 	r.Duplicates += c.duplicates
+	r.NearDuplicates += c.near
 	r.AlreadyImported += c.already
 	r.ParseFailed += c.parseFailed
 }
@@ -483,11 +487,10 @@ func (im *Importer) storeBatch(ctx context.Context, batch []staged, rep *Report)
 		}
 		q := im.Store.Queries.WithTx(tx)
 		var err error
-		c, err = im.walk(ctx, q, batch, func(p staged, draft ingest.Draft) (ingest.Outcome, error) {
-			outcome, _, err := im.Ingest.Save(ctx, q, draft, func(id int64) error {
-				return q.InsertImportReception(ctx, db.InsertImportReceptionParams{MessageID: id, ReceivedAt: p.at, SourceID: sourceParam(p.sourceID)})
+		c, err = im.walk(ctx, q, batch, func(p staged, draft ingest.Draft) (ingest.Result, error) {
+			return im.Ingest.Save(ctx, q, draft, func(id int64, text *string) error {
+				return q.InsertImportReception(ctx, db.InsertImportReceptionParams{MessageID: id, ReceivedAt: p.at, SourceID: sourceParam(p.sourceID), Text: text})
 			})
-			return outcome, err
 		})
 		return err
 	})
@@ -501,8 +504,8 @@ func (im *Importer) storeBatch(ctx context.Context, batch []staged, rep *Report)
 // checkBatch is storeBatch's dry run: the same checks, read only.
 func (im *Importer) checkBatch(ctx context.Context, batch []staged, rep *Report, seen *dryRun) error {
 	q := im.Store.Queries
-	c, err := im.walk(ctx, q, batch, func(p staged, draft ingest.Draft) (ingest.Outcome, error) {
-		return seen.outcome(ctx, q, p, draft)
+	c, err := im.walk(ctx, q, batch, func(p staged, draft ingest.Draft) (ingest.Result, error) {
+		return seen.outcome(ctx, q, p, draft, im.Ingest.Ratio())
 	})
 	if err != nil {
 		return fmt.Errorf("checking pages: %s", store.SafeError(err))
@@ -514,7 +517,7 @@ func (im *Importer) checkBatch(ctx context.Context, batch []staged, rep *Report,
 
 // walk goes through a batch in order: a page an earlier run stored is counted
 // and skipped (R83c), and the others are parsed and given to save.
-func (im *Importer) walk(ctx context.Context, q *db.Queries, batch []staged, save func(staged, ingest.Draft) (ingest.Outcome, error)) (counts, error) {
+func (im *Importer) walk(ctx context.Context, q *db.Queries, batch []staged, save func(staged, ingest.Draft) (ingest.Result, error)) (counts, error) {
 	var c counts
 	seen, err := seenSources(ctx, q, batch)
 	if err != nil {
@@ -531,7 +534,7 @@ func (im *Importer) walk(ctx context.Context, q *db.Queries, batch []staged, sav
 			return c, err
 		}
 		if p.sourceID == "" {
-			stored, err := q.ImportedCopyExists(ctx, db.ImportedCopyExistsParams{DedupKey: draft.Params.DedupKey, ReceivedAt: p.at})
+			stored, err := q.ImportedCopyExists(ctx, db.ImportedCopyExistsParams{DedupKey: draft.Params.DedupKey, ReceivedAt: p.at, Capcode: p.prep.Capcode, Text: p.prep.Text})
 			if err != nil {
 				return c, err
 			}
@@ -540,14 +543,14 @@ func (im *Importer) walk(ctx context.Context, q *db.Queries, batch []staged, sav
 				continue
 			}
 		}
-		outcome, err := save(p, draft)
+		res, err := save(p, draft)
 		if err != nil {
 			return c, err
 		}
 		if p.sourceID != "" {
 			seen[p.sourceID] = true
 		}
-		switch outcome {
+		switch res.Outcome {
 		case ingest.Stored:
 			c.stored++
 			if draft.Params.ParseFailed {
@@ -555,6 +558,9 @@ func (im *Importer) walk(ctx context.Context, q *db.Queries, batch []staged, sav
 			}
 		case ingest.Duplicate:
 			c.duplicates++
+			if res.Dedup == ingest.Near {
+				c.near++
+			}
 		case alreadyInFile:
 			c.already++
 		}
@@ -568,10 +574,14 @@ const alreadyInFile ingest.Outcome = "already in the file"
 
 // dryRun remembers what a real run would have stored by now, as those pages
 // aren't in the database. The pages come in time order, so only the last 10
-// seconds matter (R19).
+// seconds matter (R19). Its texts are the staged ones, redacted (P1), and
+// stay in memory.
 type dryRun struct {
 	first  map[[32]byte]time.Time // each dedup key's first copy
 	copies map[copyID]bool        // the copies with no source ID
+	// recent are each capcode's pages a real run would have stored, for
+	// near duplicates in the file (R19a).
+	recent map[string][]recentPage
 }
 
 type copyID struct {
@@ -579,12 +589,21 @@ type copyID struct {
 	at  time.Time
 }
 
-func (d *dryRun) outcome(ctx context.Context, q *db.Queries, p staged, draft ingest.Draft) (ingest.Outcome, error) {
+type recentPage struct {
+	at   time.Time
+	text string
+	job  *string
+}
+
+// outcome is what a real run would do with a page. A near duplicate (R19a)
+// is merged, as a real run merges it; which copy its message would keep
+// isn't worked out, so the count of near duplicates is "about".
+func (d *dryRun) outcome(ctx context.Context, q *db.Queries, p staged, draft ingest.Draft, ratio float64) (ingest.Result, error) {
 	key := [32]byte(draft.Params.DedupKey)
 	if p.sourceID == "" {
 		id := copyID{key, p.at}
 		if d.copies[id] {
-			return alreadyInFile, nil
+			return ingest.Result{Outcome: alreadyInFile}, nil
 		}
 		d.copies[id] = true
 	}
@@ -592,12 +611,30 @@ func (d *dryRun) outcome(ctx context.Context, q *db.Queries, p staged, draft ing
 	_, err := q.FindDuplicate(ctx, db.FindDuplicateParams{DedupKey: draft.Params.DedupKey, ReceivedAt: p.at})
 	switch {
 	case err == nil, inFile && p.at.Sub(first) <= ingest.DedupWindow:
-		return ingest.Duplicate, nil
-	case errors.Is(err, pgx.ErrNoRows):
-		d.first[key] = p.at
-		return ingest.Stored, nil
+		return ingest.Result{Outcome: ingest.Duplicate, Dedup: ingest.Exact}, nil
+	case !errors.Is(err, pgx.ErrNoRows):
+		return ingest.Result{}, err
 	}
-	return "", err
+	if ratio >= 0 {
+		job := draft.Params.JobNumber
+		for _, r := range d.recent[p.prep.Capcode] {
+			if p.at.Sub(r.at) <= ingest.DedupWindow && !ingest.OtherJob(r.job, job) && neardup.Compare(r.text, p.prep.Text, ratio).Near {
+				return ingest.Result{Outcome: ingest.Duplicate, Dedup: ingest.Near}, nil
+			}
+		}
+		rows, err := q.NearCandidates(ctx, db.NearCandidatesParams{ClientID: "", Capcode: p.prep.Capcode, ReceivedAt: p.at})
+		if err != nil {
+			return ingest.Result{}, err
+		}
+		for _, r := range rows {
+			if !ingest.OtherJob(r.JobNumber, job) && neardup.Compare(r.Text, p.prep.Text, ratio).Near {
+				return ingest.Result{Outcome: ingest.Duplicate, Dedup: ingest.Near}, nil
+			}
+		}
+	}
+	d.first[key] = p.at
+	d.recent[p.prep.Capcode] = append(d.recent[p.prep.Capcode], recentPage{p.at, p.prep.Text, draft.Params.JobNumber})
+	return ingest.Result{Outcome: ingest.Stored}, nil
 }
 
 func (d *dryRun) forgetBefore(t time.Time) {
@@ -609,6 +646,14 @@ func (d *dryRun) forgetBefore(t time.Time) {
 	for id := range d.copies {
 		if id.at.Before(t) {
 			delete(d.copies, id)
+		}
+	}
+	for c, pages := range d.recent {
+		pages = slices.DeleteFunc(pages, func(r recentPage) bool { return r.at.Before(t) })
+		if len(pages) == 0 {
+			delete(d.recent, c)
+		} else {
+			d.recent[c] = pages
 		}
 	}
 }
