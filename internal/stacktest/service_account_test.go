@@ -64,8 +64,9 @@ func TestPowerShellA130ServiceAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	connect := fmt.Sprintf(`$c = [pscredential]::new('%s', (ConvertTo-SecureString -AsPlainText -Force -String (Get-Content -Raw -LiteralPath '%s').Trim()))
-Connect-PagerArchive -Uri '%s' -AllowUnencryptedAuthentication -ServiceAccount $c | Select-Object Name, Role`, name, secretFile, ps.app.String())
-	if got := w.do(connect); !hasLine(got, `JSON {"Name":"`+name+`","Role":"service account"}`) {
+Connect-PagerArchive -Uri '%s' -AllowUnencryptedAuthentication -ServiceAccount $c | Select-Object Name, Role, @{ Name = 'Days'; Expression = { [int][math]::Round(($_.ExpiresAt - [datetimeoffset]::UtcNow).TotalDays) } }`, name, secretFile, ps.app.String())
+	// ExpiresAt is the credential's expiry, 90 days on, not the access token's.
+	if got := w.do(connect); !hasLine(got, `JSON {"Name":"`+name+`","Role":"service account","Days":90}`) {
 		t.Fatalf("connect: %q", got)
 	}
 

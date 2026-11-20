@@ -62,8 +62,12 @@ function Connect-PagerArchive {
 
     .OUTPUTS
     PagerArchive.Connection. The server (Uri), who you're signed in as
-    (Name, Email, Role), where the sign-in is saved (SavedIn) and when the
-    current access token expires (ExpiresAt).
+    (Name, Email, Role), where the sign-in is saved (SavedIn) and
+    ExpiresAt. For a person, ExpiresAt is when the current access token
+    expires: the module renews it as it goes, and the sign-in itself ends
+    only after 30 days unused. For a service account, ExpiresAt is when its
+    credential expires (90 days after it was made or rotated); its access
+    tokens renew themselves and aren't shown.
 
     .LINK
     Disconnect-PagerArchive

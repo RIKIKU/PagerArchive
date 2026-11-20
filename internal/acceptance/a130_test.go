@@ -114,6 +114,11 @@ func TestA130ServiceAccounts(t *testing.T) {
 	if code, p := e.bearerJSON(http.MethodGet, "/api/v1/me", tok, &me); code != http.StatusOK || !me.ServiceAccount || me.Email != "" {
 		t.Fatalf("me: %d %+v %+v", code, p, me)
 	}
+	// Its credential's expiry, which the module shows as the connection's
+	// ExpiresAt.
+	if me.CredentialExpiresAt == nil || me.CredentialExpiresAt.Sub(cred.ExpiresAt).Abs() > time.Second {
+		t.Errorf("me: credential expires %v, want %v", me.CredentialExpiresAt, cred.ExpiresAt)
+	}
 	var page struct {
 		Messages []server.Message `json:"messages"`
 	}
