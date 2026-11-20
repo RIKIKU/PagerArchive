@@ -13,6 +13,14 @@ export default defineConfig({
 	// job's summary, tests/flaky-reporter.ts), and one that fails both times
 	// fails. By hand, no retries.
 	retries: process.env.CI ? 1 : 0,
+	// Each test has its own time limit (30 s, or its test.setTimeout), so a
+	// stuck test fails in minutes and names itself. The whole run has one too
+	// in CI: the browser job's e2e.spec.ts run takes 50-60 minutes, and up to
+	// about 75 on a slow runner (the same tests, each slower, none stuck).
+	// Past 95 minutes Playwright stops, names the test it was on, lists those
+	// not run and writes its report, before the job's own limit (110) would
+	// cancel it with no report at all.
+	globalTimeout: process.env.CI ? 95 * 60_000 : 0,
 	// The HTML report is uploaded by CI when a browser test fails.
 	reporter: [['list'], ['html', { open: 'never', outputFolder: 'playwright-report' }], ['./tests/flaky-reporter.ts']],
 	// The app's service worker (R90) is blocked unless a test allows it: it
