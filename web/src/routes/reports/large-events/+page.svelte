@@ -26,7 +26,7 @@
 	})}
 >
 	{#snippet controls(q: URLSearchParams)}
-		<label class="field">
+		<label class="pick">
 			<span>By</span>
 			<select name="by" value={q.get('by') ?? 'month'}>
 				<option value="month">Month</option>
@@ -54,16 +54,16 @@
 </ReportPage>
 
 <style>
-	.field {
+	.pick {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3xs);
 		font-size: var(--text-sm);
 	}
-	.field > span {
+	.pick > span {
 		font-weight: var(--weight-strong);
 	}
-	.field select {
+	.pick select {
 		min-height: var(--target);
 	}
 </style>

@@ -6,6 +6,12 @@
 	import { api } from './api.ts';
 	import { albums, refreshAlbums } from './albums.svelte.ts';
 	import Icon from './Icon.svelte';
+	import FieldError from './FieldError.svelte';
+	import FormSummary from './FormSummary.svelte';
+	import { FormCheck } from './formCheck.svelte.ts';
+
+	// R82e: the new album's name says it's required; checked on save.
+	const fc = new FormCheck();
 
 	let { message }: { message: number } = $props();
 
@@ -53,8 +59,9 @@
 
 	async function create(e: SubmitEvent) {
 		e.preventDefault();
-		busy = true;
 		error = '';
+		if (!fc.check(e.currentTarget as HTMLFormElement)) return;
+		busy = true;
 		try {
 			const a = await api.createAlbum(name, '');
 			await api.addToAlbum(a.id, message);
@@ -99,12 +106,14 @@
 	{:else}
 		<p>You have no albums yet: make one here.</p>
 	{/if}
-	<form onsubmit={create}>
-		<label for="{uid}-name">New album</label>
+	<form novalidate onsubmit={create} oninput={fc.cleared}>
+		<FormSummary check={fc} />
+		<label for="{uid}-name">New album <span class="required">required</span></label>
 		<div class="row">
-			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" />
+			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-name`)} aria-describedby={fc.describedBy(`${uid}-name`)} />
 			<button type="submit" disabled={busy}><Icon name="add" />Create and add</button>
 		</div>
+		<FieldError check={fc} id="{uid}-name" />
 	</form>
 	<p class="status" role="status">{status}</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}

@@ -11,6 +11,9 @@
 	import { date } from '#lib/format.ts';
 	import { setTitle } from '#lib/here.svelte.ts';
 	import Icon from '#lib/Icon.svelte';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
 	import MessageList from '#lib/MessageList.svelte';
 	import { criteria } from '#lib/search.ts';
 
@@ -26,6 +29,8 @@
 	let description = $state('');
 	let formError = $state('');
 	let busy = $state(false);
+	// R82e: the name says it's required, and is checked on save.
+	const fc = new FormCheck();
 	const id = $derived(page.params.id ?? '');
 	const query = $derived(criteria(page.url));
 
@@ -56,13 +61,15 @@
 		name = album.name;
 		description = album.description ?? '';
 		formError = '';
+		fc.reset();
 		editing = true;
 	}
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
 		if (!album) return;
-		busy = true;
 		formError = '';
+		if (!fc.check(e.currentTarget as HTMLFormElement)) return;
+		busy = true;
 		try {
 			album = await api.updateAlbum(album.id, { name, description });
 			editing = false;
@@ -98,11 +105,13 @@
 {#if album}
 	<section class="about" aria-labelledby="album-name">
 		{#if editing}
-			<form onsubmit={save}>
+			<form novalidate onsubmit={save} oninput={fc.cleared}>
 				<h1 id="album-name">Edit album</h1>
-				<label for="album-name-field">Name</label>
-				<input id="album-name-field" bind:value={name} required maxlength={MAX_NAME} autocomplete="off" />
-				<label for="album-description">Description <span class="hint">(optional: what it's for, at most {MAX_DESCRIPTION} characters)</span></label>
+				<FormSummary check={fc} />
+				<label for="album-name-field">Name <span class="required">required</span></label>
+				<input id="album-name-field" bind:value={name} required maxlength={MAX_NAME} autocomplete="off" aria-invalid={fc.invalid('album-name-field')} aria-describedby={fc.describedBy('album-name-field')} />
+				<FieldError check={fc} id="album-name-field" />
+				<label for="album-description">Description <span class="hint">(what it's for, at most {MAX_DESCRIPTION} characters)</span></label>
 				<textarea id="album-description" bind:value={description} maxlength={MAX_DESCRIPTION} rows="5"></textarea>
 				<div class="actions">
 					<button type="submit" disabled={busy}>Save</button>

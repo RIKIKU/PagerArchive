@@ -1,6 +1,12 @@
 <script lang="ts">
 	import { api, type Meta, type Retention, type RetentionConfirm } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
+
+	// R82e: the days say they're required, and are checked on save.
+	const fc = new FormCheck();
 
 	// R45, R46: how long messages are kept, in days. Shortening it asks the
 	// admin to confirm the cut-off date; deletion happens at the next nightly
@@ -57,20 +63,24 @@
 	<p class="note">Admins only. Messages older than the retention period are deleted completely by the nightly run.</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if r}
+		<FormSummary check={fc} />
 		<form
+			novalidate
+			oninput={fc.cleared}
 			onsubmit={(e) => {
 				e.preventDefault();
 				confirm = undefined;
-				save();
+				if (fc.check(e.currentTarget)) save();
 			}}
 		>
 			<label
-				>Keep messages for (days)
-				<input type="number" bind:value={days} min={r.min_days} max={r.max_days} step="1" required disabled={busy || !!confirm} />
+				><span>Keep messages for (days) <span class="required">required</span></span>
+				<input id="retention-days" type="number" bind:value={days} min={r.min_days} max={r.max_days} step="1" required disabled={busy || !!confirm} aria-invalid={fc.invalid('retention-days')} aria-describedby={fc.describedBy('retention-days', 'retention-hint')} />
 			</label>
 			<button type="submit" disabled={busy || !!confirm || days === r.days}>Save</button>
 		</form>
-		<p class="hint">Between {r.min_days} and {r.max_days.toLocaleString('en-AU')} days. The default is {r.default_days.toLocaleString('en-AU')} (about 10 years).</p>
+		<FieldError check={fc} id="retention-days" />
+		<p class="hint" id="retention-hint">Between {r.min_days} and {r.max_days.toLocaleString('en-AU')} days. The default is {r.default_days.toLocaleString('en-AU')} (about 10 years).</p>
 
 		{#if confirm}
 			<div class="confirm" role="alertdialog" aria-labelledby="confirm-msg">

@@ -23,7 +23,7 @@ The owner also confirmed that only the map's tokens stay in PagerArchive.
 
 ### 1. A git dependency, pinned to the tag and locked to its commit
 
-`web/package.json` has `"archiveux": "github:RIKIKU/ArchiveUx#v0.1.1"` (a devDependency: it's CSS, built into the app). `web/package-lock.json` locks it to the tag's commit, `git+ssh://git@github.com/RIKIKU/ArchiveUx.git#537c44c53e362116eccfff9612221cd36dedc1f3`. `npm ci` installs exactly that commit whatever the tag later points at, and a different commit needs a change to the lock file, which a pull request shows. Not GitHub Packages, whose npm registry needs a token even for public packages, and not a submodule (ArchiveUx ADR 0001).
+`web/package.json` has `"archiveux": "github:RIKIKU/ArchiveUx#v0.2.0"` (a devDependency: it's CSS, built into the app; v0.1.1 at first, v0.2.0 since the forms rule below). `web/package-lock.json` locks it to the tag's commit, `git+ssh://git@github.com/RIKIKU/ArchiveUx.git#6d52c0ceec3b633490d5d8ca329ddaf27c253518`. `npm ci` installs exactly that commit whatever the tag later points at, and a different commit needs a change to the lock file, which a pull request shows. Not GitHub Packages, whose npm registry needs a token even for public packages, and not a submodule (ArchiveUx ADR 0001).
 
 **How it's fetched, and why the build image doesn't change.** For a GitHub dependency with a commit in the lock file, npm doesn't run git. It downloads that commit's tarball over HTTPS from GitHub (`codeload.github.com`), and falls back to git only if that fails. The fallback is never needed: ArchiveUx is public and has no `prepare` script, which would need a clone. This was checked in the server image's own build stage, `node:24-slim` at the Dockerfile's digest, which has no git: `npm ci` with this lock file installs `archiveux` (`which git` → none; `node_modules/archiveux/src` has `archiveux.css`, `base.css` and `tokens.css`). So the Dockerfile, CI's `npm ci` steps and the release's attested image builds stay as they are, with no new tool in the build. The build already fetches its npm packages over the network, and this is one more HTTPS fetch, pinned by commit.
 
@@ -72,3 +72,10 @@ The one visible change is applied: the busy-times grid colours each shade `--hea
   It reads `color(srgb …)` too, which is how a browser gives a `color-mix()` shade.
 - **"Back up now" and R84h** check that the backup and upgrade alerts draw no edge on any side (the owner's decision above).
 - **A120** checks that every cell of the busy-times grid writes its count in its own step's `--heat-N-fg` on `--heat-N`, in light and dark.
+
+## ArchiveUx 0.2.0: required fields (owner, 2026-11-20)
+
+"The word required, every form. This should probably be a part of our design system." ArchiveUx 0.2.0 (its ADR 0001, decision 14; tag v0.2.0, commit 6d52c0c) made this a rule for every app. It adds the classes `.field`, `.required`, `.field-hint`, `.field-error` and `.field-group`, and a `--danger` border on a control with `aria-invalid="true"`. They're built from existing tokens, so no token changes. PagerArchive moved to it with SPEC.md R82g and A131:
+
+- Every form with a required or checked field has `novalidate`. Its own check, `web/src/lib/formCheck.svelte.ts`, runs on save. It reads each control's `validity` (required, type, min, max, maxlength) and the form's own rules: an integration's capcodes or aliases, and the capcode report's pick. It puts each message under its field (`FieldError.svelte`), moves focus to the first problem, and writes the count at the top (`FormSummary.svelte`).
+- ArchiveUx's `.field` is now a column. Five report controls and the search box's suggestion field used `.field` for a row of their own, so they're now `.pick`.

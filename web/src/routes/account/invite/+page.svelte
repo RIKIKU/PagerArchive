@@ -4,6 +4,12 @@
 	import { api, type Invitation, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import { resendable, resentNotice, statusLabels as labels } from '#lib/invitations.ts';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
+
+	// R82e: the address says it's required; checked on save.
+	const fc = new FormCheck();
 
 	let meta: Meta | undefined = $state();
 	let invitations: Invitation[] = $state([]);
@@ -27,6 +33,7 @@
 	async function invite(ev: SubmitEvent) {
 		ev.preventDefault();
 		inviteError = inviteDone = '';
+		if (!fc.check(ev.currentTarget as HTMLFormElement)) return;
 		sending = true;
 		try {
 			const inv = await api.invite(email.trim());
@@ -67,12 +74,14 @@
 
 <h1>Invite someone</h1>
 <section aria-label="Send an invitation">
-	<form onsubmit={invite}>
-		<label for="invite-email">Their email address</label>
+	<form novalidate onsubmit={invite} oninput={fc.cleared}>
+		<FormSummary check={fc} />
+		<label for="invite-email">Their email address <span class="required">required</span></label>
 		<div class="row">
-			<input id="invite-email" type="email" autocomplete="off" required bind:value={email} aria-describedby="invite-help" />
+			<input id="invite-email" type="email" autocomplete="off" required bind:value={email} aria-invalid={fc.invalid('invite-email')} aria-describedby={fc.describedBy('invite-email', 'invite-help')} />
 			<button type="submit" disabled={sending}>{sending ? 'Sending…' : 'Send invitation'}</button>
 		</div>
+		<FieldError check={fc} id="invite-email" />
 		<p id="invite-help" class="help">
 			{#if meta?.allowed_email_domains?.length}Addresses at {meta.allowed_email_domains.join(' or ')} only.{/if}
 			They'll get an email with a link that works for 7 days, until they join, and a code to confirm their address.

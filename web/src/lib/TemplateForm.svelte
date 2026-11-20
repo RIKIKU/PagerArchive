@@ -3,6 +3,9 @@
 	// every alias using it; the server checks the values and says what's wrong.
 	import { untrack } from 'svelte';
 	import type { TemplateInput } from '#lib/api.ts';
+	import FieldError from './FieldError.svelte';
+	import FormSummary from './FormSummary.svelte';
+	import { FormCheck } from './formCheck.svelte.ts';
 
 	let {
 		initial,
@@ -34,9 +37,13 @@
 	// changes doesn't drop it silently.
 	const missing = $derived(start.agency_profile !== '' && !profiles.includes(start.agency_profile));
 
+	// R82e: required fields say so; the form checks itself on save.
+	const fc = new FormCheck();
+
 	async function submit(ev: SubmitEvent) {
 		ev.preventDefault();
 		error = '';
+		if (!fc.check(ev.currentTarget as HTMLFormElement)) return;
 		busy = true;
 		try {
 			await onSave({ name, agency, colour, agency_profile: profile });
@@ -48,16 +55,19 @@
 	}
 </script>
 
-<form class="template-form" onsubmit={submit} aria-labelledby="{uid}-h" data-testid="template-form">
+<form class="template-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="template-form">
 	<h2 id="{uid}-h">{heading}</h2>
+	<FormSummary check={fc} />
 	<div class="grid">
 		<div class="field">
-			<label for="{uid}-name">Name</label>
-			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" />
+			<label for="{uid}-name">Name <span class="required">required</span></label>
+			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-name`)} aria-describedby={fc.describedBy(`${uid}-name`)} />
+			<FieldError check={fc} id="{uid}-name" />
 		</div>
 		<div class="field">
-			<label for="{uid}-agency">Agency</label>
-			<input id="{uid}-agency" bind:value={agency} required maxlength="100" autocomplete="off" aria-describedby="{uid}-agency-help" />
+			<label for="{uid}-agency">Agency <span class="required">required</span></label>
+			<input id="{uid}-agency" bind:value={agency} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-agency`)} aria-describedby={fc.describedBy(`${uid}-agency`, `${uid}-agency-help`)} />
+			<FieldError check={fc} id="{uid}-agency" />
 		</div>
 	</div>
 	<p class="help" id="{uid}-agency-help">The agency's name is shown with its pages, and is its icon's text alternative.</p>
@@ -110,7 +120,6 @@
 	}
 	.field label {
 		display: block;
-		margin-bottom: var(--space-2xs);
 	}
 	.colour {
 		display: flex;
