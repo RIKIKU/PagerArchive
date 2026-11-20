@@ -4,17 +4,36 @@
 // This reporter lists each as a warning annotation, "flaky: <test>", and in
 // the job's summary, so a retry never hides it. A test that fails both times
 // still fails the run.
+//
+// It also names the test that was running when the whole run hit its time
+// limit (globalTimeout in playwright.config.ts): Playwright's own output
+// then says only how many tests didn't run.
 import { appendFileSync } from 'node:fs';
 import type { FullConfig, FullResult, Reporter, Suite, TestCase } from '@playwright/test/reporter';
 
 export default class FlakyReporter implements Reporter {
 	private suite: Suite | undefined;
+	private running = new Map<TestCase, number>();
 
 	onBegin(_config: FullConfig, suite: Suite) {
 		this.suite = suite;
 	}
 
-	onEnd(_result: FullResult) {
+	onTestBegin(test: TestCase) {
+		this.running.set(test, Date.now());
+	}
+
+	onTestEnd(test: TestCase) {
+		this.running.delete(test);
+	}
+
+	onEnd(result: FullResult) {
+		if (result.status === 'timedout') {
+			const notRun = (this.suite?.allTests() ?? []).filter((t) => t.results.length === 0).length;
+			const on = [...this.running].map(([t, at]) => `${t.titlePath().filter(Boolean).join(' › ')} (running for ${Math.round((Date.now() - at) / 1000)} s)`);
+			const line = `the whole run hit its time limit while on ${on.join('; ') || 'no test (between tests)'}; ${notRun} more not started`;
+			console.log(process.env.GITHUB_ACTIONS ? `::error title=Browser tests out of time::${line}` : line);
+		}
 		const flaky = (this.suite?.allTests() ?? []).filter((t: TestCase) => t.outcome() === 'flaky');
 		if (flaky.length === 0) return;
 		const name = (t: TestCase) => t.titlePath().filter(Boolean).join(' › ');

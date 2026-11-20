@@ -16,17 +16,25 @@ const OWNER = process.env.PA_OWNER_EMAIL ?? `owner@${DOMAIN}`;
 // The made-up test icons (ADR 0011).
 const testIcon = (name: string) => join(process.cwd(), '..', 'testdata', 'icons', name);
 
-/** The text of the newest email to address after since whose subject has subject. */
+/**
+ * The text of the newest email to address after since whose subject has
+ * subject. Authentik's worker sends it from its queue, so it can take a
+ * while; the stack scripts start the tests only once that queue is empty
+ * (stack_wait_worker in scripts/stack-lib.sh), so 30 s is plenty, and a
+ * miss says what did reach the catcher for that address.
+ */
 async function mail(request: APIRequestContext, address: string, subject: string, since: Date): Promise<string> {
 	const deadline = Date.now() + 30_000;
+	let seen: { ID: string; Created: string; Subject: string }[] = [];
 	while (Date.now() < deadline) {
 		const res = await request.get(`${MAILPIT}/api/v1/search`, { params: { query: `to:"${address}"` } });
-		const list = (await res.json()) as { messages: { ID: string; Created: string; Subject: string }[] };
-		const m = list.messages.find((m) => new Date(m.Created) > since && m.Subject.includes(subject));
+		seen = ((await res.json()) as { messages: typeof seen }).messages;
+		const m = seen.find((m) => new Date(m.Created) > since && m.Subject.includes(subject));
 		if (m) return ((await (await request.get(`${MAILPIT}/api/v1/message/${m.ID}`)).json()) as { Text: string }).Text;
 		await new Promise((r) => setTimeout(r, 300));
 	}
-	throw new Error(`no "${subject}" email to ${address}`);
+	const got = seen.map((m) => `"${m.Subject}" at ${m.Created}`).join(', ') || 'none';
+	throw new Error(`no "${subject}" email to ${address} within 30 s of ${since.toISOString()}; the catcher had for that address: ${got}`);
 }
 
 /** The password enrol sets for someone of this name. */

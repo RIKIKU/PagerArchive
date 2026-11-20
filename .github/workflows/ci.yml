@@ -378,7 +378,11 @@ jobs:
     needs: [stamp, changes]
     if: needs.changes.outputs.web == 'true'
     runs-on: ubuntu-24.04
-    timeout-minutes: 75
+    # About 2x a normal run (50-60 minutes; up to 75 on a slow runner, where
+    # every test is slower and none is stuck). A stuck test fails at its own
+    # time limit, naming itself, and the whole Playwright run stops at 95
+    # minutes with its report (web/playwright.config.ts).
+    timeout-minutes: 110
     # Microsoft's Playwright image, the exact version in web/package-lock.json
     # (by digest): the browsers and their libraries are already installed.
     # There's no Docker in it, so the database is a service container,
@@ -444,13 +448,18 @@ jobs:
       - name: Playwright is the image's version
         working-directory: web
         run: test "$(npx playwright --version)" = "Version 1.64.0"
+      # Which runner this is, to compare a slow run's times with a normal one's.
+      - name: The runner's CPUs
+        run: |
+          echo "$(nproc) CPUs: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
       # A test that passed only on its retry (flaky) keeps its report too, with
       # the failed try's trace.
       - name: Browser tests against a real API and PostGIS
         id: e2e
+        timeout-minutes: 100
         run: sh scripts/e2e.sh
       - name: Upload Playwright report, screenshots and traces
-        if: failure() || steps.e2e.outputs.flaky == 'true'
+        if: failure() || cancelled() || steps.e2e.outputs.flaky == 'true'
         uses: ./.github/actions/upload
         with:
           name: playwright-report-${{ github.run_id }}-${{ github.run_attempt }}

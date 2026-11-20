@@ -31,10 +31,24 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# wait_for <seconds> <what> <command...>: runs the command every second until
+# it succeeds, or fails naming what never became ready. Every wait here is
+# bounded, so a database or an API that never starts fails the run in
+# minutes, saying which, instead of running into the job's time limit.
+wait_for() {
+	_secs=$1 _what=$2
+	shift 2
+	_end=$(($(date +%s) + _secs))
+	until "$@" >/dev/null 2>&1; do
+		[ "$(date +%s)" -lt "$_end" ] || { echo "e2e.sh: $_what wasn't ready after $_secs s" >&2; return 1; }
+		sleep 1
+	done
+}
+
 if [ -n "${PA_E2E_DATABASE_URL:-}" ]; then
 	export DATABASE_URL="$PA_E2E_DATABASE_URL"
 	psql_db() { psql "$DATABASE_URL" "$@"; }
-	until pg_isready -d "$DATABASE_URL" >/dev/null 2>&1; do sleep 1; done
+	wait_for 120 "the database at PA_E2E_DATABASE_URL" pg_isready -d "$DATABASE_URL"
 	# The settings the container below is started with, applied to this one.
 	for s in "log_statement = 'none'" "log_min_error_statement = panic" "log_error_verbosity = terse"; do
 		psql_db -q -v ON_ERROR_STOP=1 -c "ALTER SYSTEM SET $s"
@@ -47,9 +61,9 @@ else
 	psql_db() { docker exec -i "$DB" psql -U postgres "$@"; }
 	docker run -d --platform linux/amd64 --name "$DB" -e POSTGRES_PASSWORD=test -p "127.0.0.1:$PORT_DB:5432" postgis/postgis:18-3.6 \
 		postgres -c log_statement=none -c log_min_error_statement=panic -c log_error_verbosity=terse >/dev/null
-	until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
+	wait_for 120 "the database container" docker exec "$DB" pg_isready -U postgres -h 127.0.0.1
 	sleep 3 # the image restarts PostgreSQL once after its init scripts
-	until docker exec "$DB" pg_isready -U postgres -h 127.0.0.1 >/dev/null 2>&1; do sleep 1; done
+	wait_for 120 "the database container, after its init scripts" docker exec "$DB" pg_isready -U postgres -h 127.0.0.1
 fi
 
 (cd web && npm run build >/dev/null)
@@ -150,16 +164,29 @@ PA_E2E_BACKUP_DIR=${BIN%/*}/backup
 mkdir -p "$PA_E2E_BACKUP_DIR/status" "$PA_E2E_BACKUP_DIR/requests" "$PA_E2E_BACKUP_DIR/auto-upgrade"
 export PA_E2E_BACKUP_DIR
 
+# The API's port: PA_E2E_API_PORT, or 18080.
+API_PORT=${PA_E2E_API_PORT:-18080}
 # Authentik isn't running: sign-in reports it unavailable, which one test checks.
-PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:18080 MAP_TILES=deploy/example-map/example-map.pmtiles \
-	APP_URL=http://127.0.0.1:18080 AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
+PROFILES_DIR=profiles/example TZ=Australia/Melbourne LISTEN_ADDR=127.0.0.1:$API_PORT MAP_TILES=deploy/example-map/example-map.pmtiles \
+	APP_URL=http://127.0.0.1:$API_PORT AUTHENTIK_URL=http://127.0.0.1:1 OIDC_CLIENT_SECRET=unused AUTHENTIK_API_TOKEN=unused \
 	INTEGRATION_SECRETS_KEY=$(head -c 32 /dev/urandom | base64) \
 	BACKUP_STATUS_FILE="$PA_E2E_BACKUP_DIR/status/status.json" BACKUP_REQUEST_FILE="$PA_E2E_BACKUP_DIR/requests/request.json" \
 	AUTO_UPGRADE_STATUS_FILE="$PA_E2E_BACKUP_DIR/auto-upgrade/status.json" \
 	ALLOWED_EMAIL_DOMAINS=example.test "$BIN" serve 2>>"$BIN.log" &
 PIDS="$PIDS $!"
-until curl -sf "http://127.0.0.1:18080/healthz" >/dev/null; do sleep 0.2; done
-export PA_URL=http://127.0.0.1:18080
+api_pid=$!
+# The API answers, or the run stops with its log: an API that exited, or
+# never answered in 60 s.
+api_end=$(($(date +%s) + 60))
+until curl -sf -m 2 "http://127.0.0.1:$API_PORT/healthz" >/dev/null; do
+	if ! kill -0 "$api_pid" 2>/dev/null || [ "$(date +%s)" -ge "$api_end" ]; then
+		echo "e2e.sh: the API didn't answer at http://127.0.0.1:$API_PORT/healthz within 60 s; its log:" >&2
+		tail -n 30 "$BIN.log" >&2
+		exit 1
+	fi
+	sleep 0.2
+done
+export PA_URL=http://127.0.0.1:$API_PORT
 
 status=0
 (cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?
