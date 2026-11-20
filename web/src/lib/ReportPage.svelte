@@ -159,7 +159,7 @@
 	{#if meta && query}
 		<form method="GET" class="form" onsubmit={submit} data-testid="report-form">
 			{#if filters.agency}
-				<label class="field">
+				<label class="pick">
 					<span>Agency</span>
 					<select name="agency">
 						<option value="">Every agency</option>
@@ -169,7 +169,7 @@
 				</label>
 			{/if}
 			{#if filters.eventType}
-				<label class="field">
+				<label class="pick">
 					<span>Event type</span>
 					<select name="event_type">
 						<option value="">Every event type</option>
@@ -236,7 +236,7 @@
 		align-items: flex-end;
 		margin: var(--space-md) 0 var(--space-md);
 	}
-	.field,
+	.pick,
 	.dates {
 		display: flex;
 		flex-direction: column;
@@ -244,11 +244,11 @@
 		font-size: var(--text-sm);
 		min-width: 0;
 	}
-	.field > span,
+	.pick > span,
 	.dates-label {
 		font-weight: var(--weight-strong);
 	}
-	.field select {
+	.pick select {
 		min-height: var(--target);
 		max-width: var(--field-wide);
 	}

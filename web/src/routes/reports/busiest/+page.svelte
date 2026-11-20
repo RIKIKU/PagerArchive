@@ -25,7 +25,7 @@
 	})}
 >
 	{#snippet controls(q: URLSearchParams)}
-		<label class="field">
+		<label class="pick">
 			<span>Show</span>
 			<select name="limit" value={q.get('limit') ?? '10'}>
 				{#each ['10', '25', '50'] as n (n)}<option value={n}>Top {n}</option>{/each}
@@ -76,16 +76,16 @@
 </ReportPage>
 
 <style>
-	.field {
+	.pick {
 		display: flex;
 		flex-direction: column;
 		gap: var(--space-3xs);
 		font-size: var(--text-sm);
 	}
-	.field > span {
+	.pick > span {
 		font-weight: var(--weight-strong);
 	}
-	.field select {
+	.pick select {
 		min-height: var(--target);
 	}
 </style>

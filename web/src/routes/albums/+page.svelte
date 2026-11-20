@@ -5,6 +5,12 @@
 	import { api } from '#lib/api.ts';
 	import { albums, refreshAlbums, retentionLine } from '#lib/albums.svelte.ts';
 	import Icon from '#lib/Icon.svelte';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
+
+	// R82g: the name says it's required, and is checked on save.
+	const fc = new FormCheck();
 
 	const MAX_NAME = 100;
 	const MAX_DESCRIPTION = 2000;
@@ -18,8 +24,9 @@
 
 	async function create(e: SubmitEvent) {
 		e.preventDefault();
-		busy = true;
 		error = '';
+		if (!fc.check(e.currentTarget as HTMLFormElement)) return;
+		busy = true;
 		try {
 			const a = await api.createAlbum(name, description);
 			await refreshAlbums();
@@ -58,10 +65,12 @@
 
 <section class="new" aria-labelledby="new-album">
 	<h2 id="new-album">New album</h2>
-	<form onsubmit={create}>
-		<label for="album-name">Name</label>
-		<input id="album-name" bind:value={name} required maxlength={MAX_NAME} autocomplete="off" />
-		<label for="album-description">Description <span class="hint">(optional: what it's for, at most {MAX_DESCRIPTION} characters)</span></label>
+	<form novalidate onsubmit={create} oninput={fc.cleared}>
+		<FormSummary check={fc} />
+		<label for="album-name">Name <span class="required">required</span></label>
+		<input id="album-name" bind:value={name} required maxlength={MAX_NAME} autocomplete="off" aria-invalid={fc.invalid('album-name')} aria-describedby={fc.describedBy('album-name')} />
+		<FieldError check={fc} id="album-name" />
+		<label for="album-description">Description <span class="hint">(what it's for, at most {MAX_DESCRIPTION} characters)</span></label>
 		<textarea id="album-description" bind:value={description} maxlength={MAX_DESCRIPTION} rows="3"></textarea>
 		<div><button type="submit" disabled={busy}><Icon name="add" />Create album</button></div>
 		{#if error}<p class="error" role="alert">{error}</p>{/if}

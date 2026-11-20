@@ -1,5 +1,11 @@
 <script lang="ts">
 	import { api } from '#lib/api.ts';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
+
+	// R82g: the number says it's required, and is checked on save.
+	const fc = new FormCheck();
 
 	// R87: how many Emergency pages one job must have, to aliased capcodes, to
 	// open a large event. Each stored page counts once, however many receivers
@@ -22,8 +28,9 @@
 
 	async function save(e: SubmitEvent) {
 		e.preventDefault();
-		busy = true;
 		error = saved = '';
+		if (!fc.check(e.currentTarget as HTMLFormElement)) return;
+		busy = true;
 		try {
 			const s = await api.setLargeEventSettings(pages);
 			current = pages = s.job_pages;
@@ -46,14 +53,16 @@
 	</p>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
 	{#if current !== undefined}
-		<form onsubmit={save}>
+		<FormSummary check={fc} />
+		<form novalidate onsubmit={save} oninput={fc.cleared}>
 			<label
-				>Emergency pages on one job that open a large event
-				<input type="number" bind:value={pages} min={MIN} max={MAX} step="1" required disabled={busy} />
+				><span>Emergency pages on one job that open a large event <span class="required">required</span></span>
+				<input id="job-pages" type="number" bind:value={pages} min={MIN} max={MAX} step="1" required disabled={busy} aria-invalid={fc.invalid('job-pages')} aria-describedby={fc.describedBy('job-pages', 'job-pages-hint')} />
 			</label>
 			<button type="submit" disabled={busy || pages === current}>Save</button>
 		</form>
-		<p class="hint">Between {MIN} and {MAX}. The default is 20. Events already recorded stay as they are; pages from now on are judged by the new number.</p>
+		<FieldError check={fc} id="job-pages" />
+		<p class="hint" id="job-pages-hint">Between {MIN} and {MAX}. The default is 20. Events already recorded stay as they are; pages from now on are judged by the new number.</p>
 		<p role="status" class="saved">{saved}</p>
 	{/if}
 </div>

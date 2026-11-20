@@ -4,6 +4,9 @@
 	// The server checks everything again (R27a) and says what's wrong.
 	import { untrack } from 'svelte';
 	import { api, type AliasRequest, type RequestKind, type TemplateChoice } from '#lib/api.ts';
+	import FieldError from './FieldError.svelte';
+	import FormSummary from './FormSummary.svelte';
+	import { FormCheck } from './formCheck.svelte.ts';
 
 	interface Current {
 		id: number;
@@ -54,9 +57,13 @@
 		existing ? 'Edit your request' : kind === 'add' ? 'Request a new alias' : kind === 'delete' ? 'Request deletion' : 'Request a change'
 	);
 
+	// R82g: required fields say so; the form checks itself on save.
+	const fc = new FormCheck();
+
 	async function submit(ev: SubmitEvent) {
 		ev.preventDefault();
 		error = '';
+		if (!fc.check(ev.currentTarget as HTMLFormElement)) return;
 		busy = true;
 		const tid = template === '' ? null : Number(template);
 		const body =
@@ -81,20 +88,24 @@
 	}
 </script>
 
-<form class="request-form" onsubmit={submit} aria-labelledby="{uid}-h" data-testid="request-form">
+<form class="request-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="request-form">
 	<h2 id="{uid}-h">{heading}</h2>
+	<FormSummary check={fc} />
 	{#if kind === 'add'}
 		<div class="field">
-			<label for="{uid}-pattern">Capcode or pattern</label>
+			<!-- A waiting request's capcode can't change: read-only, so not marked. -->
+			<label for="{uid}-pattern">Capcode or pattern {#if !existing}<span class="required">required</span>{/if}</label>
 			<input id="{uid}-pattern" bind:value={pat} required maxlength="7" inputmode="numeric" autocomplete="off"
-				readonly={!!existing} aria-describedby="{uid}-pattern-help" />
+				readonly={!!existing} aria-invalid={fc.invalid(`${uid}-pattern`)} aria-describedby={fc.describedBy(`${uid}-pattern`, `${uid}-pattern-help`)} />
 			<p class="help" id="{uid}-pattern-help">Up to 7 digits. A pattern uses % for any run of digits and _ for one digit.</p>
+			<FieldError check={fc} id="{uid}-pattern" />
 		</div>
 	{/if}
 	{#if kind !== 'delete'}
 		<div class="field">
-			<label for="{uid}-name">Name</label>
-			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" />
+			<label for="{uid}-name">Name <span class="required">required</span></label>
+			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-name`)} aria-describedby={fc.describedBy(`${uid}-name`)} />
+			<FieldError check={fc} id="{uid}-name" />
 		</div>
 		<div class="field">
 			<label for="{uid}-template">Template</label>
@@ -110,7 +121,7 @@
 		<p class="help">An admin reviews the request before the alias is deleted. Its pages stay; they show the capcode instead.</p>
 	{/if}
 	<div class="field">
-		<label for="{uid}-note">Note for the admins (optional)</label>
+		<label for="{uid}-note">Note for the admins</label>
 		<textarea id="{uid}-note" bind:value={note} maxlength="500" rows="2"></textarea>
 	</div>
 	{#if error}<p class="error" role="alert">{error}</p>{/if}
@@ -138,7 +149,6 @@
 	}
 	.field label {
 		display: block;
-		margin-bottom: var(--space-2xs);
 	}
 	.check {
 		display: inline-flex;

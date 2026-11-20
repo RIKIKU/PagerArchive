@@ -109,7 +109,7 @@
 			confirm();
 		}}
 	>
-		<label for="reason">Reason (optional, only admins see it)</label>
+		<label for="reason">Reason (only admins see it)</label>
 		<textarea id="reason" rows="2" maxlength="500" bind:value={reason}></textarea>
 		<p class="totals" aria-live="polite" data-testid="totals">{totals}.</p>
 		<div class="actions">

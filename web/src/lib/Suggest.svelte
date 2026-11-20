@@ -22,7 +22,10 @@
 		icon,
 		placeholder,
 		listLabel,
-		describedby
+		describedby,
+		id,
+		marker,
+		invalid = false
 	}: {
 		text?: string;
 		/** The suggestions for the word at the caret. */
@@ -38,9 +41,16 @@
 		placeholder?: string;
 		listLabel: string;
 		describedby?: string;
+		/** The input's id (else one of its own). */
+		id?: string;
+		/** R82g: "required", or when it is, after the label. */
+		marker?: string;
+		/** R82g: the form found a problem in it (aria-invalid). */
+		invalid?: boolean;
 	} = $props();
 
 	const uid = $props.id();
+	const inputId = $derived(id ?? `${uid}-input`);
 	let input: HTMLInputElement;
 	let list: Suggestions = $state({ options: [], what: 'suggestion' });
 	let open = $state(false);
@@ -166,14 +176,16 @@
 </script>
 
 <div class="suggest">
-	{#if showLabel}<label class="above" for="{uid}-input">{label}</label>{/if}
-	<svelte:element this={showLabel ? 'div' : 'label'} class="field">
+	{#if showLabel}<label class="above" for={inputId}>{label}{#if marker}{' '}<span class="required">{marker}</span>{/if}</label>{/if}
+	<svelte:element this={showLabel ? 'div' : 'label'} class="pick">
 		{#if icon}<Icon name={icon} />{/if}
-		{#if !showLabel}<span class="visually-hidden">{label}</span>{/if}
+		{#if !showLabel}<span class="visually-hidden">{label}{#if marker}{' '}{marker}{/if}</span>{/if}
 		<input
 			bind:this={input}
 			bind:value={text}
-			id="{uid}-input"
+			id={inputId}
+			required={!!marker}
+			aria-invalid={invalid ? 'true' : undefined}
 			type="text"
 			role="combobox"
 			autocomplete="off"
@@ -233,7 +245,7 @@
 		margin-bottom: var(--space-3xs);
 		font-size: var(--text-sm);
 	}
-	.field {
+	.pick {
 		display: flex;
 		align-items: center;
 		gap: var(--space-sm);
@@ -244,21 +256,21 @@
 		background: var(--surface-2);
 		color: var(--muted);
 	}
-	.field:focus-within {
+	.pick:focus-within {
 		outline: var(--focus-width) solid var(--focus);
 		outline-offset: var(--focus-offset);
 	}
-	.field input {
+	.pick input {
 		min-height: 0;
 		padding: var(--space-xs) 0;
 		border: 0;
 		background: transparent;
 		color: var(--fg);
 	}
-	.field input:focus-visible {
+	.pick input:focus-visible {
 		outline: none;
 	}
-	.field input::placeholder {
+	.pick input::placeholder {
 		color: var(--muted);
 		opacity: 1;
 	}

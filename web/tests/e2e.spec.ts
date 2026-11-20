@@ -896,7 +896,12 @@ test('capcode report counts Emergency messages by category', async ({ page, requ
 	// Something that's neither is refused, without asking the API.
 	await box.fill('no such alias anywhere');
 	await page.getByRole('button', { name: 'Run report' }).click();
-	await expect(page.getByRole('alert')).toHaveText(`There's no alias "no such alias anywhere". Pick one from the suggestions.`);
+	// R82e: under the box, which says it's invalid and takes focus; the top line only counts.
+	await expect(page.locator('#report-box-error')).toHaveText(`There's no alias "no such alias anywhere". Pick one from the suggestions.`);
+	await expect(box).toHaveAttribute('aria-invalid', 'true');
+	await expect(box).toHaveAttribute('aria-describedby', 'report-box-error');
+	await expect(box).toBeFocused();
+	await expect(page.getByTestId('form-summary')).toHaveText('1 field needs attention');
 });
 
 // R78, A6: the Unknown capcodes page lists the most messages first, then
@@ -1008,9 +1013,9 @@ test('A30 integrations in the browser: notice, create, Send test, delivery, paus
 			'Integrations are a convenience, not a replacement for your pager: delivery is best-effort, and a page may arrive late or not at all.'
 		);
 		await page.getByRole('button', { name: 'New integration' }).click();
-		await page.getByLabel('Name', { exact: true }).fill(name);
+		await page.getByLabel('Name required', { exact: true }).fill(name);
 		await chooseInSelection(page, '0100001', 'Station 1 (0100001)');
-		await page.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook/T0PS3CRET`);
+		await page.getByLabel('URL required', { exact: true }).fill(`http://127.0.0.1:${port}/hook/T0PS3CRET`);
 		await page.getByRole('button', { name: 'Save integration' }).click();
 		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
 		const card = page.getByTestId('integration').filter({ hasText: name });
@@ -1101,8 +1106,8 @@ test('A40 one selection field', async ({ page, request }) => {
 	await expect(chosen).toHaveText([/^Station 1 \(0100001\)\s*×$/, /^0100009\s*in Stations block\s*×$/]);
 
 	const name = `A40 selection ${Date.now()}`;
-	await page.getByLabel('Name', { exact: true }).fill(name);
-	await page.getByLabel('URL', { exact: true }).fill('http://127.0.0.1:9/hook');
+	await page.getByLabel('Name required', { exact: true }).fill(name);
+	await page.getByLabel('URL required', { exact: true }).fill('http://127.0.0.1:9/hook');
 	await page.getByRole('button', { name: 'Save integration' }).click();
 	const card = page.getByTestId('integration').filter({ hasText: name });
 	await expect(card).toContainText('Station 1, 0100009 (in Stations block)');
@@ -1331,7 +1336,7 @@ test('A43 request approved', async ({ page, browser, request }, info) => {
 	await form.getByLabel('Capcode or pattern').fill(capcode);
 	await form.getByLabel('Name').fill(name);
 	await form.getByLabel('Template').selectOption({ label: 'Example Fire (Example Fire Service)' });
-	await form.getByLabel('Note for the admins (optional)').fill('NOTE-MARKER new pager');
+	await form.getByLabel('Note for the admins').fill('NOTE-MARKER new pager');
 	await form.getByRole('button', { name: 'Send request' }).click();
 	await expect(page.getByRole('status').filter({ hasText: 'Your request was sent' })).toBeVisible();
 	const mine = page.getByTestId('alias-request').filter({ hasText: capcode });
@@ -1396,8 +1401,11 @@ test('A44 request rejected', async ({ page, browser, request }, info) => {
 	await expect(card.getByRole('row', { name: `Name ${current} Station 7 ${n}` })).toBeVisible();
 	await card.getByRole('button', { name: /^Reject:/ }).click();
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
-	await expect(card.getByRole('alert')).toContainText('needs feedback');
-	await card.getByLabel('Feedback for the person who asked (required)').fill('Wrong station');
+	// R82e: the empty feedback is caught before it's sent, under the field, which takes focus.
+	await expect(card.locator('.field-error')).toHaveText("Say why it's rejected: they'll see this.");
+	await expect(card.getByLabel('Feedback for the person who asked required')).toBeFocused();
+	await expect(card.getByTestId('form-summary')).toHaveText('1 field needs attention');
+	await card.getByLabel('Feedback for the person who asked required').fill('Wrong station');
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
 	await expect(admin.getByRole('status')).toContainText('Rejected');
 	await admin.context().close();
@@ -1460,7 +1468,7 @@ test('A45 out-of-date requests', async ({ page, browser, request }, info) => {
 	// Clean up: both rejected, so no request lingers for other tests.
 	for (const card of [stale, changed]) {
 		await card.getByRole('button', { name: /^Reject:/ }).click();
-		await card.getByLabel('Feedback for the person who asked (required)').fill('Wrong station: already done');
+		await card.getByLabel('Feedback for the person who asked required').fill('Wrong station: already done');
 		await card.getByRole('button', { name: 'Reject', exact: true }).click();
 		await expect(card).toHaveCount(0);
 	}
@@ -1783,7 +1791,7 @@ test('A50 trusted, record and changes', async ({ browser, request }, info) => {
 	await expect(admin.getByRole('checkbox', { name: tr.c.label })).not.toBeChecked();
 	await expect(admin.getByRole('checkbox', { name: tr.c.label })).toBeEnabled();
 	for (const p of [tr.a, tr.b, tr.d]) await expect(admin.getByRole('checkbox', { name: p.label })).toBeChecked();
-	await admin.getByLabel('Reason (optional, only admins see it)').fill('spam REASON-MARKER');
+	await admin.getByLabel('Reason (only admins see it)').fill('spam REASON-MARKER');
 	await admin.getByRole('button', { name: 'Deactivate 3 people' }).click();
 	await expect(admin.getByRole('status')).toContainText('Done: 3 people deactivated, 1 person spared');
 	await admin.goto(`/admin/users/${aID}`);
@@ -1836,7 +1844,7 @@ test('A56 admin manages templates', async ({ page, browser, request }, info) => 
 	await admin.getByRole('button', { name: 'Add template' }).click();
 	const form = admin.getByTestId('template-form');
 	await form.getByLabel('Name').fill(name);
-	await form.getByLabel('Agency', { exact: true }).fill('Example Rescue Service');
+	await form.getByLabel('Agency required', { exact: true }).fill('Example Rescue Service');
 	await expect(form.getByLabel('Agency profile')).toHaveValue('');
 	await form.getByRole('button', { name: 'Add template' }).click();
 	await expect(admin.getByRole('heading', { level: 1 })).toHaveText(`Template “${name}”`);
@@ -1887,7 +1895,7 @@ test('A57 icons shown', async ({ browser, request }, info) => {
 	const admin = await (await signedIn(browser, 'admin')).newPage();
 	await admin.goto('/admin/templates');
 	await admin.getByTestId('template-table').getByRole('link', { name: 'Example Fire' }).click();
-	const fileInput = admin.getByLabel(/^(Add an icon|Replace it with)$/);
+	const fileInput = admin.getByLabel(/^(Add an icon|Replace it with) required$/);
 	await fileInput.setInputFiles(testIcon('example-icon.png'));
 	await admin.getByRole('button', { name: /^(Upload|Replace) icon$/ }).click();
 	await expect(admin.getByRole('status').filter({ hasText: 'Icon saved' })).toBeVisible();
@@ -3191,7 +3199,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 		await page.getByRole('button', { name: 'New integration' }).tap();
 		const form = page.locator('form.integration-form');
 		await expect(form.getByRole('heading', { name: 'New integration' })).toBeVisible();
-		await form.getByLabel('Name', { exact: true }).fill(name);
+		await form.getByLabel('Name required', { exact: true }).fill(name);
 		const field = form.getByRole('combobox', { name: 'Capcodes and aliases' });
 		const options = form.getByRole('listbox', { name: 'Suggestions' }).getByRole('option');
 		const chosen = form.getByRole('list', { name: 'Chosen capcodes and aliases' }).getByTestId('chosen');
@@ -3216,7 +3224,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 		// A chip comes off with a tap.
 		await form.getByRole('button', { name: 'Remove Station 3 (0100003)' }).tap();
 		await expect(chosen).toHaveText([/^Station 1 \(0100001\)/, /^Station 2 \(0100002\)/, /^0100009\s*in Stations block/]);
-		const url = form.getByLabel('URL', { exact: true });
+		const url = form.getByLabel('URL required', { exact: true });
 		await expect(url).toHaveAttribute('type', 'url');
 		await expect(url).toHaveAttribute('autocapitalize', 'off');
 		await url.fill(`http://127.0.0.1:${port}/hook/PH0NES3CRET`);
@@ -3239,7 +3247,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 		const edit = card.locator('form.integration-form');
 		await expect(edit.getByRole('heading', { name: `Edit “${name}”` })).toBeVisible();
 		await expect(edit.getByLabel('URL', { exact: true })).toHaveValue(''); // never shown again (R51)
-		await edit.getByLabel('Name', { exact: true }).fill(renamed);
+		await edit.getByLabel('Name required', { exact: true }).fill(renamed);
 		await edit.getByRole('button', { name: 'Remove Station 2 (0100002)' }).tap();
 		expect(await sideways(page), 'the edit form: no sideways scroll').toBe(0);
 		expect((await tooSmall(edit)).small, 'the edit form').toEqual([]);
@@ -3272,13 +3280,13 @@ test('A70 phones', async ({ browser, request }, info) => {
 
 		// A large-event integration (R87d), set up the same way.
 		await page.getByRole('button', { name: 'New integration' }).tap();
-		await form.getByLabel('Name', { exact: true }).fill(events);
+		await form.getByLabel('Name required', { exact: true }).fill(events);
 		const large = form.getByRole('radio', { name: /^Large events: a summary/ });
 		await large.tap();
 		await expect(large).toBeChecked();
 		await expect(form.getByRole('combobox', { name: 'Capcodes and aliases' })).toHaveCount(0);
 		await expect(page.getByTestId('large-event-help')).toContainText('once for each large event, when the event opens');
-		await form.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/events`);
+		await form.getByLabel('URL required', { exact: true }).fill(`http://127.0.0.1:${port}/events`);
 		expect(await sideways(page), 'the large-event form: no sideways scroll').toBe(0);
 		expect((await tooSmall(form)).small, 'the large-event form').toEqual([]);
 		await form.screenshot({ path: info.outputPath('a70-large-event-form.png') });
@@ -4644,7 +4652,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await desk.goto('/integrations');
 		await desk.getByRole('button', { name: 'New integration' }).click();
 		const name = `Large events ${Date.now()}`;
-		await desk.getByLabel('Name', { exact: true }).fill(name);
+		await desk.getByLabel('Name required', { exact: true }).fill(name);
 		await desk.getByRole('radio', { name: /^Large events: a summary/ }).check();
 		// A summary only, with no level: no capcodes, filter, content or level to choose.
 		await expect(desk.getByRole('combobox', { name: 'Capcodes and aliases' })).toHaveCount(0);
@@ -4653,7 +4661,7 @@ test('A86 large events in the browser', async ({ browser, request }, info) => {
 		await expect(form.getByRole('radio')).toHaveCount(2);
 		await expect(desk.getByTestId('large-event-help')).toContainText('once for each large event, when the event opens');
 		await expect(form).not.toContainText(/deploy|level|big job/i);
-		await desk.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
+		await desk.getByLabel('URL required', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
 		await form.screenshot({ path: info.outputPath('large-event-integration-form-1280.png') });
 		await desk.getByRole('button', { name: 'Save integration' }).click();
 		await expect(desk.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
@@ -4966,8 +4974,8 @@ test('A89 template names unique ignoring case', async ({ browser }, info) => {
 	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
 	await admin.goto('/admin/templates');
 	await admin.getByRole('button', { name: 'Add template' }).click();
-	await admin.getByLabel('Name', { exact: true }).fill('EXAMPLE FIRE');
-	await admin.getByLabel('Agency', { exact: true }).fill('Example Fire Service');
+	await admin.getByLabel('Name required', { exact: true }).fill('EXAMPLE FIRE');
+	await admin.getByLabel('Agency required', { exact: true }).fill('Example Fire Service');
 	await admin.getByRole('button', { name: 'Add template' }).click();
 	await expect(admin.getByRole('alert')).toContainText('There\'s already a template called "Example Fire", which differs from "EXAMPLE FIRE" only in letter case.');
 
@@ -5277,7 +5285,7 @@ test('M24 report filters, the alias picker and an empty range', async ({ page, r
 	await expect.poll(() => tableRows(page)).toHaveLength(1);
 
 	await page.goto(`/reports/busy-times?${reportRange(n)}`);
-	const box = page.getByRole('combobox', { name: 'Alias or capcode (optional)' });
+	const box = page.getByRole('combobox', { name: 'Alias or capcode', exact: true });
 	await box.fill(`report station ${n}2`);
 	await page.getByRole('listbox', { name: 'Aliases and capcodes' }).getByRole('option', { name: `alias:"Report station ${n}2"` }).click();
 	await page.getByRole('button', { name: 'Show', exact: true }).click();
@@ -6415,9 +6423,9 @@ test('A126 level filter in the integration form', async ({ page, request }, info
 		await expect(at).toHaveValue('1');
 		await at.selectOption({ label: 'Second alarm' });
 
-		await form.getByLabel('Name', { exact: true }).fill(name);
+		await form.getByLabel('Name required', { exact: true }).fill(name);
 		await chooseInSelection(page, '0100001', 'Station 1 (0100001)');
-		await form.getByLabel('URL', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
+		await form.getByLabel('URL required', { exact: true }).fill(`http://127.0.0.1:${port}/hook`);
 		await form.getByRole('button', { name: 'Save integration' }).click();
 		await expect(page.getByRole('status').filter({ hasText: `Saved “${name}”` })).toBeVisible();
 		const card = page.getByTestId('integration').filter({ hasText: name });
@@ -6462,6 +6470,175 @@ test('A126 level filter in the integration form', async ({ page, request }, info
 		const list = await request.get(`${URL}/api/v1/integrations`, { headers: asRole('user') });
 		for (const i of (await list.json()).integrations as { id: number; name: string }[]) {
 			if (i.name.startsWith(`Bigger jobs ${projectN(info)} `)) await request.delete(`${URL}/api/v1/integrations/${i.id}`, { headers: asRole('user') });
+		}
+	}
+});
+
+// A131, R82g: every form says which fields are required, in the label, with
+// the word (owner, 2026-11-20: "The word required, every form."); unmarked
+// is optional, and nothing says "(optional)". Each form checks itself on
+// save: a message under each problem, focus on the first, a top line that
+// only counts. ArchiveUx's rule (its design-system.md, section 5).
+async function requiredRule(page: Page, where: string) {
+	const found = await page.evaluate(() => {
+		const shown = (el: Element) => (el as HTMLElement).getClientRects().length > 0;
+		const controls = [...document.querySelectorAll<HTMLInputElement>('input[required], select[required], textarea[required]')]
+			.filter((el) => shown(el) && !el.readOnly && !el.disabled)
+			.map((el) => el.id);
+		const optional = [...document.querySelectorAll('label, legend')].map((el) => el.textContent ?? '').filter((t) => /\(optional/i.test(t));
+		const stray = [...document.querySelectorAll('.required')]
+			.filter(shown)
+			.map((m) => {
+				const legend = m.closest('legend');
+				if (legend) return legend.closest('fieldset')?.getAttribute('aria-describedby') ? '' : `a legend with no hint: ${legend.textContent}`;
+				const label = m.closest('label');
+				const control = label?.control as HTMLInputElement | null | undefined;
+				return control?.required ? '' : `a marker on a control that isn't required: ${label?.textContent}`;
+			})
+			.filter(Boolean);
+		return { controls, optional, stray };
+	});
+	expect(found.controls.every(Boolean), `${where}: every required control has an id`).toBe(true);
+	expect(found.optional, `${where}: no "(optional)"`).toEqual([]);
+	expect(found.stray, `${where}: markers`).toEqual([]);
+	for (const id of found.controls) await expect(page.locator(`[id="${id}"]`), `${where}: #${id}'s name`).toHaveAccessibleName(/\brequired\b/);
+	expect(await axeOf(page), `${where}: axe`).toEqual([]);
+	return found.controls.length;
+}
+
+test('A131 required fields say so, and each form checks itself', async ({ browser, request }, info) => {
+	test.setTimeout(240_000);
+	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+	const user = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	const name = `A131 ${projectN(info)} ${Date.now()}`;
+	// The integration made below sends to this machine (R51b's allow list).
+	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: asRole('admin'), data: { entries: ['127.0.0.0/8'] } });
+	// A page on Station 1, for Add to album and the alias's requests.
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 A131 SMOKE @ 12 FICTION ST, MADEUPTON #STN1`);
+	let posted = 0;
+	admin.on('request', (r) => {
+		if (r.method() === 'POST' && new globalThis.URL(r.url()).pathname === '/api/v1/integrations') posted++;
+	});
+
+	try {
+		// A new integration, of every kind.
+		await admin.goto('/integrations');
+		await admin.getByRole('button', { name: 'New integration' }).click();
+		const form = admin.locator('form.integration-form');
+		await expect(form).toHaveAttribute('novalidate', '');
+		const kinds = form.getByLabel('Send to');
+		const options = await kinds.locator('option').allTextContents();
+		expect(options.length).toBeGreaterThanOrEqual(6);
+		for (const kind of options) {
+			await kinds.selectOption({ label: kind });
+			expect(await requiredRule(admin, `new integration: ${kind}`), kind).toBeGreaterThan(1);
+		}
+		await kinds.selectOption({ index: 0 }); // the webhook
+
+		// The webhook: Name and URL required, the header's value only with a name.
+		const nameBox = form.getByRole('textbox', { name: /^Name/ });
+		const url = form.getByRole('textbox', { name: /^URL/ });
+		const hvalue = form.getByLabel(/^Auth header value/);
+		await expect(nameBox).toHaveAccessibleName(/^Name\W*required$/);
+		await expect(url).toHaveAccessibleName(/^URL\W*required$/);
+		await expect(hvalue).toHaveAccessibleName('Auth header value');
+		await form.getByLabel(/^Auth header name/).fill('Authorization');
+		await expect(hvalue).toHaveAccessibleName(/^Auth header value\W*required with a header name$/);
+		await expect(hvalue).toHaveAttribute('required', '');
+		await form.getByLabel(/^Auth header name/).fill('');
+		await expect(hvalue).toHaveAccessibleName('Auth header value');
+		const pages = form.getByRole('group', { name: /^Which pages/ });
+		await expect(pages).toHaveAccessibleName(/^Which pages\W*required$/);
+		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias.');
+
+		// Saved empty: nothing is sent; a message under each problem; focus on the first.
+		await form.getByRole('button', { name: 'Save integration' }).click();
+		const summary = form.getByTestId('form-summary');
+		await expect(summary).toHaveText('3 fields need attention');
+		for (const [what, control] of [
+			['Name', nameBox],
+			['URL', url]
+		] as const) {
+			await expect(control, what).toHaveAttribute('aria-invalid', 'true');
+			const described = (await control.getAttribute('aria-describedby')) ?? '';
+			const message = admin.locator(`[id="${described.split(' ').pop()}"]`);
+			await expect(message, what).toHaveClass(/field-error/);
+			await expect(message, what).toBeVisible();
+		}
+		await expect(form.locator('[id$="-name-error"]')).toHaveText('Fill this in.');
+		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias. Nothing chosen yet: choose at least one capcode or alias.');
+		await expect(nameBox).toBeFocused();
+		expect(await axeOf(admin), 'axe: after a save with problems').toEqual([]);
+
+		// Name filled and saved again: its message goes; focus moves to the capcode box.
+		await nameBox.fill(name);
+		await expect(nameBox).not.toHaveAttribute('aria-invalid', 'true');
+		await form.getByRole('button', { name: 'Save integration' }).click();
+		await expect(summary).toHaveText('2 fields need attention');
+		const box = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		await expect(box).toBeFocused();
+		expect(posted, 'nothing was sent').toBe(0);
+
+		// Made, then edited: a saved URL needn't be typed again, so it's unmarked.
+		await box.fill('0100009');
+		await form.getByRole('listbox', { name: 'Suggestions' }).getByRole('option').first().click();
+		await url.fill('http://127.0.0.1:9/a131');
+		await form.getByRole('button', { name: 'Save integration' }).click();
+		const card = admin.getByTestId('integration').filter({ hasText: name });
+		await card.getByRole('button', { name: 'Edit' }).click();
+		const edit = card.locator('form.integration-form');
+		await expect(edit.getByRole('textbox', { name: /^URL/ })).toHaveAccessibleName('URL');
+		await expect(edit.getByRole('textbox', { name: /^URL/ })).not.toHaveAttribute('required', '');
+		await requiredRule(admin, 'an integration, edited');
+		await edit.getByRole('button', { name: 'Cancel' }).click();
+
+		// The other forms, each open.
+		await admin.goto('/admin/templates');
+		await admin.getByRole('button', { name: 'Add template' }).click();
+		await requiredRule(admin, 'a new template');
+		const templates = await request.get(`${URL}/api/v1/admin/templates`, { headers: asRole('admin') });
+		const templateID = (await templates.json()).find((t: { name: string }) => t.name === 'Example Fire').id;
+		await admin.goto(`/admin/templates/${templateID}`);
+		await expect(admin.locator('main h1')).toBeVisible();
+		await requiredRule(admin, "a template's page");
+		await admin.goto('/admin/aliases');
+		await admin.getByRole('button', { name: 'Add alias' }).click();
+		await requiredRule(admin, 'a new alias');
+		for (const path of ['/admin/retention', '/admin/large-events', '/account/invite', '/reports/capcode', '/albums']) {
+			await admin.goto(path);
+			await expect(admin.locator('main h1').first()).toBeVisible();
+			await expect(admin.locator('main form').first()).toBeVisible();
+			expect(await requiredRule(admin, path), path).toBeGreaterThan(0);
+		}
+		// An album's Edit, and Add to album.
+		const album = await (await request.post(`${URL}/api/v1/albums`, { headers: asRole('admin'), data: { name, description: '' } })).json();
+		await admin.goto(`/albums/${album.id}`);
+		await admin.getByRole('button', { name: 'Rename or describe' }).click();
+		await requiredRule(admin, "an album's Edit");
+		await request.delete(`${URL}/api/v1/albums/${album.id}`, { headers: asRole('admin') });
+		await admin.goto('/');
+		await admin.getByTestId('message-list').locator('article a.open').first().click();
+		await admin.getByRole('button', { name: 'Add to album' }).click();
+		await expect(admin.getByRole('dialog', { name: 'Add to album' })).toBeVisible();
+		await requiredRule(admin, 'Add to album');
+
+		// A user's alias requests: new, a change and a deletion.
+		await user.goto('/requests?pattern=0999999');
+		await expect(user.getByRole('heading', { name: 'Request a new alias' })).toBeVisible();
+		await requiredRule(user, 'a new alias request');
+		const res = await request.get(`${URL}/api/v1/messages?capcode=0100001`, { headers: asRole('user') });
+		const aliasID = (await res.json()).messages[0].alias_id;
+		for (const ask of ['Request a change', 'Request deletion']) {
+			await user.goto(`/aliases/${aliasID}`);
+			await waitLive(user);
+			await user.getByRole('button', { name: ask }).click();
+			await expect(user.getByRole('heading', { name: ask })).toBeVisible();
+			await requiredRule(user, ask);
+		}
+	} finally {
+		const list = await request.get(`${URL}/api/v1/integrations`, { headers: asRole('admin') });
+		for (const i of (await list.json()).integrations as { id: number; name: string }[]) {
+			if (i.name === name) await request.delete(`${URL}/api/v1/integrations/${i.id}`, { headers: asRole('admin') });
 		}
 	}
 });

@@ -9,6 +9,9 @@
 	import DateRange from '#lib/DateRange.svelte';
 	import Suggest from '#lib/Suggest.svelte';
 	import ReportCaveat from '#lib/ReportCaveat.svelte';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
 	// R38: Emergency messages to one capcode, or to one alias (every capcode
 	// it covers), per event category, for a date range (inclusive, deployment
@@ -19,7 +22,8 @@
 	let meta: Meta | undefined = $state();
 	let report: Report | undefined = $state();
 	let error = $state('');
-	let problem = $state('');
+	// R82g: the alias or capcode is required; a problem with it shows under it.
+	const fc = new FormCheck();
 	let text = $state('');
 	let aliases: string[] = $state([]);
 	let box: Suggest | undefined = $state();
@@ -34,7 +38,7 @@
 	// The box shows what the address asks for.
 	$effect(() => {
 		text = reportBox(page.url.searchParams);
-		problem = '';
+		fc.reset();
 	});
 
 	function load() {
@@ -71,8 +75,7 @@
 		ev.preventDefault();
 		box?.close();
 		const picked = reportPick(text, aliases);
-		problem = picked.problem;
-		if (problem) return;
+		if (!fc.check(ev.currentTarget as HTMLFormElement, { 'report-box': picked.problem })) return;
 		const form = new FormData(ev.currentTarget as HTMLFormElement);
 		const params = new URLSearchParams();
 		if (picked.alias) params.set('alias', picked.alias);
@@ -98,22 +101,26 @@
 	<ReportCaveat />
 
 	{#if meta}
-		<form method="GET" action="/reports/capcode" class="form" onsubmit={submit}>
+		<FormSummary check={fc} />
+		<form method="GET" action="/reports/capcode" class="form" novalidate onsubmit={submit}>
 			<Suggest
 				bind:this={box}
 				bind:text
 				suggest={(t) => reportSuggestions(t, aliases)}
 				onfocus={load}
-				oninput={() => (problem = '')}
+				oninput={() => fc.reset()}
+				id="report-box"
 				label="Alias or capcode"
+				marker="required"
+				invalid={!!fc.problems['report-box']}
 				showLabel
 				placeholder="Part of an alias name, or a capcode"
 				listLabel="Aliases and capcodes"
-				describedby={problem ? 'report-problem' : undefined}
+				describedby={fc.describedBy('report-box')}
 			/>
 			<DateRange from={from || defaultFrom} to={to || defaultTo} timeZone={meta.time_zone} firstPage={meta.first_page} lastPage={meta.last_page} />
 			<button type="submit">Run report</button>
-			{#if problem}<p class="problem" id="report-problem" role="alert">{problem}</p>{/if}
+			<div class="problem"><FieldError check={fc} id="report-box" /></div>
 		</form>
 	{/if}
 
@@ -174,9 +181,9 @@
 	}
 	.problem {
 		flex-basis: 100%;
-		margin: 0;
-		color: var(--danger-text);
-		font-size: var(--text-sm);
+	}
+	.problem:empty {
+		display: none;
 	}
 	table {
 		border-collapse: collapse;

@@ -73,7 +73,7 @@
 				bind:text
 				suggest={(t) => reportSuggestions(t, aliases)}
 				onfocus={load}
-				label="Alias or capcode (optional)"
+				label="Alias or capcode"
 				showLabel
 				placeholder="Every alias and capcode"
 				listLabel="Aliases and capcodes"
