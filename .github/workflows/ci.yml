@@ -450,7 +450,8 @@ jobs:
         run: test "$(npx playwright --version)" = "Version 1.64.0"
       # Which runner this is, to compare a slow run's times with a normal one's.
       - name: The runner's CPUs
-        run: echo "$(nproc) CPUs: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
+        run: |
+          echo "$(nproc) CPUs: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2-)"
       # A test that passed only on its retry (flaky) keeps its report too, with
       # the failed try's trace.
       - name: Browser tests against a real API and PostGIS
