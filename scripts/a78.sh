@@ -75,6 +75,10 @@ show_why() {
 	curl -s 'http://127.0.0.1:8025/api/v1/messages?limit=10' | grep -o '"Subject":"[^"]*"' || echo "(none)"
 	echo "--- the catcher's log:"
 	docker logs --tail 20 "$MAILPIT" 2>&1 || true
+	# Every email goes out from the worker's queue: what it still had to run.
+	echo "--- Authentik's worker queue, by state and task:"
+	stack_compose exec -T db psql -U postgres -d authentik -Atc \
+		"SELECT state, actor_name, count(*), max(mtime) FROM authentik_tasks_task GROUP BY 1, 2 ORDER BY 1, 3 DESC" 2>&1 | head -30 || true
 	echo "--- Authentik's worker, its last lines:"
 	stack_compose logs --no-color --tail 60 authentik-worker 2>&1 | cut -c1-300 || true
 }

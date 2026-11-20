@@ -64,8 +64,37 @@ stack_wait_ready() {
 			fi
 		done
 	done
+	stack_wait_worker
 	stack_wait_api
 	echo "--- stack ready after $(($(date +%s) - start)) s"
+}
+
+# Authentik sends every email (an enrolment code, an invitation) from its
+# worker's queue. A worker that has just started works through a backlog
+# first: every blueprint applied, then the events each one made. On a slow
+# runner that took longer than a test waits for its code email (A78 failed
+# so, with the code mailed after the test had given up). Ready means the
+# worker has nothing due to run (a task scheduled for later doesn't count),
+# three times in a row a second apart: then a mail sent next goes at once.
+stack_wait_worker() {
+	_start=$(date +%s) _idle=0
+	until [ $_idle -ge 3 ]; do
+		_due=$(stack_compose exec -T db psql -U postgres -d authentik -Atc \
+			"SELECT count(*) FROM authentik_tasks_task WHERE state IN ('queued', 'consumed') AND (eta IS NULL OR eta <= now())" 2>/dev/null) || _due=""
+		if [ "$_due" = 0 ]; then
+			_idle=$((_idle + 1))
+		else
+			_idle=0
+			if [ $(($(date +%s) - _start)) -gt "${STACK_WORKER_WAIT:-300}" ]; then
+				echo "Authentik's worker still had ${_due:-an unknown number of} tasks to run after ${STACK_WORKER_WAIT:-300} s; the oldest:" >&2
+				stack_compose exec -T db psql -U postgres -d authentik -Atc \
+					"SELECT actor_name, state, mtime FROM authentik_tasks_task WHERE state IN ('queued', 'consumed') ORDER BY mtime LIMIT 10" >&2 || true
+				return 1
+			fi
+		fi
+		sleep 1
+	done
+	echo "--- Authentik's worker has no backlog, after $(($(date +%s) - _start)) s"
 }
 
 # stack_wait_flow <slug>: Authentik has the flow, so it has applied the
