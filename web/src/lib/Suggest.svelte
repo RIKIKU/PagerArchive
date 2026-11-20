@@ -43,9 +43,9 @@
 		describedby?: string;
 		/** The input's id (else one of its own). */
 		id?: string;
-		/** R82e: "required", or when it is, after the label. */
+		/** R82g: "required", or when it is, after the label. */
 		marker?: string;
-		/** R82e: the form found a problem in it (aria-invalid). */
+		/** R82g: the form found a problem in it (aria-invalid). */
 		invalid?: boolean;
 	} = $props();
 

@@ -8,7 +8,7 @@
 	import FormSummary from '#lib/FormSummary.svelte';
 	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
-	// R82e: the address says it's required; checked on save.
+	// R82g: the address says it's required; checked on save.
 	const fc = new FormCheck();
 
 	let meta: Meta | undefined = $state();

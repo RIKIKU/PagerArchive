@@ -9,7 +9,7 @@
 	import FormSummary from '#lib/FormSummary.svelte';
 	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
-	// R82e: the name says it's required, and is checked on save.
+	// R82g: the name says it's required, and is checked on save.
 	const fc = new FormCheck();
 
 	const MAX_NAME = 100;

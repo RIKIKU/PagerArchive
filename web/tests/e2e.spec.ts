@@ -6543,7 +6543,7 @@ test('A131 required fields say so, and each form checks itself', async ({ browse
 		await expect(url).toHaveAccessibleName(/^URL\W*required$/);
 		await expect(hvalue).toHaveAccessibleName('Auth header value');
 		await form.getByLabel(/^Auth header name/).fill('Authorization');
-		await expect(hvalue).toHaveAccessibleName(/^Auth header value\W*needed with a header name$/);
+		await expect(hvalue).toHaveAccessibleName(/^Auth header value\W*required with a header name$/);
 		await expect(hvalue).toHaveAttribute('required', '');
 		await form.getByLabel(/^Auth header name/).fill('');
 		await expect(hvalue).toHaveAccessibleName('Auth header value');

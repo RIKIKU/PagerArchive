@@ -22,7 +22,7 @@
 	let meta: Meta | undefined = $state();
 	let report: Report | undefined = $state();
 	let error = $state('');
-	// R82e: the alias or capcode is required; a problem with it shows under it.
+	// R82g: the alias or capcode is required; a problem with it shows under it.
 	const fc = new FormCheck();
 	let text = $state('');
 	let aliases: string[] = $state([]);

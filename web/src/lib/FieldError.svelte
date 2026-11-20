@@ -1,5 +1,5 @@
 <script lang="ts">
-	// R82e: a control's or group's problem, under it (ArchiveUx .field-error).
+	// R82g: a control's or group's problem, under it (ArchiveUx .field-error).
 	// The control points at it: aria-describedby={check.describedBy(id)}.
 	import { errorId, type FormCheck } from './formCheck.svelte.ts';
 

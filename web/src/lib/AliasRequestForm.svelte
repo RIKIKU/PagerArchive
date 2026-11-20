@@ -57,7 +57,7 @@
 		existing ? 'Edit your request' : kind === 'add' ? 'Request a new alias' : kind === 'delete' ? 'Request deletion' : 'Request a change'
 	);
 
-	// R82e: required fields say so; the form checks itself on save.
+	// R82g: required fields say so; the form checks itself on save.
 	const fc = new FormCheck();
 
 	async function submit(ev: SubmitEvent) {

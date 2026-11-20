@@ -10,7 +10,7 @@
 	import FormSummary from './FormSummary.svelte';
 	import { FormCheck } from './formCheck.svelte.ts';
 
-	// R82e: the new album's name says it's required; checked on save.
+	// R82g: the new album's name says it's required; checked on save.
 	const fc = new FormCheck();
 
 	let { message }: { message: number } = $props();

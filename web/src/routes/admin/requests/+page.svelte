@@ -6,7 +6,7 @@
 	import FormSummary from '#lib/FormSummary.svelte';
 	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
-	// R82e: the feedback says it's required, and is checked before it's sent.
+	// R82g: the feedback says it's required, and is checked before it's sent.
 	const fc = new FormCheck();
 
 	// R55: requests waiting for review, oldest first, each with the current

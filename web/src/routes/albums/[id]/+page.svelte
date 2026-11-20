@@ -29,7 +29,7 @@
 	let description = $state('');
 	let formError = $state('');
 	let busy = $state(false);
-	// R82e: the name says it's required, and is checked on save.
+	// R82g: the name says it's required, and is checked on save.
 	const fc = new FormCheck();
 	const id = $derived(page.params.id ?? '');
 	const query = $derived(criteria(page.url));

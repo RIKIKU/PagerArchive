@@ -5,7 +5,7 @@
 	import FormSummary from '#lib/FormSummary.svelte';
 	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
-	// R82e: the days say they're required, and are checked on save.
+	// R82g: the days say they're required, and are checked on save.
 	const fc = new FormCheck();
 
 	// R45, R46: how long messages are kept, in days. Shortening it asks the

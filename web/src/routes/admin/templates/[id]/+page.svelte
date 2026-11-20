@@ -25,7 +25,7 @@
 	let confirming = $state(false);
 	let busy = $state(false);
 	let formKey = $state(0);
-	// R82e: the icon file says it's required to upload, and is checked first.
+	// R82g: the icon file says it's required to upload, and is checked first.
 	const fc = new FormCheck();
 	const id = $derived(Number(page.params.id));
 

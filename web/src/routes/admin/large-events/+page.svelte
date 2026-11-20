@@ -4,7 +4,7 @@
 	import FormSummary from '#lib/FormSummary.svelte';
 	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
-	// R82e: the number says it's required, and is checked on save.
+	// R82g: the number says it's required, and is checked on save.
 	const fc = new FormCheck();
 
 	// R87: how many Emergency pages one job must have, to aliased capcodes, to

@@ -37,7 +37,7 @@
 	let error = $state('');
 	let busy = $state(false);
 
-	// R82e: required fields say so; the form checks itself on save.
+	// R82g: required fields say so; the form checks itself on save.
 	const fc = new FormCheck();
 
 	async function submit(ev: SubmitEvent) {

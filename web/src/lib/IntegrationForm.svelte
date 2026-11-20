@@ -17,6 +17,7 @@
 	import { kindLabels, presets } from './integrations.ts';
 	import SelectionField from './SelectionField.svelte';
 	import FieldError from './FieldError.svelte';
+	import Required from './Required.svelte';
 	import FormSummary from './FormSummary.svelte';
 	import { FormCheck } from './formCheck.svelte.ts';
 
@@ -96,12 +97,12 @@
 		return existing?.secrets_set[field] ? 'Saved. Leave empty to keep it.' : '';
 	}
 
-	// R82e: the word "required" in each required field's label. A secret is
+	// R82g: the word "required" in each required field's label. A secret is
 	// required only while none is saved, and the auth header's value only
 	// with a header name (and none saved). The form checks itself on save.
 	const fc = new FormCheck();
 	const secretNeeded = (field: string) => !existing?.secrets_set[field];
-	const secretMarker = (field: string) => (!secretNeeded(field) ? '' : existing ? 'required: none saved yet' : 'required');
+	const secretWhen = init ? 'none saved yet' : undefined;
 	const headerValueNeeded = $derived(!!config.auth_header?.trim() && secretNeeded('auth_value'));
 	const f = (name: string) => `${id}-${name}`;
 
@@ -321,7 +322,7 @@
 		<legend>{kindLabels[kind]}</legend>
 		{#if kind === 'webhook'}
 			<div class="field">
-				<label for={f('url')}>URL {#if secretMarker('url')}<span class="required">{secretMarker('url')}</span>{/if}</label>
+				<label for={f('url')}>URL {#if secretNeeded('url')}<Required when={secretWhen} />{/if}</label>
 				<input id={f('url')} type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={secretNeeded('url')} placeholder={saved('url') || 'https://'} aria-invalid={fc.invalid(f('url'))} aria-describedby={fc.describedBy(f('url'), f('url-help'))} />
 				<FieldError check={fc} id={f('url')} />
 				<p id="{id}-url-help" class="help">
@@ -335,7 +336,7 @@
 					<input id="{id}-hname" bind:value={config.auth_header} placeholder="Authorization" autocomplete="off" autocapitalize="off" spellcheck="false" />
 				</div>
 				<div class="field">
-					<label for={f('hvalue')}>Auth header value {#if headerValueNeeded}<span class="required">needed with a header name</span>{/if}</label>
+					<label for={f('hvalue')}>Auth header value {#if headerValueNeeded}<Required when="with a header name" />{/if}</label>
 					<input id={f('hvalue')} type="password" autocomplete="off" bind:value={secrets.auth_value} required={headerValueNeeded} data-problem="Give the header a value, or clear its name." placeholder={saved('auth_value')} aria-invalid={fc.invalid(f('hvalue'))} aria-describedby={fc.describedBy(f('hvalue'))} />
 					<FieldError check={fc} id={f('hvalue')} />
 				</div>
@@ -374,7 +375,7 @@
 			{/if}
 		{:else if kind === 'discord'}
 			<div class="field">
-				<label for={f('durl')}>Webhook URL {#if secretMarker('url')}<span class="required">{secretMarker('url')}</span>{/if}</label>
+				<label for={f('durl')}>Webhook URL {#if secretNeeded('url')}<Required when={secretWhen} />{/if}</label>
 				<input id={f('durl')} type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={secretNeeded('url')} placeholder={saved('url') || 'https://discord.com/api/webhooks/…'} aria-invalid={fc.invalid(f('durl'))} aria-describedby={fc.describedBy(f('durl'), f('durl-help'))} />
 				<FieldError check={fc} id={f('durl')} />
 				<p id="{id}-durl-help" class="help">In Discord: Server settings → Integrations → Webhooks → Copy webhook URL.</p>
@@ -382,7 +383,7 @@
 		{:else if kind === 'telegram'}
 			<div class="grid">
 				<div class="field">
-					<label for={f('bot')}>Bot token {#if secretMarker('bot_token')}<span class="required">{secretMarker('bot_token')}</span>{/if}</label>
+					<label for={f('bot')}>Bot token {#if secretNeeded('bot_token')}<Required when={secretWhen} />{/if}</label>
 					<input id={f('bot')} type="password" autocomplete="off" bind:value={secrets.bot_token} required={secretNeeded('bot_token')} placeholder={saved('bot_token')} aria-invalid={fc.invalid(f('bot'))} aria-describedby={fc.describedBy(f('bot'))} />
 					<FieldError check={fc} id={f('bot')} />
 				</div>
@@ -395,12 +396,12 @@
 		{:else if kind === 'pushover'}
 			<div class="grid">
 				<div class="field">
-					<label for={f('app')}>Application token {#if secretMarker('app_token')}<span class="required">{secretMarker('app_token')}</span>{/if}</label>
+					<label for={f('app')}>Application token {#if secretNeeded('app_token')}<Required when={secretWhen} />{/if}</label>
 					<input id={f('app')} type="password" autocomplete="off" bind:value={secrets.app_token} required={secretNeeded('app_token')} placeholder={saved('app_token')} aria-invalid={fc.invalid(f('app'))} aria-describedby={fc.describedBy(f('app'))} />
 					<FieldError check={fc} id={f('app')} />
 				</div>
 				<div class="field">
-					<label for={f('ukey')}>User key {#if secretMarker('user_key')}<span class="required">{secretMarker('user_key')}</span>{/if}</label>
+					<label for={f('ukey')}>User key {#if secretNeeded('user_key')}<Required when={secretWhen} />{/if}</label>
 					<input id={f('ukey')} type="password" autocomplete="off" bind:value={secrets.user_key} required={secretNeeded('user_key')} placeholder={saved('user_key')} aria-invalid={fc.invalid(f('ukey'))} aria-describedby={fc.describedBy(f('ukey'))} />
 					<FieldError check={fc} id={f('ukey')} />
 				</div>
@@ -423,7 +424,7 @@
 					<FieldError check={fc} id={f('server')} />
 				</div>
 				<div class="field">
-					<label for={f('ntopic')}>Topic {#if secretMarker('topic')}<span class="required">{secretMarker('topic')}</span>{/if}</label>
+					<label for={f('ntopic')}>Topic {#if secretNeeded('topic')}<Required when={secretWhen} />{/if}</label>
 					<input id={f('ntopic')} type="password" autocomplete="off" bind:value={secrets.topic} required={secretNeeded('topic')} placeholder={saved('topic')} aria-invalid={fc.invalid(f('ntopic'))} aria-describedby={fc.describedBy(f('ntopic'))} />
 					<FieldError check={fc} id={f('ntopic')} />
 				</div>

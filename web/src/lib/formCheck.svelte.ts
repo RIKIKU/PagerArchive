@@ -1,4 +1,4 @@
-// R82e: every form's own check (ArchiveUx's design-system.md, section 5;
+// R82g: every form's own check (ArchiveUx's design-system.md, section 5;
 // owner, 2026-11-20: "The word required, every form."). A form has
 // novalidate, so the browser shows none of its own bubbles; on save it runs
 // check(): each control the browser finds invalid (required, type, min, max,
