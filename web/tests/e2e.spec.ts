@@ -5,6 +5,7 @@
 import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext, type TestInfo } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -6474,7 +6475,7 @@ test('A126 level filter in the integration form', async ({ page, request }, info
 	}
 });
 
-// A131, R82g: every form says which fields are required, in the label, with
+// A132, R82g: every form says which fields are required, in the label, with
 // the word (owner, 2026-11-20: "The word required, every form."); unmarked
 // is optional, and nothing says "(optional)". Each form checks itself on
 // save: a message under each problem, focus on the first, a top line that
@@ -6506,15 +6507,15 @@ async function requiredRule(page: Page, where: string) {
 	return found.controls.length;
 }
 
-test('A131 required fields say so, and each form checks itself', async ({ browser, request }, info) => {
+test('A132 required fields say so, and each form checks itself', async ({ browser, request }, info) => {
 	test.setTimeout(240_000);
 	const admin = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
 	const user = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
-	const name = `A131 ${projectN(info)} ${Date.now()}`;
+	const name = `A132 ${projectN(info)} ${Date.now()}`;
 	// The integration made below sends to this machine (R51b's allow list).
 	await request.put(`${URL}/api/v1/admin/integration-hosts`, { headers: asRole('admin'), data: { entries: ['127.0.0.0/8'] } });
 	// A page on Station 1, for Add to album and the alias's requests.
-	await post(request, '0100001', `@@${uniqueJob()} HSF1 A131 SMOKE @ 12 FICTION ST, MADEUPTON #STN1`);
+	await post(request, '0100001', `@@${uniqueJob()} HSF1 A132 SMOKE @ 12 FICTION ST, MADEUPTON #STN1`);
 	let posted = 0;
 	admin.on('request', (r) => {
 		if (r.method() === 'POST' && new globalThis.URL(r.url()).pathname === '/api/v1/integrations') posted++;
@@ -6641,4 +6642,75 @@ test('A131 required fields say so, and each form checks itself', async ({ browse
 			if (i.name === name) await request.delete(`${URL}/api/v1/integrations/${i.id}`, { headers: asRole('admin') });
 		}
 	}
+});
+
+// A131 (R19a, ADR 0050): a second receiver, the test's own, removed after:
+// a receiver hears a transmission once, so a near copy comes from another.
+async function withSecondReceiver(request: APIRequestContext, name: string, run: (post: (capcode: string, text: string, at: number) => Promise<string>) => Promise<void>) {
+	const id = `a131-${name}`;
+	const key = `a131-key-${id}-${Date.now()}`;
+	const hash = createHash('sha256').update(key).digest('hex');
+	sql(`INSERT INTO clients (id, name, key_hash) VALUES ('${id}', 'Second receiver', decode('${hash}', 'hex'));`);
+	try {
+		await run(async (capcode, text, at) => {
+			const res = await request.post(`${URL}/api/v1/pages`, {
+				headers: { Authorization: `Bearer ${key}` },
+				data: { capcode, text, received_at: new Date(at).toISOString(), baud: 512 }
+			});
+			expect(res.status()).toBe(200);
+			return (await res.json()).outcome;
+		});
+	} finally {
+		sql(`DELETE FROM receptions WHERE client_id = '${id}'; DELETE FROM clients WHERE id = '${id}';`);
+	}
+}
+// A131: a copy cut short is stored and shown live; the whole page from the
+// second receiver, within the window, replaces its text in the open list,
+// and the message's view shows the cut copy under its receiver, as heard.
+test('A131 a better copy replaces a cut one, live, and the cut one is kept', async ({ page, request }) => {
+	await withSecondReceiver(request, `live-${test.info().project.name}`, async (postB) => {
+		const job = uniqueJob();
+		const full = `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`;
+		const cut = full.slice(0, 32);
+		await page.goto(`/?job=${job}`);
+		await waitLive(page);
+		const list = page.getByTestId('message-list');
+		const now = Date.now();
+		await postAt(request, '0100001', cut, new Date(now).toISOString());
+		await expect(list.locator('article')).toHaveCount(1);
+		await expect(list).not.toContainText('#STN1');
+		expect(await postB('0100001', full, now + 400)).toBe('duplicate');
+		// Shown in its place, live: still one row, now the whole page.
+		await expect(list).toContainText('MADEUPTON #STN1');
+		await expect(list.locator('article')).toHaveCount(1);
+
+		await list.locator('article').first().locator('a.open').click();
+		await expect(page.getByRole('heading', { name: 'Received by' })).toBeVisible();
+		// The detail view (beside the list on a wide screen) shows the whole page.
+		await expect(page.getByRole('region', { name: 'Message', exact: true }).locator('p.text')).toContainText('#STN1');
+		const heard = page.getByTestId('variant');
+		await expect(heard).toHaveCount(1);
+		await expect(heard).toHaveText(cut);
+		await expect(page.getByText('Heard as')).toBeVisible();
+		await expect(page.locator('tbody tr').filter({ hasText: 'Receiver' })).toHaveCount(2);
+	});
+});
+
+// A131: where a copy differs from the message, the differing characters are marked.
+test('A131 a garbled copy is shown with its differences marked', async ({ page, request }) => {
+	await withSecondReceiver(request, `marked-${test.info().project.name}`, async (postB) => {
+		const job = uniqueJob();
+		const full = `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`;
+		const now = Date.now();
+		await postAt(request, '0100002', full, new Date(now).toISOString());
+		expect(await postB('0100002', full.replace('FROM', 'FR}M'), now + 400)).toBe('duplicate');
+		await page.goto(`/?job=${job}`);
+		await waitLive(page);
+		const list = page.getByTestId('message-list');
+		await expect(list.locator('article')).toHaveCount(1);
+		await list.locator('article').first().locator('a.open').click();
+		const heard = page.getByTestId('variant');
+		await expect(heard).toHaveText(full.replace('FROM', 'FR}M'));
+		await expect(heard.locator('mark')).toHaveText(['}']);
+	});
 });

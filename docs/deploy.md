@@ -320,6 +320,18 @@ Shortening the period asks for the cut-off date to be confirmed. A run missed wh
 
 Pages printed from [the print sheet](print-sheet.md) are outside PagerArchive's control: retention and deactivation don't reach paper.
 
+## Two receivers and near duplicates
+
+A second receiver hears the same pages with its own errors: a garbled character or three, a page cut short, a few junk characters at the end. Copies of a page to one capcode within 10 seconds, from different receivers, whose text is nearly the same are one message (R19a, ADR 0050); pages of different job numbers never are, nor two that one receiver heard (its second is another page, such as an alarm raised a level). The message keeps the copy that parses, or the longer of a truncated pair, or the first; the other is kept as that receiver's copy, with its own text, and shown under it on the message's page. A better copy that comes after the first replaces the message's text at once: nothing waits for it, and an integration already sent the page isn't sent it again.
+
+`DEDUP_NEAR_RATIO` in `.env` is how many edits a copy may differ by, per character of the shorter copy (default `0.1`, at most `0.5`; `0` turns near duplicates off). To see how your receivers' copies differ, on your own archive, with counts only:
+
+```sh
+docker compose exec api pagerarchive dedup-report --since 7d
+```
+
+It counts the near duplicates kept (by how they differed, and which copy parses), the pages to one capcode within 10 seconds that were kept apart, with histograms of how far apart each pair was, and what other ratios would have done. It never prints a page's text or a capcode.
+
 ## Integrations
 
 Users forward new pages to their own systems from **Integrations**: a webhook, MQTT (with Home Assistant discovery), Discord, Telegram, Pushover or ntfy. See [integrations](integrations.md) for what each needs and what is sent.

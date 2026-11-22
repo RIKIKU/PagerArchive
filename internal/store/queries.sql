@@ -40,8 +40,54 @@ SELECT id FROM aliases
 WHERE (cardinality(sqlc.arg(aliases)::text[]) = 0 OR name ILIKE ANY(sqlc.arg(aliases)::text[]))
   AND (cardinality(sqlc.arg(alias_likes)::text[]) = 0 OR name ILIKE ANY(sqlc.arg(alias_likes)::text[]));
 
--- name: LockDedupKey :exec
-SELECT pg_advisory_xact_lock(hashtextextended(encode(sqlc.arg(dedup_key)::bytea, 'hex'), 0));
+-- name: LockCapcode :exec
+-- R19, R19a: copies of pages to one capcode wait for each other, so two
+-- copies of one page, exact or near, can't both be stored as messages.
+SELECT pg_advisory_xact_lock(hashtextextended('dedup ' || sqlc.arg(capcode)::text, 0));
+
+-- name: NearCandidates :many
+-- R19a: the messages to a capcode sent within 10 s of a copy's receive
+-- time, either side, nearest first, with what a near duplicate's choice and
+-- the swap need (ADR 0050). heard says the copy's client has a copy of it
+-- already ('' for an import: never).
+SELECT m.id, m.text, m.priority, m.heartbeat, m.sent_at, m.job_number,
+       EXISTS (SELECT 1 FROM large_event_messages lem WHERE lem.message_id = m.id) AS in_event,
+       EXISTS (SELECT 1 FROM receptions r WHERE r.message_id = m.id AND r.client_id = sqlc.arg(client_id)::text) AS heard
+FROM messages m
+WHERE m.capcode = sqlc.arg(capcode)::text
+  AND m.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '10 seconds'
+                    AND sqlc.arg(received_at)::timestamptz + interval '10 seconds'
+ORDER BY abs(extract(epoch FROM m.sent_at - sqlc.arg(received_at)::timestamptz)), m.id
+LIMIT 20;
+
+-- name: SwapMessageText :exec
+-- R19a (ADR 0050): a better copy of a page came in after the first was
+-- stored: the message takes its text (redacted, P1), dedup hash, priority
+-- and what it parsed to, and its sent time stays the earliest (R21). Where
+-- it's placed is written after, as a re-parse writes it.
+UPDATE messages SET
+    text = sqlc.arg(text), dedup_key = sqlc.arg(dedup_key), priority = sqlc.narg(priority),
+    alias_id = sqlc.narg(alias_id), format = sqlc.narg(format), job_number = sqlc.narg(job_number),
+    event_type = sqlc.narg(event_type), description = sqlc.narg(description), address = sqlc.narg(address),
+    locality = sqlc.narg(locality), grid_ref = sqlc.narg(grid_ref), call_sign = sqlc.narg(call_sign),
+    units = sqlc.arg(units), call_signs = sqlc.arg(call_signs), extra = sqlc.arg(extra),
+    parse_failed = sqlc.arg(parse_failed), address_unsplit = sqlc.arg(address_unsplit),
+    large_event_field = sqlc.arg(large_event_field),
+    sent_at = LEAST(sent_at, sqlc.arg(received_at)::timestamptz)
+WHERE id = sqlc.arg(id);
+
+-- name: SwapReceptionTexts :many
+-- R19a: when a message takes a better copy's text, the copies that had its
+-- old text keep that as their own, and a copy whose text is the new one's
+-- needs none. variant says which a row became.
+UPDATE receptions SET text = CASE WHEN text IS NULL THEN sqlc.arg(old_text)::text END
+WHERE message_id = sqlc.arg(id) AND (text IS NULL OR text = sqlc.arg(new_text)::text)
+RETURNING client_id, (text IS NOT NULL)::boolean AS variant;
+
+-- name: SwapImportReceptionTexts :exec
+-- As SwapReceptionTexts, for the copies from import files (R83a).
+UPDATE import_receptions SET text = CASE WHEN text IS NULL THEN sqlc.arg(old_text)::text END
+WHERE message_id = sqlc.arg(id) AND (text IS NULL OR text = sqlc.arg(new_text)::text);
 
 -- name: FindDuplicate :one
 -- A copy within 10 s of the message's sent time, either side (R19, section 14).
@@ -72,8 +118,10 @@ RETURNING id;
 UPDATE messages SET sent_at = LEAST(sent_at, sqlc.arg(received_at)::timestamptz) WHERE id = sqlc.arg(id);
 
 -- name: InsertReception :exec
-INSERT INTO receptions (message_id, client_id, received_at)
-VALUES ($1, $2, $3)
+-- text is the copy's own, redacted (P1), when it's a near duplicate whose
+-- text isn't its message's (R19a); NULL otherwise.
+INSERT INTO receptions (message_id, client_id, received_at, text)
+VALUES ($1, $2, $3, sqlc.narg(text))
 ON CONFLICT DO NOTHING;
 
 -- name: ListTemplates :many
@@ -438,7 +486,7 @@ SELECT DISTINCT message_id FROM receptions WHERE message_id > sqlc.arg(id) ORDER
 
 -- name: InsertImportReception :exec
 -- R83b: a copy read from an import file. Running a file again adds nothing.
-INSERT INTO import_receptions (message_id, received_at, source_id) VALUES ($1, $2, $3)
+INSERT INTO import_receptions (message_id, received_at, source_id, text) VALUES ($1, $2, $3, sqlc.narg(text))
 ON CONFLICT DO NOTHING;
 
 -- name: ImportedSourceIDs :many
@@ -462,7 +510,9 @@ ON CONFLICT DO NOTHING;
 -- R83c: whether an earlier import stored this copy of a page with no source
 -- ID, by its dedup key and receive time. A message's sent time is its earliest
 -- copy's (R21), and copies are seconds apart (R19): a day bounds the search.
-SELECT EXISTS (
+-- A near duplicate (R19a) is a copy kept with its own text: it was merged
+-- within seconds of its message's sent time, so a minute bounds that search.
+SELECT (EXISTS (
     SELECT 1
     FROM messages m
     JOIN import_receptions i ON i.message_id = m.id
@@ -470,7 +520,17 @@ SELECT EXISTS (
       AND m.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '1 day' AND sqlc.arg(received_at)::timestamptz
       AND i.received_at = sqlc.arg(received_at)::timestamptz
       AND i.source_id IS NULL
-);
+      AND i.text IS NULL
+) OR EXISTS (
+    SELECT 1
+    FROM messages m
+    JOIN import_receptions i ON i.message_id = m.id
+    WHERE m.capcode = sqlc.arg(capcode)::text
+      AND m.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '1 minute' AND sqlc.arg(received_at)::timestamptz
+      AND i.received_at = sqlc.arg(received_at)::timestamptz
+      AND i.source_id IS NULL
+      AND i.text = sqlc.arg(text)::text
+))::boolean AS found;
 
 -- name: UnaliasedCapcodes :many
 -- R33, R78: capcodes with no alias, with message count (all time) and first-
@@ -483,13 +543,14 @@ GROUP BY capcode
 ORDER BY count(*) DESC, max(sent_at) DESC, capcode;
 
 -- name: MessageReceptions :many
--- An empty client_id is a copy from an import file (R83b, ADR 0018).
-SELECT r.client_id, c.name AS client_name, r.received_at
+-- An empty client_id is a copy from an import file (R83b, ADR 0018). text
+-- is the copy's own when it isn't the message's (R19a).
+SELECT r.client_id, c.name AS client_name, r.received_at, r.text
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = $1
 UNION ALL
-SELECT DISTINCT '', 'import', i.received_at
+SELECT DISTINCT '', 'import', i.received_at, i.text
 FROM import_receptions i
 WHERE i.message_id = $1
 ORDER BY received_at, client_id;
@@ -861,6 +922,56 @@ LIMIT sqlc.arg(batch)::int;
 -- P1: retroactive redaction replaces the text and its dedup hash, and
 -- re-parses the message in the same transaction, so parsed fields follow (R45a).
 UPDATE messages SET text = $2, dedup_key = $3 WHERE id = $1;
+
+-- name: ReceptionVariantsBetween :many
+-- P1, R19a: the copies with their own text (near duplicates) of the
+-- messages a retroactive redaction batch checked, after after_id up to
+-- last_id. An empty client_id is a copy from an import file.
+SELECT r.message_id, r.client_id, r.received_at, r.text::text AS text
+FROM receptions r
+WHERE r.message_id > sqlc.arg(after_id)::bigint AND r.message_id <= sqlc.arg(last_id)::bigint AND r.text IS NOT NULL
+UNION ALL
+SELECT i.message_id, '', i.received_at, i.text::text
+FROM import_receptions i
+WHERE i.message_id > sqlc.arg(after_id)::bigint AND i.message_id <= sqlc.arg(last_id)::bigint AND i.text IS NOT NULL
+ORDER BY message_id;
+
+-- name: RedactReceptionVariant :exec
+-- P1, R45a: a copy's own text, as the rules now redact it; none when that's
+-- now its message's text.
+UPDATE receptions r SET text = NULLIF(sqlc.arg(new_text)::text, (SELECT m.text FROM messages m WHERE m.id = r.message_id))
+WHERE r.message_id = sqlc.arg(message_id) AND r.client_id = sqlc.arg(client_id) AND r.received_at = sqlc.arg(received_at)
+  AND r.text = sqlc.arg(old_text)::text;
+
+-- name: RedactImportVariant :exec
+-- As RedactReceptionVariant, for a copy from an import file.
+UPDATE import_receptions i SET text = NULLIF(sqlc.arg(new_text)::text, (SELECT m.text FROM messages m WHERE m.id = i.message_id))
+WHERE i.message_id = sqlc.arg(message_id) AND i.received_at = sqlc.arg(received_at) AND i.text = sqlc.arg(old_text)::text;
+
+-- name: DedupReportVariants :many
+-- R19b: the near duplicates kept as copies with their own text, of the
+-- messages sent since a time, with their messages' text, for the
+-- dedup-report to count. Neither text leaves the command (P1).
+SELECT m.capcode, m.text AS message_text, m.priority, m.heartbeat, r.text::text AS variant_text
+FROM receptions r
+JOIN messages m ON m.id = r.message_id
+WHERE m.sent_at >= sqlc.arg(since)::timestamptz AND r.text IS NOT NULL
+UNION ALL
+SELECT m.capcode, m.text, m.priority, m.heartbeat, i.text::text
+FROM import_receptions i
+JOIN messages m ON m.id = i.message_id
+WHERE m.sent_at >= sqlc.arg(since)::timestamptz AND i.text IS NOT NULL;
+
+-- name: DedupReportCloseMessages :many
+-- R19b: pairs of messages to one capcode sent within 10 s of each other
+-- since a time: pages R19a kept apart, for the dedup-report to measure how
+-- far apart they were. Neither text leaves the command (P1).
+SELECT a.text AS first_text, b.text AS second_text, a.job_number AS first_job, b.job_number AS second_job
+FROM messages a
+JOIN messages b ON b.capcode = a.capcode AND b.id <> a.id
+ AND b.sent_at BETWEEN a.sent_at AND a.sent_at + interval '10 seconds'
+ AND (b.sent_at > a.sent_at OR b.id > a.id)
+WHERE a.sent_at >= sqlc.arg(since)::timestamptz;
 
 -- name: MessagesByIDs :many
 -- As MessagesToReparse, for the given messages: one whose text changed while it was re-parsed.
@@ -1361,13 +1472,14 @@ ORDER BY a.pattern;
 
 -- name: ReceptionsForMessages :many
 -- R63a: each message's receive times, for a page of messages at once. An
--- empty client_id is a copy from an import file (R83b, ADR 0018).
-SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at
+-- empty client_id is a copy from an import file (R83b, ADR 0018). text is
+-- the copy's own when it isn't the message's (R19a).
+SELECT r.message_id, r.client_id, c.name AS client_name, r.received_at, r.text
 FROM receptions r
 JOIN clients c ON c.id = r.client_id
 WHERE r.message_id = ANY(sqlc.arg(ids)::bigint[])
 UNION ALL
-SELECT DISTINCT i.message_id, '', 'import', i.received_at
+SELECT DISTINCT i.message_id, '', 'import', i.received_at, i.text
 FROM import_receptions i
 WHERE i.message_id = ANY(sqlc.arg(ids)::bigint[])
 ORDER BY message_id, received_at, client_id;

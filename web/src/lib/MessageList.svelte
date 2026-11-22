@@ -397,6 +397,19 @@
 			insert(m);
 			scrub?.arrived(m.sent_at); // R81c: the counts follow live updates
 		});
+		// R19a: a better copy of a page replaced a message's text. It's shown
+		// in its place, or added if it now matches the search; one that no
+		// longer matches is dropped.
+		es.addEventListener('update', (ev) => {
+			const m: Message = JSON.parse((ev as MessageEvent).data);
+			const i = messages.findIndex((x) => x.id === m.id);
+			if (i === -1) insert(m);
+			else messages = [...messages.slice(0, i), m, ...messages.slice(i + 1)];
+		});
+		es.addEventListener('remove', (ev) => {
+			const { id } = JSON.parse((ev as MessageEvent).data) as { id: number };
+			messages = messages.filter((x) => x.id !== id);
+		});
 		return () => {
 			clearTimeout(timer);
 			es.close();

@@ -101,7 +101,9 @@ func a76File(now time.Time) []string {
 		lines = append(lines, a76Line(at(), capcode, text, fmt.Sprintf("page-%d", i)))
 	}
 	for i := range recent {
-		lines = append(lines, a76Line(now.Add(time.Duration(i-recent)*time.Second), fmt.Sprintf("010000%d", 1+i%4), fmt.Sprintf("QDRECENT PAGE %d", i), fmt.Sprintf("recent-%d", i)))
+		// Each its own job: pages this alike, seconds apart on one capcode,
+		// would otherwise be near duplicates, one page (R19a).
+		lines = append(lines, a76Line(now.Add(time.Duration(i-recent)*time.Second), fmt.Sprintf("010000%d", 1+i%4), fmt.Sprintf("QDRECENT PAGE EX%07d", 9000000+i), fmt.Sprintf("recent-%d", i)))
 	}
 	return lines
 }

@@ -111,10 +111,14 @@ type Flags struct {
 }
 
 // Reception is one client's receive time. Client names may reveal where
-// receivers are, so only admins see them (R39; ADR 0003).
+// receivers are, so only admins see them (R39; ADR 0003). Text is the
+// copy's own text when it was a near duplicate that differs from the
+// message's (R19a): redacted as the message's is (P1), and shown to whoever
+// sees the message.
 type Reception struct {
 	Client     string    `json:"client"`
 	ReceivedAt time.Time `json:"received_at"`
+	Text       *string   `json:"text,omitempty"`
 }
 
 func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
@@ -403,7 +407,7 @@ func (s *Server) addReceptions(ctx context.Context, msgs []Message, admin bool) 
 	}
 	byMessage := map[int64][]db.MessageReceptionsRow{}
 	for _, rc := range recs {
-		byMessage[rc.MessageID] = append(byMessage[rc.MessageID], db.MessageReceptionsRow{ClientID: rc.ClientID, ClientName: rc.ClientName, ReceivedAt: rc.ReceivedAt})
+		byMessage[rc.MessageID] = append(byMessage[rc.MessageID], db.MessageReceptionsRow{ClientID: rc.ClientID, ClientName: rc.ClientName, ReceivedAt: rc.ReceivedAt, Text: rc.Text})
 	}
 	for i := range msgs {
 		msgs[i].Receptions = receptions(byMessage[msgs[i].ID], admin)
@@ -425,7 +429,7 @@ func receptions(recs []db.MessageReceptionsRow, admin bool) []Reception {
 			}
 			label = names[rc.ClientID]
 		}
-		out = append(out, Reception{Client: label, ReceivedAt: rc.ReceivedAt.UTC()})
+		out = append(out, Reception{Client: label, ReceivedAt: rc.ReceivedAt.UTC(), Text: rc.Text})
 	}
 	return out
 }
@@ -726,6 +730,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "event: reconnect\ndata: %s\n\n", data)
 		_ = rc.Flush()
 	}
+	event := "message" // what send calls the messages it sends
 	send := func(rows []db.SearchMessagesRow) error {
 		msgs := make([]Message, len(rows))
 		for i, m := range rows {
@@ -741,7 +746,12 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, m := range msgs {
 			data, _ := json.Marshal(m)
-			fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", m.ID, data)
+			if event == "message" {
+				fmt.Fprintf(w, "id: %d\nevent: message\ndata: %s\n\n", m.ID, data)
+			} else {
+				// No id: an update isn't a place in the stream to resume from.
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event, data)
+			}
 		}
 		return nil
 	}
@@ -861,13 +871,24 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 			return
 		case <-keepalive.C:
 			fmt.Fprint(w, ": keepalive\n\n")
-		case id := <-sub.C:
-			if id <= covered {
+		case n := <-sub.C:
+			if !n.Changed && n.ID <= covered {
 				continue // before the stream started, or sent by the catch-up
 			}
-			rows, err := s.search(ctx, f, nil, 1, []int64{id})
-			if err == nil && len(rows) > 0 {
+			rows, err := s.search(ctx, f, nil, 1, []int64{n.ID})
+			switch {
+			case err == nil && len(rows) > 0 && n.Changed:
+				// R19a: a better copy's text replaced the message's. The
+				// update event carries it as it is now, for the list to show
+				// in its place, or add if it now matches.
+				event = "update"
 				err = send(rows)
+				event = "message"
+			case err == nil && len(rows) > 0:
+				err = send(rows)
+			case err == nil && n.Changed:
+				// It no longer matches this viewer's filter: the list drops it.
+				fmt.Fprintf(w, "event: remove\ndata: {\"id\":%d}\n\n", n.ID)
 			}
 			if err != nil {
 				if s.noteAbandoned(r, err) {
@@ -876,7 +897,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 				s.Log.Error("stream", "error", err.Error())
 				return
 			}
-			if len(rows) == 0 {
+			if len(rows) == 0 && !n.Changed {
 				continue // doesn't match this viewer's filter (A4)
 			}
 		}

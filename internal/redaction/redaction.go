@@ -574,6 +574,13 @@ func (w *Worker) batch(ctx context.Context, r db.RedactionRun, cands []ingest.Ca
 			w.Progress.Add()
 		}
 		b.end = len(rows) < batchSize && !b.cut
+		// P1: the copies of the pages checked that were kept with their own
+		// text (near duplicates, R19a), in the same transaction.
+		if b.last > after {
+			if err := w.redactVariants(ctx, q, after, b.last); err != nil {
+				return err
+			}
+		}
 		cur, err := q.LockRedactionRun(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
 			b.changed = true
@@ -624,6 +631,31 @@ func (w *Worker) redact(ctx context.Context, q *db.Queries, cands []ingest.Candi
 	}
 	m.Text = text
 	return true, w.Reparse.ReparseInTx(ctx, q, cands, db.MessagesToReparseRow(m), days)
+}
+
+// redactVariants applies the rules to the own text of the copies of the
+// messages after after up to last (R19a), in q's transaction. A copy whose
+// text is then its message's keeps none.
+func (w *Worker) redactVariants(ctx context.Context, q *db.Queries, after, last int64) error {
+	rows, err := q.ReceptionVariantsBetween(ctx, db.ReceptionVariantsBetweenParams{AfterID: after, LastID: last})
+	if err != nil {
+		return err
+	}
+	for _, r := range rows {
+		text := pipeline.Redact(w.Network, r.Text)
+		if text == r.Text {
+			continue
+		}
+		if r.ClientID == "" {
+			err = q.RedactImportVariant(ctx, db.RedactImportVariantParams{NewText: text, MessageID: r.MessageID, ReceivedAt: r.ReceivedAt, OldText: r.Text})
+		} else {
+			err = q.RedactReceptionVariant(ctx, db.RedactReceptionVariantParams{NewText: text, MessageID: r.MessageID, ClientID: r.ClientID, ReceivedAt: r.ReceivedAt, OldText: r.Text})
+		}
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // sources checks a batch of the imported source IDs after after, and drops

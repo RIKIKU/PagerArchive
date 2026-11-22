@@ -41,6 +41,7 @@ line 3920: received_at must be RFC 3339 with its offset
 lines read                                           3100000
 pages stored                                         3071482
 duplicates merged                                    28401
+of which near duplicates (R19a)                      3120
 already imported                                     0
 parse failures                                       1204
 skipped by retention                                 113
@@ -49,14 +50,14 @@ refused lines                                        2
 source IDs not kept (a redaction rule matches them)  0
 ```
 
-A dry run's report says what a real run would do, and is exact unless pages arrive in between.
+A dry run's report says what a real run would do, and is exact unless pages arrive in between; its count of near duplicates is close, as it doesn't work out which copy a message would keep.
 
 Refused lines don't stop the import, and the command still exits 0. Fix them in your conversion, if they matter, and run the file again. Each is named by its line number and a reason, never its text.
 
 ## What it does
 
 - **The same path as a live page.** Each page goes through cleaning, redaction, parsing, placing on the map, deduplication and job grouping, as if a client had sent it at its `received_at`. A page that fails to parse is still stored and shown in full. Redaction happens before anything leaves the command: an unredacted page never reaches the database.
-- **The order of the file doesn't matter.** The command reads the whole file first, then stores the pages in time order. Copies of a page no more than 10 seconds after its first copy are merged, within the file and with pages already stored.
+- **The order of the file doesn't matter.** The command reads the whole file first, then stores the pages in time order. Copies of a page no more than 10 seconds after its first copy are merged, within the file and with pages already stored, and so are copies whose text is nearly the same (a near duplicate, R19a: DEDUP_NEAR_RATIO, read from the environment as the API reads it). The message keeps the copy that parses, or the longer of a truncated pair, or the first; the other is kept as the import's copy, with its own text.
 - **Quiet.** Integrations aren't set off, open lists and watches hear nothing, no alert fires, and no client's last-seen time changes. A page's detail view shows `import` as what received it. `import` isn't a client: it isn't in the clients list, the metrics or the dashboards.
 - **Retention.** Pages older than the retention period are skipped and counted.
 
