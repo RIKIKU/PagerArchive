@@ -5,6 +5,9 @@
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
 	import TemplateForm from '#lib/TemplateForm.svelte';
 	import { setTitle } from '#lib/here.svelte.ts';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
 
 	// R64: one template in Administration: edit it (at once, for every alias
 	// using it), add, replace or remove its icon (R65), and delete it, which
@@ -22,6 +25,8 @@
 	let confirming = $state(false);
 	let busy = $state(false);
 	let formKey = $state(0);
+	// R82g: the icon file says it's required to upload, and is checked first.
+	const fc = new FormCheck();
 	const id = $derived(Number(page.params.id));
 
 	function load() {
@@ -54,10 +59,7 @@
 		ev.preventDefault();
 		iconError = iconNotice = '';
 		const f = file?.[0];
-		if (!f) {
-			iconError = 'Choose an image file.';
-			return;
-		}
+		if (!fc.check(ev.currentTarget as HTMLFormElement) || !f) return;
 		busy = true;
 		try {
 			await api.setIcon(t!.id, f);
@@ -133,10 +135,12 @@
 				<span class="none">No icon. Its aliases show their colour only.</span>
 			{/if}
 		</div>
-		<form onsubmit={upload}>
-			<label for="icon-file">{t.icon ? 'Replace it with' : 'Add an icon'}</label>
-			<input id="icon-file" type="file" bind:files={file} accept=".png,.ico,.gif,.jpg,.jpeg,.webp,image/png,image/x-icon,image/gif,image/jpeg,image/webp"
-				aria-describedby="icon-help" />
+		<form novalidate onsubmit={upload} onchange={fc.cleared}>
+			<FormSummary check={fc} />
+			<label for="icon-file">{t.icon ? 'Replace it with' : 'Add an icon'} <span class="required">required</span></label>
+			<input id="icon-file" type="file" bind:files={file} accept=".png,.ico,.gif,.jpg,.jpeg,.webp,image/png,image/x-icon,image/gif,image/jpeg,image/webp" required
+				data-problem="Choose an image file." aria-invalid={fc.invalid('icon-file')} aria-describedby={fc.describedBy('icon-file', 'icon-help')} />
+			<FieldError check={fc} id="icon-file" />
 			<p class="help" id="icon-help">
 				A PNG, ICO, GIF, JPEG or WebP file of at most 100 KB. It's stored as a 64×64 image, scaled to fit. SVG files aren't accepted.
 			</p>

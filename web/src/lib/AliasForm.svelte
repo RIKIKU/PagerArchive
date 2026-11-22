@@ -3,6 +3,9 @@
 	// server applies R27a and says what's wrong.
 	import { untrack } from 'svelte';
 	import { api, type AliasInput, type TemplateChoice } from '#lib/api.ts';
+	import FieldError from './FieldError.svelte';
+	import FormSummary from './FormSummary.svelte';
+	import { FormCheck } from './formCheck.svelte.ts';
 
 	let {
 		initial,
@@ -34,9 +37,13 @@
 	let error = $state('');
 	let busy = $state(false);
 
+	// R82g: required fields say so; the form checks itself on save.
+	const fc = new FormCheck();
+
 	async function submit(ev: SubmitEvent) {
 		ev.preventDefault();
 		error = '';
+		if (!fc.check(ev.currentTarget as HTMLFormElement)) return;
 		busy = true;
 		try {
 			await onSave({ pattern, name, template_id: template === '' ? null : Number(template), ignored });
@@ -48,17 +55,20 @@
 	}
 </script>
 
-<form class="alias-form" onsubmit={submit} aria-labelledby="{uid}-h" data-testid="alias-form">
+<form class="alias-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="alias-form">
 	<h2 id="{uid}-h">{heading}</h2>
+	<FormSummary check={fc} />
 	<div class="grid">
 		<div class="field">
-			<label for="{uid}-pattern">Capcode or pattern</label>
+			<label for="{uid}-pattern">Capcode or pattern <span class="required">required</span></label>
 			<input id="{uid}-pattern" bind:value={pattern} required maxlength="7" inputmode="numeric" autocomplete="off"
-				aria-describedby="{uid}-pattern-help" />
+				aria-invalid={fc.invalid(`${uid}-pattern`)} aria-describedby={fc.describedBy(`${uid}-pattern`, `${uid}-pattern-help`)} />
+			<FieldError check={fc} id="{uid}-pattern" />
 		</div>
 		<div class="field">
-			<label for="{uid}-name">Name</label>
-			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" />
+			<label for="{uid}-name">Name <span class="required">required</span></label>
+			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-name`)} aria-describedby={fc.describedBy(`${uid}-name`)} />
+			<FieldError check={fc} id="{uid}-name" />
 		</div>
 	</div>
 	<p class="help" id="{uid}-pattern-help">Up to 7 digits. A pattern uses % for any run of digits and _ for one digit.</p>
@@ -102,7 +112,6 @@
 	}
 	.field label {
 		display: block;
-		margin-bottom: var(--space-2xs);
 	}
 	.check {
 		display: inline-flex;

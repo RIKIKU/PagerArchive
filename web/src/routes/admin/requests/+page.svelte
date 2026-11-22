@@ -2,6 +2,12 @@
 	import { api, type AliasRequest, type Meta } from '#lib/api.ts';
 	import RequestCard from '#lib/RequestCard.svelte';
 	import { refreshWaiting } from '#lib/waiting.svelte.ts';
+	import FieldError from '#lib/FieldError.svelte';
+	import FormSummary from '#lib/FormSummary.svelte';
+	import { FormCheck } from '#lib/formCheck.svelte.ts';
+
+	// R82g: the feedback says it's required, and is checked before it's sent.
+	const fc = new FormCheck();
 
 	// R55: requests waiting for review, oldest first, each with the current
 	// value beside the proposed one. Approve applies it exactly as submitted;
@@ -90,19 +96,32 @@
 				{#snippet actions()}
 					{#if r.status === 'waiting'}
 						{#if rejecting === r.id}
-							<form class="reject" onsubmit={(ev) => (ev.preventDefault(), reject(r))}>
-								<label for="feedback-{r.id}">Feedback for the person who asked (required)</label>
-								<textarea id="feedback-{r.id}" bind:value={feedback} maxlength="500" rows="2"
-									aria-invalid={feedbackError ? 'true' : undefined} aria-describedby={feedbackError ? `feedback-err-${r.id}` : undefined}></textarea>
-								{#if feedbackError}<p class="error" id="feedback-err-{r.id}" role="alert">{feedbackError}</p>{/if}
+							<form
+								class="reject"
+								novalidate
+								oninput={fc.cleared}
+								onsubmit={(ev) => {
+									ev.preventDefault();
+									feedbackError = '';
+									if (fc.check(ev.currentTarget)) reject(r);
+								}}
+							>
+								<FormSummary check={fc} />
+								<label for="feedback-{r.id}">Feedback for the person who asked <span class="required">required</span></label>
+								<textarea id="feedback-{r.id}" bind:value={feedback} maxlength="500" rows="2" required
+									data-problem="Say why it's rejected: they'll see this."
+									aria-invalid={feedbackError ? 'true' : fc.invalid(`feedback-${r.id}`)}
+									aria-describedby={feedbackError ? `feedback-err-${r.id}` : fc.describedBy(`feedback-${r.id}`)}></textarea>
+								<FieldError check={fc} id="feedback-{r.id}" />
+								{#if feedbackError}<p class="field-error" id="feedback-err-{r.id}" role="alert">{feedbackError}</p>{/if}
 								<div class="buttons">
 									<button type="submit" class="danger" disabled={busy}>Reject</button>
-									<button type="button" class="secondary" onclick={() => ((rejecting = undefined), (feedbackError = ''))}>Cancel</button>
+									<button type="button" class="secondary" onclick={() => ((rejecting = undefined), (feedbackError = ''), fc.reset())}>Cancel</button>
 								</div>
 							</form>
 						{:else}
 							<button type="button" disabled={busy || !!r.now_aliased_as} onclick={() => approve(r)} aria-label="Approve: {describe(r)}">Approve</button>
-							<button type="button" class="secondary" disabled={busy} onclick={() => ((rejecting = r.id), (feedback = ''), (feedbackError = ''))} aria-label="Reject: {describe(r)}">Reject…</button>
+							<button type="button" class="secondary" disabled={busy} onclick={() => ((rejecting = r.id), (feedback = ''), (feedbackError = ''), fc.reset())} aria-label="Reject: {describe(r)}">Reject…</button>
 						{/if}
 					{/if}
 				{/snippet}
@@ -140,9 +159,6 @@
 		border-radius: var(--radius-small);
 		padding: var(--space-xs) var(--space-sm);
 		width: 100%;
-	}
-	.reject .error {
-		padding: var(--space-2xs) 0;
 	}
 	.buttons {
 		display: flex;

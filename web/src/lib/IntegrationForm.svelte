@@ -16,6 +16,10 @@
 	} from './api.ts';
 	import { kindLabels, presets } from './integrations.ts';
 	import SelectionField from './SelectionField.svelte';
+	import FieldError from './FieldError.svelte';
+	import Required from './Required.svelte';
+	import FormSummary from './FormSummary.svelte';
+	import { FormCheck } from './formCheck.svelte.ts';
 
 	let {
 		existing,
@@ -93,6 +97,15 @@
 		return existing?.secrets_set[field] ? 'Saved. Leave empty to keep it.' : '';
 	}
 
+	// R82g: the word "required" in each required field's label. A secret is
+	// required only while none is saved, and the auth header's value only
+	// with a header name (and none saved). The form checks itself on save.
+	const fc = new FormCheck();
+	const secretNeeded = (field: string) => !existing?.secrets_set[field];
+	const secretWhen = init ? 'none saved yet' : undefined;
+	const headerValueNeeded = $derived(!!config.auth_header?.trim() && secretNeeded('auth_value'));
+	const f = (name: string) => `${id}-${name}`;
+
 	function kindChanged() {
 		// Presets go to third parties: Summary unless chosen otherwise (R50a).
 		content = presets.includes(kind) ? 'summary' : 'full';
@@ -108,6 +121,8 @@
 	async function submit(ev: SubmitEvent) {
 		ev.preventDefault();
 		error = '';
+		const noPages = selects === 'pages' && capcodes.length === 0 && chosenAliases.length === 0;
+		if (!fc.check(ev.currentTarget as HTMLFormElement, { [f('pages')]: noPages && 'Nothing chosen yet: choose at least one capcode or alias.' })) return;
 		saving = true;
 		const req: IntegrationRequest = {
 			name,
@@ -146,12 +161,14 @@
 	}
 </script>
 
-<form class="integration-form" onsubmit={submit} aria-labelledby="{id}-heading">
+<form class="integration-form" novalidate onsubmit={submit} oninput={fc.cleared} onchange={fc.cleared} aria-labelledby="{id}-heading">
 	<h2 id="{id}-heading">{existing ? `Edit “${existing.name}”` : 'New integration'}</h2>
+	<FormSummary check={fc} />
 
 	<div class="field">
-		<label for="{id}-name">Name</label>
-		<input id="{id}-name" bind:value={name} required maxlength="80" autocomplete="off" />
+		<label for={f('name')}>Name <span class="required">required</span></label>
+		<input id={f('name')} bind:value={name} required maxlength="80" autocomplete="off" aria-invalid={fc.invalid(f('name'))} aria-describedby={fc.describedBy(f('name'))} />
+		<FieldError check={fc} id={f('name')} />
 	</div>
 
 	<div class="field">
@@ -177,13 +194,15 @@
 			many Emergency pages it holds, and a link to the event. Never page text. Nothing more is sent as the event grows.
 		</p>
 	{:else}
-		<fieldset>
-			<legend>Which pages (at least one capcode or alias)</legend>
+		<fieldset id={f('pages')} aria-describedby={fc.describedBy(f('pages'), f('pages-hint'))}>
+			<legend>Which pages <span class="required">required</span></legend>
+			<p class="field-hint" id={f('pages-hint')}>Choose at least one capcode or alias.</p>
 			<SelectionField id="{id}-selection" bind:capcodes bind:aliases={chosenAliases} bind:coveredBy />
+			<FieldError check={fc} id={f('pages')} />
 		</fieldset>
 
 		<fieldset>
-			<legend>Only these (optional)</legend>
+			<legend>Only these</legend>
 			<p class="help">Leave everything empty to send every page from the capcodes and aliases above.</p>
 			<fieldset class="inner">
 				<legend>Event categories</legend>
@@ -303,8 +322,9 @@
 		<legend>{kindLabels[kind]}</legend>
 		{#if kind === 'webhook'}
 			<div class="field">
-				<label for="{id}-url">URL</label>
-				<input id="{id}-url" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://'} aria-describedby="{id}-url-help" />
+				<label for={f('url')}>URL {#if secretNeeded('url')}<Required when={secretWhen} />{/if}</label>
+				<input id={f('url')} type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={secretNeeded('url')} placeholder={saved('url') || 'https://'} aria-invalid={fc.invalid(f('url'))} aria-describedby={fc.describedBy(f('url'), f('url-help'))} />
+				<FieldError check={fc} id={f('url')} />
 				<p id="{id}-url-help" class="help">
 					{#if existing?.config.target}Saved: {existing.config.target}/…{/if}
 					The URL is kept secret once saved. Use http:// only on your own network.
@@ -312,18 +332,20 @@
 			</div>
 			<div class="grid">
 				<div class="field">
-					<label for="{id}-hname">Auth header name (optional)</label>
+					<label for="{id}-hname">Auth header name</label>
 					<input id="{id}-hname" bind:value={config.auth_header} placeholder="Authorization" autocomplete="off" autocapitalize="off" spellcheck="false" />
 				</div>
 				<div class="field">
-					<label for="{id}-hvalue">Auth header value</label>
-					<input id="{id}-hvalue" type="password" autocomplete="off" bind:value={secrets.auth_value} placeholder={saved('auth_value')} />
+					<label for={f('hvalue')}>Auth header value {#if headerValueNeeded}<Required when="with a header name" />{/if}</label>
+					<input id={f('hvalue')} type="password" autocomplete="off" bind:value={secrets.auth_value} required={headerValueNeeded} data-problem="Give the header a value, or clear its name." placeholder={saved('auth_value')} aria-invalid={fc.invalid(f('hvalue'))} aria-describedby={fc.describedBy(f('hvalue'))} />
+					<FieldError check={fc} id={f('hvalue')} />
 				</div>
 			</div>
 		{:else if kind === 'mqtt'}
 			<div class="field">
-				<label for="{id}-broker">Broker</label>
-				<input id="{id}-broker" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.broker} required placeholder="mqtt://broker.example.org or mqtts://…:8883" />
+				<label for={f('broker')}>Broker <span class="required">required</span></label>
+				<input id={f('broker')} inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.broker} required placeholder="mqtt://broker.example.org or mqtts://…:8883" aria-invalid={fc.invalid(f('broker'))} aria-describedby={fc.describedBy(f('broker'))} />
+				<FieldError check={fc} id={f('broker')} />
 			</div>
 			<div class="field">
 				<label for="{id}-topic">Topic</label>
@@ -331,7 +353,7 @@
 			</div>
 			<div class="grid">
 				<div class="field">
-					<label for="{id}-user">User name (optional)</label>
+					<label for="{id}-user">User name</label>
 					<input id="{id}-user" bind:value={config.username} autocomplete="off" autocapitalize="off" spellcheck="false" />
 				</div>
 				<div class="field">
@@ -340,8 +362,9 @@
 				</div>
 			</div>
 			<div class="field">
-				<label for="{id}-ca">CA certificate (optional, mqtts:// only)</label>
-				<textarea id="{id}-ca" rows="3" autocapitalize="off" spellcheck="false" bind:value={config.ca_cert} placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+				<label for="{id}-ca">CA certificate</label>
+				<textarea id="{id}-ca" rows="3" autocapitalize="off" spellcheck="false" bind:value={config.ca_cert} placeholder="-----BEGIN CERTIFICATE-----" aria-describedby="{id}-ca-help"></textarea>
+				<p id="{id}-ca-help" class="help">For mqtts:// only.</p>
 			</div>
 			<label class="check"><input type="checkbox" bind:checked={config.ha_discovery} /> Home Assistant discovery: an event entity for this integration</label>
 			{#if config.ha_discovery}
@@ -352,30 +375,35 @@
 			{/if}
 		{:else if kind === 'discord'}
 			<div class="field">
-				<label for="{id}-durl">Webhook URL</label>
-				<input id="{id}-durl" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={!existing?.secrets_set.url} placeholder={saved('url') || 'https://discord.com/api/webhooks/…'} aria-describedby="{id}-durl-help" />
+				<label for={f('durl')}>Webhook URL {#if secretNeeded('url')}<Required when={secretWhen} />{/if}</label>
+				<input id={f('durl')} type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={secrets.url} required={secretNeeded('url')} placeholder={saved('url') || 'https://discord.com/api/webhooks/…'} aria-invalid={fc.invalid(f('durl'))} aria-describedby={fc.describedBy(f('durl'), f('durl-help'))} />
+				<FieldError check={fc} id={f('durl')} />
 				<p id="{id}-durl-help" class="help">In Discord: Server settings → Integrations → Webhooks → Copy webhook URL.</p>
 			</div>
 		{:else if kind === 'telegram'}
 			<div class="grid">
 				<div class="field">
-					<label for="{id}-bot">Bot token</label>
-					<input id="{id}-bot" type="password" autocomplete="off" bind:value={secrets.bot_token} required={!existing?.secrets_set.bot_token} placeholder={saved('bot_token')} />
+					<label for={f('bot')}>Bot token {#if secretNeeded('bot_token')}<Required when={secretWhen} />{/if}</label>
+					<input id={f('bot')} type="password" autocomplete="off" bind:value={secrets.bot_token} required={secretNeeded('bot_token')} placeholder={saved('bot_token')} aria-invalid={fc.invalid(f('bot'))} aria-describedby={fc.describedBy(f('bot'))} />
+					<FieldError check={fc} id={f('bot')} />
 				</div>
 				<div class="field">
-					<label for="{id}-chat">Chat ID</label>
-					<input id="{id}-chat" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.chat_id} required placeholder="-1001234567890 or @channel" />
+					<label for={f('chat')}>Chat ID <span class="required">required</span></label>
+					<input id={f('chat')} autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.chat_id} required placeholder="-1001234567890 or @channel" aria-invalid={fc.invalid(f('chat'))} aria-describedby={fc.describedBy(f('chat'))} />
+					<FieldError check={fc} id={f('chat')} />
 				</div>
 			</div>
 		{:else if kind === 'pushover'}
 			<div class="grid">
 				<div class="field">
-					<label for="{id}-app">Application token</label>
-					<input id="{id}-app" type="password" autocomplete="off" bind:value={secrets.app_token} required={!existing?.secrets_set.app_token} placeholder={saved('app_token')} />
+					<label for={f('app')}>Application token {#if secretNeeded('app_token')}<Required when={secretWhen} />{/if}</label>
+					<input id={f('app')} type="password" autocomplete="off" bind:value={secrets.app_token} required={secretNeeded('app_token')} placeholder={saved('app_token')} aria-invalid={fc.invalid(f('app'))} aria-describedby={fc.describedBy(f('app'))} />
+					<FieldError check={fc} id={f('app')} />
 				</div>
 				<div class="field">
-					<label for="{id}-ukey">User key</label>
-					<input id="{id}-ukey" type="password" autocomplete="off" bind:value={secrets.user_key} required={!existing?.secrets_set.user_key} placeholder={saved('user_key')} />
+					<label for={f('ukey')}>User key {#if secretNeeded('user_key')}<Required when={secretWhen} />{/if}</label>
+					<input id={f('ukey')} type="password" autocomplete="off" bind:value={secrets.user_key} required={secretNeeded('user_key')} placeholder={saved('user_key')} aria-invalid={fc.invalid(f('ukey'))} aria-describedby={fc.describedBy(f('ukey'))} />
+					<FieldError check={fc} id={f('ukey')} />
 				</div>
 			</div>
 			<div class="field">
@@ -392,14 +420,16 @@
 			<div class="grid">
 				<div class="field">
 					<label for="{id}-server">Server</label>
-					<input id="{id}-server" type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.server} placeholder="https://ntfy.sh" />
+					<input id={f('server')} type="url" inputmode="url" autocomplete="off" autocapitalize="off" spellcheck="false" bind:value={config.server} placeholder="https://ntfy.sh" aria-invalid={fc.invalid(f('server'))} aria-describedby={fc.describedBy(f('server'))} />
+					<FieldError check={fc} id={f('server')} />
 				</div>
 				<div class="field">
-					<label for="{id}-ntopic">Topic</label>
-					<input id="{id}-ntopic" type="password" autocomplete="off" bind:value={secrets.topic} required={!existing?.secrets_set.topic} placeholder={saved('topic')} />
+					<label for={f('ntopic')}>Topic {#if secretNeeded('topic')}<Required when={secretWhen} />{/if}</label>
+					<input id={f('ntopic')} type="password" autocomplete="off" bind:value={secrets.topic} required={secretNeeded('topic')} placeholder={saved('topic')} aria-invalid={fc.invalid(f('ntopic'))} aria-describedby={fc.describedBy(f('ntopic'))} />
+					<FieldError check={fc} id={f('ntopic')} />
 				</div>
 				<div class="field">
-					<label for="{id}-ntoken">Access token (optional)</label>
+					<label for="{id}-ntoken">Access token</label>
 					<input id="{id}-ntoken" type="password" autocomplete="off" bind:value={secrets.access_token} placeholder={saved('access_token')} />
 				</div>
 				<div class="field">
@@ -457,7 +487,6 @@
 	}
 	.field label {
 		display: block;
-		margin-bottom: var(--space-2xs);
 	}
 	/* Side by side where there's room; one column, never wider than the form,
 	   where there isn't (a phone). */
