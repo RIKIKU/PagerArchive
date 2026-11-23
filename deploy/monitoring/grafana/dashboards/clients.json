@@ -94,11 +94,11 @@
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
-      "id": 11, "type": "timeseries", "title": "Radio: rtl_fm messages by kind (per hour)",
+      "id": 11, "type": "timeseries", "title": "Radio: rtl_fm messages by kind (per 10 minutes)",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 41},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
-      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[1h])) > 0", "legendFormat": "{{instance}} {{kind}}"}],
-      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "noValue": "none in the last hour"}, "overrides": []},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, kind) (increase(pagerarchive_client_radio_messages_total[10m])) > 0", "legendFormat": "{{instance}} {{kind}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "noValue": "none in the last 10 minutes"}, "overrides": []},
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
