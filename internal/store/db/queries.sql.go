@@ -1720,20 +1720,27 @@ func (q *Queries) CreateInvitation(ctx context.Context, arg CreateInvitationPara
 }
 
 const createLargeEvent = `-- name: CreateLargeEvent :one
-INSERT INTO large_events (first_at, last_at) VALUES ($1::timestamptz, $1::timestamptz)
-RETURNING id, first_at, last_at, created_at
+INSERT INTO large_events (first_at, last_at, opened_at)
+VALUES ($1::timestamptz, $1::timestamptz, $2::timestamptz)
+RETURNING id, first_at, last_at, created_at, opened_at
 `
 
+type CreateLargeEventParams struct {
+	At       time.Time
+	OpenedAt time.Time
+}
+
 // R87d: the only place an event begins, so the only time its integrations
-// are told.
-func (q *Queries) CreateLargeEvent(ctx context.Context, at time.Time) (LargeEvent, error) {
-	row := q.db.QueryRow(ctx, createLargeEvent, at)
+// are told. opened_at is when it opened in the archive (R77c).
+func (q *Queries) CreateLargeEvent(ctx context.Context, arg CreateLargeEventParams) (LargeEvent, error) {
+	row := q.db.QueryRow(ctx, createLargeEvent, arg.At, arg.OpenedAt)
 	var i LargeEvent
 	err := row.Scan(
 		&i.ID,
 		&i.FirstAt,
 		&i.LastAt,
 		&i.CreatedAt,
+		&i.OpenedAt,
 	)
 	return i, err
 }
@@ -1776,7 +1783,7 @@ const createServiceAccount = `-- name: CreateServiceAccount :one
 
 INSERT INTO users (kind, subject, name, role, invited_by, credential_expires_at)
 VALUES ('service', $1, $2::text, 'user', $3::bigint, $4)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events
 `
 
 type CreateServiceAccountParams struct {
@@ -1813,6 +1820,7 @@ func (q *Queries) CreateServiceAccount(ctx context.Context, arg CreateServiceAcc
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }
@@ -1891,7 +1899,7 @@ func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeac
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events
 `
 
 type CreateUserParams struct {
@@ -1931,6 +1939,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }
@@ -3547,7 +3556,7 @@ func (q *Queries) KeepEarliestSentAt(ctx context.Context, arg KeepEarliestSentAt
 }
 
 const largeEventByID = `-- name: LargeEventByID :one
-SELECT id, first_at, last_at, created_at FROM large_events WHERE id = $1
+SELECT id, first_at, last_at, created_at, opened_at FROM large_events WHERE id = $1
 `
 
 func (q *Queries) LargeEventByID(ctx context.Context, id int64) (LargeEvent, error) {
@@ -3558,6 +3567,7 @@ func (q *Queries) LargeEventByID(ctx context.Context, id int64) (LargeEvent, err
 		&i.FirstAt,
 		&i.LastAt,
 		&i.CreatedAt,
+		&i.OpenedAt,
 	)
 	return i, err
 }
@@ -3641,8 +3651,43 @@ func (q *Queries) LargeEventPages(ctx context.Context, eventID int64) (int64, er
 	return column_1, err
 }
 
+const largeEventsAreas = `-- name: LargeEventsAreas :many
+SELECT DISTINCT lem.event_id, ma.layer, ma.area
+FROM large_event_messages lem JOIN message_areas ma ON ma.message_id = lem.message_id
+WHERE lem.event_id = ANY($1::bigint[])
+ORDER BY lem.event_id, ma.layer, ma.area
+`
+
+type LargeEventsAreasRow struct {
+	EventID int64
+	Layer   string
+	Area    string
+}
+
+// R87c, R88b: the areas the pages of these events are in, each layer's: one
+// query for a whole page of the Large events list, or for one event's view.
+func (q *Queries) LargeEventsAreas(ctx context.Context, eventIds []int64) ([]LargeEventsAreasRow, error) {
+	rows, err := q.db.Query(ctx, largeEventsAreas, eventIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []LargeEventsAreasRow
+	for rows.Next() {
+		var i LargeEventsAreasRow
+		if err := rows.Scan(&i.EventID, &i.Layer, &i.Area); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const largeEventsNear = `-- name: LargeEventsNear :many
-SELECT id, first_at, last_at, created_at FROM large_events
+SELECT id, first_at, last_at, created_at, opened_at FROM large_events
 WHERE last_at >= $1::timestamptz - interval '12 hours'
   AND first_at <= $1::timestamptz + interval '12 hours'
 ORDER BY id
@@ -3665,6 +3710,7 @@ func (q *Queries) LargeEventsNear(ctx context.Context, t time.Time) ([]LargeEven
 			&i.FirstAt,
 			&i.LastAt,
 			&i.CreatedAt,
+			&i.OpenedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -3974,7 +4020,7 @@ func (q *Queries) ListInvitations(ctx context.Context, inviter *int64) ([]ListIn
 }
 
 const listLargeEvents = `-- name: ListLargeEvents :many
-SELECT e.id, e.first_at, e.last_at, e.created_at,
+SELECT e.id, e.first_at, e.last_at, e.created_at, e.opened_at,
        (SELECT count(*) FROM large_event_messages lem WHERE lem.event_id = e.id)::bigint AS pages,
        (SELECT count(DISTINCT m.job_number) FROM large_event_messages lem JOIN messages m ON m.id = lem.message_id
         WHERE lem.event_id = e.id)::bigint AS jobs
@@ -3996,6 +4042,7 @@ type ListLargeEventsRow struct {
 	FirstAt   time.Time
 	LastAt    time.Time
 	CreatedAt time.Time
+	OpenedAt  *time.Time
 	Pages     int64
 	Jobs      int64
 }
@@ -4018,6 +4065,7 @@ func (q *Queries) ListLargeEvents(ctx context.Context, arg ListLargeEventsParams
 			&i.FirstAt,
 			&i.LastAt,
 			&i.CreatedAt,
+			&i.OpenedAt,
 			&i.Pages,
 			&i.Jobs,
 		); err != nil {
@@ -4459,7 +4507,7 @@ func (q *Queries) MatchingIntegrations(ctx context.Context, arg MatchingIntegrat
 
 const mergeLargeEvents = `-- name: MergeLargeEvents :exec
 WITH others AS (
-    SELECT id, first_at, last_at, created_at FROM large_events WHERE id = ANY($1::bigint[]) AND id <> $2::bigint
+    SELECT id, first_at, last_at, created_at, opened_at FROM large_events WHERE id = ANY($1::bigint[]) AND id <> $2::bigint
 ), pages AS (
     UPDATE large_event_messages SET event_id = $2::bigint WHERE event_id IN (SELECT id FROM others)
 ), sent AS (
@@ -4467,7 +4515,10 @@ WITH others AS (
 ), kept AS (
     UPDATE large_events e SET
         first_at = LEAST(e.first_at, (SELECT min(first_at) FROM others)),
-        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others))
+        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others)),
+        -- R77c: the newer opening, so a merge of events a user saw shows
+        -- them nothing new, and one with an event they hadn't seen still does.
+        opened_at = GREATEST(COALESCE(e.opened_at, e.created_at), (SELECT max(COALESCE(opened_at, created_at)) FROM others))
     WHERE e.id = $2::bigint
 )
 SELECT 1
@@ -4974,6 +5025,30 @@ func (q *Queries) NearCandidates(ctx context.Context, arg NearCandidatesParams) 
 	return items, nil
 }
 
+const newLargeEventStart = `-- name: NewLargeEventStart :one
+SELECT e.first_at FROM large_events e
+WHERE e.first_at > $1::timestamptz
+  AND COALESCE(e.opened_at, e.created_at) > COALESCE(
+      (SELECT u.seen_large_events FROM users u WHERE u.id = $2::bigint), '-infinity'::timestamptz)
+ORDER BY e.first_at DESC, e.id DESC
+LIMIT 1
+`
+
+type NewLargeEventStartParams struct {
+	Since  time.Time
+	UserID int64
+}
+
+// R77c: the start of the newest event new to the user: it started after
+// since (4 hours ago), and opened after they last opened the Large events
+// page. No row: none is new. Read on large_events_first_idx, newest first.
+func (q *Queries) NewLargeEventStart(ctx context.Context, arg NewLargeEventStartParams) (time.Time, error) {
+	row := q.db.QueryRow(ctx, newLargeEventStart, arg.Since, arg.UserID)
+	var first_at time.Time
+	err := row.Scan(&first_at)
+	return first_at, err
+}
+
 const nextDeliveryDue = `-- name: NextDeliveryDue :one
 SELECT min(next_attempt_at)::timestamptz FROM deliveries WHERE status = 'pending'
 `
@@ -5109,19 +5184,26 @@ func (q *Queries) PutLargeEventPages(ctx context.Context, arg PutLargeEventPages
 }
 
 const putLargeEventSpan = `-- name: PutLargeEventSpan :exec
-UPDATE large_events SET first_at = $1::timestamptz, last_at = $2::timestamptz
-WHERE id = $3::bigint
+UPDATE large_events SET first_at = $1::timestamptz, last_at = $2::timestamptz,
+    opened_at = $3::timestamptz
+WHERE id = $4::bigint
 `
 
 type PutLargeEventSpanParams struct {
-	FirstAt time.Time
-	LastAt  time.Time
-	ID      int64
+	FirstAt  time.Time
+	LastAt   time.Time
+	OpenedAt time.Time
+	ID       int64
 }
 
-// A rebuilt event's first and last pages' times.
+// A rebuilt event's first and last pages' times, and when it opened (R77c).
 func (q *Queries) PutLargeEventSpan(ctx context.Context, arg PutLargeEventSpanParams) error {
-	_, err := q.db.Exec(ctx, putLargeEventSpan, arg.FirstAt, arg.LastAt, arg.ID)
+	_, err := q.db.Exec(ctx, putLargeEventSpan,
+		arg.FirstAt,
+		arg.LastAt,
+		arg.OpenedAt,
+		arg.ID,
+	)
 	return err
 }
 
@@ -5390,7 +5472,7 @@ func (q *Queries) RefreshLargeEventSpans(ctx context.Context) (int64, error) {
 
 const regroupEventsNear = `-- name: RegroupEventsNear :many
 
-SELECT id, first_at, last_at FROM large_events
+SELECT id, first_at, last_at, COALESCE(opened_at, created_at)::timestamptz AS opened_at FROM large_events
 WHERE last_at >= $1::timestamptz - interval '12 hours'
   AND first_at <= $2::timestamptz + interval '12 hours'
 ORDER BY id
@@ -5402,16 +5484,18 @@ type RegroupEventsNearParams struct {
 }
 
 type RegroupEventsNearRow struct {
-	ID      int64
-	FirstAt time.Time
-	LastAt  time.Time
+	ID       int64
+	FirstAt  time.Time
+	LastAt   time.Time
+	OpenedAt time.Time
 }
 
 // Rebuilding large events after a re-parse (R23a, R87; owner, 2026-11-14;
 // ADR 0027 §9). Each runs in a rebuild's transaction, under LockLargeEvents.
 // The pages that count are those JobEventPages counts.
 // The events pages sent between lo and hi could join (R87a): from 12 hours
-// before an event's first page to 12 hours after its last. Oldest first.
+// before an event's first page to 12 hours after its last. Oldest first,
+// with when each opened (R77c).
 func (q *Queries) RegroupEventsNear(ctx context.Context, arg RegroupEventsNearParams) ([]RegroupEventsNearRow, error) {
 	rows, err := q.db.Query(ctx, regroupEventsNear, arg.Lo, arg.Hi)
 	if err != nil {
@@ -5421,7 +5505,12 @@ func (q *Queries) RegroupEventsNear(ctx context.Context, arg RegroupEventsNearPa
 	var items []RegroupEventsNearRow
 	for rows.Next() {
 		var i RegroupEventsNearRow
-		if err := rows.Scan(&i.ID, &i.FirstAt, &i.LastAt); err != nil {
+		if err := rows.Scan(
+			&i.ID,
+			&i.FirstAt,
+			&i.LastAt,
+			&i.OpenedAt,
+		); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -6310,6 +6399,22 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 	return items, nil
 }
 
+const seeLargeEvents = `-- name: SeeLargeEvents :exec
+UPDATE users SET seen_large_events = GREATEST(seen_large_events, $1::timestamptz)
+WHERE id = $2::bigint AND status <> 'deleted'
+`
+
+type SeeLargeEventsParams struct {
+	At time.Time
+	ID int64
+}
+
+// R77c: the user opened the Large events page at at. Never moved back.
+func (q *Queries) SeeLargeEvents(ctx context.Context, arg SeeLargeEventsParams) error {
+	_, err := q.db.Exec(ctx, seeLargeEvents, arg.At, arg.ID)
+	return err
+}
+
 const seeRelease = `-- name: SeeRelease :one
 UPDATE users u SET seen_release = $1::text
 FROM (SELECT id, seen_release FROM users WHERE id = $2::bigint FOR UPDATE) AS before
@@ -6352,7 +6457,7 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 }
 
 const serviceAccountByName = `-- name: ServiceAccountByName :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE kind = 'service' AND name = $1::text AND status <> 'deleted'
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE kind = 'service' AND name = $1::text AND status <> 'deleted'
 `
 
 // The live one (active or deactivated) with that name.
@@ -6377,12 +6482,13 @@ func (q *Queries) ServiceAccountByName(ctx context.Context, name string) (User, 
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, u.kind, u.credential_expires_at, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, u.kind, u.credential_expires_at, u.seen_large_events, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
@@ -6405,6 +6511,7 @@ type SessionUserRow struct {
 	SeenRelease         *string
 	Kind                string
 	CredentialExpiresAt *time.Time
+	SeenLargeEvents     *time.Time
 	SessionUsedAt       time.Time
 }
 
@@ -6429,6 +6536,7 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -7426,7 +7534,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -7450,12 +7558,13 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -7479,13 +7588,14 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -7510,6 +7620,7 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.SeenRelease,
 		&i.Kind,
 		&i.CredentialExpiresAt,
+		&i.SeenLargeEvents,
 	)
 	return i, err
 }

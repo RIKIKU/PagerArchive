@@ -16,6 +16,7 @@
 	import BottomBar from '#lib/BottomBar.svelte';
 	import Crumbs from '#lib/Crumbs.svelte';
 	import { here } from '#lib/here.svelte.ts';
+	import { followLargeEventDot, largeEventDot } from '#lib/largeEventDot.svelte.ts';
 	import { list, listHref } from '#lib/listState.svelte.ts';
 	import Menu from '#lib/Menu.svelte';
 	import ReleaseNotice from '#lib/ReleaseNotice.svelte';
@@ -71,10 +72,13 @@
 		}
 		// R90: an installed app's title and status bars follow the look and theme.
 		const unfollowTopBar = followTopBar();
+		// R77c: the new-large-event dot, live.
+		const unfollowDot = signedOut ? () => {} : followLargeEventDot();
 		return () => {
 			window.removeEventListener('pagerarchive:meta', update);
 			unfollow();
 			unfollowTopBar();
+			unfollowDot();
 		};
 	});
 
@@ -156,7 +160,7 @@
 	<ReleaseNotice />
 	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
 		<nav class="side" aria-label="Main">
-			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} version={meta?.version ?? ''} />
+			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} newEvent={largeEventDot.on} version={meta?.version ?? ''} />
 		</nav>
 		<header class="top" bind:clientHeight={topHeight}>
 			<Crumbs {trail} listHref={listHref()} />
@@ -171,7 +175,7 @@
 		{#if meta?.attribution}
 			<footer class="note">Address data: {meta.attribution}</footer>
 		{/if}
-		<BottomBar {path} {admin} listHref={listHref()} {mapHref} version={meta?.version ?? ''} />
+		<BottomBar {path} {admin} listHref={listHref()} {mapHref} newEvent={largeEventDot.on} version={meta?.version ?? ''} />
 	</div>
 {/if}
 

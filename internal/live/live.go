@@ -18,8 +18,9 @@ const (
 
 // Hub is the set of live connections.
 type Hub struct {
-	mu   sync.Mutex
-	subs map[*Sub]struct{}
+	mu      sync.Mutex
+	subs    map[*Sub]struct{}
+	watches map[*Watch]struct{} // R77c: the new-large-event dot's
 }
 
 // Note is a message published: a new one, or one that changed.
@@ -111,6 +112,12 @@ func (h *Hub) CloseUsers(ids []int64) {
 			delete(h.subs, s)
 		}
 	}
+	for w := range h.watches {
+		if want[w.user] {
+			w.once.Do(func() { close(w.Dropped) })
+			delete(h.watches, w)
+		}
+	}
 }
 
 // Len is the number of connections.
@@ -118,4 +125,54 @@ func (h *Hub) Len() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.subs)
+}
+
+// Watch is one connection following its user's new-large-event dot (R77c):
+// C gets a tick when a large event opens, for everyone, and when its own
+// user opens the Large events page, in any tab or browser. Ticks coalesce:
+// it says "look again", not what changed.
+type Watch struct {
+	C       chan struct{}
+	Dropped chan struct{} // closed when the hub drops it (Account: see Sub)
+	user    int64
+	once    sync.Once
+}
+
+// WatchEvents adds a watch for a signed-in user.
+func (h *Hub) WatchEvents(userID int64) *Watch {
+	w := &Watch{C: make(chan struct{}, 1), Dropped: make(chan struct{}), user: userID}
+	h.mu.Lock()
+	if h.watches == nil {
+		h.watches = map[*Watch]struct{}{}
+	}
+	h.watches[w] = struct{}{}
+	h.mu.Unlock()
+	return w
+}
+
+// Unwatch removes a watch.
+func (h *Hub) Unwatch(w *Watch) {
+	h.mu.Lock()
+	delete(h.watches, w)
+	h.mu.Unlock()
+}
+
+// EventOpened tells every watch a large event opened (R77c).
+func (h *Hub) EventOpened() { h.tick(0) }
+
+// SeenEvents tells a user's watches that they opened the Large events page.
+func (h *Hub) SeenEvents(userID int64) { h.tick(userID) }
+
+func (h *Hub) tick(userID int64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for w := range h.watches {
+		if userID != 0 && w.user != userID {
+			continue
+		}
+		select {
+		case w.C <- struct{}{}:
+		default: // a tick is already waiting
+		}
+	}
 }

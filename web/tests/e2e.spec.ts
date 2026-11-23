@@ -2936,7 +2936,9 @@ test('A68 side menu and breadcrumbs', async ({ browser, request }, info) => {
 		await waitLive(page);
 		const nav = page.getByRole('navigation', { name: 'Main' });
 		const groups = Object.keys(expected).filter((g) => role === 'admin' || g !== 'Administration');
-		for (const g of Object.keys(expected)) await expect(nav.getByRole('link', { name: g, exact: true }), `${role}: ${g}`).toHaveCount(groups.includes(g) ? 1 : 0);
+		// A group's name may say more after a comma: Tools' that a large event is new (R77c).
+		for (const g of Object.keys(expected))
+			await expect(nav.getByRole('link', { name: g, exact: true }).or(nav.getByRole('link', { name: new RegExp(`^${g},`) })), `${role}: ${g}`).toHaveCount(groups.includes(g) ? 1 : 0);
 		// Every group and page has its icon.
 		const bare = await nav.locator('a.item').evaluateAll((as) => as.filter((a) => !a.querySelector('svg.ui-icon')).map((a) => a.textContent));
 		expect(bare, `${role}: links without an icon`).toEqual([]);
@@ -3144,7 +3146,7 @@ test('A70 phones', async ({ browser, request }, info) => {
 			await bar.getByRole('button', { name: 'More' }).click();
 			const more = page.getByRole('dialog', { name: 'More' });
 			await expect(more).toBeVisible();
-			for (const there of ['Unknown capcodes', 'Large events', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true })).toBeVisible();
+			for (const there of ['Unknown capcodes', 'Large events', 'Capcode report', 'Profile', 'Integrations', 'My requests', 'Invite someone']) await expect(more.getByRole('link', { name: there, exact: true }).or(more.getByRole('link', { name: new RegExp(`^${there},`) }))).toBeVisible();
 			for (const gone of ['Print sheet', 'Administration', 'Users', 'Aliases', 'Templates', 'Alias requests', 'Receiving clients', 'Retention', 'Backups', 'Integration addresses', 'Large event settings'])
 				await expect(more.getByRole('link', { name: gone })).toHaveCount(0);
 			await page.screenshot({ path: info.outputPath(`a70-more-${role}.png`) });
@@ -6713,4 +6715,223 @@ test('A131 a garbled copy is shown with its differences marked', async ({ page, 
 		await expect(heard).toHaveText(full.replace('FROM', 'FR}M'));
 		await expect(heard.locator('mark')).toHaveText(['}']);
 	});
+});
+
+// A133 (R77c; owner, 2026-11-23): a new large event shows a dot. With the
+// server's answer stood in, at 1,280 px: the Large events entry and the
+// Tools heading, the group open and closed, and the shrunk menu's Tools icon
+// with its tooltip; at 375 px, More, and Tools and Large events in it. The
+// names say so, nothing scrolls sideways, and axe passes with the dot and
+// without. The answer itself is A133's API half
+// (internal/acceptance/a133_test.go).
+const NEW_EVENT = { name: 'Large events, new in the last 4 hours', tools: 'Tools, new large event', more: 'More, new large event' };
+
+/** Stands in the server's answer for the dot: on or off, for an hour. */
+async function standInDot(page: Page, on: boolean) {
+	const now = new Date();
+	const state = JSON.stringify(on ? { new: true, until: new Date(now.getTime() + 3600_000).toISOString(), now: now.toISOString() } : { new: false, now: now.toISOString() });
+	await page.route('**/api/v1/me/new-large-event/stream', (r) =>
+		r.fulfill({ status: 200, headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' }, body: `retry: 3000\n\nevent: state\ndata: ${state}\n\n` })
+	);
+	await page.route('**/api/v1/me/new-large-event', (r) => r.fulfill({ json: JSON.parse(state) }));
+}
+
+/** The dot's fill against what it's drawn on: the nearest ancestor with a background. */
+async function dotContrast(dot: Locator): Promise<number> {
+	const c = await dot.evaluate((el) => {
+		const fill = getComputedStyle(el).backgroundColor;
+		let on = 'rgb(255, 255, 255)';
+		for (let p = el.parentElement; p; p = p.parentElement) {
+			const bg = getComputedStyle(p).backgroundColor;
+			const a = bg.match(/rgba\([^)]*,\s*([\d.]+)\)$/);
+			if (bg !== 'transparent' && !(a && Number(a[1]) === 0)) {
+				on = bg;
+				break;
+			}
+		}
+		return { fill, on };
+	});
+	const rgb = (s: string) => {
+		const n = s.match(/[\d.]+/g)!.slice(0, 3).map(Number);
+		return s.startsWith('color(srgb') ? n.map((v) => v * 255) : n;
+	};
+	const lum = (x: number[]) => x.map((v) => v / 255).map((v) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4)).reduce((s, v, i) => s + v * [0.2126, 0.7152, 0.0722][i], 0);
+	const [x, y] = [lum(rgb(c.fill)), lum(rgb(c.on))].sort((p, q) => q - p);
+	return (x + 0.05) / (y + 0.05);
+}
+
+test('A133 a new large event shows a dot in the menu', async ({ browser, request }, info) => {
+	test.setTimeout(240_000);
+	const report: string[] = [];
+	const failures: string[] = [];
+	const check = async (where: string, dot: Locator) => {
+		await expect(dot, where).toBeVisible();
+		const r = await dotContrast(dot);
+		report.push(`${where} ${r.toFixed(2)}:1`);
+		if (r < 3) failures.push(`${where}: the dot is ${r.toFixed(2)}:1, needs 3:1`);
+	};
+	const noSideScroll = async (page: Page, where: string) =>
+		expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${where}: sideways scroll`).toBeLessThanOrEqual(0);
+	for (const look of ['harbour', 'console'] as const) {
+		await setLook(request, 'user', look);
+		try {
+			for (const colorScheme of ['light', 'dark'] as const) {
+				const where = `${look === 'console' ? 'Console' : 'Harbour'}, ${colorScheme}`;
+				// 1,280 px: the entry and the heading, open and closed, and shrunk.
+				const page = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 }, colorScheme })).newPage();
+				await standInDot(page, true);
+				await page.goto('/');
+				await expect(page.locator('html')).toHaveAttribute('data-look', look);
+				const nav = page.getByRole('navigation', { name: 'Main' });
+				const entry = nav.getByRole('link', { name: NEW_EVENT.name, exact: true });
+				const tools = nav.getByRole('link', { name: NEW_EVENT.tools, exact: true });
+				await expect(entry).toBeVisible();
+				await expect(tools).toBeVisible();
+				await check(`${where}, 1280: Large events`, entry.locator('.dot'));
+				await check(`${where}, 1280: Tools`, tools.locator('.dot'));
+				// A dot, no number.
+				await expect(entry.locator('.dot')).toHaveText('');
+				await expect(tools.locator('.dot')).toHaveText('');
+				await noSideScroll(page, `${where}, 1280`);
+				if (look === 'harbour' && colorScheme === 'light') await page.screenshot({ path: info.outputPath('a133-dot-1280.png') });
+				expect(await axeOf(page), `${where}: axe, with the dot`).toEqual([]);
+				// The group closed: the heading still shows it.
+				await nav.getByRole('button', { name: 'Tools: hide its pages' }).click();
+				await expect(entry).toBeHidden();
+				await check(`${where}, 1280, Tools closed: Tools`, tools.locator('.dot'));
+				await nav.getByRole('button', { name: 'Tools: show its pages' }).click();
+				// Shrunk: on Tools' icon, its tooltip saying so.
+				await nav.getByRole('button', { name: 'Shrink menu' }).click();
+				const icon = nav.getByRole('link', { name: NEW_EVENT.tools, exact: true });
+				await check(`${where}, 1280, shrunk: Tools icon`, icon.locator('.dot'));
+				await icon.hover();
+				await expect(nav.locator('#menu-tools .fresh')).toHaveText('New large event, in the last 4 hours');
+				await expect(nav.locator('#menu-tools .flyhead')).toHaveText('Printing for training, capcodes with no alias, and large events');
+				await check(`${where}, 1280, shrunk panel: Large events`, nav.getByRole('link', { name: NEW_EVENT.name, exact: true }).locator('.dot'));
+				if (look === 'harbour' && colorScheme === 'light') await page.screenshot({ path: info.outputPath('a133-dot-shrunk.png') });
+				expect(await axeOf(page), `${where}: axe, shrunk, with the dot`).toEqual([]);
+				await nav.getByRole('button', { name: 'Widen the menu' }).click();
+				await page.context().close();
+
+				// 375 px: More, and Tools and Large events in it.
+				const phone = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 740 }, hasTouch: true, colorScheme })).newPage();
+				await standInDot(phone, true);
+				await phone.goto('/');
+				const bar = phone.getByRole('navigation', { name: 'Main' });
+				const more = bar.getByRole('button', { name: NEW_EVENT.more, exact: true });
+				await check(`${where}, 375: More`, more.locator('.dot'));
+				await noSideScroll(phone, `${where}, 375`);
+				await more.click();
+				const dialog = phone.getByRole('dialog', { name: 'More' });
+				await check(`${where}, 375, More: Tools`, dialog.locator('h3').filter({ has: phone.getByRole('link', { name: NEW_EVENT.tools, exact: true }) }).locator('.dot'));
+				await check(`${where}, 375, More: Large events`, dialog.getByRole('link', { name: NEW_EVENT.name, exact: true }).locator('.dot'));
+				if (look === 'harbour' && colorScheme === 'light') await phone.screenshot({ path: info.outputPath('a133-dot-375.png') });
+				expect(await axeOf(phone), `${where}: axe at 375 px, with the dot`).toEqual([]);
+				await phone.context().close();
+
+				// Without the dot: none drawn, the names plain, axe clean.
+				const plain = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 }, colorScheme })).newPage();
+				await standInDot(plain, false);
+				await plain.goto('/');
+				const pnav = plain.getByRole('navigation', { name: 'Main' });
+				await expect(pnav.getByRole('link', { name: 'Large events', exact: true })).toBeVisible();
+				await expect(pnav.getByRole('link', { name: 'Tools', exact: true })).toBeVisible();
+				await expect(pnav.locator('.dot')).toHaveCount(0);
+				expect(await axeOf(plain), `${where}: axe, without the dot`).toEqual([]);
+				await plain.context().close();
+			}
+		} finally {
+			await setLook(request, 'user', 'harbour');
+		}
+	}
+	console.log(`A133 (${info.project.name}): ${report.join('; ')}`);
+	expect(failures).toEqual([]);
+});
+
+// A133, live: with a second tab open, an event that opens shows the dot in
+// both without a reload, and opening the Large events page in one takes it
+// away in both (the server keeps what the user has seen).
+test('A133 the dot is live in two tabs', async ({ browser, request }) => {
+	// Earlier tests' pages may have opened an event within 12 hours: start
+	// from none, so this one opens here.
+	sql('DELETE FROM large_events;');
+	const ctx = await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } });
+	const [one, two] = [await ctx.newPage(), await ctx.newPage()];
+	await Promise.all([one.goto('/'), two.goto('/')]);
+	await Promise.all([waitLive(one), waitLive(two)]);
+	const seen = await request.post(`${URL}/api/v1/me/large-events-seen`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	expect(seen.status()).toBe(200);
+	const nav = (p: Page) => p.getByRole('navigation', { name: 'Main' });
+	const entry = (p: Page) => nav(p).getByRole('link', { name: NEW_EVENT.name, exact: true });
+	for (const p of [one, two]) await expect(nav(p).locator('.dot')).toHaveCount(0);
+	const n = ['chromium', 'firefox', 'webkit'].indexOf(test.info().project.name) + 1;
+	const start = Date.now();
+	await post(request, '0100001', `@@${uniqueJob()} GRS3 DG93${n}1 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1`);
+	for (const p of [one, two]) await expect(entry(p)).toBeVisible({ timeout: 5000 });
+	console.log(`A133 (live): the dot showed in both tabs ${Date.now() - start} ms after the page that opened the event`);
+	await expect(nav(two).getByRole('link', { name: NEW_EVENT.tools, exact: true })).toBeVisible();
+	await entry(one).click();
+	await expect(one.getByRole('heading', { level: 1, name: 'Large events' })).toBeVisible();
+	for (const p of [one, two]) await expect(nav(p).locator('.dot')).toHaveCount(0, { timeout: 5000 });
+	await ctx.close();
+});
+
+// A134 (R87c, R88b; owner, 2026-11-23): a large event's areas. The example
+// profile's two made-up layers; an event of pages at 3 FICTION ST, MADEUPTON
+// (Zone A, Region North) and one at 4 FICTION ST, TESTVILLE (in none), 14
+// hours apart. At 1,280 and 375 px, light and dark. (With no layers, no areas
+// anywhere: A134's API half, internal/acceptance/a134_test.go.)
+test('A134 a large event shows its areas', async ({ browser, request }, info) => {
+	test.setTimeout(180_000);
+	sql('DELETE FROM large_events;');
+	const n = ['chromium', 'firefox', 'webkit'].indexOf(info.project.name) + 1;
+	const t0 = Date.now() - 14 * 3600_000;
+	const at = (ms: number) => new Date(t0 + ms).toISOString();
+	const [j1, j2, j3] = [uniqueJob(), uniqueJob(), uniqueJob()];
+	await postAt(request, '0100001', `@@${j1} GRS3 DG94${n}1 GRASS FIRE @ 3 FICTION ST, MADEUPTON #STN1`, at(0));
+	await postAt(request, '0100002', `@@${j1} HSF1 SMOKE FROM ROOF @ 3 FICTION ST, MADEUPTON #STN2`, at(60_000));
+	await postAt(request, '0100003', `@@${j2} GRS3 DG94${n}2 GRASS FIRE @ 4 FICTION ST, TESTVILLE #STN3`, new Date().toISOString());
+	const events = (await (await request.get(`${URL}/api/v1/large-events`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } })).json()).events as { id: number }[];
+	expect(events).toHaveLength(2);
+	const [second, first] = events;
+	const tags = (l: Locator) => l.locator('li');
+	let joined = false;
+	for (const width of [1280, 375]) {
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const where = `${width} px, ${colorScheme}`;
+			const page = await (await signedIn(browser, 'user', { viewport: { width, height: 900 }, colorScheme, hasTouch: width < 768 })).newPage();
+			await page.goto('/large-events');
+			const card = (id: number) => page.locator(`[data-event-id="${id}"]`);
+			await expect(card(first.id)).toBeVisible();
+			const want = joined ? ['Zone A', 'Zone B', 'Region North'] : ['Zone A', 'Region North'];
+			await expect(tags(card(first.id).getByTestId('event-areas')), where).toHaveText(want);
+			await expect(card(second.id).getByTestId('event-areas')).toHaveCount(0);
+			await expect(card(second.id)).not.toContainText(/unknown/i);
+			expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${where}: sideways scroll`).toBeLessThanOrEqual(0);
+			await page.screenshot({ path: info.outputPath(`a134-list-${width}-${colorScheme}.png`) });
+			expect(await axeOf(page), `${where}: axe, Large events`).toEqual([]);
+
+			await page.goto(`/large-events/${first.id}`);
+			await waitLive(page);
+			const areas = page.getByTestId('event-areas');
+			await expect(tags(areas), where).toHaveText(want);
+			// Each tag edged as its layer is outlined: zones solid, regions dashed.
+			await expect(areas.locator('li[data-layer="zones"]').first()).toHaveCSS('border-top-style', 'solid');
+			await expect(areas.locator('li[data-layer="regions"]')).toHaveCSS('border-top-style', 'dashed');
+			if (!joined) {
+				// A page at 5 EXAMPLE ST (Zone B, Region North) joins it: its
+				// view follows without a reload, Region North once.
+				await postAt(request, '0100004', `@@${j3} GRS3 DG94${n}3 GRASS FIRE @ 5 EXAMPLE ST, MADEUPTON #STN4`, at(120_000));
+				await expect(tags(areas), `${where}: after the page joined`).toHaveText(['Zone A', 'Zone B', 'Region North'], { timeout: 5000 });
+				joined = true;
+			}
+			await page.screenshot({ path: info.outputPath(`a134-event-${width}-${colorScheme}.png`) });
+			expect(await axeOf(page), `${where}: axe, the event's view`).toEqual([]);
+			await page.goto(`/large-events/${second.id}`);
+			await expect(page.getByTestId('event-about')).toBeVisible();
+			await expect(page.getByTestId('event-areas')).toHaveCount(0);
+			await expect(page.getByTestId('event-about')).not.toContainText(/unknown/i);
+			await page.context().close();
+		}
+	}
 });

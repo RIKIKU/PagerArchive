@@ -620,6 +620,22 @@ FROM (SELECT id, seen_release FROM users WHERE id = sqlc.arg(id)::bigint FOR UPD
 WHERE u.id = before.id AND u.status <> 'deleted' AND u.seen_release IS DISTINCT FROM sqlc.arg(version)::text
 RETURNING before.seen_release;
 
+-- name: SeeLargeEvents :exec
+-- R77c: the user opened the Large events page at at. Never moved back.
+UPDATE users SET seen_large_events = GREATEST(seen_large_events, sqlc.arg(at)::timestamptz)
+WHERE id = sqlc.arg(id)::bigint AND status <> 'deleted';
+
+-- name: NewLargeEventStart :one
+-- R77c: the start of the newest event new to the user: it started after
+-- since (4 hours ago), and opened after they last opened the Large events
+-- page. No row: none is new. Read on large_events_first_idx, newest first.
+SELECT e.first_at FROM large_events e
+WHERE e.first_at > sqlc.arg(since)::timestamptz
+  AND COALESCE(e.opened_at, e.created_at) > COALESCE(
+      (SELECT u.seen_large_events FROM users u WHERE u.id = sqlc.arg(user_id)::bigint), '-infinity'::timestamptz)
+ORDER BY e.first_at DESC, e.id DESC
+LIMIT 1;
+
 -- name: ClearUserSubject :exec
 UPDATE users SET subject = NULL WHERE id = $1;
 
@@ -1586,8 +1602,9 @@ ORDER BY id;
 
 -- name: CreateLargeEvent :one
 -- R87d: the only place an event begins, so the only time its integrations
--- are told.
-INSERT INTO large_events (first_at, last_at) VALUES (sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz)
+-- are told. opened_at is when it opened in the archive (R77c).
+INSERT INTO large_events (first_at, last_at, opened_at)
+VALUES (sqlc.arg(at)::timestamptz, sqlc.arg(at)::timestamptz, sqlc.arg(opened_at)::timestamptz)
 RETURNING *;
 
 -- name: MergeLargeEvents :exec
@@ -1603,7 +1620,10 @@ WITH others AS (
 ), kept AS (
     UPDATE large_events e SET
         first_at = LEAST(e.first_at, (SELECT min(first_at) FROM others)),
-        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others))
+        last_at = GREATEST(e.last_at, (SELECT max(last_at) FROM others)),
+        -- R77c: the newer opening, so a merge of events a user saw shows
+        -- them nothing new, and one with an event they hadn't seen still does.
+        opened_at = GREATEST(COALESCE(e.opened_at, e.created_at), (SELECT max(COALESCE(opened_at, created_at)) FROM others))
     WHERE e.id = sqlc.arg(id)::bigint
 )
 SELECT 1;
@@ -1675,6 +1695,14 @@ FROM (SELECT lem.event_id, min(m.sent_at) AS first_at, max(m.sent_at) AS last_at
       GROUP BY lem.event_id) s
 WHERE s.event_id = e.id AND (e.first_at <> s.first_at OR e.last_at <> s.last_at);
 
+-- name: LargeEventsAreas :many
+-- R87c, R88b: the areas the pages of these events are in, each layer's: one
+-- query for a whole page of the Large events list, or for one event's view.
+SELECT DISTINCT lem.event_id, ma.layer, ma.area
+FROM large_event_messages lem JOIN message_areas ma ON ma.message_id = lem.message_id
+WHERE lem.event_id = ANY(sqlc.arg(event_ids)::bigint[])
+ORDER BY lem.event_id, ma.layer, ma.area;
+
 -- name: LargeEventPages :one
 -- R87c, R87d: how many Emergency pages an event holds (all its pages count, R87).
 SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1;
@@ -1685,8 +1713,9 @@ SELECT count(*)::bigint FROM large_event_messages WHERE event_id = $1;
 
 -- name: RegroupEventsNear :many
 -- The events pages sent between lo and hi could join (R87a): from 12 hours
--- before an event's first page to 12 hours after its last. Oldest first.
-SELECT id, first_at, last_at FROM large_events
+-- before an event's first page to 12 hours after its last. Oldest first,
+-- with when each opened (R77c).
+SELECT id, first_at, last_at, COALESCE(opened_at, created_at)::timestamptz AS opened_at FROM large_events
 WHERE last_at >= sqlc.arg(lo)::timestamptz - interval '12 hours'
   AND first_at <= sqlc.arg(hi)::timestamptz + interval '12 hours'
 ORDER BY id;
@@ -1737,8 +1766,9 @@ ON CONFLICT (message_id) DO UPDATE SET event_id = EXCLUDED.event_id;
 DELETE FROM large_event_messages WHERE message_id = ANY(sqlc.arg(message_ids)::bigint[]);
 
 -- name: PutLargeEventSpan :exec
--- A rebuilt event's first and last pages' times.
-UPDATE large_events SET first_at = sqlc.arg(first_at)::timestamptz, last_at = sqlc.arg(last_at)::timestamptz
+-- A rebuilt event's first and last pages' times, and when it opened (R77c).
+UPDATE large_events SET first_at = sqlc.arg(first_at)::timestamptz, last_at = sqlc.arg(last_at)::timestamptz,
+    opened_at = sqlc.arg(opened_at)::timestamptz
 WHERE id = sqlc.arg(id)::bigint;
 
 -- name: RehomeEventDeliveries :execrows

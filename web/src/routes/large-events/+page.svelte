@@ -1,10 +1,14 @@
 <script lang="ts">
 	// R87c: large events, newest first: their first and last pages, and how
 	// many jobs and Emergency pages they hold (no levels or codes; owner,
-	// 2026-11-13). Every signed-in user sees them, as they see the pages.
+	// 2026-11-13), and the areas their pages are in (R87c, R88b). Every signed-in
+	// user sees them, as they see the pages. Opening it clears the side menu's
+	// new-large-event dot, on every device (R77c).
 	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
 	import { dateTime, isoAttr } from '#lib/format.ts';
+	import AreaTags from '#lib/AreaTags.svelte';
 	import Icon from '#lib/Icon.svelte';
+	import { seeLargeEvents } from '#lib/largeEventDot.svelte.ts';
 	import { span, numbers } from '#lib/largeEvents.ts';
 
 	let meta: Meta | undefined = $state();
@@ -30,6 +34,7 @@
 		}
 	}
 	load();
+	seeLargeEvents();
 </script>
 
 <svelte:head><title>Large events · PagerArchive</title></svelte:head>
@@ -57,6 +62,7 @@
 						</span>
 					</span>
 					<span class="numbers">{numbers(ev)}</span>
+					<AreaTags {meta} areas={ev.areas ?? []} label="Areas, from where its pages were placed" testid="event-areas" />
 				</a>
 			</li>
 		{/each}
@@ -133,5 +139,9 @@
 	.numbers {
 		color: var(--muted);
 		font-size: var(--text-sm);
+	}
+	/* R87c: its areas on a line of their own. */
+	.card > :global(.areas) {
+		flex-basis: 100%;
 	}
 </style>

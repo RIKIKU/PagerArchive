@@ -284,6 +284,12 @@ func cmpID(a, b int64) int {
 // Regrouper rebuilds large events in the database.
 type Regrouper struct {
 	Network *profile.Network
+	// Now is the clock an event a rebuild makes from pages in no event opens
+	// by (R77c); nil is time.Now.
+	Now func() time.Time
+	// Opened, if set, is told after a batch that opened such an event is
+	// committed, so the side menu's new-event dot can show it live (R77c).
+	Opened func()
 }
 
 // Rebuilt says what a rebuild did. It never holds page text.
@@ -292,6 +298,10 @@ type Rebuilt struct {
 	Pages   int // pages that count, read and grouped
 	Events  int // events the rebuilt spans hold afterwards
 	Created int // new events
+	// Opened is the new events made only from pages in no event before: they
+	// open now (R77c). The others hold pages of events that opened before,
+	// and open when the newest of those did.
+	Opened  int
 	Deleted int // events that went
 	Moved   int // pages put into, moved between or taken out of events
 	// Longest is the longest batch's transaction, which holds the large
@@ -309,8 +319,12 @@ func (r *Regrouper) Rebuild(ctx context.Context, st *store.Store, a *Affected) (
 	var out Rebuilt
 	for _, s := range a.Spans() {
 		start := time.Now()
+		opened := out.Opened
 		if err := st.InTx(ctx, func(q *db.Queries) error { return r.rebuild(ctx, q, s, &out) }); err != nil {
 			return out, err
+		}
+		if out.Opened > opened && r.Opened != nil {
+			r.Opened()
 		}
 		out.Batches++
 		out.Longest = max(out.Longest, time.Since(start))
@@ -393,21 +407,44 @@ func (r *Regrouper) rebuild(ctx context.Context, q *db.Queries, s Span, out *Reb
 	// New events never fire (R87d's integrations hear only of events live
 	// ingest opens): CreateLargeEvent is called here without Fire.
 	spans := map[int64]Span{}
+	openedAt := map[int64]time.Time{}
 	for _, e := range near {
 		spans[e.ID] = Span{e.FirstAt, e.LastAt}
+		openedAt[e.ID] = e.OpenedAt
+	}
+	now := time.Now
+	if r.Now != nil {
+		now = r.Now
 	}
 	will := map[int64]int64{}
 	for i, g := range groups {
+		// R77c: a rebuilt event opened when the newest of the events whose
+		// pages it holds did, whatever its ID now: a user who saw them all
+		// has seen it, and a rebuild never brings the dot back. Only one
+		// made wholly of pages that were in no event opens now.
+		var opened time.Time
+		for _, p := range g.Pages {
+			if old, ok := was[p]; ok && openedAt[old].After(opened) {
+				opened = openedAt[old]
+			}
+		}
+		fresh := opened.IsZero()
+		if fresh {
+			opened = now()
+		}
 		if ids[i] == 0 {
-			ev, err := q.CreateLargeEvent(ctx, g.First)
+			ev, err := q.CreateLargeEvent(ctx, db.CreateLargeEventParams{At: g.First, OpenedAt: opened})
 			if err != nil {
 				return err
 			}
 			ids[i] = ev.ID
 			out.Created++
+			if fresh {
+				out.Opened++
+			}
 		}
-		if was, ok := spans[ids[i]]; !ok || !was.From.Equal(g.First) || !was.To.Equal(g.Last) {
-			if err := q.PutLargeEventSpan(ctx, db.PutLargeEventSpanParams{ID: ids[i], FirstAt: g.First, LastAt: g.Last}); err != nil {
+		if was, ok := spans[ids[i]]; !ok || !was.From.Equal(g.First) || !was.To.Equal(g.Last) || !openedAt[ids[i]].Equal(opened) {
+			if err := q.PutLargeEventSpan(ctx, db.PutLargeEventSpanParams{ID: ids[i], FirstAt: g.First, LastAt: g.Last, OpenedAt: opened}); err != nil {
 				return err
 			}
 		}

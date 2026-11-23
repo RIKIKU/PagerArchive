@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -33,6 +34,9 @@ type LargeEvent struct {
 	Jobs           int64 `json:"jobs"`
 	// The event's own view only: its job numbers, by first page.
 	JobList []string `json:"job_list,omitempty"`
+	// Areas are every area of every layer its pages are in (R87c, R88b),
+	// in the profile's order and by name; none when they're in none.
+	Areas []AreaRef `json:"areas"`
 }
 
 // LargeEventPage is one page of the Large events list, newest first.
@@ -69,8 +73,23 @@ func (s *Server) listLargeEvents(w http.ResponseWriter, r *http.Request) {
 		last := rows[len(rows)-1]
 		out.Next = search.EncodeCursor(search.Cursor{SentAt: last.FirstAt, ID: last.ID})
 	}
+	ids := make([]int64, 0, len(rows))
 	for _, e := range rows {
 		out.Events = append(out.Events, LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(), EmergencyPages: e.Pages, Jobs: e.Jobs})
+		ids = append(ids, e.ID)
+	}
+	// R87c: the areas of the whole page of events, in one query.
+	areas, err := s.eventAreas(r.Context(), ids)
+	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
+		s.Log.Error("large events: areas", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	for i := range out.Events {
+		out.Events[i].Areas = areas[out.Events[i].ID]
 	}
 	writeJSON(w, http.StatusOK, out)
 }
@@ -96,6 +115,10 @@ func (s *Server) getLargeEvent(w http.ResponseWriter, r *http.Request) {
 	if err == nil {
 		pages, err = s.Store.LargeEventPages(ctx, id)
 	}
+	var areas map[int64][]AreaRef
+	if err == nil {
+		areas, err = s.eventAreas(ctx, []int64{id})
+	}
 	if err != nil {
 		if s.abandoned(w, r, err) {
 			return
@@ -104,7 +127,7 @@ func (s *Server) getLargeEvent(w http.ResponseWriter, r *http.Request) {
 		problem(w, http.StatusInternalServerError, "lookup failed")
 		return
 	}
-	out := LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(), EmergencyPages: pages, Jobs: int64(len(jobs)), JobList: []string{}}
+	out := LargeEvent{ID: e.ID, Start: e.FirstAt.UTC(), End: e.LastAt.UTC(), EmergencyPages: pages, Jobs: int64(len(jobs)), JobList: []string{}, Areas: areas[id]}
 	for _, j := range jobs {
 		out.JobList = append(out.JobList, j.JobNumber)
 	}
@@ -195,4 +218,57 @@ func (s *Server) putLargeEventSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	s.Log.Info("large event threshold changed", "by", currentUser(r).ID, "job_pages", req.JobPages)
 	writeJSON(w, http.StatusOK, req)
+}
+
+// eventAreas are the areas each of these events' pages are in (R87c, R88b),
+// as a job's are: one query however many events. Every event asked for has
+// a list, empty when its pages are in no area or the profile has no layers.
+func (s *Server) eventAreas(ctx context.Context, ids []int64) (map[int64][]AreaRef, error) {
+	out := make(map[int64][]AreaRef, len(ids))
+	for _, id := range ids {
+		out[id] = []AreaRef{}
+	}
+	if len(s.shownAreas()) == 0 || len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.Store.LargeEventsAreas(ctx, ids)
+	if err != nil {
+		return nil, store.SafeErr("", err)
+	}
+	for _, r := range rows {
+		out[r.EventID] = append(out[r.EventID], AreaRef{Layer: r.Layer, Name: r.Area})
+	}
+	for id, refs := range out {
+		out[id] = s.sortRefs(refs)
+	}
+	return out, nil
+}
+
+// getLargeEventAreas is an event's areas alone, which its view asks for
+// again as pages join (R87c, as a job's view does, R88b).
+func (s *Server) getLargeEventAreas(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id < 1 {
+		problem(w, http.StatusNotFound, "no such large event")
+		return
+	}
+	ctx := r.Context()
+	_, err = s.Store.LargeEventByID(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		problem(w, http.StatusNotFound, "no such large event")
+		return
+	}
+	var areas map[int64][]AreaRef
+	if err == nil {
+		areas, err = s.eventAreas(ctx, []int64{id})
+	}
+	if err != nil {
+		if s.abandoned(w, r, err) {
+			return
+		}
+		s.Log.Error("large event areas", "error", store.SafeError(err))
+		problem(w, http.StatusInternalServerError, "lookup failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, JobAreas{Areas: areas[id]})
 }

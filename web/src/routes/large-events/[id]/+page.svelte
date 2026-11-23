@@ -4,7 +4,8 @@
 	// pages like the message list (P1, P2: the full text, as stored), with the
 	// scrubber over its days (R81b) and live updates as pages join.
 	import { page } from '$app/state';
-	import { api, type LargeEvent, type Meta } from '#lib/api.ts';
+	import { api, type AreaRef, type LargeEvent, type Meta } from '#lib/api.ts';
+	import AreaTags from '#lib/AreaTags.svelte';
 	import { dateTime, isoAttr } from '#lib/format.ts';
 	import { setTitle } from '#lib/here.svelte.ts';
 	import { numbers, span } from '#lib/largeEvents.ts';
@@ -25,12 +26,28 @@
 			.largeEvent(want)
 			.then((e) => {
 				ev = e;
+				areas = e.areas;
 				error = '';
 			})
 			.catch((e) => {
 				ev = undefined;
 				error = e.status === 404 ? 'There’s no such large event. Retention may have deleted its pages.' : e.message;
 			});
+	});
+	// R87c, R88b: the areas its pages are in, above them, asked again as
+	// pages join (a new page may be in another), as a job's view does.
+	let count = $state(0);
+	let areas: AreaRef[] = $state([]);
+	$effect(() => {
+		void count;
+		const asked = id;
+		if (!meta?.areas?.length) return;
+		api
+			.largeEventAreas(asked)
+			.then((a) => {
+				if (asked === id) areas = a.areas;
+			})
+			.catch(() => {});
 	});
 	const title = $derived(ev && meta ? `Large event, ${dateTime(ev.start, tz)}` : '');
 	$effect(() => {
@@ -43,8 +60,9 @@
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 {#if ev && meta}
 	<div class="event">
-		<MessageList {query} base={{ event: String(ev.id), ignored: 'true' }} title={title}>
+		<MessageList {query} base={{ event: String(ev.id), ignored: 'true' }} title={title} bind:count>
 			<div class="about" data-testid="event-about">
+				<AreaTags {meta} {areas} label="Areas, from where its pages were placed" testid="event-areas" />
 				<p class="numbers">{numbers(ev)}</p>
 				<dl>
 					<dt>First page</dt>
@@ -78,6 +96,9 @@
 	}
 	.about p {
 		margin: 0 0 var(--space-xs);
+	}
+	.about > :global(.areas) {
+		margin-bottom: var(--space-sm);
 	}
 	.when {
 		font-weight: var(--weight-strong);

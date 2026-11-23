@@ -4,11 +4,20 @@
 	// print sheet, Administration). They still open from a link or bookmark.
 	// At the bottom of More, the build's version, as at the foot of the side
 	// menu (owner, 2026-11-14). The "New release" notice lands on More (R77b).
+	// R77c: while a large event is new to the user, a dot on More, on Tools and
+	// on Large events, where it's reached on a phone.
 	import Icon from './Icon.svelte';
 	import { releaseHref } from './release.ts';
 	import { entryOf, visible } from './nav.ts';
 
-	let { path, admin, listHref, mapHref, version }: { path: string; admin: boolean; listHref: string; mapHref: string; version: string } = $props();
+	let {
+		path,
+		admin,
+		listHref,
+		mapHref,
+		newEvent = false,
+		version
+	}: { path: string; admin: boolean; listHref: string; mapHref: string; newEvent?: boolean; version: string } = $props();
 
 	let dialog: HTMLDialogElement;
 	let more = $state(false);
@@ -36,8 +45,16 @@
 		<li><a href={mapHref} aria-current={path === '/map' ? 'page' : undefined}><Icon name="map" /><span>Map</span></a></li>
 		<li><a href="/albums" aria-current={onAlbums ? 'page' : undefined}><Icon name="albums" /><span>Albums</span></a></li>
 		<li>
-			<button type="button" aria-haspopup="dialog" aria-expanded={more} aria-current={inMore ? 'page' : undefined} data-release-target onclick={show}
-				><Icon name="more" /><span>More</span></button
+			<button
+				type="button"
+				aria-haspopup="dialog"
+				aria-expanded={more}
+				aria-current={inMore ? 'page' : undefined}
+				aria-label={newEvent ? 'More, new large event' : undefined}
+				data-new-event={newEvent ? '' : undefined}
+				data-release-target
+				onclick={show}
+				><span class="spot"><Icon name="more" />{#if newEvent}<span class="dot" aria-hidden="true"></span>{/if}</span><span>More</span></button
 			>
 		</li>
 	</ul>
@@ -49,10 +66,23 @@
 		<button class="ghost" type="button" onclick={hide}><Icon name="close" />Close</button>
 	</div>
 	{#each groups as g (g.id)}
-		<h3><Icon name={g.icon} /><a href={g.href} onclick={hide}>{g.label}</a></h3>
+		{@const dot = g.id === 'tools' && newEvent}
+		<h3>
+			<Icon name={g.icon} /><a href={g.href} onclick={hide} aria-label={dot ? `${g.label}, new large event` : undefined} data-new-event={dot ? '' : undefined}>{g.label}</a
+			>{#if dot}<span class="dot" aria-hidden="true"></span>{/if}
+		</h3>
 		<ul>
 			{#each g.entries as e (e.href)}
-				<li><a href={e.href} onclick={hide} aria-current={entryOf(path)?.entry === e ? 'page' : undefined}><Icon name={e.icon} />{e.label}</a></li>
+				{@const dot = e.href === '/large-events' && newEvent}
+				<li>
+					<a
+						href={e.href}
+						onclick={hide}
+						aria-current={entryOf(path)?.entry === e ? 'page' : undefined}
+						aria-label={dot ? `${e.label}, new in the last 4 hours` : undefined}
+						data-new-event={dot ? '' : undefined}><Icon name={e.icon} />{e.label}{#if dot}<span class="dot" aria-hidden="true"></span>{/if}</a
+					>
+				</li>
 			{/each}
 		</ul>
 	{/each}
@@ -105,6 +135,26 @@
 	}
 	.version a {
 		color: inherit;
+	}
+	/* R77c: the new-large-event dot, in the side menu's strong style. */
+	.dot {
+		flex: none;
+		width: var(--badge-dot-size);
+		height: var(--badge-dot-size);
+		border-radius: var(--radius-pill);
+		background: var(--accent);
+	}
+	.more li .dot {
+		margin-left: auto;
+	}
+	.spot {
+		position: relative;
+		display: inline-flex;
+	}
+	.spot .dot {
+		position: absolute;
+		top: 0;
+		right: var(--space-xs);
 	}
 	.more ul {
 		margin: 0;
