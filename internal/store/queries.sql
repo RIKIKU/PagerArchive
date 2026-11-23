@@ -989,6 +989,48 @@ JOIN messages b ON b.capcode = a.capcode AND b.id <> a.id
  AND (b.sent_at > a.sent_at OR b.id > a.id)
 WHERE a.sent_at >= sqlc.arg(since)::timestamptz;
 
+-- name: DedupReportHeardBy :many
+-- R19b, measuring voting (ADR 0050): how many messages sent since a time
+-- each number of clients heard. Counts only.
+SELECT h.clients::int AS clients, count(*)::int AS messages
+FROM (
+  SELECT count(DISTINCT r.client_id) AS clients
+  FROM messages m
+  JOIN receptions r ON r.message_id = m.id
+  WHERE m.sent_at >= sqlc.arg(since)::timestamptz
+  GROUP BY m.id
+) h
+GROUP BY h.clients
+ORDER BY h.clients;
+
+-- name: DedupReportClientCopies :many
+-- R19b: how many of the messages sent since a time each client heard, to
+-- number the receivers by it. Client IDs never leave the command.
+SELECT r.client_id, count(DISTINCT r.message_id)::int AS copies
+FROM receptions r
+JOIN messages m ON m.id = r.message_id
+WHERE m.sent_at >= sqlc.arg(since)::timestamptz
+GROUP BY r.client_id;
+
+-- name: DedupReportCopies :many
+-- R19b: the messages sent since a time that three or more clients heard,
+-- a batch at a time after (after_sent, after_id), with each reception's
+-- own text (NULL: the message's). Neither text leaves the command (P1).
+WITH batch AS (
+  SELECT m.id
+  FROM messages m
+  WHERE m.sent_at >= sqlc.arg(since)::timestamptz
+    AND (m.sent_at, m.id) > (sqlc.arg(after_sent)::timestamptz, sqlc.arg(after_id)::bigint)
+    AND (SELECT count(DISTINCT r.client_id) FROM receptions r WHERE r.message_id = m.id) >= 3
+  ORDER BY m.sent_at, m.id
+  LIMIT sqlc.arg(batch)::int
+)
+SELECT m.id, m.sent_at, m.capcode, m.text AS message_text, m.heartbeat, r.client_id, r.text AS copy_text
+FROM batch b
+JOIN messages m ON m.id = b.id
+JOIN receptions r ON r.message_id = m.id
+ORDER BY m.sent_at, m.id, r.client_id, r.received_at;
+
 -- name: MessagesByIDs :many
 -- As MessagesToReparse, for the given messages: one whose text changed while it was re-parsed.
 SELECT m.id, m.capcode, m.text, m.priority, m.heartbeat, m.sent_at,

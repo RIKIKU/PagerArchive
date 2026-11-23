@@ -35,6 +35,46 @@ type Report struct {
 	// AtRatio is, for each of the ratios tried, how many kept pairs would be
 	// kept apart and how many close pairs would be merged.
 	AtRatio []ratioCount
+	// Heard is ADR 0050's "measuring voting": messages by how many clients
+	// heard them, and for those heard by three or more, how their copies
+	// differ and what a simulated vote (Vote) would do.
+	Heard Heard
+	// RedactionMarker is how a redaction shows in stored text
+	// (pipeline.Redacted), for the vote's redaction check.
+	RedactionMarker string
+}
+
+// Heard counts messages by the clients that heard them (dedup-report's
+// voting section). Counts only (P1).
+type Heard struct {
+	// ByClients: heard by 1, 2, 3, and 4 or more clients.
+	ByClients [4]int
+	// Of those heard by 3 or more: every copy the same; all but one the same;
+	// two texts split otherwise (2-2 and the like, 4 or more copies); 3 or
+	// more texts.
+	Identical, OneOdd, TwoSplit, ThreeOrMore int
+	// Vote is the simulated vote, for those whose copies differ.
+	Vote struct {
+		// Same: the voted text is the kept one's (cleaned). Differs: it isn't;
+		// of those, AsWell parse as well as the kept text or better, Worse
+		// parse worse, and Rescued are those whose kept text fails to parse
+		// and the voted one parses.
+		Same, Differs, AsWell, Worse, Rescued int
+		// Ties are the positions with no majority, per message.
+		Ties histogram
+		// Unredacted: voted texts that would hold something else where a copy
+		// holds a redaction marker.
+		Unredacted int
+	}
+	// Receivers, in order of copies heard (receiver 1 heard the most): the
+	// copies each heard, and how often its copy was the one that differs
+	// when all but one are the same. Indexes, never client IDs.
+	Receivers []Receiver
+}
+
+// Receiver is one client's counts, known by its index, never its ID.
+type Receiver struct {
+	Copies, OddOneOut int
 }
 
 type ratioCount struct {
@@ -54,6 +94,7 @@ func NewReport(ratio float64) *Report {
 	for _, t := range tryRatios {
 		r.AtRatio = append(r.AtRatio, ratioCount{Ratio: t})
 	}
+	r.Heard.Vote.Ties = tieBuckets()
 	return r
 }
 
@@ -135,6 +176,82 @@ func (r *Report) AddClose(a, b string, otherJob bool) {
 	}
 }
 
+// AddHeardBy counts messages heard by clients clients.
+func (r *Report) AddHeardBy(clients, messages int) {
+	if clients < 1 {
+		return
+	}
+	r.Heard.ByClients[min(clients, 4)-1] += messages
+}
+
+// AddReceiver adds the next receiver (in order of copies heard, the most
+// first) with the copies it heard.
+func (r *Report) AddReceiver(copies int) {
+	r.Heard.Receivers = append(r.Heard.Receivers, Receiver{Copies: copies})
+}
+
+// AddCopies counts a message heard by three or more clients: its text
+// (message, the copy kept), each client's copy (copies, as stored) and each
+// copy's receiver (receivers, indexes into Heard.Receivers). quality says
+// how a text parses, as R19a judges it.
+func (r *Report) AddCopies(message string, copies []string, receivers []int, quality func(text string) Quality) {
+	h := &r.Heard
+	count := map[string]int{}
+	for _, c := range copies {
+		count[c]++
+	}
+	switch len(count) {
+	case 1:
+		h.Identical++
+		return
+	case 2:
+		// Two texts: one copy differs (3-1, 2-1), or they split (2-2).
+		odd := -1
+		for i, c := range copies {
+			if count[c] == 1 {
+				odd = i
+			}
+		}
+		if odd >= 0 {
+			h.OneOdd++
+			if x := receivers[odd]; x >= 0 && x < len(h.Receivers) {
+				h.Receivers[x].OddOneOut++
+			}
+		} else {
+			h.TwoSplit++
+		}
+	default:
+		h.ThreeOrMore++
+	}
+	prefer := -1
+	for i, c := range copies {
+		if c == message {
+			prefer = i
+			break
+		}
+	}
+	v := Vote(copies, prefer, r.RedactionMarker)
+	vt := &h.Vote
+	vt.Ties.add(float64(v.Ties))
+	if v.Unredacted {
+		vt.Unredacted++
+	}
+	if v.Text == string(Clean(message)) {
+		vt.Same++
+		return
+	}
+	vt.Differs++
+	qk, qv := quality(message), quality(v.Text)
+	if qk.Better(qv) {
+		vt.Worse++
+	} else {
+		vt.AsWell++
+	}
+	if !qk.Matched && qv.Matched {
+		vt.Rescued++
+	}
+}
+
 // Write prints the report: counts and histograms only.
 func (r *Report) Write(w io.Writer) {
 	line := func(name string, n int) { fmt.Fprintf(w, "  %-58s %d\n", name, n) }
@@ -170,6 +287,37 @@ func (r *Report) Write(w io.Writer) {
 	for _, a := range r.AtRatio {
 		fmt.Fprintf(w, "  %-10.2f %-26d %d\n", a.Ratio, a.KeptApart, a.CloseMerged)
 	}
+
+	h := &r.Heard
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, "messages by how many clients heard them (measuring voting)")
+	line("heard by 1", h.ByClients[0])
+	line("heard by 2", h.ByClients[1])
+	line("heard by 3", h.ByClients[2])
+	line("heard by 4 or more", h.ByClients[3])
+	fmt.Fprintln(w, "of those heard by 3 or more")
+	line("every copy the same", h.Identical)
+	line("all but one the same (2 agree, 1 differs)", h.OneOdd)
+	line("two texts, split otherwise (4 or more copies)", h.TwoSplit)
+	line("3 or more texts", h.ThreeOrMore)
+	vt := &h.Vote
+	fmt.Fprintln(w, "a simulated vote, of those whose copies differ")
+	line("the vote gives the kept text", vt.Same)
+	line("the vote gives another text", vt.Differs)
+	line("  it parses as well as the kept text, or better", vt.AsWell)
+	line("  it parses worse", vt.Worse)
+	line("  the kept text fails to parse, the vote's parses", vt.Rescued)
+	vt.Ties.write(w, "positions with no majority, per message")
+	line("votes holding something else where a copy has REDACTED", vt.Unredacted)
+	fmt.Fprintln(w, "by receiver, in order of copies heard")
+	fmt.Fprintf(w, "  %-12s %-14s %s\n", "receiver", "copies heard", "the one that differs (2 agree, 1 differs)")
+	for i, x := range h.Receivers {
+		fmt.Fprintf(w, "  %-12d %-14d %d\n", i+1, x.Copies, x.OddOneOut)
+	}
+}
+
+func tieBuckets() histogram {
+	return histogram{bounds: []float64{0, 1, 3}, labels: []string{"0", "1", "2-3", "4 or more"}, counts: make([]int, 4)}
 }
 
 // histogram counts values into buckets, each up to and including its bound.

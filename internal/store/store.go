@@ -95,6 +95,15 @@ func (s *Store) InTx(ctx context.Context, fn func(*db.Queries) error) error {
 	})
 }
 
+// ReadOnly runs fn in a read-only transaction on one snapshot (repeatable
+// read), for a report: everything it reads is of one moment, and it can
+// write nothing.
+func (s *Store) ReadOnly(ctx context.Context, fn func(*db.Queries) error) error {
+	return pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly}, func(tx pgx.Tx) error {
+		return fn(s.Queries.WithTx(tx))
+	})
+}
+
 // SafeError describes a database error without its message text, which can
 // echo values (P1). PostgreSQL errors are reduced to their SQLSTATE.
 func SafeError(err error) string {

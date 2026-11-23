@@ -1975,6 +1975,41 @@ func (q *Queries) DeactivateUsers(ctx context.Context, ids []int64) ([]Deactivat
 	return items, nil
 }
 
+const dedupReportClientCopies = `-- name: DedupReportClientCopies :many
+SELECT r.client_id, count(DISTINCT r.message_id)::int AS copies
+FROM receptions r
+JOIN messages m ON m.id = r.message_id
+WHERE m.sent_at >= $1::timestamptz
+GROUP BY r.client_id
+`
+
+type DedupReportClientCopiesRow struct {
+	ClientID string
+	Copies   int32
+}
+
+// R19b: how many of the messages sent since a time each client heard, to
+// number the receivers by it. Client IDs never leave the command.
+func (q *Queries) DedupReportClientCopies(ctx context.Context, since time.Time) ([]DedupReportClientCopiesRow, error) {
+	rows, err := q.db.Query(ctx, dedupReportClientCopies, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedupReportClientCopiesRow
+	for rows.Next() {
+		var i DedupReportClientCopiesRow
+		if err := rows.Scan(&i.ClientID, &i.Copies); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const dedupReportCloseMessages = `-- name: DedupReportCloseMessages :many
 SELECT a.text AS first_text, b.text AS second_text, a.job_number AS first_job, b.job_number AS second_job
 FROM messages a
@@ -2009,6 +2044,116 @@ func (q *Queries) DedupReportCloseMessages(ctx context.Context, since time.Time)
 			&i.FirstJob,
 			&i.SecondJob,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dedupReportCopies = `-- name: DedupReportCopies :many
+WITH batch AS (
+  SELECT m.id
+  FROM messages m
+  WHERE m.sent_at >= $1::timestamptz
+    AND (m.sent_at, m.id) > ($2::timestamptz, $3::bigint)
+    AND (SELECT count(DISTINCT r.client_id) FROM receptions r WHERE r.message_id = m.id) >= 3
+  ORDER BY m.sent_at, m.id
+  LIMIT $4::int
+)
+SELECT m.id, m.sent_at, m.capcode, m.text AS message_text, m.heartbeat, r.client_id, r.text AS copy_text
+FROM batch b
+JOIN messages m ON m.id = b.id
+JOIN receptions r ON r.message_id = m.id
+ORDER BY m.sent_at, m.id, r.client_id, r.received_at
+`
+
+type DedupReportCopiesParams struct {
+	Since     time.Time
+	AfterSent time.Time
+	AfterID   int64
+	Batch     int32
+}
+
+type DedupReportCopiesRow struct {
+	ID          int64
+	SentAt      time.Time
+	Capcode     string
+	MessageText string
+	Heartbeat   bool
+	ClientID    string
+	CopyText    *string
+}
+
+// R19b: the messages sent since a time that three or more clients heard,
+// a batch at a time after (after_sent, after_id), with each reception's
+// own text (NULL: the message's). Neither text leaves the command (P1).
+func (q *Queries) DedupReportCopies(ctx context.Context, arg DedupReportCopiesParams) ([]DedupReportCopiesRow, error) {
+	rows, err := q.db.Query(ctx, dedupReportCopies,
+		arg.Since,
+		arg.AfterSent,
+		arg.AfterID,
+		arg.Batch,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedupReportCopiesRow
+	for rows.Next() {
+		var i DedupReportCopiesRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SentAt,
+			&i.Capcode,
+			&i.MessageText,
+			&i.Heartbeat,
+			&i.ClientID,
+			&i.CopyText,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const dedupReportHeardBy = `-- name: DedupReportHeardBy :many
+SELECT h.clients::int AS clients, count(*)::int AS messages
+FROM (
+  SELECT count(DISTINCT r.client_id) AS clients
+  FROM messages m
+  JOIN receptions r ON r.message_id = m.id
+  WHERE m.sent_at >= $1::timestamptz
+  GROUP BY m.id
+) h
+GROUP BY h.clients
+ORDER BY h.clients
+`
+
+type DedupReportHeardByRow struct {
+	Clients  int32
+	Messages int32
+}
+
+// R19b, measuring voting (ADR 0050): how many messages sent since a time
+// each number of clients heard. Counts only.
+func (q *Queries) DedupReportHeardBy(ctx context.Context, since time.Time) ([]DedupReportHeardByRow, error) {
+	rows, err := q.db.Query(ctx, dedupReportHeardBy, since)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []DedupReportHeardByRow
+	for rows.Next() {
+		var i DedupReportHeardByRow
+		if err := rows.Scan(&i.Clients, &i.Messages); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
