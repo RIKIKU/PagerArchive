@@ -103,18 +103,27 @@ type Fire func(ctx context.Context, q *db.Queries, eventID, messageID int64, sen
 type Detector struct {
 	Network *profile.Network
 	Fire    Fire // nil fires nothing
+	// Now is the clock an event opens by (R77c: a user who opened the Large
+	// events page after it has seen it); nil is time.Now.
+	Now func() time.Time
 }
 
 // Stored groups a newly stored page into a large event, if it opens or joins
 // one (R87, R87a), and fires the event's integrations when the page opens it
 // (R87d): only then, so each integration is told of an event once. A page
 // joining an event, or merging two, fires nothing. It runs in the ingest
-// transaction q. A page that doesn't count, with no code and no job, costs
-// nothing: no query is made for it.
-func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) error {
+// transaction q, and reports whether the page opened an event, for the live
+// new-event dot (R77c) once q commits. A page that doesn't count, with no
+// code and no job, costs nothing: no query is made for it.
+func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) (opened bool, err error) {
 	if d == nil || !p.Counts() {
-		return nil
+		return false, nil
 	}
+	err = d.store(ctx, q, p, &opened)
+	return opened && err == nil, err
+}
+
+func (d *Detector) store(ctx context.Context, q *db.Queries, p Page, opened *bool) error {
 	// A listed field value opens an event as a code does (R87).
 	coded := p.LargeEventField || HasCode(d.Network, p.Text)
 	if !coded && p.Job == nil {
@@ -166,9 +175,13 @@ func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) error {
 	// The event: the oldest it's near, with any others merged into it, or a
 	// new one.
 	var ev db.LargeEvent
-	opened := len(near) == 0
-	if opened {
-		if ev, err = q.CreateLargeEvent(ctx, p.SentAt); err != nil {
+	*opened = len(near) == 0
+	if *opened {
+		now := time.Now
+		if d.Now != nil {
+			now = d.Now
+		}
+		if ev, err = q.CreateLargeEvent(ctx, db.CreateLargeEventParams{At: p.SentAt, OpenedAt: now()}); err != nil {
 			return err
 		}
 	} else {
@@ -197,7 +210,7 @@ func (d *Detector) Stored(ctx context.Context, q *db.Queries, p Page) error {
 	if err := q.SetLargeEventSpan(ctx, span); err != nil {
 		return err
 	}
-	if opened && d.Fire != nil {
+	if *opened && d.Fire != nil {
 		return d.Fire(ctx, q, ev.ID, p.ID, p.SentAt)
 	}
 	return nil

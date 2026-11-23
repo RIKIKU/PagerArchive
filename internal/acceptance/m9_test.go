@@ -37,16 +37,29 @@ type event struct {
 // channel closes when the server ends the stream.
 func (e *env) sse(query string, cookie *http.Cookie, token string) <-chan event {
 	e.t.Helper()
+	before := e.srv.Hub.Len()
+	out := e.sseAt("/api/v1/stream?"+query, cookie, token)
+	// Subscribed once the hub has one more connection (or the stream ended
+	// straight away, which the caller sees as a closed channel).
+	for deadline := time.Now().Add(5 * time.Second); e.srv.Hub.Len() == before && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
+	return out
+}
+
+// sseAt opens a stream at path as cookie or token and returns its events;
+// the channel closes when the server ends the stream.
+func (e *env) sseAt(path string, cookie *http.Cookie, token string) <-chan event {
+	e.t.Helper()
 	ctx, cancel := context.WithCancel(e.ctx)
 	e.t.Cleanup(cancel)
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.url+"/api/v1/stream?"+query, nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, e.url+path, nil)
 	if cookie != nil {
 		req.AddCookie(cookie)
 	}
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
-	before := e.srv.Hub.Len()
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		e.t.Fatalf("stream: %v %v", err, resp)
@@ -79,11 +92,6 @@ func (e *env) sse(query string, cookie *http.Cookie, token string) <-chan event 
 			}
 		}
 	}()
-	// Subscribed once the hub has one more connection (or the stream ended
-	// straight away, which the caller sees as a closed channel).
-	for deadline := time.Now().Add(5 * time.Second); e.srv.Hub.Len() == before && time.Now().Before(deadline); {
-		time.Sleep(5 * time.Millisecond)
-	}
 	return out
 }
 

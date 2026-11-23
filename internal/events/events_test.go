@@ -122,12 +122,12 @@ func TestStoredSkipsWithoutQueries(t *testing.T) {
 		{ID: 7, Text: "@@ALARM 3", Priority: &em, AliasID: &alias, Heartbeat: true, LargeEventField: true},
 		{ID: 8, Text: "@@EX0000101 HSF1 FIRE @ SAMPLE RD, MADEUPTON ALARM 3 #STN1", Priority: &em, AliasID: &alias, Ignored: true, Job: ptr("EX0000101"), LargeEventField: true},
 	} {
-		if err := d.Stored(context.Background(), nil, p); err != nil {
+		if _, err := d.Stored(context.Background(), nil, p); err != nil {
 			t.Errorf("page %d: %v", p.ID, err)
 		}
 	}
 	var none *Detector
-	if err := none.Stored(context.Background(), nil, Page{}); err != nil {
+	if _, err := none.Stored(context.Background(), nil, Page{}); err != nil {
 		t.Error(err)
 	}
 }

@@ -336,10 +336,13 @@ func serve(stderr io.Writer) error {
 			}
 		}
 	}()
+	// Live updates (R32), and the side menu's new-large-event dot (R77c),
+	// which a rebuild that opens an event tells too.
+	hub := live.NewHub()
 	worker := &reparse.Worker{
 		Store: st, Network: net, Agencies: set.Agencies, Streets: ix, Geo: geocoder,
 		ProfileHash: hash, LegacyProfileHash: legacyHash, Log: log, Poll: time.Minute, Tracer: tracer,
-		Regroup: &events.Regrouper{Network: net},
+		Regroup: &events.Regrouper{Network: net, Opened: hub.EventOpened},
 	}
 	if err := worker.CheckProfiles(ctx); err != nil {
 		return fmt.Errorf("profile change check: %s", store.SafeError(err))
@@ -354,7 +357,6 @@ func serve(stderr io.Writer) error {
 	}
 	go redactor.Run(ctx)
 
-	hub := live.NewHub()
 	dir := &authentik.Client{URL: auth.authentikURL, Token: auth.apiToken, HTTP: auth.http}
 	acc := &accounts.Service{
 		Store: st, Dir: dir, AllowedDomains: auth.domains, InitialAdmin: auth.initialAdmin,
@@ -451,7 +453,7 @@ func serve(stderr io.Writer) error {
 			Geo:       geocoder,
 			OnStored:  integ.Enqueue,
 			Events:    &events.Detector{Network: net, Fire: integ.EnqueueEvent},
-			Regroup:   &events.Regrouper{Network: net},
+			Regroup:   &events.Regrouper{Network: net, Opened: hub.EventOpened},
 			NearRatio: nearRatio,
 			Log:       log,
 			Tracer:    tracer,

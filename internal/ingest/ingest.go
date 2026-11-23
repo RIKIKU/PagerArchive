@@ -83,6 +83,9 @@ type Result struct {
 	// Variants are the clients whose earlier copies now keep the message's
 	// old text, after a swap.
 	Variants []string
+	// EventOpened: the page opened a large event (R87), which the side menu's
+	// new-event dot is told of once it's committed (R77c).
+	EventOpened bool
 	// regroup is the sent time of a swapped message in a large event: the
 	// events around it are rebuilt once the page is committed (R87f).
 	regroup *time.Time
@@ -302,22 +305,23 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 	if err := record(id, nil); err != nil {
 		return Result{}, err
 	}
-	if err := s.stored(ctx, q, d, id, d.Params.SentAt); err != nil {
+	opened, err := s.stored(ctx, q, d, id, d.Params.SentAt)
+	if err != nil {
 		return Result{}, err
 	}
-	return Result{Outcome: Stored, MessageID: id}, nil
+	return Result{Outcome: Stored, MessageID: id, EventOpened: opened}, nil
 }
 
 // stored tells the integrations and the large events of a page stored as
 // message id, or of a message that took a better copy's text (R19a).
-func (s *Service) stored(ctx context.Context, q *db.Queries, d Draft, id int64, sentAt time.Time) error {
+func (s *Service) stored(ctx context.Context, q *db.Queries, d Draft, id int64, sentAt time.Time) (opened bool, err error) {
 	if s.OnStored != nil {
 		if err := s.OnStored(ctx, q, id); err != nil {
-			return err
+			return false, err
 		}
 	}
 	if s.Events == nil {
-		return nil
+		return false, nil
 	}
 	ectx, espan := telemetry.Or(s.Tracer).Start(ctx, "ingest.events")
 	defer espan.End()
@@ -441,7 +445,8 @@ func (s *Service) merge(ctx context.Context, q *db.Queries, d Draft, c db.NearCa
 		return res, nil
 	}
 	// In no event: the new text may open or join one, as a live page's would.
-	return res, s.stored(ctx, q, d, c.ID, sentAt)
+	res.EventOpened, err = s.stored(ctx, q, d, c.ID, sentAt)
+	return res, err
 }
 
 // agencyFor resolves a template's agency profile name (R3). nil means text

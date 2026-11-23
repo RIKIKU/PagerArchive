@@ -182,6 +182,7 @@ type LargeEvent struct {
 	FirstAt   time.Time
 	LastAt    time.Time
 	CreatedAt time.Time
+	OpenedAt  *time.Time
 }
 
 type LargeEventMessage struct {
@@ -417,4 +418,5 @@ type User struct {
 	SeenRelease         *string
 	Kind                string
 	CredentialExpiresAt *time.Time
+	SeenLargeEvents     *time.Time
 }

@@ -297,6 +297,8 @@ export interface LargeEvent {
 	jobs: number;
 	/** The event's own view only: its job numbers, by first page. */
 	job_list?: string[];
+	/** R87c, R88b: every area of every layer its pages are in, in the profile's order; none when in none. */
+	areas: AreaRef[];
 }
 
 export interface UnaliasedCapcode {
@@ -493,6 +495,13 @@ export interface Me {
 export interface ReleaseSeen {
 	version: string;
 	show: boolean;
+}
+
+/** R77c: whether the side menu shows the new-large-event dot, and when it goes by itself (by the server's clock, now). */
+export interface NewLargeEvent {
+	new: boolean;
+	until?: string;
+	now: string;
 }
 
 export interface Invitation {
@@ -842,6 +851,7 @@ export const api = {
 	// Large events (R87c).
 	largeEvents: (before?: string) => get<{ events: LargeEvent[]; next?: string }>(`/api/v1/large-events${before ? `?before=${encodeURIComponent(before)}` : ''}`),
 	largeEvent: (id: string | number) => get<LargeEvent>(`/api/v1/large-events/${encodeURIComponent(id)}`),
+	largeEventAreas: (id: string | number) => get<{ areas: AreaRef[] }>(`/api/v1/large-events/${encodeURIComponent(id)}/areas`),
 	largeEventSettings: () => get<{ job_pages: number }>('/api/v1/admin/large-events'),
 	setLargeEventSettings: (pages: number) =>
 		request<{ job_pages: number }>('PUT', '/api/v1/admin/large-events', { job_pages: pages }),
@@ -909,6 +919,8 @@ export const api = {
 	setLook: (look: Look) => request<Me>('PATCH', '/api/v1/me', { look }).then((m) => ((mePromise = Promise.resolve(m)), m)),
 	/** R77b: whether to show the "New release" notice; asking records it as told. */
 	releaseSeen: () => request<ReleaseSeen>('POST', '/api/v1/me/release-seen'),
+	largeEventsSeen: () => request<NewLargeEvent>('POST', '/api/v1/me/large-events-seen'),
+	newLargeEvent: () => get<NewLargeEvent>('/api/v1/me/new-large-event'),
 	invitations: () => get<Invitation[]>('/api/v1/invitations'),
 	invite: (email: string) => request<Invitation>('POST', '/api/v1/invitations', { email }),
 	cancelInvitation: (id: number) => request<void>('DELETE', `/api/v1/invitations/${id}`),

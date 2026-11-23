@@ -5,7 +5,8 @@
 	// with a tooltip and an accessible name, and hovering over one or
 	// focusing it opens a panel of its pages. R44b, R55: Administration
 	// carries the count of alias requests waiting; R67: the print sheet its
-	// count of messages; R39: admins see when a receiver has gone quiet. At
+	// count of messages; R77c: Large events and Tools a dot while a large event
+	// is new to the user; R39: admins see when a receiver has gone quiet. At
 	// the very bottom, the build's version, as the API reports it (owner,
 	// 2026-11-14), where the "New release" notice lands (R77b).
 	import { albums } from './albums.svelte.ts';
@@ -21,8 +22,9 @@
 		waiting,
 		sheetCount,
 		quiet,
+		newEvent = false,
 		version
-	}: { path: string; admin: boolean; listHref: string; waiting: number; sheetCount: number; quiet: number; version: string } = $props();
+	}: { path: string; admin: boolean; listHref: string; waiting: number; sheetCount: number; quiet: number; newEvent?: boolean; version: string } = $props();
 
 	const shrunk = $derived(menu.shrunk);
 	const current = $derived(entryOf(path));
@@ -30,6 +32,9 @@
 	const isCurrent = (e: Entry) => current?.entry === e;
 	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 	const waitingName = (n: number) => (n > 0 ? `, ${plural(n, 'alias request', 'alias requests')} waiting` : '');
+	// R77c: no dot stands alone (R77a): the names say it.
+	const NEW_ENTRY = ', new in the last 4 hours';
+	const NEW_GROUP = ', new large event';
 </script>
 
 <div class="menu" class:shrunk>
@@ -46,14 +51,16 @@
 		{#each visible(admin) as g (g.id)}
 			{@const open = shrunk || isOpen(g.id, holds(g))}
 			{@const count = g.id === 'admin' ? waiting : 0}
+			{@const dot = g.id === 'tools' && newEvent}
 			<li class="group">
 				<div class="heading">
 					<a
 						class="item head"
 						href={g.href}
 						aria-current={path === g.href ? 'page' : undefined}
-						aria-label={shrunk || count ? `${g.label}${waitingName(count)}` : undefined}
-						><Icon name={g.icon} /><span class="label">{g.label}</span>{#if count}<span class="count" aria-hidden="true"
+						aria-label={shrunk || count || dot ? `${g.label}${waitingName(count)}${dot ? NEW_GROUP : ''}` : undefined}
+						data-new-event={dot ? '' : undefined}
+						><Icon name={g.icon} /><span class="label">{g.label}</span>{#if dot}<span class="dot" aria-hidden="true"></span>{/if}{#if count}<span class="count" aria-hidden="true"
 								>{count}</span
 							>{/if}</a
 					>
@@ -72,6 +79,7 @@
 				     words: its tooltip, which doesn't just repeat its name. -->
 				<ul id="menu-{g.id}" class="entries" hidden={!open}>
 					{#if shrunk}<li class="flyhead" aria-hidden="true">{g.text}</li>{/if}
+					{#if shrunk && dot}<li class="fresh" aria-hidden="true">New large event, in the last 4 hours</li>{/if}
 					{#if g.id === 'albums'}
 						<!-- R77: one entry per album, with how many messages it holds. -->
 						{#each albums.list as a (a.id)}
@@ -96,6 +104,10 @@
 									data-testid="sheet-link"
 									aria-label="{e.label}, {plural(sheetCount, 'message', 'messages')}"
 									><Icon name={e.icon} /><span class="label">{e.label}</span><span class="count quiet" aria-hidden="true">{sheetCount}</span></a
+								>
+							{:else if e.href === '/large-events' && newEvent}
+								<a class="item" href={e.href} aria-current={isCurrent(e) ? 'page' : undefined} aria-label="{e.label}{NEW_ENTRY}" data-new-event
+									><Icon name={e.icon} /><span class="label">{e.label}</span><span class="dot" aria-hidden="true"></span></a
 								>
 							{:else if e.href === '/admin/requests' && waiting > 0}
 								<a class="item" href={e.href} aria-current={isCurrent(e) ? 'page' : undefined} aria-label="{e.label}{waitingName(waiting)}"
@@ -251,6 +263,15 @@
 		background: var(--accent-soft);
 		color: var(--accent-soft-fg);
 	}
+	/* R77c: a dot, no number, in the strong style of the waiting count. */
+	.dot {
+		flex: none;
+		margin-left: auto;
+		width: var(--badge-dot-size);
+		height: var(--badge-dot-size);
+		border-radius: var(--radius-pill);
+		background: var(--accent);
+	}
 	.foot {
 		position: relative;
 		display: flex;
@@ -328,6 +349,11 @@
 		right: 0;
 		padding: 0 var(--space-3xs);
 	}
+	.shrunk .head .dot {
+		position: absolute;
+		top: var(--space-2xs);
+		right: var(--space-2xs);
+	}
 	.shrunk .entries,
 	.tip {
 		display: none;
@@ -364,6 +390,13 @@
 		font-weight: var(--weight-strong);
 		letter-spacing: var(--badge-tracking);
 		text-transform: var(--badge-case);
+	}
+	/* R77c: the shrunk menu's tooltip for Tools says so too. */
+	.fresh {
+		padding: 0 var(--space-sm) var(--space-xs);
+		color: var(--fg);
+		font-size: var(--text-xs);
+		font-weight: var(--weight-strong);
 	}
 	.tip {
 		top: 50%;

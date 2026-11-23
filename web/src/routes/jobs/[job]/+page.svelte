@@ -2,7 +2,8 @@
 	// R34: every message of a job, ignored aliases' too, newest first, live,
 	// within the search box's search (R33a).
 	import { page } from '$app/state';
-	import { api, areaName, type AreaRef, type Meta } from '#lib/api.ts';
+	import { api, type AreaRef, type Meta } from '#lib/api.ts';
+	import AreaTags from '#lib/AreaTags.svelte';
 	import MessageList from '#lib/MessageList.svelte';
 	import { criteria } from '#lib/search.ts';
 
@@ -34,9 +35,7 @@
 <div class="job">
 	<MessageList {query} base={{ job, ignored: 'true' }} title="Job {job}" bind:count bind:more>
 		{#if meta?.areas?.length && areas.length}
-			<ul class="areas" aria-label="Areas, from where its pages were placed" data-testid="job-areas">
-				{#each areas as a (a.layer + ' ' + a.name)}<li data-layer={a.layer} data-outline={meta.areas.find((l) => l.id === a.layer)?.outline}>{areaName(meta, a)}</li>{/each}
-			</ul>
+			<div class="areas"><AreaTags {meta} {areas} label="Areas, from where its pages were placed" testid="job-areas" /></div>
 		{/if}
 		<p class="status">
 			{count} message{count === 1 ? '' : 's'}{more ? ' so far' : ''}, newest first. Pages are grouped by job number on a best-effort
@@ -56,28 +55,7 @@
 		border-bottom: var(--border-width) solid var(--border);
 	}
 	.areas {
-		display: flex;
-		flex-wrap: wrap;
-		gap: var(--space-xs) var(--space-sm);
-		margin: 0;
 		padding: var(--space-sm) var(--row-pad-x) 0;
-		list-style: none;
-	}
-	.areas li {
-		padding: var(--space-2xs) var(--space-sm);
-		border: var(--border-width) solid var(--area-tag-border);
-		border-radius: var(--radius-pill);
-		background: var(--area-tag-bg);
-		color: var(--fg);
-		font-size: var(--text-md);
-		font-weight: var(--weight-strong);
-	}
-	/* Each layer's tags edged as the map outlines it (R88c). */
-	.areas li[data-outline='dashed'] {
-		border-style: dashed;
-	}
-	.areas li[data-outline='dotted'] {
-		border-style: dotted;
 	}
 	@media (max-width: 47.99rem) {
 		.job {
