@@ -330,7 +330,7 @@ A second receiver hears the same pages with its own errors: a garbled character 
 docker compose exec api pagerarchive dedup-report --since 7d
 ```
 
-It counts the near duplicates kept (by how they differed, and which copy parses), the pages to one capcode within 10 seconds that were kept apart, with histograms of how far apart each pair was, and what other ratios would have done. It never prints a page's text or a capcode.
+It counts the near duplicates kept (by how they differed, and which copy parses), the pages to one capcode within 10 seconds that were kept apart, with histograms of how far apart each pair was, and what other ratios would have done. With three or more receivers, its last section measures whether voting (rebuilding a page's text from three or more copies) would be worth having: how many messages 1, 2, 3 or more receivers heard, how often their copies differ, what a simulated vote would give and whether it parses better than the text kept, and which receiver (numbered by how many copies it heard) is most often the odd one out. It reads in one read-only transaction, at most 31 days. It never prints a page's text, a capcode or a client's ID.
 
 ## Integrations
 
