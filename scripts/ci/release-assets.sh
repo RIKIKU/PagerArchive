@@ -31,8 +31,12 @@ cp compose.yaml "$out/compose.yaml"
 cp .env.example "$out/env.example"
 cp deploy/monitoring/compose.yaml "$out/monitoring-compose.yaml"
 cp deploy/monitoring/.env.example "$out/monitoring-env.example"
-# The same bytes from the same files, whoever builds it.
-tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=u+rwX,go+rX -cf - \
+# The same bytes from the same files, whoever builds it. The folders a
+# companion app drops its own files into (R76a, R84l) are in it empty, so
+# unpacking a release makes them but never writes in them: their READMEs are
+# the repository's only.
+tar --sort=name --owner=0 --group=0 --numeric-owner --mtime=@0 --mode=u+rwX,go+rX \
+	--exclude='deploy/authentik/blueprints.d/*' --exclude='deploy/monitoring/include/*/*' -cf - \
 	deploy/authentik deploy/auto-upgrade deploy/backup deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana \
-	deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo |
+	deploy/monitoring/include deploy/monitoring/include.sh deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo |
 	gzip -n >"$out/pagerarchive-config.tar.gz"

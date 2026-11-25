@@ -11,3 +11,14 @@ providers:
     updateIntervalSeconds: 60
     options:
       path: /var/lib/grafana/dashboards
+  # A companion app's dashboards (R76a): deploy/monitoring/include/dashboards.d,
+  # which a release never writes in. A subfolder there is a Grafana folder of
+  # that name; a dashboard at the top goes in General.
+  - name: include
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 60
+    options:
+      path: /var/lib/grafana/dashboards.d
+      foldersFromFilesStructure: true

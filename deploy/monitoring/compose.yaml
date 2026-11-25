@@ -32,9 +32,12 @@ services:
   alloy:
     image: grafana/alloy:v1.22.0
     restart: unless-stopped
-    command: [run, /etc/alloy/config.alloy, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
+    # Our config.alloy and a companion app's include/alloy.d, as one (R76a):
+    # include.sh puts them in one folder, and Alloy runs on that.
+    entrypoint: [/bin/sh, /etc/pagerarchive/include.sh, alloy]
+    command: [/bin/alloy, run, /tmp/alloy-config, --storage.path=/var/lib/alloy, --server.http.listen-addr=0.0.0.0:12345, --disable-reporting]
     labels:
-      pagerarchive.config: "93a4c10f74420e70"
+      pagerarchive.config: "6140f2b066fd81e9"
     environment:
       # The metrics bearer token the API's METRICS_TOKEN is set to (R75).
       PA_METRICS_TOKEN: ${PA_METRICS_TOKEN:?set PA_METRICS_TOKEN in .env}
@@ -47,6 +50,9 @@ services:
       PA_AUTHENTIK_WORKER_ADDRESS: ${PA_AUTHENTIK_WORKER_ADDRESS-pagerarchive-authentik-worker:9300}
     volumes:
       - ./alloy/config.alloy:/etc/alloy/config.alloy:ro
+      - ./include.sh:/etc/pagerarchive/include.sh:ro
+      # A companion app's *.alloy (R76a): its folder, which a release never writes in.
+      - ./include/alloy.d:/etc/alloy/include:ro
       # PagerArchive's automatic upgrades' log (docs/monitoring.md), or nothing.
       - ${AUTO_UPGRADE_STATUS_DIR:-/dev/null}:/var/log/pagerarchive-auto-upgrade:ro
       - alloy:/var/lib/alloy
@@ -96,8 +102,11 @@ services:
   grafana:
     image: grafana/grafana:13.3
     restart: unless-stopped
+    # Our alert rules and a companion app's include/alerts.d together (R76a):
+    # include.sh copies both into one provisioning folder, then starts Grafana.
+    entrypoint: [/bin/sh, /etc/pagerarchive/include.sh, grafana, /run.sh]
     labels:
-      pagerarchive.config: "684e2b9f397f2da0"
+      pagerarchive.config: "c0a0b69b8873b645"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
@@ -123,6 +132,11 @@ services:
       - ./grafana/dashboards/failures.json:/var/lib/grafana/dashboards/failures.json:ro
       - ./grafana/dashboards/page-path.json:/var/lib/grafana/dashboards/page-path.json:ro
       - ./grafana/dashboards/requests.json:/var/lib/grafana/dashboards/requests.json:ro
+      - ./include.sh:/etc/pagerarchive/include.sh:ro
+      # A companion app's alert rules and dashboards (R76a): its folders, which a
+      # release never writes in.
+      - ./include/alerts.d:/etc/grafana/include/alerts:ro
+      - ./include/dashboards.d:/var/lib/grafana/dashboards.d:ro
       - grafana:/var/lib/grafana
     ports:
       - "${GRAFANA_BIND:-127.0.0.1:3000}:3000"

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // autoUpgrade runs script in bash with deploy/auto-upgrade/auto-upgrade.sh
@@ -209,5 +210,160 @@ echo "up-to-date: $(snap)"`
 	if !strings.Contains(lines["up-to-date"], `"state":"idle","running_since":0,"target_version":"","last_check_at":`) ||
 		strings.Contains(lines["up-to-date"], `"last_check_at":`+start+",") || !strings.Contains(lines["up-to-date"], `"last_check_result":"up-to-date"`) {
 		t.Errorf("a run that found nothing: %s", lines["up-to-date"])
+	}
+}
+
+// R84m, A138: two upgrades at once on one host, this install's and another's
+// (a companion app's copy of the script takes the same lock): the second
+// says "another upgrade is running", records a skipped check and exits 0,
+// and the first, holding the lock from its check through its backup and
+// upgrade, carries on. Each step stubbed; the first waits in its backup.
+func TestA138AutoUpgradeHostWideLock(t *testing.T) {
+	if _, err := exec.LookPath("jq"); err != nil {
+		t.Skip("needs jq")
+	}
+	if _, err := exec.LookPath("flock"); err != nil {
+		t.Skip("needs flock")
+	}
+	lock := filepath.Join(t.TempDir(), "archive-upgrade.lock")
+	stubs := `PA_DIR=$PWD HOME_AU=$PWD/au STATUS_DIR=$PWD/au/status STATUS=$PWD/au/status/status.json LOG=$PWD/au/status/auto-upgrade.log
+JQ=jq MON_DIR= RELEASES=$PWD/au/releases.json
+mkdir -p "$STATUS_DIR"
+running_version() { echo 1.18.0; }
+latest_release() { echo v1.19.0; }
+release_field() { echo ""; }
+backup_busy() { return 1; }
+verify() { :; }
+back_up() { touch "$PA_DIR/held"; while [ ! -e "$PA_DIR/go" ]; do sleep 0.05; done; NIGHT=2026-11-20; }
+fingerprint() { echo fp; }
+images_of() { :; }
+docker() { :; }
+dc() { :; }
+dbq() { echo 0; }
+upgrade() { :; }
+health() { PAGE_NOTE=skipped; }
+echo '{"enabled":true,"state":"idle","running_since":0,"running_version":"1.18.0","last_check_at":5,"failures":0,"rollbacks":0,"failed_versions":[],"history":[]}' >"$STATUS"
+host_locked_run; echo "exit $?"; jq -c "{state, last_check_result, last_check_note, running_version}" "$STATUS"`
+	src, err := filepath.Abs("deploy/auto-upgrade/auto-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, second := installDir(t), installDir(t)
+	var out1 strings.Builder
+	cmd := exec.Command("bash", "-c", `. "$1"; `+stubs, "test", src)
+	cmd.Dir = first
+	cmd.Env = append(os.Environ(), "PA_TEST_HOST_LOCK="+lock)
+	cmd.Stdout, cmd.Stderr = &out1, &out1
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = cmd.Process.Kill() }()
+	for i := 0; ; i++ {
+		if _, err := os.Stat(filepath.Join(first, "held")); err == nil {
+			break
+		}
+		if i > 400 {
+			t.Fatalf("the first run never reached its backup: %s", out1.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	out, ok := autoUpgrade(t, second, stubs, "PA_TEST_HOST_LOCK="+lock)
+	t.Log("second: " + out)
+	if !ok || !strings.Contains(out, "another upgrade is running") || !strings.Contains(out, "exit 0") {
+		t.Errorf("the second run, while the first holds the lock: %s", out)
+	}
+	if !strings.Contains(out, `{"state":"idle","last_check_result":"skipped","last_check_note":"another upgrade is running on this host: trying again next hour","running_version":"1.18.0"}`) {
+		t.Errorf("the second run's status doesn't record a skipped check: %s", out)
+	}
+	if _, err := os.Stat(filepath.Join(second, "held")); err == nil {
+		t.Error("the second run backed up while the first held the lock")
+	}
+	log, _ := os.ReadFile(filepath.Join(second, "au", "status", "auto-upgrade.log"))
+	if !strings.Contains(string(log), `"step":"check","result":"skipped","from":"1.18.0","to":"","reason":"another upgrade is running"`) {
+		t.Errorf("the second run's log line: %s", log)
+	}
+
+	if err := os.WriteFile(filepath.Join(first, "go"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Wait(); err != nil {
+		t.Fatalf("the first run: %v\n%s", err, out1.String())
+	}
+	t.Log("first: " + out1.String())
+	if !strings.Contains(out1.String(), "exit 0") || !strings.Contains(out1.String(), `"last_check_result":"upgraded"`) {
+		t.Errorf("the first run didn't finish its upgrade: %s", out1.String())
+	}
+	// Once it's done, the lock is free: the next run goes ahead.
+	_ = os.WriteFile(filepath.Join(second, "go"), nil, 0o644)
+	if out, _ := autoUpgrade(t, second, stubs, "PA_TEST_HOST_LOCK="+lock); strings.Contains(out, "another upgrade is running") || !strings.Contains(out, `"last_check_result":"upgraded"`) {
+		t.Errorf("the lock was still held after the first run: %s", out)
+	}
+	if fi, err := os.Stat(lock); err != nil || fi.Mode().Perm() != 0o666 {
+		t.Errorf("the lock file: %v %v, want mode 666 so another app's user can open it", fi, err)
+	}
+}
+
+// R76a, R84l, A136, A137: an automatic upgrade unpacks the release's archive
+// over the install and the monitoring stack's own folder: what a companion
+// app dropped in their include folders is still there, unchanged, and a
+// rollback's copy of the monitoring stack's files leaves them out.
+func TestA137UpgradeKeepsDropIns(t *testing.T) {
+	assets := releaseAssets(t)
+	pa, mon := installDir(t), t.TempDir()
+	release := filepath.Join(pa, "au", "releases", "1.19.0")
+	if err := os.MkdirAll(release, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range []string{"compose.yaml", "pagerarchive-config.tar.gz", "monitoring-compose.yaml"} {
+		data, err := os.ReadFile(filepath.Join(assets, f))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(release, f), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dropped := map[string]string{
+		filepath.Join(pa, "deploy", "authentik", "blueprints.d", "companion.yaml"): "# a companion's blueprint\n",
+		filepath.Join(mon, "include", "alloy.d", "companion.alloy"):                "// a companion's config\n",
+		filepath.Join(mon, "include", "alerts.d", "companion.yaml"):                "# a companion's rules\n",
+		filepath.Join(mon, "include", "dashboards.d", "Companion", "calls.json"):   "{}\n",
+		// The names the archive's own files have elsewhere.
+		filepath.Join(mon, "include", "alerts.d", "README.md"): "the companion's own README\n",
+	}
+	for p, data := range dropped {
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	script := `PA_DIR=$PWD HOME_AU=$PWD/au MON_DIR=$MON TO=1.19.0 PREFIX=ghcr.io/rikiku/ FILES="compose.yaml pagerarchive-config.tar.gz monitoring-compose.yaml"
+verified_file() { :; }
+install_files || { echo "install_files: $REASON"; exit 1; }`
+	out, ok := autoUpgrade(t, pa, script, "MON="+mon)
+	if !ok {
+		t.Fatalf("install: %s", out)
+	}
+	for p, data := range dropped {
+		got, err := os.ReadFile(p)
+		if err != nil || string(got) != data {
+			t.Errorf("%s after the upgrade: %q %v, want %q", p, got, err, data)
+		}
+	}
+	for _, f := range []string{"alloy/config.alloy", "include.sh", "grafana/provisioning/alerting/rules.yaml"} {
+		if _, err := os.Stat(filepath.Join(mon, f)); err != nil {
+			t.Errorf("the upgrade didn't install the monitoring stack's %s: %v", f, err)
+		}
+	}
+	// back_up's list: the rollback puts back what it kept aside, never include/.
+	data, err := os.ReadFile("deploy/auto-upgrade/auto-upgrade.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(data), "for f in compose.yaml compose.override.yaml .env alloy grafana include.sh loki prometheus tempo; do") {
+		t.Error("back_up doesn't keep the monitoring stack's files aside as this test expects: update both")
 	}
 }

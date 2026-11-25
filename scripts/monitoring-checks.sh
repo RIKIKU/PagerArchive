@@ -1,5 +1,5 @@
 #!/bin/sh
-# A65, A67, A80's alert, A83's alert, A90's Grafana part, A113, A115, A119, A122's Grafana part, and A123's and A124's stack parts against the example
+# A65, A67, A80's alert, A83's alert, A90's Grafana part, A113, A115, A119, A122's Grafana part, A123's and A124's stack parts, and A137 against the example
 # monitoring stack itself (deploy/monitoring): the API, its database, Authentik
 # and the backup services from the compose file at the top, joined to the
 # stack's `monitoring` and `monitoring-authentik` networks by the override
@@ -182,6 +182,56 @@ PA_MON_GRAFANA_URL=http://127.0.0.1:13001 PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMI
 	go test -count=1 -v -run TestA78MonitoringInstalled ./internal/monitortest/ || status=1
 
 # From here on, the test's own overlay: a webhook contact point and Alloy's OTLP port.
+# A137 (R76a): a companion app's Alloy config, alert rules and dashboard,
+# dropped in the include folders the release made (empty), load with the
+# stack's own: a scrape job of Alloy itself, a rule that never fires, and a
+# dashboard in a folder of its own.
+for d in alloy.d alerts.d dashboards.d; do
+	[ -d "$MONDIR/include/$d" ] && [ -z "$(ls -A "$MONDIR/include/$d")" ] || { echo "FAIL: the release's include/$d isn't there, empty" >&2; status=1; }
+done
+cat >"$MONDIR/include/alloy.d/a137.alloy" <<'ALLOY'
+// A137: a made-up companion's scrape, sent on with the stack's own component.
+prometheus.scrape "a137_made_up_companion" {
+  targets         = [{"__address__" = "127.0.0.1:12345"}]
+  job_name        = "a137-made-up-companion"
+  scrape_interval = "15s"
+  forward_to      = [prometheus.remote_write.prometheus.receiver]
+}
+ALLOY
+cat >"$MONDIR/include/alerts.d/a137.yaml" <<'YAML'
+# A137: a made-up companion's alert rule, which never fires.
+apiVersion: 1
+groups:
+  - orgId: 1
+    name: A137 made-up companion
+    folder: A137 companion
+    interval: 1m
+    rules:
+      - uid: a137-made-up-companion
+        title: A137 made-up companion rule
+        condition: never
+        data:
+          - refId: zero
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model: {refId: zero, instant: true, range: false, expr: "vector(0)"}
+          - refId: never
+            datasourceUid: __expr__
+            model:
+              refId: never
+              type: threshold
+              expression: zero
+              conditions:
+                - evaluator: {type: gt, params: [1]}
+        noDataState: OK
+        execErrState: OK
+        for: 0s
+YAML
+mkdir -p "$MONDIR/include/dashboards.d/A137 companion"
+cat >"$MONDIR/include/dashboards.d/A137 companion/a137.json" <<'JSON'
+{"uid": "a137-made-up-companion", "title": "A137 made-up companion", "schemaVersion": 39, "panels": []}
+JSON
+chmod -R a+rX "$MONDIR/include"
 cp deploy/monitoring/test/compose.yaml "$MONDIR/compose.override.yaml"
 mkdir -p "$MONDIR/test"
 cp deploy/monitoring/test/alerting-test.yaml deploy/monitoring/test/prometheus-test.yml "$MONDIR/test/"
@@ -193,6 +243,27 @@ PROMETHEUS_TEST_BIND=127.0.0.1:19090
 VARS
 fill_env "$MONDIR/.env" "$MONROOT/vars"
 mon_up
+
+echo "--- A137: the include folders' files load with the stack's own (R76a)"
+grafana_get() { curl -sf -u "admin:$GRAFANA_ADMIN_PASSWORD" "http://127.0.0.1:13001$1"; }
+i=0
+until grafana_get /api/dashboards/uid/a137-made-up-companion | grep -q '"folderTitle":"A137 companion"'; do
+	i=$((i + 1))
+	[ $i -lt 60 ] || { echo "FAIL: the dashboard in include/dashboards.d isn't in its folder after 120 s" >&2; status=1; break; }
+	sleep 2
+done
+grafana_get /api/v1/provisioning/alert-rules/a137-made-up-companion | grep -q '"title":"A137 made-up companion rule"' ||
+	{ echo "FAIL: the rule in include/alerts.d isn't provisioned" >&2; status=1; }
+grafana_get /api/v1/provisioning/alert-rules/pa-backup-failing | grep -q '"uid":"pa-backup-failing"' ||
+	{ echo "FAIL: the stack's own rules went with the included one" >&2; status=1; }
+i=0
+until curl -sf 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22a137-made-up-companion%22%7D' | grep -q '"value":\[[0-9.]*,"1"\]'; do
+	i=$((i + 1))
+	[ $i -lt 60 ] || { echo "FAIL: include/alloy.d's scrape reached no Prometheus after 120 s" >&2; mon logs --tail 20 alloy >&2; status=1; break; }
+	sleep 2
+done
+echo "--- A137: its dashboard in A137 companion, its rule, and its Alloy scrape in Prometheus, beside the stack's own"
+mon logs --no-color alloy grafana | grep 'include: ' || true
 
 # Loki refuses every write above 90% disk use (its WAL's disk_full_threshold),
 # so A67 would find no client lines (ADR 0014): stop now if the disk is close.
