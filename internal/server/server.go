@@ -89,6 +89,10 @@ type Server struct {
 	// RadioArchiveURL is the radio beside it (R92), without a trailing slash;
 	// "" when it stands alone, and nothing links to the radio.
 	RadioArchiveURL string
+	// LookCookieDomain is the parent domain of the look cookie the apps
+	// share (R92b, LOOK_COOKIE_DOMAIN); "" when there's none, and the look
+	// is the account's alone.
+	LookCookieDomain string
 	// Areas are the network profile's layers of areas (R88), in its order;
 	// none when it names none. A layer that didn't load has its Error.
 	Areas []*areas.Layer
@@ -146,6 +150,8 @@ func (s *Server) Handler() http.Handler {
 	handle("GET /auth/callback", http.HandlerFunc(s.callback))
 	handle("POST /auth/logout", http.HandlerFunc(s.logout))
 	handle("GET /auth/end-session", http.HandlerFunc(s.endSession))
+	// R92d: Authentik's server posts here, with no browser.
+	handle("POST /auth/backchannel-logout", http.HandlerFunc(s.backchannelLogout))
 	handle("GET /auth/status", http.HandlerFunc(s.authStatus))
 	handle("GET /auth/powershell", http.HandlerFunc(s.powershellSettings))
 	handle("POST /auth/first-admin", http.HandlerFunc(s.firstAdmin))

@@ -19,6 +19,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"regexp"
 	"runtime"
 	"strings"
 	"syscall"
@@ -114,6 +115,9 @@ serve reads its settings from the environment:
   RADIOARCHIVE_URL        RadioArchive's public URL: fireground links (R92a) and the app switcher
                           (R77e; default: none, PagerArchive stands alone)
   RADIOARCHIVE_NAME       the name the switcher shows (default Radio)
+  LOOK_COOKIE_DOMAIN      the parent domain whose look cookie the apps share, such as
+                          example.org for pager.example.org (R92b; default: none, the
+                          look is the account's alone)
   INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
                                (openssl rand -base64 32); without it integrations are off
   INTEGRATION_SECRETS_KEY_OLD  the previous key, only while rotating
@@ -389,6 +393,8 @@ func serve(stderr io.Writer) error {
 	go expireSessions(ctx, st, log)
 	go acc.CheckFirstAdminAddress(ctx, adminAddressCheckEvery, adminAddressCheckTries)
 	go acc.WatchInvitations(ctx, adminAddressCheckEvery, adminAddressCheckTries)
+	// R92e: everyone in the group the companion app admits, once Authentik answers.
+	go acc.JoinUsersGroup(ctx, dir, adminAddressCheckEvery, adminAddressCheckTries)
 
 	at, err := nightly.ParseAt(getenv("NIGHTLY_AT", "03:00"))
 	if err != nil {
@@ -466,6 +472,10 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	lookDomain, err := lookCookieDomain(os.Getenv("LOOK_COOKIE_DOMAIN"), auth.appURL)
+	if err != nil {
+		return err
+	}
 	srv := &server.Server{
 		RadioArchiveName: getenv("RADIOARCHIVE_NAME", "Radio"),
 		Store:            st,
@@ -519,6 +529,7 @@ func serve(stderr io.Writer) error {
 		MapTiles:              mapTiles,
 		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
 		RadioArchiveURL:       radio,
+		LookCookieDomain:      lookDomain,
 		Areas:                 areaLayers,
 		Integrations:          integ,
 		MetricsToken:          os.Getenv("METRICS_TOKEN"),
@@ -749,6 +760,26 @@ func expireSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 		}
 	}
 }
+
+// lookCookieDomain reads LOOK_COOKIE_DOMAIN (R92b): the parent domain the
+// apps share their look cookie on, in lower case and without a leading dot.
+// The app's own host must be in it, or the browser would refuse the cookie.
+// Empty: there's no shared look.
+func lookCookieDomain(v string, app *url.URL) (string, error) {
+	v = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(v)), ".")
+	if v == "" {
+		return "", nil
+	}
+	if !cookieDomainRe.MatchString(v) {
+		return "", errors.New("LOOK_COOKIE_DOMAIN must be a domain name, such as example.org")
+	}
+	if host := strings.ToLower(app.Hostname()); host != v && !strings.HasSuffix(host, "."+v) {
+		return "", fmt.Errorf("LOOK_COOKIE_DOMAIN (%s) must be APP_URL's host or a parent domain of it (%s)", v, host)
+	}
+	return v, nil
+}
+
+var cookieDomainRe = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
 
 // radioArchiveURL reads RADIOARCHIVE_URL (R92): the radio beside this
 // PagerArchive, an absolute http(s) URL with a host, without its trailing

@@ -14,6 +14,7 @@
 	import { page, updated } from '$app/state';
 	import { onMount } from 'svelte';
 	import { AccountMenu, BottomBar, Frame, Menu } from 'archiveux/components';
+	import { pickLook } from 'archiveux/look.js';
 	import { api, type Look, type Me, type Meta } from '#lib/api.ts';
 	import { albums, refreshAlbums } from '#lib/albums.svelte.ts';
 	import Crumbs from '#lib/Crumbs.svelte';
@@ -43,6 +44,10 @@
 	// Until their account loads, the one the server put there.
 	const sentLook = document.documentElement.dataset.look;
 	let look: Look = $state(sentLook === 'console' ? 'console' : 'harbour');
+	// R92b: beside RadioArchive the server sent the look from the look cookie
+	// the apps share (data-look-shared), which wins over the account's here
+	// too (ArchiveUx's rule, look.js), so the page never switches looks.
+	const shared = document.documentElement.dataset.lookShared !== undefined;
 
 	// The sign-in page works without a session, and has no frame.
 	const signedOut = $derived(page.url.pathname.startsWith('/signin'));
@@ -64,7 +69,7 @@
 				.me()
 				.then((m) => {
 					me = m;
-					look = m.look;
+					look = shared ? pickLook({ cookies: document.cookie, cookie: 'look', own: m.look }) : m.look;
 					unfollow = loadSheet(m.id);
 					// R77: the Albums group lists their albums.
 					refreshAlbums();
@@ -108,10 +113,12 @@
 	});
 
 	// A look chosen in the account menu applies at once, without reloading
-	// (R82d). Pages before sign-in are Harbour.
+	// (R82d). Pages before sign-in are Harbour, or beside RadioArchive the
+	// shared cookie's look, as the server sent them (R92b).
 	$effect(() => {
-		if (signedOut) delete document.documentElement.dataset.look;
-		else if (look && document.documentElement.dataset.look !== look) document.documentElement.dataset.look = look;
+		if (signedOut) {
+			if (!shared) delete document.documentElement.dataset.look;
+		} else if (look && document.documentElement.dataset.look !== look) document.documentElement.dataset.look = look;
 	});
 
 	// R39: admins see at a glance when a receiver has gone quiet; R55: and how

@@ -2469,6 +2469,18 @@ func (q *Queries) DeleteSession(ctx context.Context, tokenHash []byte) ([]*strin
 	return items, nil
 }
 
+const deleteSessionsByHash = `-- name: DeleteSessionsByHash :execrows
+DELETE FROM sessions WHERE token_hash = ANY($1::bytea[])
+`
+
+func (q *Queries) DeleteSessionsByHash(ctx context.Context, hashes [][]byte) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteSessionsByHash, hashes)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteTemplate = `-- name: DeleteTemplate :execrows
 DELETE FROM templates WHERE id = $1
 `
@@ -2530,6 +2542,34 @@ func (q *Queries) DeliveryByKey(ctx context.Context, arg DeliveryByKeyParams) (D
 		&i.EventID,
 	)
 	return i, err
+}
+
+const directoryPeople = `-- name: DirectoryPeople :many
+SELECT subject::text FROM users
+WHERE subject IS NOT NULL AND status <> 'deleted' AND kind = 'person'
+ORDER BY id
+`
+
+// R92e: the Authentik users of everyone with an account (not service
+// accounts), who belong in the pagerarchive-users group.
+func (q *Queries) DirectoryPeople(ctx context.Context) ([]string, error) {
+	rows, err := q.db.Query(ctx, directoryPeople)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []string
+	for rows.Next() {
+		var subject string
+		if err := rows.Scan(&subject); err != nil {
+			return nil, err
+		}
+		items = append(items, subject)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const distanceToStreet = `-- name: DistanceToStreet :one
@@ -7926,6 +7966,37 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.SeesSwitcher,
 	)
 	return i, err
+}
+
+const userSessionIDTokens = `-- name: UserSessionIDTokens :many
+SELECT token_hash, id_token FROM sessions WHERE user_id = $1
+`
+
+type UserSessionIDTokensRow struct {
+	TokenHash []byte
+	IDToken   *string
+}
+
+// R92d: a user's browser sessions with the ID token each signed in with,
+// whose sid says which Authentik session it came from.
+func (q *Queries) UserSessionIDTokens(ctx context.Context, userID int64) ([]UserSessionIDTokensRow, error) {
+	rows, err := q.db.Query(ctx, userSessionIDTokens, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []UserSessionIDTokensRow
+	for rows.Next() {
+		var i UserSessionIDTokensRow
+		if err := rows.Scan(&i.TokenHash, &i.IDToken); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const waitingRequestOf = `-- name: WaitingRequestOf :one

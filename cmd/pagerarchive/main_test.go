@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -307,6 +308,29 @@ func TestRadioArchiveURL(t *testing.T) {
 	for _, in := range []string{"radio.example.com", "/radio", "ftp://radio.example.com", "https://", "https://u:p@radio.example.com", "https://radio.example.com/?x=1", "https://radio.example.com/#a", "javascript:alert(1)"} {
 		if _, err := radioArchiveURL(in); err == nil || !strings.Contains(err.Error(), "RADIOARCHIVE_URL") {
 			t.Errorf("radioArchiveURL(%q): %v, want an error naming the setting", in, err)
+		}
+	}
+}
+
+// R92b: LOOK_COOKIE_DOMAIN is a domain name that APP_URL's host is in, in
+// lower case and without a leading dot; unset or empty, there's no shared look.
+func TestLookCookieDomain(t *testing.T) {
+	app, _ := url.Parse("https://pager.example.org")
+	for in, want := range map[string]string{
+		"":                  "",
+		"  ":                "",
+		"example.org":       "example.org",
+		".example.org":      "example.org",
+		"Example.ORG":       "example.org",
+		"pager.example.org": "pager.example.org",
+	} {
+		if got, err := lookCookieDomain(in, app); err != nil || got != want {
+			t.Errorf("lookCookieDomain(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"other.example", "le.org", "example.org; Secure", "exa mple.org", "-example.org", "https://example.org", "example.org/", "..example.org"} {
+		if _, err := lookCookieDomain(in, app); err == nil || !strings.Contains(err.Error(), "LOOK_COOKIE_DOMAIN") {
+			t.Errorf("lookCookieDomain(%q): %v, want an error naming the setting", in, err)
 		}
 	}
 }

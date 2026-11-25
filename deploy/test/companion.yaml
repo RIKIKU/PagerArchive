@@ -1,0 +1,23 @@
+# Test overlay: a made-up companion app beside PagerArchive (SPEC.md R92d,
+# A150-A151), never in a deployment. Two more OIDC clients in Authentik
+# (deploy/test/companion-blueprint.yaml), whose back-channel logout URLs are
+# a tiny receiver that keeps what Authentik posts, for the stack checks to
+# read (deploy/test/logout-receiver.py). Used by scripts/stack-checks.sh:
+#   docker compose -f compose.yaml -f deploy/test/compose.yaml -f deploy/test/companion.yaml ...
+services:
+  authentik-server:
+    volumes:
+      - ./deploy/test/companion-blueprint.yaml:/blueprints/test-companion/companion.yaml:ro
+  authentik-worker:
+    volumes:
+      - ./deploy/test/companion-blueprint.yaml:/blueprints/test-companion/companion.yaml:ro
+  logout-receiver:
+    # Authentik's image has Python already: nothing more to pull.
+    image: ghcr.io/goauthentik/server:2026.8
+    entrypoint: ["python3", "/logout-receiver.py"]
+    healthcheck:
+      disable: true
+    volumes:
+      - ./deploy/test/logout-receiver.py:/logout-receiver.py:ro
+    ports:
+      - "${LOGOUT_RECEIVER_BIND:-127.0.0.1:8026}:8026"

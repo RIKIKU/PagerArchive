@@ -253,6 +253,8 @@ type loginState struct {
 	Nonce    string `json:"n"`
 	Verifier string `json:"v"`
 	Return   string `json:"r"`
+	// Silent is the silent sign-in check (R92c): sent with prompt=none.
+	Silent bool `json:"q,omitempty"`
 }
 
 // signInFailed sends the browser to the app's sign-in page with a reason.
@@ -268,9 +270,31 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st := loginState{State: randomString(), Nonce: randomString(), Verifier: oauth2.GenerateVerifier(), Return: localPath(r.URL.Query().Get("return"))}
+	opts := []oauth2.AuthCodeOption{oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)}
+	// R92c: beside RadioArchive, the first sign-in of a browser session
+	// first asks Authentik, without a prompt, whether it's already signed
+	// in. Marked before it's made, so it's made once whatever comes back.
+	_, unmarked := r.Cookie(silentCookie)
+	if s.silentCheck() && unmarked != nil && r.URL.Query().Get("checked") == "" {
+		st.Silent = true
+		opts = append(opts, oauth2.SetAuthURLParam("prompt", "none"))
+		s.setCookie(w, silentCookie, "1", "/auth/", 0)
+	}
 	b, _ := json.Marshal(st)
 	s.setCookie(w, loginCookie, base64.RawURLEncoding.EncodeToString(b), "/auth/", 10*time.Minute)
-	http.Redirect(w, r, cfg.AuthCodeURL(st.State, oidc.Nonce(st.Nonce), oauth2.S256ChallengeOption(st.Verifier)), http.StatusFound)
+	http.Redirect(w, r, cfg.AuthCodeURL(st.State, opts...), http.StatusFound)
+}
+
+// silentFailed carries a silent sign-in check that found no Authentik
+// session, or failed, on to the normal sign-in (R92c), and reports whether
+// it did: false for a sign-in that wasn't the check.
+func (s *Server) silentFailed(w http.ResponseWriter, r *http.Request, st loginState, why string) bool {
+	if !st.Silent {
+		return false
+	}
+	s.Log.Info("silent sign-in check: going on to sign in", "reason", why)
+	http.Redirect(w, r, normalSignIn(st.Return), http.StatusSeeOther)
+	return true
 }
 
 func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
@@ -289,6 +313,10 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	s.setCookie(w, loginCookie, "", "/auth/", -1)
 	if q.Get("error") != "" {
+		// login_required, the usual answer: no Authentik session.
+		if s.silentFailed(w, r, st, q.Get("error")) {
+			return
+		}
 		s.Log.Warn("sign-in refused by Authentik", "error", q.Get("error"), "description", q.Get("error_description"))
 		signInFailed(w, r, "refused")
 		return
@@ -303,14 +331,18 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	tok, err := cfg.Exchange(ctx, q.Get("code"), oauth2.VerifierOption(st.Verifier))
 	if err != nil {
 		s.Log.Warn("oidc code exchange failed", "error", err.Error())
-		signInFailed(w, r, "expired")
+		if !s.silentFailed(w, r, st, "code exchange failed") {
+			signInFailed(w, r, "expired")
+		}
 		return
 	}
 	raw, _ := tok.Extra("id_token").(string)
 	idt, err := verifier.Verify(ctx, raw)
 	if err != nil || idt.Nonce != st.Nonce {
 		s.Log.Warn("oidc id token rejected", "error", errString(err))
-		signInFailed(w, r, "expired")
+		if !s.silentFailed(w, r, st, "id token rejected") {
+			signInFailed(w, r, "expired")
+		}
 		return
 	}
 	var claims struct {
@@ -351,6 +383,9 @@ func (s *Server) callback(w http.ResponseWriter, r *http.Request) {
 	// The server's 30-day expiry, renewed by use, decides; the cookie just
 	// lives as long as browsers allow.
 	s.setCookie(w, sessionCookie, token, "/", 400*24*time.Hour)
+	// R92b: beside RadioArchive, the account's look goes into the shared
+	// look cookie, so both apps' next pages are drawn in it.
+	s.setLookCookie(w, pickLook("", u.Look))
 	s.Log.Info("signed in", "user", u.ID)
 	// Checked again here: the cookie may be from before an upgrade.
 	http.Redirect(w, r, localPath(st.Return), http.StatusSeeOther)
@@ -545,7 +580,22 @@ func (s *Server) firstAdmin(w http.ResponseWriter, r *http.Request) {
 // before sign-in, on the sign-in page, and whenever the session can't be
 // read. It never refuses anything: the page itself loads without a session,
 // and the app then sends the visitor to sign in.
-func (s *Server) PageLook(r *http.Request) string {
+//
+// Beside RadioArchive (LookCookieDomain set, R92b), it's ArchiveUx's rule
+// instead (look.js, its ADR 0002): the shared look cookie's look, else the
+// account's, else Harbour, on every page, the sign-in page too; and shared
+// says so, so the app's script follows the cookie as well.
+func (s *Server) PageLook(r *http.Request) (look string, shared bool) {
+	own := s.accountLook(r)
+	if s.LookCookieDomain == "" {
+		return own, false
+	}
+	return pickLook(lookFromCookies(r), own), true
+}
+
+// accountLook is the signed-in user's look, or "" before sign-in, on the
+// sign-in page, and whenever the session can't be read.
+func (s *Server) accountLook(r *http.Request) string {
 	if s.Accounts == nil || strings.HasPrefix(r.URL.Path, "/signin") {
 		return ""
 	}
