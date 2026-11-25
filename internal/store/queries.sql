@@ -120,10 +120,19 @@ WHERE m.id IN (
   AND m.probably_noise IS DISTINCT FROM message_probably_noise(m.id, m.capcode, m.format, m.sent_at);
 
 -- name: ClearCapcodeNoise :exec
--- R35h (d): an imported page to a capcode means none of its pages is
--- probably noise. An import has no client, so it marks nothing (a).
+-- R35h (d): an imported copy saved as message id means none of its
+-- capcode's pages is probably noise. Only the message itself and the one
+-- other page to the capcode can be marked (a marked page is its capcode's
+-- only one), so those two are read by index, never every page to a busy
+-- capcode. An import has no client, so it marks nothing (a).
 UPDATE messages SET probably_noise = false
-WHERE capcode = sqlc.arg(capcode)::text AND probably_noise;
+WHERE probably_noise
+  AND id IN (
+        SELECT sqlc.arg(id)::bigint
+        UNION ALL
+        (SELECT o.id FROM messages o
+         WHERE o.capcode = sqlc.arg(capcode)::text AND o.id <> sqlc.arg(id)::bigint
+         ORDER BY o.sent_at DESC LIMIT 1));
 
 -- name: BackfillNoise :execrows
 -- R35h: the background pass over pages stored before (internal/noise): the

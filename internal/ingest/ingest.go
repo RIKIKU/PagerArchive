@@ -261,7 +261,7 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 // which has no client, only clears its capcode's (leg d).
 func (s *Service) noise(ctx context.Context, q *db.Queries, d Draft, id int64) error {
 	if d.Client == "" {
-		return q.ClearCapcodeNoise(ctx, d.Params.Capcode)
+		return q.ClearCapcodeNoise(ctx, db.ClearCapcodeNoiseParams{ID: id, Capcode: d.Params.Capcode})
 	}
 	return q.RefreshNoise(ctx, db.RefreshNoiseParams{ID: id, Capcode: d.Params.Capcode, ReceivedAt: d.ReceivedAt})
 }

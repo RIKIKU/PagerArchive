@@ -1294,13 +1294,27 @@ func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseReque
 
 const clearCapcodeNoise = `-- name: ClearCapcodeNoise :exec
 UPDATE messages SET probably_noise = false
-WHERE capcode = $1::text AND probably_noise
+WHERE probably_noise
+  AND id IN (
+        SELECT $1::bigint
+        UNION ALL
+        (SELECT o.id FROM messages o
+         WHERE o.capcode = $2::text AND o.id <> $1::bigint
+         ORDER BY o.sent_at DESC LIMIT 1))
 `
 
-// R35h (d): an imported page to a capcode means none of its pages is
-// probably noise. An import has no client, so it marks nothing (a).
-func (q *Queries) ClearCapcodeNoise(ctx context.Context, capcode string) error {
-	_, err := q.db.Exec(ctx, clearCapcodeNoise, capcode)
+type ClearCapcodeNoiseParams struct {
+	ID      int64
+	Capcode string
+}
+
+// R35h (d): an imported copy saved as message id means none of its
+// capcode's pages is probably noise. Only the message itself and the one
+// other page to the capcode can be marked (a marked page is its capcode's
+// only one), so those two are read by index, never every page to a busy
+// capcode. An import has no client, so it marks nothing (a).
+func (q *Queries) ClearCapcodeNoise(ctx context.Context, arg ClearCapcodeNoiseParams) error {
+	_, err := q.db.Exec(ctx, clearCapcodeNoise, arg.ID, arg.Capcode)
 	return err
 }
 
