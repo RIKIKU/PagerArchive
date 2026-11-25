@@ -133,9 +133,9 @@ metadata:
 entries:
   - model: authentik_core.group
     identifiers:
-      name: a136-made-up-companion
+      name: a141-made-up-companion
     attrs:
-      name: a136-made-up-companion
+      name: a141-made-up-companion
 YAML
 chmod a+r "$DIR/deploy/authentik/blueprints.d/companion.yaml"
 
@@ -146,7 +146,7 @@ limited "a new install"
 
 echo "=== A141: a blueprint in deploy/authentik/blueprints.d is applied (R84l)"
 i=0
-until [ "$(stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT count(*) FROM authentik_core_group WHERE name = 'a136-made-up-companion'" | tr -d '\r')" = 1 ]; do
+until [ "$(stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT count(*) FROM authentik_core_group WHERE name = 'a141-made-up-companion'" | tr -d '\r')" = 1 ]; do
 	i=$((i + 1))
 	if [ $i -gt 100 ]; then
 		fail "Authentik didn't apply the blueprint in blueprints.d after 300 s"

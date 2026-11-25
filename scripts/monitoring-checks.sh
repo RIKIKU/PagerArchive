@@ -189,16 +189,16 @@ PA_MON_GRAFANA_URL=http://127.0.0.1:13001 PA_MON_GRAFANA_PASSWORD="$GRAFANA_ADMI
 for d in alloy.d alerts.d dashboards.d; do
 	[ -d "$MONDIR/include/$d" ] && [ -z "$(ls -A "$MONDIR/include/$d")" ] || { echo "FAIL: the release's include/$d isn't there, empty" >&2; status=1; }
 done
-cat >"$MONDIR/include/alloy.d/a137.alloy" <<'ALLOY'
+cat >"$MONDIR/include/alloy.d/a142.alloy" <<'ALLOY'
 // A142: a made-up companion's scrape, sent on with the stack's own component.
-prometheus.scrape "a137_made_up_companion" {
+prometheus.scrape "a142_made_up_companion" {
   targets         = [{"__address__" = "127.0.0.1:12345"}]
-  job_name        = "a137-made-up-companion"
+  job_name        = "a142-made-up-companion"
   scrape_interval = "15s"
   forward_to      = [prometheus.remote_write.prometheus.receiver]
 }
 ALLOY
-cat >"$MONDIR/include/alerts.d/a137.yaml" <<'YAML'
+cat >"$MONDIR/include/alerts.d/a142.yaml" <<'YAML'
 # A142: a made-up companion's alert rule, which never fires.
 apiVersion: 1
 groups:
@@ -207,7 +207,7 @@ groups:
     folder: A142 companion
     interval: 1m
     rules:
-      - uid: a137-made-up-companion
+      - uid: a142-made-up-companion
         title: A142 made-up companion rule
         condition: never
         data:
@@ -228,8 +228,8 @@ groups:
         for: 0s
 YAML
 mkdir -p "$MONDIR/include/dashboards.d/A142 companion"
-cat >"$MONDIR/include/dashboards.d/A142 companion/a137.json" <<'JSON'
-{"uid": "a137-made-up-companion", "title": "A142 made-up companion", "schemaVersion": 39, "panels": []}
+cat >"$MONDIR/include/dashboards.d/A142 companion/a142.json" <<'JSON'
+{"uid": "a142-made-up-companion", "title": "A142 made-up companion", "schemaVersion": 39, "panels": []}
 JSON
 chmod -R a+rX "$MONDIR/include"
 cp deploy/monitoring/test/compose.yaml "$MONDIR/compose.override.yaml"
@@ -247,17 +247,17 @@ mon_up
 echo "--- A142: the include folders' files load with the stack's own (R76a)"
 grafana_get() { curl -sf -u "admin:$GRAFANA_ADMIN_PASSWORD" "http://127.0.0.1:13001$1"; }
 i=0
-until grafana_get /api/dashboards/uid/a137-made-up-companion | grep -q '"folderTitle":"A142 companion"'; do
+until grafana_get /api/dashboards/uid/a142-made-up-companion | grep -q '"folderTitle":"A142 companion"'; do
 	i=$((i + 1))
 	[ $i -lt 60 ] || { echo "FAIL: the dashboard in include/dashboards.d isn't in its folder after 120 s" >&2; status=1; break; }
 	sleep 2
 done
-grafana_get /api/v1/provisioning/alert-rules/a137-made-up-companion | grep -q '"title":"A142 made-up companion rule"' ||
+grafana_get /api/v1/provisioning/alert-rules/a142-made-up-companion | grep -q '"title":"A142 made-up companion rule"' ||
 	{ echo "FAIL: the rule in include/alerts.d isn't provisioned" >&2; status=1; }
 grafana_get /api/v1/provisioning/alert-rules/pa-backup-failing | grep -q '"uid":"pa-backup-failing"' ||
 	{ echo "FAIL: the stack's own rules went with the included one" >&2; status=1; }
 i=0
-until curl -sf 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22a137-made-up-companion%22%7D' | grep -q '"value":\[[0-9.]*,"1"\]'; do
+until curl -sf 'http://127.0.0.1:19090/api/v1/query?query=up%7Bjob%3D%22a142-made-up-companion%22%7D' | grep -q '"value":\[[0-9.]*,"1"\]'; do
 	i=$((i + 1))
 	[ $i -lt 60 ] || { echo "FAIL: include/alloy.d's scrape reached no Prometheus after 120 s" >&2; mon logs --tail 20 alloy >&2; status=1; break; }
 	sleep 2
