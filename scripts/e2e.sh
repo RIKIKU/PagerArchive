@@ -187,6 +187,12 @@ until curl -sf -m 2 "http://127.0.0.1:$API_PORT/healthz" >/dev/null; do
 	sleep 0.2
 done
 export PA_URL=http://127.0.0.1:$API_PORT
+# A135 (R77e, R77f): the API above is standalone (no RADIOARCHIVE_URL). The
+# app switcher's test starts a second one on the same database with
+# RadioArchive set, for its own run only, so no worker runs twice while the
+# other tests do: the build, its port and log, and the settings both share.
+export PA_E2E_BIN="$BIN" PA_E2E_COMBINED_PORT=${PA_E2E_COMBINED_PORT:-$((API_PORT + 1))}
+export PA_E2E_PROFILES="$PWD/profiles/example"
 
 status=0
 (cd web && npx playwright test tests/e2e.spec.ts "$@") || status=$?

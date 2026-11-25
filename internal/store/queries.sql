@@ -646,7 +646,9 @@ SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, 
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing,
        -- R42c: the trusted mark, who set it and when.
-       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name
+       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name,
+       -- R77f: marked to see the app switcher.
+       u.sees_switcher
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 LEFT JOIN users t ON t.id = u.trusted_by
@@ -701,6 +703,11 @@ UPDATE users SET trusted_at = CASE WHEN sqlc.narg(by)::bigint IS NULL THEN NULL 
     trusted_by = sqlc.narg(by)::bigint
 WHERE id = sqlc.arg(id) AND status <> 'deleted';
 
+-- name: SetUserSeesSwitcher :execrows
+-- R77f: marks or unmarks a user to see the app switcher.
+UPDATE users SET sees_switcher = sqlc.arg(sees)::boolean
+WHERE id = sqlc.arg(id) AND status <> 'deleted';
+
 -- name: CreateTreeDeactivation :one
 INSERT INTO tree_deactivations (root_id, actor_id, reason, invitations_cancelled)
 VALUES ($1, $2, $3, $4)
@@ -745,7 +752,7 @@ UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted';
 -- connected (owner, 2026-10-13).
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
     email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
-    look = 'harbour'
+    look = 'harbour', sees_switcher = false
 WHERE id = $1;
 
 -- Service accounts (R62a, ADR 0048).

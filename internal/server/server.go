@@ -97,6 +97,10 @@ type Server struct {
 	MetricsToken string
 	Locks        LockCounter
 	Version      string
+	// RadioArchiveURL is the other app's address, for the app switcher
+	// (R77e; "" for a standalone PagerArchive: no switcher), and
+	// RadioArchiveName the name it shows.
+	RadioArchiveURL, RadioArchiveName string
 	// Flagged has the flagged messages' counts for /metrics, counted in the
 	// background (R52); nil leaves them out.
 	Flagged *FlagCounts
@@ -460,23 +464,27 @@ func (s *Server) apiRoutes() map[string]http.HandlerFunc {
 		"GET /api/v1/admin/users/{id}/deactivation-preview": s.adminOnly(s.deactivationPreview),
 		"POST /api/v1/admin/users/{id}/deactivate-tree":     s.adminOnly(s.deactivateTree),
 		"PUT /api/v1/admin/users/{id}/trusted":              s.adminOnly(s.setTrusted),
-		"GET /api/v1/integrations/selection":                s.suggestSelection,
-		"GET /api/v1/integrations/levels":                   s.integrationLevels,
-		"GET /api/v1/integrations":                          s.listIntegrations,
-		"POST /api/v1/integrations":                         s.createIntegration,
-		"GET /api/v1/integrations/{id}":                     s.getIntegration,
-		"PUT /api/v1/integrations/{id}":                     s.updateIntegration,
-		"DELETE /api/v1/integrations/{id}":                  s.deleteIntegration,
-		"POST /api/v1/integrations/{id}/test":               s.testIntegration,
-		"POST /api/v1/integrations/{id}/pause":              s.pauseIntegration(false),
-		"POST /api/v1/integrations/{id}/resume":             s.resumeIntegration(false),
-		"GET /api/v1/integrations/{id}/deliveries":          s.integrationDeliveries,
-		"GET /api/v1/admin/users/{id}":                      s.adminOnly(s.adminUser),
-		"GET /api/v1/admin/users/{id}/invitations":          s.adminOnly(s.userInvitations),
-		"POST /api/v1/admin/integrations/{id}/pause":        s.adminOnly(s.pauseIntegration(true)),
-		"POST /api/v1/admin/integrations/{id}/resume":       s.adminOnly(s.resumeIntegration(true)),
-		"GET /api/v1/admin/integration-hosts":               s.adminOnly(s.getAllowList),
-		"PUT /api/v1/admin/integration-hosts":               s.adminOnly(s.putAllowList),
+		// R77f: who sees the app switcher.
+		"PUT /api/v1/admin/users/{id}/switcher":       s.adminOnly(s.setSeesSwitcher),
+		"GET /api/v1/admin/switcher":                  s.adminOnly(s.getSwitcher),
+		"PUT /api/v1/admin/switcher":                  s.adminOnly(s.putSwitcher),
+		"GET /api/v1/integrations/selection":          s.suggestSelection,
+		"GET /api/v1/integrations/levels":             s.integrationLevels,
+		"GET /api/v1/integrations":                    s.listIntegrations,
+		"POST /api/v1/integrations":                   s.createIntegration,
+		"GET /api/v1/integrations/{id}":               s.getIntegration,
+		"PUT /api/v1/integrations/{id}":               s.updateIntegration,
+		"DELETE /api/v1/integrations/{id}":            s.deleteIntegration,
+		"POST /api/v1/integrations/{id}/test":         s.testIntegration,
+		"POST /api/v1/integrations/{id}/pause":        s.pauseIntegration(false),
+		"POST /api/v1/integrations/{id}/resume":       s.resumeIntegration(false),
+		"GET /api/v1/integrations/{id}/deliveries":    s.integrationDeliveries,
+		"GET /api/v1/admin/users/{id}":                s.adminOnly(s.adminUser),
+		"GET /api/v1/admin/users/{id}/invitations":    s.adminOnly(s.userInvitations),
+		"POST /api/v1/admin/integrations/{id}/pause":  s.adminOnly(s.pauseIntegration(true)),
+		"POST /api/v1/admin/integrations/{id}/resume": s.adminOnly(s.resumeIntegration(true)),
+		"GET /api/v1/admin/integration-hosts":         s.adminOnly(s.getAllowList),
+		"PUT /api/v1/admin/integration-hosts":         s.adminOnly(s.putAllowList),
 		// Aliases in the browser (R53-R58, ADR 0007).
 		"GET /api/v1/templates":                          s.listTemplates,
 		"GET /api/v1/alias-requests":                     s.myRequests,

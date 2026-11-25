@@ -110,6 +110,8 @@ serve reads its settings from the environment:
   MAP_TILES               path to a PMTiles map extract (default: no background map;
                           /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
+  RADIOARCHIVE_URL        RadioArchive's public URL, for the app switcher (R77e; default: none, no switcher)
+  RADIOARCHIVE_NAME       the name the switcher shows (default Radio)
   INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
                                (openssl rand -base64 32); without it integrations are off
   INTEGRATION_SECRETS_KEY_OLD  the previous key, only while rotating
@@ -162,6 +164,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+// radioArchiveURL is RADIOARCHIVE_URL (R77e): RadioArchive's address, for
+// the app switcher, or "" for none. It must be an http(s) URL.
+func radioArchiveURL() (string, error) {
+	v := strings.TrimSpace(os.Getenv("RADIOARCHIVE_URL"))
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
+		return "", fmt.Errorf("RADIOARCHIVE_URL must be an http(s) URL")
+	}
+	return u.String(), nil
 }
 
 func getenv(name, def string) string {
@@ -443,8 +459,14 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	radioURL, err := radioArchiveURL()
+	if err != nil {
+		return err
+	}
 	srv := &server.Server{
-		Store: st,
+		RadioArchiveURL:  radioURL,
+		RadioArchiveName: getenv("RADIOARCHIVE_NAME", "Radio"),
+		Store:            st,
 		Ingest: &ingest.Service{
 			Store:     st,
 			Network:   net,

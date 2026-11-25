@@ -188,11 +188,18 @@ type Meta struct {
 	// The network profile's layers of areas that have some to show (R88), in
 	// its order; left out when there are none.
 	Areas []MetaAreas `json:"areas,omitempty"`
+	// R77e: the other app, RadioArchive, when RADIOARCHIVE_URL is set: its
+	// address and the name the switcher shows; left out when it isn't.
+	RadioArchiveURL  string `json:"radioarchive_url,omitempty"`
+	RadioArchiveName string `json:"radioarchive_name,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
 		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version, Areas: s.metaAreas()}
+	if s.RadioArchiveURL != "" {
+		m.RadioArchiveURL, m.RadioArchiveName = s.RadioArchiveURL, s.RadioArchiveName
+	}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}

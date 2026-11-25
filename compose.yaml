@@ -155,6 +155,9 @@ services:
       DEDUP_NEAR_RATIO: ${DEDUP_NEAR_RATIO:-}
       MAP_TILES: /map/tiles.pmtiles
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
+      # The app switcher to RadioArchive (R77e): off unless set.
+      RADIOARCHIVE_URL: ${RADIOARCHIVE_URL:-}
+      RADIOARCHIVE_NAME: ${RADIOARCHIVE_NAME:-}
       # Integrations (docs/integrations.md) and metrics (docs/deploy.md).
       INTEGRATION_SECRETS_KEY: ${INTEGRATION_SECRETS_KEY:-}
       INTEGRATION_SECRETS_KEY_OLD: ${INTEGRATION_SECRETS_KEY_OLD:-}

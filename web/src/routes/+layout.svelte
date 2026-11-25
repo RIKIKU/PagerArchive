@@ -2,7 +2,10 @@
 	// The frame of every signed-in page (R77-R81, ADR 0015): the side menu,
 	// the top bar with the breadcrumbs, the search box and the account menu,
 	// and on phones a bottom bar instead of the side menu. The page itself
-	// uses the full width (R80).
+	// uses the full width (R80). R77d (ADR 0051): the frame is ArchiveUx's
+	// (Frame, Menu, BottomBar, AccountMenu), filled with PagerArchive's menu
+	// tree, counts and dots (frame.ts); R77e: with RadioArchive set, its app
+	// switcher, for whom R77f says.
 	// ArchiveUx's tokens and base styles (ADR 0049), then PagerArchive's own
 	// (the map's), in that order.
 	import 'archiveux/archiveux.css';
@@ -10,17 +13,19 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { page, updated } from '$app/state';
 	import { onMount } from 'svelte';
+	import { AccountMenu, BottomBar, Frame, Menu } from 'archiveux/components';
 	import { api, type Look, type Me, type Meta } from '#lib/api.ts';
-	import AccountMenu from '#lib/AccountMenu.svelte';
-	import { refreshAlbums } from '#lib/albums.svelte.ts';
-	import BottomBar from '#lib/BottomBar.svelte';
+	import { albums, refreshAlbums } from '#lib/albums.svelte.ts';
 	import Crumbs from '#lib/Crumbs.svelte';
+	import { bottomCurrent, bottomEntries, menuCurrent, menuGroups, menuTop, moreGroups, NEW_GROUP, type Marks } from '#lib/frame.ts';
 	import { here } from '#lib/here.svelte.ts';
+	import { icons } from '#lib/icons.ts';
 	import { followLargeEventDot, largeEventDot } from '#lib/largeEventDot.svelte.ts';
 	import { list, listHref } from '#lib/listState.svelte.ts';
-	import Menu from '#lib/Menu.svelte';
+	import ReceiverAlert from '#lib/ReceiverAlert.svelte';
+	import { releaseHref } from '#lib/release.ts';
 	import ReleaseNotice from '#lib/ReleaseNotice.svelte';
-	import { menu } from '#lib/menu.svelte.ts';
+	import { menu as menuState, toggleGroup, toggleShrunk } from '#lib/menu.svelte.ts';
 	import { crumbs } from '#lib/nav.ts';
 	import SearchBox from '#lib/SearchBox.svelte';
 	import { criteria } from '#lib/search.ts';
@@ -35,8 +40,9 @@
 	let theme: 'system' | 'light' | 'dark' = $state('system');
 	// R82d: the user's look, from their account. The server sent the page
 	// with it already on the root (data-look), so the first paint is theirs.
-	let look: Look | undefined = $state();
-	let topHeight = $state(0);
+	// Until their account loads, the one the server put there.
+	const sentLook = document.documentElement.dataset.look;
+	let look: Look = $state(sentLook === 'console' ? 'console' : 'harbour');
 
 	// The sign-in page works without a session, and has no frame.
 	const signedOut = $derived(page.url.pathname.startsWith('/signin'));
@@ -138,109 +144,104 @@
 	const action = $derived(own ? path : '/');
 	const query = $derived(own ? criteria(page.url) : route === '/(list)/messages/[id]' ? new URLSearchParams(list.query) : new URLSearchParams());
 	const mapHref = $derived(list.query ? `/map?${list.query}` : '/map');
+
+	// R77d: the menu's tree and marks, for ArchiveUx's Menu and BottomBar.
+	const marks: Marks = $derived({ admin, waiting: waiting.count, sheetCount: sheet.ids.length, newEvent: largeEventDot.on, albums: albums.list });
+	const home = $derived(listHref());
+	const version = $derived(meta?.version ?? '');
+	// An album's page keeps the Albums group open, listed yet or not.
+	const opened = $derived(path.startsWith('/albums/') ? { ...menuState.open, albums: true } : menuState.open);
+	// R77e, R77f: the switcher, when RadioArchive is set and the server says
+	// this user sees it.
+	const otherApp = $derived(meta?.radioarchive_url && me?.show_switcher ? { name: meta.radioarchive_name ?? 'Radio', href: meta.radioarchive_url } : null);
 </script>
 
 {#if signedOut}
 	<main id="main" class="bare">{@render children()}</main>
 {:else}
-	<a class="skip" href="#main">Skip to content</a>
-	{#if scrubberHere.focus}
-		<!-- R81b: the scrubber, without tabbing through the menu and every row (also Alt+J). -->
-		<a
-			class="skip"
-			href="#main"
-			aria-keyshortcuts="Alt+J"
-			onclick={(e) => {
-				e.preventDefault();
-				scrubberHere.focus?.();
-			}}>Skip to the date scrubber (Alt+J)</a
-		>
-	{/if}
-	<!-- R77b: told of a new release once; early in the tab order, as it's on screen only briefly. -->
-	<ReleaseNotice />
-	<div class="shell" class:shrunk={menu.shrunk} style:--topbar-height="{topHeight}px">
-		<nav class="side" aria-label="Main">
-			<Menu {path} {admin} listHref={listHref()} waiting={waiting.count} sheetCount={sheet.ids.length} {quiet} newEvent={largeEventDot.on} version={meta?.version ?? ''} />
-		</nav>
-		<header class="top" bind:clientHeight={topHeight}>
-			<Crumbs {trail} listHref={listHref()} />
-			<div class="tools">
-				{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} timeZone={meta.time_zone} firstPage={meta.first_page} lastPage={meta.last_page} />{/if}
-				<AccountMenu {me} bind:theme bind:look />
-			</div>
-		</header>
-		<main id="main">
-			{@render children()}
-		</main>
-		{#if meta?.attribution}
-			<footer class="note">Address data: {meta.attribution}</footer>
-		{/if}
-		<BottomBar {path} {admin} listHref={listHref()} {mapHref} newEvent={largeEventDot.on} version={meta?.version ?? ''} />
-	</div>
+	<Frame shrunk={menuState.shrunk} {otherApp}>
+		{#snippet notices()}
+			{#if scrubberHere.focus}
+				<!-- R81b: the scrubber, without tabbing through the menu and every row (also Alt+J). -->
+				<a
+					class="skip"
+					href="#main"
+					aria-keyshortcuts="Alt+J"
+					onclick={(e) => {
+						e.preventDefault();
+						scrubberHere.focus?.();
+					}}>Skip to the date scrubber (Alt+J)</a
+				>
+			{/if}
+			<!-- R77b: told of a new release once; early in the tab order, as it's on screen only briefly. -->
+			<ReleaseNotice />
+		{/snippet}
+		{#snippet menu()}
+			<Menu
+				brand={{ name: 'PagerArchive', mark: 'PA', href: home }}
+				current={menuCurrent(path, home)}
+				top={menuTop(home)}
+				groups={menuGroups(marks)}
+				open={opened}
+				ontoggle={toggleGroup}
+				shrunk={menuState.shrunk}
+				onshrink={toggleShrunk}
+				{version}
+				versionHref={version ? releaseHref(version) : undefined}
+			>
+				{#snippet foot({ shrunk }: { shrunk: boolean })}
+					{#if admin && quiet > 0}<ReceiverAlert {quiet} {shrunk} />{/if}
+				{/snippet}
+			</Menu>
+		{/snippet}
+		{#snippet start()}
+			<Crumbs {trail} listHref={home} />
+		{/snippet}
+		{#snippet tools()}
+			{#if meta}<SearchBox {action} {query} {admin} categories={meta.categories} timeZone={meta.time_zone} firstPage={meta.first_page} lastPage={meta.last_page} />{/if}
+		{/snippet}
+		{#snippet account()}
+			<AccountMenu
+				account={me ? { name: me.name ?? undefined, email: me.email } : {}}
+				bind:theme
+				bind:look
+				onlook={(l: Look) => api.setLook(l)}
+				onsignout={() => api.signOut()}
+				links={[{ href: '/account/profile', label: 'Profile', svg: icons.profile }]}
+			/>
+		{/snippet}
+		{#snippet bottomBar()}
+			<!-- Below the page, beside the menu (the frame's last row, as no page here has a dock). -->
+			{#if meta?.attribution}
+				<footer class="note">Address data: {meta.attribution}</footer>
+			{/if}
+			<BottomBar
+				entries={bottomEntries(home, mapHref)}
+				groups={moreGroups(marks)}
+				current={bottomCurrent(path, home, mapHref)}
+				moreDot={largeEventDot.on}
+				moreSays={largeEventDot.on ? NEW_GROUP : ''}
+				{version}
+				versionHref={version ? releaseHref(version) : undefined}
+			/>
+		{/snippet}
+		{@render children()}
+	</Frame>
 {/if}
 
 <style>
-	.shell {
-		display: grid;
-		grid-template-columns: var(--menu-width) minmax(0, 1fr);
-		grid-template-rows: auto 1fr auto;
-		grid-template-areas: 'side top' 'side main' 'side note';
-		min-height: var(--full-height);
-	}
-	.shell.shrunk {
-		grid-template-columns: var(--menu-width-shrunk) minmax(0, 1fr);
-	}
-	.side {
-		grid-area: side;
-		position: sticky;
-		top: 0;
-		z-index: var(--layer-header);
-		height: var(--full-height);
-		overflow-y: auto;
-		background: var(--surface);
-		border-right: var(--border-width) solid var(--border);
-	}
-	.shrunk .side {
-		overflow: visible;
-	}
-	.top {
-		grid-area: top;
-		position: sticky;
-		top: 0;
-		z-index: var(--layer-header);
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: var(--space-sm) var(--space-lg);
-		padding: var(--space-sm) var(--page-pad);
-		background: var(--bg);
-		border-bottom: var(--border-width) solid var(--border);
-	}
-	.tools {
-		display: flex;
-		flex: 1 1 auto;
-		align-items: center;
-		justify-content: flex-end;
-		gap: var(--space-sm);
-		min-width: 0;
-	}
-	.tools > :global(.search) {
+	/* The frame is ArchiveUx's (R77d); these are PagerArchive's parts in it. */
+	:global(header.top .tools > .search) {
 		flex: 1 1 auto;
 		max-width: var(--measure-wide);
-	}
-	main {
-		grid-area: main;
-		min-width: 0;
-		padding: var(--page-pad);
-		/* Its own stacking context: content stays below the top bar. */
-		isolation: isolate;
 	}
 	main.bare {
 		max-width: var(--measure);
 		margin: 0 auto;
 	}
+	/* Below the page, beside the side menu: the frame's last row. */
 	.note {
-		grid-area: note;
+		grid-area: dock;
 		padding: 0 var(--page-pad) var(--space-lg);
 		font-size: var(--text-xxs);
 		color: var(--muted);
@@ -258,26 +259,13 @@
 		background: var(--surface-2);
 		padding: var(--space-sm) var(--space-lg);
 	}
-	/* Phones (R81): no side menu; the bottom bar instead. */
+	/* Phones (R81): the search box and the account menu on a row of their own,
+	   below the breadcrumbs. */
 	@media (max-width: 47.99rem) {
-		.shell,
-		.shell.shrunk {
-			display: block;
-			padding-bottom: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom));
-		}
-		.side {
-			display: none;
-		}
-		.top {
-			padding: var(--space-sm) var(--page-pad-phone);
-		}
-		.tools {
+		:global(header.top > .tools) {
 			flex-basis: 100%;
 			flex-wrap: nowrap;
 			align-items: flex-start;
-		}
-		main {
-			padding: var(--page-pad-phone);
 		}
 		.note {
 			padding: 0 var(--page-pad-phone) var(--space-lg);
@@ -287,17 +275,9 @@
 	   the page's title. */
 	@media print {
 		.skip,
-		.side,
-		.top,
 		.note,
 		:global(#svelte-announcer) {
 			display: none;
-		}
-		.shell {
-			display: block;
-		}
-		main {
-			padding: 0;
 		}
 	}
 </style>
