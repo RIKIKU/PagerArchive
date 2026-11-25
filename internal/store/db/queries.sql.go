@@ -1294,27 +1294,15 @@ func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseReque
 
 const clearCapcodeNoise = `-- name: ClearCapcodeNoise :exec
 UPDATE messages SET probably_noise = false
-WHERE probably_noise
-  AND id IN (
-        SELECT $1::bigint
-        UNION ALL
-        (SELECT o.id FROM messages o
-         WHERE o.capcode = $2::text AND o.id <> $1::bigint
-         ORDER BY o.sent_at DESC LIMIT 1))
+WHERE capcode = $1::text AND probably_noise
 `
 
-type ClearCapcodeNoiseParams struct {
-	ID      int64
-	Capcode string
-}
-
-// R35h (d): an imported copy saved as message id means none of its
-// capcode's pages is probably noise. Only the message itself and the one
-// other page to the capcode can be marked (a marked page is its capcode's
-// only one), so those two are read by index, never every page to a busy
-// capcode. An import has no client, so it marks nothing (a).
-func (q *Queries) ClearCapcodeNoise(ctx context.Context, arg ClearCapcodeNoiseParams) error {
-	_, err := q.db.Exec(ctx, clearCapcodeNoise, arg.ID, arg.Capcode)
+// R35h (d): a page to the capcode really heard (an import's copy, or a
+// format a re-parse found) means none of its pages is probably noise. The
+// marked ones are read by the partial index, never every page to a busy
+// capcode. It only clears, so it takes no lock.
+func (q *Queries) ClearCapcodeNoise(ctx context.Context, capcode string) error {
+	_, err := q.db.Exec(ctx, clearCapcodeNoise, capcode)
 	return err
 }
 
@@ -5711,9 +5699,8 @@ SET probably_noise = message_probably_noise(m.id, m.capcode, m.format, m.sent_at
 WHERE m.id IN (
         SELECT $1::bigint
         UNION ALL
-        (SELECT o.id FROM messages o
-         WHERE o.capcode = $2::text AND o.id <> $1::bigint
-         ORDER BY o.sent_at DESC LIMIT 1)
+        SELECT o.id FROM messages o
+        WHERE o.capcode = $2::text AND o.probably_noise
         UNION ALL
         SELECT w.id FROM messages w
         WHERE w.sent_at BETWEEN $3::timestamptz - interval '10 minutes'
@@ -5730,11 +5717,11 @@ type RefreshNoiseParams struct {
 
 // R35h: after client's copy received at received_at was saved as message
 // id: works out again the pages it can change, and writes only those that
-// did. They're the message itself (legs a and c), the one other page to its
-// capcode, which is the only one that can be marked (d), and the pages with
-// no format sent within 10 minutes of the copy (b). The rule is worked out
-// on the row as UPDATE finds it, so a re-parse's format written meanwhile
-// wins.
+// did. They're the message itself (legs a and c), the marked pages to its
+// capcode, which it clears once it was really heard (d; by the partial
+// index), and the pages with no format sent within 10 minutes of the copy
+// (b). The rule is worked out on the row as UPDATE finds it, so a
+// re-parse's format written meanwhile wins.
 func (q *Queries) RefreshNoise(ctx context.Context, arg RefreshNoiseParams) error {
 	_, err := q.db.Exec(ctx, refreshNoise, arg.ID, arg.Capcode, arg.ReceivedAt)
 	return err

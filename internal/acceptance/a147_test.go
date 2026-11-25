@@ -18,6 +18,10 @@ import (
 // garble is a made-up garbled decode: no format, no alias.
 const garble = "QX7#ZK.. 4R!P"
 
+// garble2 is another, for a burst to one capcode: too unlike garble to be
+// its near duplicate (R19a).
+const garble2 = "MM2(VB 9;0W ##Y"
+
 // noisy is whether message id is marked, read through the API as a user
 // sees it, and in the database.
 func (e *env) noisy(id int64) bool {
@@ -115,40 +119,67 @@ func TestA147ProbablyNoise(t *testing.T) {
 		}
 	})
 
-	t.Run("(d) a later page to the capcode clears it, from any client or an import", func(t *testing.T) {
+	t.Run("(d) earlier noise doesn't stop the mark; a page really heard clears the capcode's", func(t *testing.T) {
 		t0 := hour(4)
 		e.mustPost("b", "0100001", "@@EX0013507 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 #STN1", t0)
+		// A burst to one random capcode: each heard by A only.
 		p := e.mustPost("a", "0910004", garble, t0.Add(time.Minute))
-		q := e.mustPost("a", "0910005", garble, t0.Add(2*time.Minute))
-		if !e.noisy(p.MessageID) || !e.noisy(q.MessageID) {
+		p2 := e.mustPost("a", "0910004", garble2, t0.Add(3*time.Minute))
+		if !e.noisy(p.MessageID) || !e.noisy(p2.MessageID) {
+			t.Fatalf("a burst to one capcode: first %v, second %v, want both marked", e.noisy(p.MessageID), e.noisy(p2.MessageID))
+		}
+		// The second gains C's copy: it was really heard, so neither is noise.
+		if c := e.mustPost("c", "0910004", garble2, t0.Add(3*time.Minute+300*time.Millisecond)); c.MessageID != p2.MessageID {
+			t.Fatalf("C's copy: %+v", c)
+		}
+		if e.noisy(p2.MessageID) || e.noisy(p.MessageID) {
+			t.Errorf("after a second client's copy of one: first %v, second %v, want neither", e.noisy(p.MessageID), e.noisy(p2.MessageID))
+		}
+
+		q := e.mustPost("a", "0910005", garble, t0.Add(5*time.Minute))
+		q2 := e.mustPost("a", "0910005", garble2, t0.Add(6*time.Minute))
+		// A later page to the capcode, from C alone: not really heard (yet).
+		later := e.mustPost("c", "0910005", "ANOTHER MADE-UP PAGE", t0.Add(20*time.Minute))
+		if later.MessageID == q.MessageID || !e.noisy(q.MessageID) || !e.noisy(q2.MessageID) {
+			t.Fatalf("a later page heard by one client: %+v, earlier marked %v %v, want both still", later, e.noisy(q.MessageID), e.noisy(q2.MessageID))
+		}
+		// B's copy of it: two clients heard it, so the capcode is real.
+		if b := e.mustPost("b", "0910005", "ANOTHER MADE-UP PAGE", t0.Add(20*time.Minute+200*time.Millisecond)); b.MessageID != later.MessageID {
+			t.Fatalf("B's copy: %+v", b)
+		}
+		if e.noisy(q.MessageID) || e.noisy(q2.MessageID) || e.noisy(later.MessageID) {
+			t.Errorf("after a page heard by two: %v %v %v, want none marked", e.noisy(q.MessageID), e.noisy(q2.MessageID), e.noisy(later.MessageID))
+		}
+
+		r := e.mustPost("a", "0910006", garble, t0.Add(7*time.Minute))
+		if !e.noisy(r.MessageID) {
 			t.Fatal("not marked")
 		}
-		// An hour later, from another client: the capcode is known now.
-		later := e.mustPost("c", "0910004", "ANOTHER MADE-UP PAGE", t0.Add(70*time.Minute))
-		if later.MessageID == p.MessageID || e.noisy(p.MessageID) {
-			t.Errorf("a later page to the capcode: %+v, first still marked %v", later, e.noisy(p.MessageID))
-		}
-		if e.noisy(later.MessageID) {
-			t.Error("the later page is marked")
-		}
-		b, _ := json.Marshal(map[string]string{"received_at": t0.Add(-48 * time.Hour).Format(time.RFC3339Nano), "capcode": "0910005", "text": "AN OLD MADE-UP PAGE"})
+		b, _ := json.Marshal(map[string]string{"received_at": t0.Add(-48 * time.Hour).Format(time.RFC3339Nano), "capcode": "0910006", "text": "AN OLD MADE-UP PAGE"})
 		e.mustImport(string(b))
-		if e.noisy(q.MessageID) {
+		if e.noisy(r.MessageID) {
 			t.Error("an imported page to the capcode left it marked")
 		}
 	})
 
-	t.Run("a re-parse that gives it a format clears it", func(t *testing.T) {
+	t.Run("a re-parse that gives it a format clears it, and its capcode's others", func(t *testing.T) {
 		t0 := hour(5)
 		e.mustPost("b", "0100001", "@@EX0013508 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 #STN1", t0)
+		p0 := e.mustPost("a", "0930001", garble, t0.Add(30*time.Second))
 		p := e.mustPost("a", "0930001", "@@EX0013509 HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON GRID 123456 UNITS T1 #STN3", t0.Add(time.Minute))
-		if !e.noisy(p.MessageID) {
-			t.Fatal("a text-only page heard once isn't marked")
+		if !e.noisy(p.MessageID) || !e.noisy(p0.MessageID) {
+			t.Fatal("text-only pages heard once aren't marked")
 		}
 		e.adminAddAlias("0930001", "Noise test 3")
 		e.reparseNow()
 		if e.noisy(p.MessageID) {
 			t.Error("re-parsed with a format, still marked")
+		}
+		if _, failed := e.messageText(p0.MessageID); !failed {
+			t.Error("the garbled page matches a format after the re-parse")
+		}
+		if e.noisy(p0.MessageID) {
+			t.Error("its capcode's other page found a format, the garbled one is still marked")
 		}
 	})
 

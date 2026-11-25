@@ -99,19 +99,18 @@ SELECT pg_advisory_xact_lock(hashtextextended('probably noise', 0));
 -- name: RefreshNoise :exec
 -- R35h: after client's copy received at received_at was saved as message
 -- id: works out again the pages it can change, and writes only those that
--- did. They're the message itself (legs a and c), the one other page to its
--- capcode, which is the only one that can be marked (d), and the pages with
--- no format sent within 10 minutes of the copy (b). The rule is worked out
--- on the row as UPDATE finds it, so a re-parse's format written meanwhile
--- wins.
+-- did. They're the message itself (legs a and c), the marked pages to its
+-- capcode, which it clears once it was really heard (d; by the partial
+-- index), and the pages with no format sent within 10 minutes of the copy
+-- (b). The rule is worked out on the row as UPDATE finds it, so a
+-- re-parse's format written meanwhile wins.
 UPDATE messages m
 SET probably_noise = message_probably_noise(m.id, m.capcode, m.format, m.sent_at)
 WHERE m.id IN (
         SELECT sqlc.arg(id)::bigint
         UNION ALL
-        (SELECT o.id FROM messages o
-         WHERE o.capcode = sqlc.arg(capcode)::text AND o.id <> sqlc.arg(id)::bigint
-         ORDER BY o.sent_at DESC LIMIT 1)
+        SELECT o.id FROM messages o
+        WHERE o.capcode = sqlc.arg(capcode)::text AND o.probably_noise
         UNION ALL
         SELECT w.id FROM messages w
         WHERE w.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '10 minutes'
@@ -120,19 +119,12 @@ WHERE m.id IN (
   AND m.probably_noise IS DISTINCT FROM message_probably_noise(m.id, m.capcode, m.format, m.sent_at);
 
 -- name: ClearCapcodeNoise :exec
--- R35h (d): an imported copy saved as message id means none of its
--- capcode's pages is probably noise. Only the message itself and the one
--- other page to the capcode can be marked (a marked page is its capcode's
--- only one), so those two are read by index, never every page to a busy
--- capcode. An import has no client, so it marks nothing (a).
+-- R35h (d): a page to the capcode really heard (an import's copy, or a
+-- format a re-parse found) means none of its pages is probably noise. The
+-- marked ones are read by the partial index, never every page to a busy
+-- capcode. It only clears, so it takes no lock.
 UPDATE messages SET probably_noise = false
-WHERE probably_noise
-  AND id IN (
-        SELECT sqlc.arg(id)::bigint
-        UNION ALL
-        (SELECT o.id FROM messages o
-         WHERE o.capcode = sqlc.arg(capcode)::text AND o.id <> sqlc.arg(id)::bigint
-         ORDER BY o.sent_at DESC LIMIT 1));
+WHERE capcode = sqlc.arg(capcode)::text AND probably_noise;
 
 -- name: BackfillNoise :execrows
 -- R35h: the background pass over pages stored before (internal/noise): the
