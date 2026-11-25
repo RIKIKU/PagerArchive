@@ -213,6 +213,8 @@ export interface Meta {
 	areas?: MetaAreas[];
 	/** R92: the radio beside PagerArchive, without a trailing slash; left out when it stands alone. The fireground chips (R92a) and the app switcher read it. */
 	radioarchive_url?: string;
+	/** R77e: the name the app switcher shows (RADIOARCHIVE_NAME, "Radio" by default), with radioarchive_url only. */
+	radioarchive_name?: string;
 }
 
 /** One layer of the network's areas (R88): its id, what's shown before each name ("District", making "District 08"), whose data they are, how the map outlines it, how many, and the version of its outlines. */
@@ -493,6 +495,8 @@ export interface Me {
 	invited_by: string | null;
 	/** The look they chose (R82d), saved on the account. */
 	look: Look;
+	/** R77f: whether the frame shows them the app switcher (worked out by the server: RadioArchive set, and they're marked or it's shown to everyone). */
+	show_switcher: boolean;
 }
 
 /** R77b: the version running, and whether to tell the user of it now (the server records it as told). */
@@ -539,6 +543,8 @@ export interface UserRow {
 	trusted: TrustedMark | null;
 	// R62a: a read-only service account, a tool rather than a person.
 	service_account: boolean;
+	// R77f: marked to see the app switcher.
+	sees_switcher: boolean;
 }
 
 // Invite trees (R42a-R42d, ADR 0008). Admins only.
@@ -943,6 +949,10 @@ export const api = {
 	setTrusted: (id: number, trusted: boolean) => request<void>('PUT', `/api/v1/admin/users/${id}/trusted`, { trusted }),
 	reactivate: (id: number) => request<void>('POST', `/api/v1/admin/users/${id}/reactivate`),
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
+	// R77f: who sees the app switcher.
+	setSeesSwitcher: (id: number, sees: boolean) => request<void>('PUT', `/api/v1/admin/users/${id}/switcher`, { sees_switcher: sees }),
+	switcherSettings: () => get<{ everyone: boolean }>('/api/v1/admin/switcher'),
+	setSwitcherSettings: (everyone: boolean) => request<{ everyone: boolean }>('PUT', '/api/v1/admin/switcher', { everyone }),
 	// Integrations (R47-R51c).
 	selection: (q: string) => get<Suggestion[]>(`/api/v1/integrations/selection?q=${encodeURIComponent(q)}`),
 	integrationLevels: () => get<LevelChoice[]>('/api/v1/integrations/levels'),

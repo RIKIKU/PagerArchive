@@ -420,4 +420,5 @@ type User struct {
 	Kind                string
 	CredentialExpiresAt *time.Time
 	SeenLargeEvents     *time.Time
+	SeesSwitcher        bool
 }

@@ -161,6 +161,8 @@ services:
       MAP_ATTRIBUTION: ${MAP_ATTRIBUTION:-}
       # The radio beside it (SPEC.md R92): unset, PagerArchive stands alone.
       RADIOARCHIVE_URL: ${RADIOARCHIVE_URL:-}
+      # The name the app switcher shows (R77e; default Radio).
+      RADIOARCHIVE_NAME: ${RADIOARCHIVE_NAME:-}
       # Integrations (docs/integrations.md) and metrics (docs/deploy.md).
       INTEGRATION_SECRETS_KEY: ${INTEGRATION_SECRETS_KEY:-}
       INTEGRATION_SECRETS_KEY_OLD: ${INTEGRATION_SECRETS_KEY_OLD:-}

@@ -65,6 +65,10 @@ type Me struct {
 	// CredentialExpiresAt is when a service account's credential expires
 	// (R62a: 90 days after create or rotate). Absent for a person.
 	CredentialExpiresAt *time.Time `json:"credential_expires_at,omitempty"`
+	// ShowSwitcher: the frame shows them the app switcher (R77e, R77f),
+	// worked out by the server: RADIOARCHIVE_URL is set, and they're marked
+	// or it's shown to everyone.
+	ShowSwitcher bool `json:"show_switcher"`
 }
 
 // Looks are the looks a user can choose (R82d, ADR 0028), the default
@@ -83,6 +87,17 @@ func (s *Server) getMe(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) writeMe(w http.ResponseWriter, r *http.Request, u db.User) {
 	me := Me{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Look: u.Look, ServiceAccount: accounts.IsServiceAccount(u)}
+	if !me.ServiceAccount {
+		show, err := s.showSwitcher(r.Context(), u)
+		if err != nil {
+			if s.abandoned(w, r, err) {
+				return
+			}
+			// The frame does without it: no switcher.
+			s.Log.Error("switcher", "error", store.SafeError(err))
+		}
+		me.ShowSwitcher = show
+	}
 	if me.ServiceAccount && u.CredentialExpiresAt != nil {
 		at := u.CredentialExpiresAt.UTC()
 		me.CredentialExpiresAt = &at
@@ -270,6 +285,8 @@ type UserRow struct {
 	Trusted *TrustedMark `json:"trusted"`
 	// ServiceAccount marks a service account (R62a): a tool, not a person.
 	ServiceAccount bool `json:"service_account"`
+	// SeesSwitcher: an admin marked them to see the app switcher (R77f).
+	SeesSwitcher bool `json:"sees_switcher"`
 }
 
 // TrustedMark is who marked a user trusted, and when (R42c).
@@ -301,7 +318,7 @@ func (s *Server) userRows(ctx context.Context) ([]UserRow, error) {
 	for _, u := range rows {
 		row := UserRow{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Status: u.Status,
 			CreatedAt: u.CreatedAt.UTC(), DeactivatedAt: u.DeactivatedAt, InvitedByID: u.InvitedBy,
-			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing, ServiceAccount: u.Kind == accounts.KindService}
+			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing, ServiceAccount: u.Kind == accounts.KindService, SeesSwitcher: u.SeesSwitcher}
 		if u.InvitedBy != nil {
 			status := "active"
 			if u.InviterStatus != nil {

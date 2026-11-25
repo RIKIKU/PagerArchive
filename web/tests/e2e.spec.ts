@@ -18,6 +18,11 @@ const SESSIONS = {
 };
 type Role = keyof typeof SESSIONS;
 
+// R77d: the menu's print sheet entry and the version's tag, as ArchiveUx's
+// Menu draws them, by their accessible names (R67, R77).
+const SHEET_LINK = /^Print sheet, [0-9]+ messages?$/;
+const VERSION_TAG = /^Release notes for v/;
+
 const sessionCookie = (role: Role) => ({ name: 'pa_session', value: SESSIONS[role], url: URL });
 
 /** A browser context signed in as role. */
@@ -2221,8 +2226,8 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	console.log(`A60: no tick boxes in the message list (live row ${arrived} included), search results, the job view or the alias view`);
 
 	// The print page: its own search, with a tick box on each result.
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
-	await page.getByTestId('sheet-link').click();
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 0 messages');
+	await page.getByRole('link', { name: SHEET_LINK }).click();
 	await expect(page.getByRole('heading', { level: 1, name: 'Print sheet' })).toBeVisible();
 	await waitLive(page);
 	await searchWith(page, ref);
@@ -2239,7 +2244,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await rowOf(page, a).getByText('Print', { exact: true }).click();
 	await expect(tickOf(page, a)).toBeChecked();
 	await expect(page).toHaveURL(new RegExp(`/sheet\\?q=${ref}(&|$)`)); // ticking opened nothing (R35d)
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 3 messages');
 	await expect.poll(() => sheetIds(page)).toEqual([b, c, a]);
 
 	// A second search, for the job: d.
@@ -2247,8 +2252,8 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await expect(page).toHaveURL(new RegExp(`/sheet\\?.*job=${job}`));
 	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(1);
 	await tickOf(page, d).check();
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 4 messages');
-	await expect(page.getByTestId('sheet-link')).toContainText('4');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 4 messages');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toContainText('4');
 	// Messages already on the sheet show as ticked when listed again.
 	await page.goBack();
 	await expect(page.getByTestId('message-list').locator('article')).toHaveCount(4);
@@ -2307,7 +2312,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await page.getByRole('button', { name: /^Remove the message from Station 1 at / }).first().click();
 	await expect.poll(() => sheetIds(page)).toEqual([c, d, b]);
 	await expect(tickOf(page, a)).not.toBeChecked();
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 3 messages');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 3 messages');
 	page.once('dialog', (dlg) => dlg.dismiss());
 	await page.getByRole('button', { name: 'Clear', exact: true }).click();
 	await expect.poll(() => sheetIds(page)).toEqual([c, d, b]);
@@ -2320,7 +2325,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	await expect(page.getByTestId('sheet').locator('li')).toHaveCount(0);
 	expect(asked).toBe('Remove all 3 messages from the print sheet?');
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 0 messages');
 	expect(Object.keys(await storage(page))).toEqual(['theme']);
 	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
 	await ctx.close();
@@ -2456,14 +2461,14 @@ test('print sheet is per user', async ({ browser, request }) => {
 	const page = await ctx.newPage();
 	await page.goto(`/sheet?q=${ref}`);
 	await tickOf(page, x).check();
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 1 message');
 
 	// C signs in in the same browser.
 	await ctx.clearCookies();
 	await ctx.addCookies([sessionCookie('userC')]);
 	await page.goto('/sheet');
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 0 messages');
 	await page.goto(`/sheet?q=${ref}`);
 	await expect(tickOf(page, x)).not.toBeChecked();
 	await tickOf(page, y).check();
@@ -2501,7 +2506,7 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	await list.keyboard.press('Space');
 	await expect(tickOf(list, live)).toBeChecked();
 	// The other tab follows: its link and its sheet.
-	await expect(other.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+	await expect(other.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 1 message');
 	await expect.poll(() => sheetIds(other)).toEqual([live]);
 	await other.getByRole('button', { name: /^Remove the message from Station 1/ }).click();
 	await expect(tickOf(list, live)).not.toBeChecked();
@@ -2515,7 +2520,7 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	await list.route('**/api/v1/messages/by-id?*', (r) => r.abort());
 	await list.evaluate(([k, v]) => localStorage.setItem(k, v), [sheetKey(userId), JSON.stringify(fake)]);
 	await list.reload();
-	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 100 messages');
+	await expect(list.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 100 messages');
 	await tickOf(list, live).click();
 	await expect(tickOf(list, live)).not.toBeChecked();
 	await expect(list.getByTestId('sheet-full')).toHaveText('The print sheet is full: it holds 100 messages. Remove some before adding more.');
@@ -2525,7 +2530,7 @@ test('print sheet: live rows, other tabs, a full sheet and gone messages', async
 	// Gone: none of the 100 exists, so they all leave, with a note.
 	await list.reload();
 	await expect(list.getByTestId('sheet-gone')).toHaveText('100 messages were no longer available and have been removed from the sheet.');
-	await expect(list.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 0 messages');
+	await expect(list.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 0 messages');
 
 	// A real message deleted (as retention would, R45): it leaves too.
 	const kept = await postId(request, '0100002', `QDTRAINING DRILL ${ref} KEPT`);
@@ -2559,7 +2564,7 @@ test('print sheet without storage', async ({ browser, request }) => {
 	page.on('pageerror', (e) => errors.push(e.message));
 	await page.goto(`/sheet?q=${ref}`);
 	await tickOf(page, id).check();
-	await expect(page.getByTestId('sheet-link')).toHaveAccessibleName('Print sheet, 1 message');
+	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 1 message');
 	await expect.poll(() => sheetIds(page)).toEqual([id]);
 	await page.reload();
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
@@ -3355,7 +3360,7 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 		await page.goto('/');
 		await waitLive(page);
 		const nav = page.getByRole('navigation', { name: 'Main' });
-		const version = nav.getByTestId('version');
+		const version = nav.getByRole('link', { name: VERSION_TAG });
 		await expect(version).toHaveText(tag);
 		await links(version, meta.version);
 		const shrink = nav.getByRole('button', { name: 'Shrink menu' });
@@ -3381,7 +3386,7 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 		await waitLive(phone);
 		await phone.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: 'More' }).click();
 		const more = phone.getByRole('dialog', { name: 'More' });
-		const inMore = more.getByTestId('version');
+		const inMore = more.getByRole('link', { name: VERSION_TAG });
 		await expect(inMore).toHaveText(tag);
 		await links(inMore, meta.version);
 		expect(await inMore.evaluate((e) => e.parentElement!.parentElement!.lastElementChild === e.parentElement), 'the bottom of More').toBe(true);
@@ -3406,7 +3411,7 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 	// Signed out: no menu, no version.
 	const out = await (await browser.newContext()).newPage();
 	await out.goto('/signin');
-	await expect(out.getByTestId('version')).toHaveCount(0);
+	await expect(out.getByRole('link', { name: VERSION_TAG })).toHaveCount(0);
 	await out.context().close();
 	console.log(`R77/R81: ${tag} at the foot of the side menu (open and shrunk) and of More, for the user and the admin; none signed out; axe clean`);
 });
@@ -3623,7 +3628,7 @@ for (const width of [1280, 375]) {
 			await page.keyboard.press('Escape');
 			await expect(notice).toHaveCount(0);
 			const nav = page.getByRole('navigation', { name: 'Main' });
-			await expect(width < 768 ? nav.getByRole('button', { name: 'More' }) : nav.getByTestId('version')).toBeFocused();
+			await expect(width < 768 ? nav.getByRole('button', { name: 'More' }) : nav.getByRole('link', { name: VERSION_TAG })).toBeFocused();
 			await page.context().close();
 		}
 		console.log(`A125 at ${width} px: ${report.join('; ')}; held by pointer, focus${width < 768 ? ' and finger' : ''}, its line waiting too; Esc, a click${width < 768 ? ' and a tap' : ''} send it; reduced motion fades, its line still counting; axe clean, light and dark`);
@@ -3709,7 +3714,7 @@ test('A125 no notice for a build that is not a release', async ({ browser, reque
 		await page.goto('/');
 		await waitLive(page);
 		expect(await (await asked).json(), `${version}: the answer`).toEqual({ version, show: false });
-		await expect(page.getByRole('navigation', { name: 'Main' }).getByTestId('version')).toHaveText(`v${version}`);
+		await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: VERSION_TAG })).toHaveText(`v${version}`);
 		await page.waitForTimeout(500);
 		await expect(page.getByTestId('release-notice'), `${version}: no notice`).toHaveCount(0);
 	};
@@ -6934,6 +6939,244 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 			await page.context().close();
 		}
 	}
+});
+
+// A140, A141 (R77e, R77f): the app switcher. The run's API is standalone (no
+// RADIOARCHIVE_URL); these start a second API on the same database with
+// RadioArchive set, for their own run only (scripts/e2e.sh), and stop it
+// after, so no worker runs twice while other tests do.
+const RADIO = 'http://radio.example.test'; // as RADIOARCHIVE_URL is read: no trailing slash
+async function combinedApi(): Promise<{ url: string; stop: () => Promise<void> }> {
+	const bin = process.env.PA_E2E_BIN;
+	const port = process.env.PA_E2E_COMBINED_PORT;
+	if (!bin || !port) throw new Error('A140: PA_E2E_BIN and PA_E2E_COMBINED_PORT come from scripts/e2e.sh');
+	const url = `http://127.0.0.1:${port}`;
+	const p = spawn(bin, ['serve'], {
+		env: {
+			...process.env,
+			PROFILES_DIR: process.env.PA_E2E_PROFILES,
+			TZ: 'Australia/Melbourne',
+			LISTEN_ADDR: `127.0.0.1:${port}`,
+			APP_URL: url,
+			AUTHENTIK_URL: 'http://127.0.0.1:1',
+			OIDC_CLIENT_SECRET: 'unused',
+			AUTHENTIK_API_TOKEN: 'unused',
+			ALLOWED_EMAIL_DOMAINS: 'example.test',
+			INTEGRATION_SECRETS_KEY: '',
+			RADIOARCHIVE_URL: RADIO
+		},
+		stdio: ['ignore', 'ignore', 'pipe']
+	});
+	let log = '';
+	p.stderr.on('data', (d) => (log += d.toString()));
+	let exited = false;
+	p.on('exit', () => (exited = true));
+	for (const until = Date.now() + 60_000; ; await new Promise((r) => setTimeout(r, 200))) {
+		if (exited || Date.now() > until) throw new Error(`A140: the combined API didn't start:\n${log.slice(-3000)}`);
+		try {
+			if ((await fetch(`${url}/healthz`)).ok) break;
+		} catch {
+			// not yet
+		}
+	}
+	return {
+		url,
+		stop: async () => {
+			// Its log joins the run's, for the P1 check at the end of e2e.sh.
+			writeFileSync(`${bin}.log`, log, { flag: 'a' });
+			if (exited) return;
+			p.kill('SIGTERM');
+			await new Promise((r) => p.on('exit', r));
+		}
+	};
+}
+
+/** Nobody marked and the switcher for everyone off: a new install's state. */
+const resetSwitcher = () => sql(`UPDATE users SET sees_switcher = false; DELETE FROM settings WHERE key = 'switcher_everyone';`);
+
+async function meOf(request: APIRequestContext, base: string, role: Role) {
+	const res = await request.get(`${base}/api/v1/me`, { headers: asRole(role) });
+	expect(res.status()).toBe(200);
+	return (await res.json()) as { show_switcher: boolean };
+}
+
+/** role's message list at base, at width, in colorScheme. */
+async function listAt(browser: Browser, base: string, role: Role, width: number, colorScheme: 'light' | 'dark' = 'light') {
+	const ctx = await signedIn(browser, role, { viewport: { width, height: width < 768 ? 740 : 900 }, colorScheme });
+	await ctx.addCookies([{ name: 'pa_session', value: SESSIONS[role], url: base }]);
+	const page = await ctx.newPage();
+	await page.goto(`${base}/`);
+	await waitLive(page);
+	await expect(page.getByRole('button', { name: /^Account menu/ })).toBeVisible();
+	return page;
+}
+
+test('A140 the app switcher: none standalone, for whom R77f says with RadioArchive set', async ({ browser, request }, info) => {
+	test.setTimeout(240_000);
+	const switcher = (p: Page) => p.getByRole('banner').getByRole('link', { name: 'Switch to Radio' });
+	// Standalone (this run's API): no switcher for anyone, even marked or for
+	// everyone, at either width, and no RadioArchive in meta.
+	const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
+	expect(meta.radioarchive_url, 'standalone: no RadioArchive in meta').toBeUndefined();
+	try {
+		sql(`UPDATE users SET sees_switcher = true WHERE email = 'user@example.test'; INSERT INTO settings (key, value) VALUES ('switcher_everyone', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';`);
+		for (const role of ['user', 'admin'] as const) {
+			expect((await meOf(request, URL, role)).show_switcher, `standalone ${role}`).toBe(false);
+			for (const width of [1280, 375]) {
+				const page = await listAt(browser, URL, role, width);
+				await expect(page.locator('[data-app-switcher]'), `standalone ${role} ${width}`).toHaveCount(0);
+				await page.context().close();
+			}
+		}
+	} finally {
+		resetSwitcher();
+	}
+
+	const api = await combinedApi();
+	try {
+		const base = api.url;
+		const cmeta = await (await request.get(`${base}/api/v1/meta`, { headers: asRole('user') })).json();
+		expect([cmeta.radioarchive_url, cmeta.radioarchive_name], 'combined: meta names RadioArchive').toEqual([RADIO, 'Radio']);
+		// Set, nobody marked: none.
+		expect((await meOf(request, base, 'user')).show_switcher, 'unmarked').toBe(false);
+		for (const width of [1280, 375]) {
+			const page = await listAt(browser, base, 'user', width);
+			await expect(page.locator('[data-app-switcher]'), `unmarked ${width}`).toHaveCount(0);
+			await page.context().close();
+		}
+		// Marked: they see it, desktop and phone, light and dark, in the top bar
+		// before the account menu; it opens RadioArchive in the same tab.
+		sql(`UPDATE users SET sees_switcher = true WHERE email = 'user@example.test';`);
+		expect((await meOf(request, base, 'user')).show_switcher, 'marked').toBe(true);
+		expect((await meOf(request, base, 'userC')).show_switcher, 'someone else, unmarked').toBe(false);
+		for (const width of [1280, 375]) {
+			for (const colorScheme of ['light', 'dark'] as const) {
+				const where = `marked ${width} ${colorScheme}`;
+				const page = await listAt(browser, base, 'user', width, colorScheme);
+				const s = switcher(page);
+				await expect(s, where).toBeVisible();
+				await expect(s).toHaveText('Radio');
+				await expect(s).toHaveAttribute('href', RADIO);
+				expect(await s.getAttribute('target'), 'the same tab').toBeNull();
+				const [sb, ab] = [await s.boundingBox(), await page.getByRole('button', { name: /^Account menu/ }).boundingBox()];
+				expect(sb!.x + sb!.width, `${where}: before the account menu`).toBeLessThanOrEqual(ab!.x + 1);
+				expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${where}: sideways scroll`).toBeLessThanOrEqual(0);
+				await page.screenshot({ path: info.outputPath(`a135-switcher-${width}-${colorScheme}.png`) });
+				expect(await axeOf(page), `${where}: axe`).toEqual([]);
+				if (width === 1280 && colorScheme === 'light') {
+					await page.route(`${RADIO}/**`, (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Radio stand-in</title><p>Radio stand-in</p>' }));
+					await s.click();
+					await expect(page).toHaveURL(`${RADIO}/`);
+					expect(page.context().pages(), 'no new tab').toHaveLength(1);
+				}
+				await page.context().close();
+			}
+		}
+		const other = await listAt(browser, base, 'userC', 1280);
+		await expect(other.locator('[data-app-switcher]'), 'someone else, unmarked').toHaveCount(0);
+		await other.context().close();
+		// Everyone on: the unmarked see it too.
+		sql(`INSERT INTO settings (key, value) VALUES ('switcher_everyone', 'true');`);
+		expect((await meOf(request, base, 'userC')).show_switcher, 'everyone on').toBe(true);
+		for (const width of [1280, 375]) {
+			const page = await listAt(browser, base, 'userC', width);
+			await expect(switcher(page), `everyone on ${width}`).toBeVisible();
+			await page.context().close();
+		}
+	} finally {
+		resetSwitcher();
+		await api.stop();
+	}
+});
+
+test('A141 who sees the switcher: the admin controls on Users', async ({ browser, request }, info) => {
+	test.setTimeout(240_000);
+	const userLabel = 'Test User (user@example.test)';
+	// Standalone: neither control.
+	{
+		const page = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
+		await page.goto('/admin/users');
+		await expect(page.getByRole('link', { name: userLabel, exact: true })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /^Switcher to/ })).toHaveCount(0);
+		await expect(page.getByRole('checkbox', { name: 'Show the switcher to everyone' })).toHaveCount(0);
+		await expect(page.getByRole('button', { name: /^(Show|Hide) switcher:/ })).toHaveCount(0);
+		await page.context().close();
+	}
+	resetSwitcher();
+	const api = await combinedApi();
+	try {
+		const base = api.url;
+		// Only an admin changes them; nobody marked and everyone off to start with.
+		expect((await request.put(`${base}/api/v1/admin/switcher`, { headers: asRole('user'), data: { everyone: true } })).status(), 'a user: everyone').toBe(403);
+		const users = (await (await request.get(`${base}/api/v1/admin/users`, { headers: asRole('admin') })).json()) as { id: number; email: string; sees_switcher: boolean }[];
+		const target = users.find((u) => u.email === 'user@example.test')!;
+		expect(users.filter((u) => u.sees_switcher), 'nobody marked').toEqual([]);
+		expect((await request.put(`${base}/api/v1/admin/users/${target.id}/switcher`, { headers: asRole('user'), data: { sees_switcher: true } })).status(), 'a user: a mark').toBe(403);
+		expect((await (await request.get(`${base}/api/v1/admin/switcher`, { headers: asRole('admin') })).json()).everyone, 'everyone off').toBe(false);
+
+		for (const width of [1280, 375]) {
+			for (const colorScheme of ['light', 'dark'] as const) {
+				const where = `${width} ${colorScheme}`;
+				const ctx = await signedIn(browser, 'admin', { viewport: { width, height: width < 768 ? 740 : 900 }, colorScheme });
+				await ctx.addCookies([{ name: 'pa_session', value: SESSIONS.admin, url: base }]);
+				const page = await ctx.newPage();
+				await page.goto(`${base}/admin/users`);
+				await expect(page.getByRole('heading', { name: 'Switcher to Radio' }), where).toBeVisible();
+				const everyone = page.getByRole('checkbox', { name: 'Show the switcher to everyone' });
+				await expect(everyone).not.toBeChecked();
+				const row = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: userLabel, exact: true }) });
+				// Mark them: the tag, the mark in the API, and their switcher.
+				await row.getByRole('button', { name: `Show switcher: ${userLabel}` }).click();
+				await expect(page.getByRole('status')).toHaveText(`${userLabel} sees the switcher to Radio.`);
+				await expect(row.getByTestId('sees-switcher')).toHaveText('Sees switcher');
+				expect((await meOf(request, base, 'user')).show_switcher, `${where}: marked`).toBe(true);
+				await page.screenshot({ path: info.outputPath(`a136-users-${width}-${colorScheme}.png`) });
+				expect(await axeOf(page), `${where}: axe`).toEqual([]);
+				await row.getByRole('button', { name: `Hide switcher: ${userLabel}` }).click();
+				await expect(page.getByRole('status')).toHaveText(`${userLabel} no longer sees the switcher to Radio.`);
+				await expect(row.getByTestId('sees-switcher')).toHaveCount(0);
+				expect((await meOf(request, base, 'user')).show_switcher, `${where}: unmarked`).toBe(false);
+				// Everyone: on, kept after a reload, then off.
+				await everyone.check();
+				await expect(page.getByRole('status')).toHaveText('Everyone sees the switcher to Radio.');
+				expect((await meOf(request, base, 'userC')).show_switcher, `${where}: everyone on`).toBe(true);
+				await page.reload();
+				await expect(page.getByRole('checkbox', { name: 'Show the switcher to everyone' })).toBeChecked();
+				await page.getByRole('checkbox', { name: 'Show the switcher to everyone' }).uncheck();
+				await expect(page.getByRole('status')).toHaveText('Only the people marked see the switcher to Radio.');
+				expect((await meOf(request, base, 'userC')).show_switcher, `${where}: everyone off`).toBe(false);
+				await ctx.close();
+			}
+		}
+	} finally {
+		resetSwitcher();
+		await api.stop();
+	}
+});
+
+// A142 (R77d): the frame is ArchiveUx's, and differs from PagerArchive's own
+// only as R77d lists. The frame's other checks (A68, A70, A74, A125, A133,
+// the version's tag and R77b's notice) run on it unchanged.
+test("A142 the frame is ArchiveUx's", async ({ browser }) => {
+	const desk = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
+	await desk.goto('/');
+	await waitLive(desk);
+	await expect(desk.locator('div.frame > nav.side[aria-label="Main"]'), "ArchiveUx's frame").toHaveCount(1);
+	// A count of 0 shows no pill; the name still says it.
+	const sheet = desk.getByRole('link', { name: 'Print sheet, 0 messages', exact: true });
+	await expect(sheet).toBeVisible();
+	await expect(sheet.locator('.count')).toHaveCount(0);
+	await desk.context().close();
+	// On a phone, More is current on a group's start page, not on a desktop-only page.
+	const phone = await (await signedIn(browser, 'user', { viewport: { width: 375, height: 740 } })).newPage();
+	const more = phone.getByRole('navigation', { name: 'Main' }).getByRole('button', { name: /^More/ });
+	await phone.goto('/tools');
+	await expect(more).toHaveAttribute('aria-current', 'page');
+	await phone.goto('/sheet');
+	await expect(more).not.toHaveAttribute('aria-current', 'page');
+	await phone.goto('/account/profile');
+	await expect(more).toHaveAttribute('aria-current', 'page');
+	await phone.context().close();
 });
 
 // A135 (R92, R92a; owner, 2026-11-24; #106): fireground chips. With
