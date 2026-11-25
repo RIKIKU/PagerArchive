@@ -369,6 +369,30 @@ Trace context travels as W3C `traceparent` only; `OTEL_PROPAGATORS` is ignored a
 - **A trace from the last 30 seconds isn't found yet:** Tempo 3 leaves the newest 30 s out of searches (`query_end_cutoff`) while it's still being written. Wait a moment and search again.
 - **A span named `unnamed`:** the app saw a span name that isn't on its allowlist. Report it: it's a bug, and nothing private left with it.
 
+## A companion app
+
+Another app on the same host (see [Deploying](deploy.md#a-companion-app)) can use this stack too, with its own scrape config, alert rules and dashboards, by dropping them into three folders in the stack's folder (`deploy/monitoring`):
+
+| Folder | Files | How they load |
+|---|---|---|
+| `include/alloy.d/` | `*.alloy` | At Alloy's start, with `alloy/config.alloy`, as one configuration: a file here can send to the stack's components, such as `prometheus.remote_write.prometheus.receiver`, and its own components need names nobody else uses |
+| `include/alerts.d/` | Grafana alert rule files (`*.yaml`, `*.yml`, `*.json`, provisioning format) | At Grafana's start, with the stack's own rules. Give its rules their own folder, group and UIDs |
+| `include/dashboards.d/` | `*.json` dashboards | Read every minute. One in a subfolder goes in the Grafana folder of that name (`Companion/calls.json` in **Companion**); one at the top, in **General**. Give them their own UIDs |
+
+For example, a scrape of the other app's server, on the `monitoring` network that app joins as PagerArchive does:
+
+```alloy
+prometheus.scrape "companion" {
+  targets    = [{"__address__" = "companion:8080"}]
+  job_name   = "companion"
+  forward_to = [prometheus.remote_write.prometheus.receiver]
+}
+```
+
+After changing a file in `include/alloy.d/` or `include/alerts.d/`, restart that service: `docker compose restart alloy` or `docker compose restart grafana`. Their logs list each included file (`include: ...`) as they start. A file Alloy can't read stops Alloy, as a broken `config.alloy` would: `docker compose logs alloy` says where.
+
+The folders come empty in the release's archive, so a new install has them, and an upgrade, by hand or automatic, never writes, replaces or deletes anything in them; nor does a rollback. Each is mounted read-only. Files there must be readable by Grafana's and Alloy's users: `chmod -R a+rX include` after copying them in.
+
 ## Upgrading the stack
 
 From the folder with PagerArchive's `compose.yaml`, get the new release's archive, then the stack's compose file, and pull and start:
@@ -381,6 +405,6 @@ curl -fL -o compose.yaml $base/monitoring-compose.yaml
 docker compose pull && docker compose up -d
 ```
 
-`.env` and `compose.override.yaml` stay as they are, and so does the stack's data. `docker compose up -d` recreates the services whose image or files changed.
+`.env` and `compose.override.yaml` stay as they are, and so do the stack's data and what another app put in `include/` ([A companion app](#a-companion-app)). `docker compose up -d` recreates the services whose image or files changed.
 
 A patch release of PagerArchive changes nothing here, so that's only needed when a new minor or major version comes out. In between, `docker compose pull && docker compose up -d` in this folder gets upstream's patches for Loki and Grafana, which are named by their major.minor tags. Alloy, Tempo and Prometheus publish no such tag, so they stay at the exact version in `compose.yaml` until a release changes it.

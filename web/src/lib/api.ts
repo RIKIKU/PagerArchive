@@ -43,6 +43,8 @@ export interface Message {
 	units: string[] | null;
 	// R8, ADR 0047: the call signs and roles a page names, apart from its appliances.
 	call_signs: string[] | null;
+	/** R92a: the fireground channel numbers it names, in text order; null for none. */
+	fireground_channels: number[] | null;
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
 	location: Location | null;
@@ -209,8 +211,9 @@ export interface Meta {
 	version: string;
 	/** R88: the network profile's layers of areas with some to show, in its order. */
 	areas?: MetaAreas[];
-	/** R77e: the other app, RadioArchive, when RADIOARCHIVE_URL is set: its address and the name the switcher shows (RADIOARCHIVE_NAME, "Radio" by default). Left out when it isn't set. */
+	/** R92: the radio beside PagerArchive, without a trailing slash; left out when it stands alone. The fireground chips (R92a) and the app switcher read it. */
 	radioarchive_url?: string;
+	/** R77e: the name the app switcher shows (RADIOARCHIVE_NAME, "Radio" by default), with radioarchive_url only. */
 	radioarchive_name?: string;
 }
 

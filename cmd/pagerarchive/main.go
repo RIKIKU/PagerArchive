@@ -110,7 +110,8 @@ serve reads its settings from the environment:
   MAP_TILES               path to a PMTiles map extract (default: no background map;
                           /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
-  RADIOARCHIVE_URL        RadioArchive's public URL, for the app switcher (R77e; default: none, no switcher)
+  RADIOARCHIVE_URL        RadioArchive's public URL: fireground links (R92a) and the app switcher
+                          (R77e; default: none, PagerArchive stands alone)
   RADIOARCHIVE_NAME       the name the switcher shows (default Radio)
   INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
                                (openssl rand -base64 32); without it integrations are off
@@ -164,21 +165,6 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	return 0
-}
-
-// radioArchiveURL reads RADIOARCHIVE_URL (R77e): the radio beside this
-// PagerArchive, an absolute http(s) URL with a host, without its trailing
-// slash. Empty: it stands alone.
-func radioArchiveURL(v string) (string, error) {
-	v = strings.TrimRight(strings.TrimSpace(v), "/")
-	if v == "" {
-		return "", nil
-	}
-	u, err := url.Parse(v)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
-		return "", errors.New("RADIOARCHIVE_URL must be an absolute http(s) URL, such as https://radio.example.com")
-	}
-	return v, nil
 }
 
 func getenv(name, def string) string {
@@ -460,12 +446,11 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	radioURL, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
+	radio, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
 	if err != nil {
 		return err
 	}
 	srv := &server.Server{
-		RadioArchiveURL:  radioURL,
 		RadioArchiveName: getenv("RADIOARCHIVE_NAME", "Radio"),
 		Store:            st,
 		Ingest: &ingest.Service{
@@ -517,6 +502,7 @@ func serve(stderr io.Writer) error {
 		Started:               time.Now(),
 		MapTiles:              mapTiles,
 		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
+		RadioArchiveURL:       radio,
 		Areas:                 areaLayers,
 		Integrations:          integ,
 		MetricsToken:          os.Getenv("METRICS_TOKEN"),
@@ -746,4 +732,19 @@ func expireSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 		case <-t.C:
 		}
 	}
+}
+
+// radioArchiveURL reads RADIOARCHIVE_URL (R92): the radio beside this
+// PagerArchive, an absolute http(s) URL with a host, without its trailing
+// slash. Empty: it stands alone.
+func radioArchiveURL(v string) (string, error) {
+	v = strings.TrimRight(strings.TrimSpace(v), "/")
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("RADIOARCHIVE_URL must be an absolute http(s) URL, such as https://radio.example.com")
+	}
+	return v, nil
 }

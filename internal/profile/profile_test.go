@@ -122,6 +122,18 @@ func TestProfileErrors(t *testing.T) {
 			want: []string{"net.json", "at /deployment_code_pattern", "matches empty text"},
 		},
 		{
+			name: "fireground channel pattern doesn't compile",
+			file: "net.json",
+			doc:  strings.Replace(net, `"fireground_channel_pattern": "\\bFGND ?(?P<number>[0-9A-Z]+)\\b"`, `"fireground_channel_pattern": "FGND (?P<number>[0-9"`, 1),
+			want: []string{"net.json", "at /fireground_channel_pattern", "missing closing ]"},
+		},
+		{
+			name: "fireground channel pattern matches empty text",
+			file: "net.json",
+			doc:  strings.Replace(net, `"fireground_channel_pattern": "\\bFGND ?(?P<number>[0-9A-Z]+)\\b"`, `"fireground_channel_pattern": "[0-9]*"`, 1),
+			want: []string{"net.json", "at /fireground_channel_pattern", "matches empty text"},
+		},
+		{
 			name: "large event field no format extracts",
 			file: "fire.json",
 			doc:  strings.Replace(fire, `"field": "alarm_level"`, `"field": "alarm_levle"`, 1),

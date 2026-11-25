@@ -288,3 +288,25 @@ func TestValidateProfileOldCallSign(t *testing.T) {
 		t.Errorf("both names: exit %d\n%s%s", code, out.String(), msg)
 	}
 }
+
+// R92: RADIOARCHIVE_URL is an absolute http(s) URL, its trailing slash
+// dropped; unset or empty, PagerArchive stands alone.
+func TestRadioArchiveURL(t *testing.T) {
+	for in, want := range map[string]string{
+		"":                               "",
+		"  ":                             "",
+		"https://radio.example.com":      "https://radio.example.com",
+		"https://radio.example.com/":     "https://radio.example.com",
+		"http://radio.example.test:8080": "http://radio.example.test:8080",
+		"https://example.com/radio/":     "https://example.com/radio",
+	} {
+		if got, err := radioArchiveURL(in); err != nil || got != want {
+			t.Errorf("radioArchiveURL(%q) = %q, %v; want %q", in, got, err, want)
+		}
+	}
+	for _, in := range []string{"radio.example.com", "/radio", "ftp://radio.example.com", "https://", "https://u:p@radio.example.com", "https://radio.example.com/?x=1", "https://radio.example.com/#a", "javascript:alert(1)"} {
+		if _, err := radioArchiveURL(in); err == nil || !strings.Contains(err.Error(), "RADIOARCHIVE_URL") {
+			t.Errorf("radioArchiveURL(%q): %v, want an error naming the setting", in, err)
+		}
+	}
+}
