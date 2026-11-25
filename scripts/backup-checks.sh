@@ -215,7 +215,7 @@ ln -s "$work/nothing-here" "$request"
 until_true "a link to nothing wasn't answered" answered
 echo "--- a link is answered and deleted, its target untouched"
 
-# --- extra databases (R86e, A135): dumped with the night, rows left out of
+# --- extra databases (R86e, A140): dumped with the night, rows left out of
 # the tables named, checked on their own, and each one's state in its file
 xfield() { sed -n "s/^ *\"$2\": \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" "$root/status/databases/$1.json"; }
 export BACKUP_EXTRA_DATABASES='companion:things;spare'

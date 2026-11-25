@@ -9,8 +9,8 @@
 # its volumes and restores into a new install with the documented command. The
 # alert firing is TestA80ToldWhenABackupFails, in the monitoring stack's check.
 #
-# Also a companion app on the same host (R84l, R86e): A136, its blueprint
-# dropped in deploy/authentik/blueprints.d is applied, and A135, its made-up
+# Also a companion app on the same host (R84l, R86e): A141, its blueprint
+# dropped in deploy/authentik/blueprints.d is applied, and A140, its made-up
 # database (BACKUP_EXTRA_DATABASES) is dumped with one table's rows left out,
 # checked, kept and pruned with the night, with its state for that app.
 #
@@ -121,15 +121,15 @@ PA_TEST_CONTROL=$CTL
 VARS
 fill_env "$DIR/.env" deploy/test/stack.vars "$WORK/vars"
 chmod 777 "$CTL"
-# A136 (R84l): a companion app's blueprint, dropped in the folder the release
+# A141 (R84l): a companion app's blueprint, dropped in the folder the release
 # made (empty), is applied with PagerArchive's: a made-up group.
 [ -d "$DIR/deploy/authentik/blueprints.d" ] && [ -z "$(ls -A "$DIR/deploy/authentik/blueprints.d")" ] ||
 	fail "the release's files have no empty deploy/authentik/blueprints.d"
 cat >"$DIR/deploy/authentik/blueprints.d/companion.yaml" <<'YAML'
-# A136: a made-up companion app's blueprint.
+# A141: a made-up companion app's blueprint.
 version: 1
 metadata:
-  name: A136 made-up companion
+  name: A141 made-up companion
 entries:
   - model: authentik_core.group
     identifiers:
@@ -144,7 +144,7 @@ start_mailpit
 stack_wait_ready
 limited "a new install"
 
-echo "=== A136: a blueprint in deploy/authentik/blueprints.d is applied (R84l)"
+echo "=== A141: a blueprint in deploy/authentik/blueprints.d is applied (R84l)"
 i=0
 until [ "$(stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT count(*) FROM authentik_core_group WHERE name = 'a136-made-up-companion'" | tr -d '\r')" = 1 ]; do
 	i=$((i + 1))
@@ -282,7 +282,7 @@ after=$(metric pagerarchive_backup_last_good_timestamp_seconds)
 [ "$after" != "$before" ] || fail "the last-good metric didn't move"
 echo "--- pagerarchive_backup_last_good_timestamp_seconds: $before to $after"
 
-echo "=== A135: a companion app's database, backed up and checked with the night (R86e)"
+echo "=== A140: a companion app's database, backed up and checked with the night (R86e)"
 stack_compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c 'CREATE DATABASE companion' >/dev/null
 stack_compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres -d companion >/dev/null <<'SQL'
 CREATE TABLE calls (id int PRIMARY KEY, heard text NOT NULL);
@@ -315,7 +315,7 @@ done
 stack_compose exec -T api test -r /backup-status/databases/companion.json || fail "the state isn't on the status volume"
 echo "--- the companion's dump: settings' rows in it, calls' table without its rows; checked ok; its state in /status/databases/companion.json"
 
-echo "=== A135: a bad BACKUP_EXTRA_DATABASES refuses the backup, and says why"
+echo "=== A140: a bad BACKUP_EXTRA_DATABASES refuses the backup, and says why"
 if stack_compose exec -T -e BACKUP_EXTRA_DATABASES='companion:Calls' backup pagerarchive-backup now --night 2030-01-07 >"$WORK/out.txt" 2>&1; then
 	fail "a backup with a bad setting ran"
 fi
@@ -338,7 +338,7 @@ echo "--- nights kept: $kept, oldest $(ls "$BACKUPS" | head -n 1 | cut -d. -f1),
 [ ! -e "$BACKUPS/2031-01-01.pagerarchive.dump" ] && [ ! -e "$BACKUPS/2031-01-01.authentik.dump" ] && [ ! -e "$BACKUPS/2031-01-01.counts.tsv" ] && [ ! -e "$BACKUPS/2031-01-01.check" ] ||
 	fail "the 15th night back is still there"
 [ -e "$BACKUPS/2031-01-02.pagerarchive.dump" ] || fail "the 14th night back is gone"
-# A135: the companion's dumps are kept and pruned with the night's.
+# A140: the companion's dumps are kept and pruned with the night's.
 companion_kept=$(find "$BACKUPS" -name '*.companion.dump' | wc -l)
 [ "$companion_kept" = 14 ] || fail "$companion_kept of the companion's nights kept, want 14"
 [ -e "$BACKUPS/2031-01-02.companion.dump" ] && [ ! -e "$BACKUPS/2031-01-01.companion.dump" ] || fail "the companion's nights weren't pruned with the night's"
