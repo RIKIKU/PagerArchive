@@ -249,6 +249,24 @@ func QualityOf(p pipeline.Parsed) neardup.Quality {
 // record notes who received this copy, with its own text when that isn't
 // its message's: a client's reception, or an import's.
 func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(id int64, text *string) error) (Result, error) {
+	res, err := s.save(ctx, q, d, record)
+	if err != nil {
+		return res, err
+	}
+	return res, s.noise(ctx, q, d, res.MessageID)
+}
+
+// noise works out "probably noise" again for the pages a saved copy can
+// change (R35h): a client's copy, the pages RefreshNoise names; an import's,
+// which has no client, only clears its capcode's (leg d).
+func (s *Service) noise(ctx context.Context, q *db.Queries, d Draft, id int64) error {
+	if d.Client == "" {
+		return q.ClearCapcodeNoise(ctx, d.Params.Capcode)
+	}
+	return q.RefreshNoise(ctx, db.RefreshNoiseParams{ID: id, Capcode: d.Params.Capcode, ReceivedAt: d.ReceivedAt})
+}
+
+func (s *Service) save(ctx context.Context, q *db.Queries, d Draft, record func(id int64, text *string) error) (Result, error) {
 	tr := telemetry.Or(s.Tracer)
 	// Serialise copies of pages to one capcode, so two clients can't both
 	// store one page, whether their copies are the same or nearly so.
@@ -256,6 +274,14 @@ func (s *Service) Save(ctx context.Context, q *db.Queries, d Draft, record func(
 	defer dspan.End()
 	if err := q.LockCapcode(dctx, d.Params.Capcode); err != nil {
 		return Result{}, err
+	}
+	// A client's copy can change "probably noise" on other capcodes' pages
+	// (R35h), so live copies are saved one at a time from here; an import's
+	// can't, and doesn't wait for them.
+	if d.Client != "" {
+		if err := q.LockNoise(dctx); err != nil {
+			return Result{}, err
+		}
 	}
 	dup, err := q.FindDuplicate(dctx, db.FindDuplicateParams{DedupKey: d.Params.DedupKey, ReceivedAt: d.ReceivedAt})
 	switch {

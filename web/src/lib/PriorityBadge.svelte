@@ -4,7 +4,15 @@
 	import type { Priority } from './api.ts';
 	import Icon from './Icon.svelte';
 
-	let { priority, heartbeat = false }: { priority: Priority | null; heartbeat?: boolean } = $props();
+	let {
+		priority,
+		heartbeat = false,
+		noise = false
+	}: { priority: Priority | null; heartbeat?: boolean; noise?: boolean } = $props();
+
+	// R35h: why a page is probably noise, as its tooltip and in words for a
+	// screen reader. Nothing else treats the page differently.
+	const noiseWhy = 'Heard by one receiver only, matched no format, capcode never seen before';
 
 	const cls: Record<Priority, string> = { Emergency: 'emergency', 'Non-emergency': 'non-emergency', Admin: 'admin' };
 </script>
@@ -16,6 +24,9 @@
 {/if}
 {#if heartbeat}
 	<span class="badge heartbeat" title="Network heartbeat"><Icon name="heartbeat" />Heartbeat</span>
+{/if}
+{#if noise}
+	<span class="badge noise" title={noiseWhy} data-noise>Probably noise<span class="visually-hidden">: {noiseWhy}</span></span>
 {/if}
 
 <style>
@@ -68,5 +79,11 @@
 	.heartbeat {
 		border-color: var(--heartbeat-border);
 		color: var(--heartbeat-fg);
+	}
+	/* R35h: quiet on purpose: a hint, not an alarm. */
+	.noise {
+		border-color: var(--border);
+		color: var(--muted);
+		font-weight: var(--weight-normal);
 	}
 </style>

@@ -463,6 +463,13 @@ func (w *Worker) reparseAs(ctx context.Context, q *db.Queries, cands []ingest.Ca
 	if err != nil || written == 0 {
 		return false, err
 	}
+	// R35h (d): a page with a format was really heard, so none of its
+	// capcode's pages is probably noise (UpdateParsed cleared its own mark).
+	if f.Format != nil {
+		if err := q.ClearCapcodeNoise(ctx, m.Capcode); err != nil {
+			return false, err
+		}
+	}
 	p := events.Page{ID: m.ID, SentAt: m.SentAt, Text: m.Text, Priority: m.Priority, AliasID: aliasID, Ignored: ignored, Heartbeat: m.Heartbeat, Job: f.JobNumber}
 	if m.InEvent || (m.Live && p.Counts() && (p.Job != nil || f.LargeEventField || events.HasCode(w.Network, m.Text))) {
 		aff.Add(m.SentAt)

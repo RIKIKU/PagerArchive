@@ -90,6 +90,59 @@ RETURNING client_id, (text IS NOT NULL)::boolean AS variant;
 UPDATE import_receptions SET text = CASE WHEN text IS NULL THEN sqlc.arg(old_text)::text END
 WHERE message_id = sqlc.arg(id) AND (text IS NULL OR text = sqlc.arg(new_text)::text);
 
+-- name: LockNoise :exec
+-- R35h: a client's copy can change "probably noise" on pages to other
+-- capcodes (leg b), so live copies work it out one at a time, each seeing
+-- the copies committed before it. Taken after the capcode's lock and before
+-- any write, so it holds no row another live copy waits for.
+SELECT pg_advisory_xact_lock(hashtextextended('probably noise', 0));
+
+-- name: RefreshNoise :exec
+-- R35h: after client's copy received at received_at was saved as message
+-- id: works out again the pages it can change, and writes only those that
+-- did. They're the message itself (legs a and c), the marked pages to its
+-- capcode, which it clears once it was really heard (d; by the partial
+-- index), and the pages with no format sent within 10 minutes of the copy
+-- (b). The rule is worked out on the row as UPDATE finds it, so a
+-- re-parse's format written meanwhile wins.
+UPDATE messages m
+SET probably_noise = message_probably_noise(m.id, m.capcode, m.format, m.sent_at)
+WHERE m.id IN (
+        SELECT sqlc.arg(id)::bigint
+        UNION ALL
+        SELECT o.id FROM messages o
+        WHERE o.capcode = sqlc.arg(capcode)::text AND o.probably_noise
+        UNION ALL
+        SELECT w.id FROM messages w
+        WHERE w.sent_at BETWEEN sqlc.arg(received_at)::timestamptz - interval '10 minutes'
+                            AND sqlc.arg(received_at)::timestamptz + interval '10 minutes'
+          AND w.format IS NULL)
+  AND m.probably_noise IS DISTINCT FROM message_probably_noise(m.id, m.capcode, m.format, m.sent_at);
+
+-- name: ClearCapcodeNoise :exec
+-- R35h (d): a page to the capcode really heard (an import's copy, or a
+-- format a re-parse found) means none of its pages is probably noise. The
+-- marked ones are read by the partial index, never every page to a busy
+-- capcode. It only clears, so it takes no lock.
+UPDATE messages SET probably_noise = false
+WHERE capcode = sqlc.arg(capcode)::text AND probably_noise;
+
+-- name: BackfillNoise :execrows
+-- R35h: the background pass over pages stored before (internal/noise): the
+-- pages with no format sent in [sent_from, sent_to) that are probably noise
+-- and aren't marked. It only marks: a page stored since is worked out live.
+UPDATE messages m SET probably_noise = true
+WHERE m.sent_at >= sqlc.arg(sent_from)::timestamptz AND m.sent_at < sqlc.arg(sent_to)::timestamptz
+  AND m.format IS NULL AND NOT m.probably_noise
+  AND message_probably_noise(m.id, m.capcode, m.format, m.sent_at);
+
+-- name: FirstReceptions :many
+-- R35h: each client's first copy, earliest first, for clients with any.
+SELECT f.first_at::timestamptz AS first_at
+FROM (SELECT (SELECT min(r.received_at) FROM receptions r WHERE r.client_id = c.id) AS first_at FROM clients c) f
+WHERE f.first_at IS NOT NULL
+ORDER BY f.first_at;
+
 -- name: FindDuplicate :one
 -- A copy within 10 s of the message's sent time, either side (R19, section 14).
 SELECT id, sent_at
@@ -296,7 +349,10 @@ UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17,
-    fireground_channels = $18
+    fireground_channels = $18,
+    -- R35h: a format found clears "probably noise"; one taken away marks
+    -- nothing (no lock is taken for the rule's other legs here).
+    probably_noise = probably_noise AND $3::text IS NULL
 WHERE id = $1 AND text = $16;
 
 -- name: SetLocation :exec
@@ -390,7 +446,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.call_sign, m.units, m.call_signs, m.fireground_channels, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
-       m.lon, m.lat, m.location_source
+       m.lon, m.lat, m.location_source, m.probably_noise
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id

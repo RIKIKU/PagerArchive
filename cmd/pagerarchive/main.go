@@ -41,6 +41,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/integrations"
 	"github.com/RIKIKU/PagerArchive/internal/live"
 	"github.com/RIKIKU/PagerArchive/internal/nightly"
+	"github.com/RIKIKU/PagerArchive/internal/noise"
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 	"github.com/RIKIKU/PagerArchive/internal/redaction"
 	"github.com/RIKIKU/PagerArchive/internal/reparse"
@@ -337,6 +338,21 @@ func serve(stderr io.Writer) error {
 				return
 			}
 			log.Error("stored pages' localities", "error", store.SafeError(err))
+			select {
+			case <-ctx.Done():
+			case <-time.After(time.Minute):
+			}
+		}
+	}()
+	// Pages stored before "probably noise" was kept get theirs, in the
+	// background, once (R35h, R91a).
+	go func() {
+		for ctx.Err() == nil {
+			err := noise.Backfill(ctx, st, log, 30*time.Second)
+			if err == nil || ctx.Err() != nil {
+				return
+			}
+			log.Error("stored pages' probably noise", "error", store.SafeError(err))
 			select {
 			case <-ctx.Done():
 			case <-time.After(time.Minute):
