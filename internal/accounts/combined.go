@@ -103,14 +103,14 @@ func (s *Service) JoinUsersGroup(ctx context.Context, d GroupDirectory, every ti
 			continue
 		}
 		if failed > 0 {
-			s.Log.Warn("some users couldn't be added to Authentik's "+UsersGroup+" group; trying again on the next start", "added", added, "failed", failed)
+			s.Log.Warn("some users couldn't be added to Authentik's pagerarchive-users group; trying again on the next start", "added", added, "failed", failed)
 		} else {
-			s.Log.Info("everyone with an account is in Authentik's "+UsersGroup+" group", "added", added)
+			s.Log.Info("everyone with an account is in Authentik's pagerarchive-users group", "added", added)
 		}
 		return
 	}
 	if ctx.Err() == nil {
-		s.Log.Warn("couldn't check Authentik's "+UsersGroup+" group; checking again on the next start", "error", err.Error())
+		s.Log.Warn("couldn't check Authentik's pagerarchive-users group; checking again on the next start", "error", err.Error())
 	}
 }
 
@@ -128,7 +128,7 @@ func (s *Service) joinUsersGroup(ctx context.Context, d GroupDirectory) (added, 
 			continue
 		}
 		if err := d.AddToGroup(ctx, id, sub); err != nil {
-			s.Log.Warn("authentik: add a user to the "+UsersGroup+" group", "error", err.Error())
+			s.Log.Warn("authentik: add a user to the pagerarchive-users group", "error", err.Error())
 			failed++
 			continue
 		}
