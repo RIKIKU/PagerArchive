@@ -6944,6 +6944,8 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 // each at least the minimum tap target. Unset, there are none. (The
 // numbers' extraction and the API field: internal/acceptance/a135_test.go.)
 test('A135 fireground chips link to the radio', async ({ browser, request }, info) => {
+	// Two sizes, two views, a new tab each and an axe check per size.
+	test.setTimeout(120_000);
 	const radio = 'https://radio.example.test';
 	const job = uniqueJob();
 	const text = `@@${job} GRS3 GRASS FIRE FGND 041 FGND 7 @ SAMPLE RD, MADEUPTON #STN1`;

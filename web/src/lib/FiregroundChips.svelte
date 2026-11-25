@@ -8,7 +8,8 @@
 	import { api, type Message } from './api.ts';
 	import Icon from './Icon.svelte';
 
-	let { m }: { m: Message } = $props();
+	// spaced: room below, before what follows it (the detail view's Add to album).
+	let { m, spaced = false }: { m: Message; spaced?: boolean } = $props();
 
 	let radio: string | undefined = $state();
 	api
@@ -18,7 +19,7 @@
 </script>
 
 {#if radio && m.fireground_channels?.length}
-	<ul class="fireground" aria-label="Fireground channels" data-testid="fireground">
+	<ul class="fireground" class:spaced aria-label="Fireground channels" data-testid="fireground">
 		{#each m.fireground_channels as n (n)}
 			<li>
 				<a href="{radio}/?fireground={n}" target="_blank" rel="noopener" aria-label="Listen to fireground {n} (opens in a new tab)"
@@ -41,6 +42,9 @@
 		margin: var(--space-xs) 0 0;
 		padding: 0;
 		list-style: none;
+	}
+	.spaced {
+		margin-bottom: var(--space-sm);
 	}
 	a {
 		display: inline-flex;

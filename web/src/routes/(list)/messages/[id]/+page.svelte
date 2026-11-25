@@ -88,7 +88,7 @@
 				<!-- P2: the full message, always. -->
 				<p class="text">{m.display_text}</p>
 				<!-- R92a: its fireground channels, under the text, linking to the radio. -->
-				<FiregroundChips {m} />
+				<FiregroundChips {m} spaced />
 				<!-- R82: kept in the person's albums, from here only. -->
 				<div class="keep"><AddToAlbum message={m.id} /></div>
 			</div>
