@@ -86,6 +86,9 @@ type Server struct {
 	// MapTiles is the PMTiles extract's path ("" for none) and MapAttribution
 	// its credit line (R35).
 	MapTiles, MapAttribution string
+	// RadioArchiveURL is the radio beside it (R92), without a trailing slash;
+	// "" when it stands alone, and nothing links to the radio.
+	RadioArchiveURL string
 	// Areas are the network profile's layers of areas (R88), in its order;
 	// none when it names none. A layer that didn't load has its Error.
 	Areas []*areas.Layer

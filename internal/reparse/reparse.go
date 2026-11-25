@@ -458,7 +458,7 @@ func (w *Worker) reparseAs(ctx context.Context, q *db.Queries, cands []ingest.Ca
 		ID: m.ID, AliasID: aliasID, Format: f.Format, JobNumber: f.JobNumber, EventType: f.EventType,
 		Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		CallSign: f.CallSign, Units: f.Units, CallSigns: f.CallSigns, Extra: f.Extra, ParseFailed: f.ParseFailed, AddressUnsplit: f.AddressUnsplit,
-		LargeEventField: f.LargeEventField, Text: m.Text,
+		LargeEventField: f.LargeEventField, Text: m.Text, FiregroundChannels: f.Fireground,
 	})
 	if err != nil || written == 0 {
 		return false, err

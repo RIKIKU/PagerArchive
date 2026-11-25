@@ -68,18 +68,21 @@ type Message struct {
 	Ignored     bool      `json:"ignored"`
 	Category    *string   `json:"category"` // report category of event_type (R38)
 
-	Format      *string           `json:"format"`
-	JobNumber   *string           `json:"job_number"`
-	EventType   *string           `json:"event_type"`
-	Description *string           `json:"description"`
-	Address     *string           `json:"address"`
-	Locality    *string           `json:"locality"`
-	GridRef     *string           `json:"grid_ref"`
-	CallSign    *string           `json:"call_sign"`
-	Units       []string          `json:"units"`
-	CallSigns   []string          `json:"call_signs"` // R8, ADR 0047: apart from units
-	Extra       map[string]any    `json:"extra"`
-	Labels      map[string]string `json:"labels"` // field -> display label (R9, P3)
+	Format      *string  `json:"format"`
+	JobNumber   *string  `json:"job_number"`
+	EventType   *string  `json:"event_type"`
+	Description *string  `json:"description"`
+	Address     *string  `json:"address"`
+	Locality    *string  `json:"locality"`
+	GridRef     *string  `json:"grid_ref"`
+	CallSign    *string  `json:"call_sign"`
+	Units       []string `json:"units"`
+	CallSigns   []string `json:"call_signs"` // R8, ADR 0047: apart from units
+	// FiregroundChannels are the fireground channels it names (R92a), in text
+	// order; null for none.
+	FiregroundChannels []int32           `json:"fireground_channels"`
+	Extra              map[string]any    `json:"extra"`
+	Labels             map[string]string `json:"labels"` // field -> display label (R9, P3)
 
 	Location *Location `json:"location"` // null when not placed (R24-R25)
 	// Areas are the areas the message is in, one of each layer at most, in
@@ -128,7 +131,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
 		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, CallSign: m.CallSign,
-		Units: m.Units, CallSigns: m.CallSigns, Extra: map[string]any{}, Labels: map[string]string{},
+		Units: m.Units, CallSigns: m.CallSigns, FiregroundChannels: m.FiregroundChannels, Extra: map[string]any{}, Labels: map[string]string{},
 	}
 	if m.Priority != nil {
 		out.DisplayText = pipeline.Body(pipeline.Prepared{Text: m.Text, Priority: profile.Priority(*m.Priority)})
@@ -188,11 +191,14 @@ type Meta struct {
 	// The network profile's layers of areas that have some to show (R88), in
 	// its order; left out when there are none.
 	Areas []MetaAreas `json:"areas,omitempty"`
+	// The radio beside it (R92), left out when it stands alone: the chips
+	// linking to a page's fireground channels (R92a) and the app switcher.
+	RadioArchiveURL string `json:"radioarchive_url,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
-		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version, Areas: s.metaAreas()}
+		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version, Areas: s.metaAreas(), RadioArchiveURL: s.RadioArchiveURL}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}

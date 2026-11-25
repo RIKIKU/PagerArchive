@@ -6935,3 +6935,93 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 		}
 	}
 });
+
+// A135 (R92, R92a; owner, 2026-11-24; #106): fireground chips. With
+// RADIOARCHIVE_URL set (meta's radioarchive_url, stood in here: the test
+// API runs standalone), a page naming made-up fireground channels shows a
+// chip for each under its unchanged text, in the list and its detail view,
+// linking to the radio in a new tab; at 375 px they're on their own line,
+// each at least the minimum tap target. Unset, there are none. (The
+// numbers' extraction and the API field: internal/acceptance/a135_test.go.)
+test('A135 fireground chips link to the radio', async ({ browser, request }, info) => {
+	const radio = 'https://radio.example.test';
+	const job = uniqueJob();
+	const text = `@@${job} GRS3 GRASS FIRE FGND 041 FGND 7 @ SAMPLE RD, MADEUPTON #STN1`;
+	await post(request, '0100001', text);
+	const res = await request.get(`${URL}/api/v1/messages?job=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	const m = (await res.json()).messages[0] as { id: number; fireground_channels: number[] | null };
+	expect(m.fireground_channels).toEqual([41, 7]);
+	const report: string[] = [];
+
+	for (const [label, viewport] of [
+		['desktop', { width: 1280, height: 800 }],
+		['phone', { width: 375, height: 740 }]
+	] as const) {
+		const ctx = await signedIn(browser, 'user', { viewport, hasTouch: label === 'phone' });
+		await ctx.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), radioarchive_url: radio } }));
+		await ctx.route(`${radio}/**`, (r) => r.fulfill({ contentType: 'text/html', body: '<title>Radio</title><p>Radio</p>' }));
+		const page = await ctx.newPage();
+		for (const where of ['list', 'detail'] as const) {
+			await page.goto(where === 'list' ? `/?job=${job}` : `/messages/${m.id}`);
+			const scope = where === 'list' ? page.getByTestId('message-list').locator('article').first() : page.locator('article.detail');
+			const textEl = scope.locator('p.text').first();
+			await expect(textEl).toHaveText(text.slice(2));
+			const chips = scope.getByTestId('fireground').getByRole('link');
+			await expect(chips).toHaveCount(2);
+			for (const [i, n] of [41, 7].entries()) {
+				const chip = chips.nth(i);
+				await expect(chip).toHaveAccessibleName(`Listen to fireground ${n} (opens in a new tab)`);
+				await expect(chip).toHaveText(`Fireground ${n}`);
+				await expect(chip).toHaveAttribute('href', `${radio}/?fireground=${n}`);
+				await expect(chip).toHaveAttribute('target', '_blank');
+				await expect(chip).toHaveAttribute('rel', /\bnoopener\b/);
+			}
+			// Under the text, on their own line.
+			const t = (await textEl.boundingBox())!;
+			const boxes = await Promise.all([0, 1].map(async (i) => (await chips.nth(i).boundingBox())!));
+			for (const b of boxes) expect(b.y, `${label} ${where}: a chip under the text`).toBeGreaterThanOrEqual(t.y + t.height - 1);
+			if (label === 'phone') {
+				const target = await page.evaluate(() => {
+					const probe = document.createElement('div');
+					probe.style.height = 'var(--target)';
+					document.body.append(probe);
+					const h = probe.getBoundingClientRect().height;
+					probe.remove();
+					return h;
+				});
+				expect(target).toBeGreaterThan(0);
+				for (const b of boxes) {
+					expect(b.height, `${label} ${where}: chip height`).toBeGreaterThanOrEqual(target - 0.5);
+					expect(b.width, `${label} ${where}: chip width`).toBeGreaterThanOrEqual(target - 0.5);
+				}
+				report.push(`phone ${where}: chips ${boxes.map((b) => `${Math.round(b.width)}x${Math.round(b.height)}`).join(', ')} (target ${target} px)`);
+			}
+			// Clicking one opens the radio in a new tab, not the detail view.
+			const before = page.url();
+			const [tab] = await Promise.all([ctx.waitForEvent('page'), chips.first().click()]);
+			await tab.waitForLoadState();
+			expect(tab.url()).toBe(`${radio}/?fireground=41`);
+			await tab.close();
+			expect(page.url()).toBe(before);
+			if (where === 'list') {
+				const axe = await new AxeBuilder({ page }).include('[data-testid="message-list"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+				expect(axe.violations.map((v) => v.id)).toEqual([]);
+			}
+		}
+		await ctx.close();
+	}
+
+	// Unset: no chip anywhere.
+	const ctx = await signedIn(browser, 'user');
+	const page = await ctx.newPage();
+	await page.goto(`/?job=${job}`);
+	const row = page.getByTestId('message-list').locator('article').first();
+	await expect(row.locator('p.text')).toHaveText(text.slice(2));
+	await expect(page.getByTestId('fireground')).toHaveCount(0);
+	await page.goto(`/messages/${m.id}`);
+	await expect(page.locator('article.detail p.text')).toHaveText(text.slice(2));
+	await expect(page.getByTestId('fireground')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: /fireground/i })).toHaveCount(0);
+	await ctx.close();
+	console.log(`A135 (${info.project.name}): chips 41 and 7 in the list and detail view with RADIOARCHIVE_URL set, none unset; ${report.join('; ')}`);
+});

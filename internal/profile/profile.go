@@ -68,11 +68,16 @@ type Network struct {
 	// whole match is.
 	DeploymentCodes     *regexp.Regexp
 	DeploymentCodeGroup int
-	Categories          []Category
-	DatasetPath         string // absolute or relative to the working directory
-	Attribution         string
-	StreetTypes         map[string]string
-	GridSystem          string // how grid references are read (R25); "" if not given
+	// Fireground finds the fireground channels a page names (R5, R92a): with
+	// a group named "number", the group is the number; otherwise the whole
+	// match is. nil: the network has none, and no page links to the radio.
+	Fireground      *regexp.Regexp
+	FiregroundGroup int
+	Categories      []Category
+	DatasetPath     string // absolute or relative to the working directory
+	Attribution     string
+	StreetTypes     map[string]string
+	GridSystem      string // how grid references are read (R25); "" if not given
 	// Areas are the layers of named polygons a located page can fall in,
 	// drawn on the map (R88, ADR 0035), in the profile's order; none when it
 	// names none. A page can be in one area of each layer. They're left out
@@ -369,6 +374,7 @@ type networkJSON struct {
 	Redactions     []redactionJSON   `json:"redaction_rules"`
 	JobPatterns    []string          `json:"job_number_patterns"`
 	DeploymentCode string            `json:"deployment_code_pattern"`
+	Fireground     string            `json:"fireground_channel_pattern"`
 	Categories     []categoryJSON    `json:"event_categories"`
 	AddressDataset struct {
 		Path        string `json:"path"`
@@ -592,6 +598,20 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 			n.DeploymentCodes = re
 			if g := re.SubexpIndex("code"); g > 0 {
 				n.DeploymentCodeGroup = g
+			}
+		}
+	}
+	if j.Fireground != "" {
+		re, err := regexp.Compile(j.Fireground)
+		switch {
+		case err != nil:
+			fail("/fireground_channel_pattern", err.Error())
+		case re.MatchString(""):
+			fail("/fireground_channel_pattern", "pattern matches empty text")
+		default:
+			n.Fireground = re
+			if g := re.SubexpIndex("number"); g > 0 {
+				n.FiregroundGroup = g
 			}
 		}
 	}

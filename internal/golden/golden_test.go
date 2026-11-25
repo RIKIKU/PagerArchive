@@ -142,3 +142,36 @@ func TestOpensLargeEventRows(t *testing.T) {
 		t.Errorf("a network row listing opens_large_event: %v", d)
 	}
 }
+
+// R6, R92a: a network row's fireground_channels is checked only when the row
+// lists it: the numbers in text order, or null for none.
+func TestFiregroundChannelsColumn(t *testing.T) {
+	r := exampleRunner(t)
+	const head = "POCSAG512: Address:  100001  Function: 0  Alpha:   "
+	const text = "@@EX0000101 GRS3 GRASS FIRE FGND 041 FGND 7 @ SAMPLE RD, MADEUPTON #STN1"
+	base := `"priority":"Emergency","stored_text":"` + text + `"`
+	for _, tt := range []struct {
+		name, raw, expect string
+		diffs             int
+	}{
+		{"listed, right", text, `{` + base + `,"fireground_channels":[41,7]}`, 0},
+		{"listed, wrong order", text, `{` + base + `,"fireground_channels":[7,41]}`, 1},
+		{"listed, leading zero kept", text, `{` + base + `,"fireground_channels":[41,7,41]}`, 1},
+		{"listed null, has some", text, `{` + base + `,"fireground_channels":null}`, 1},
+		{"not listed: not checked", text, `{` + base + `}`, 0},
+		{"listed null, has none", "QDHall unlocked from 6pm", `{"priority":"Admin","stored_text":"QDHall unlocked from 6pm","fireground_channels":null}`, 0},
+		{"listed, has none", "QDHall unlocked from 6pm", `{"priority":"Admin","stored_text":"QDHall unlocked from 6pm","fireground_channels":[41]}`, 1},
+	} {
+		var expect map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(tt.expect), &expect); err != nil {
+			t.Fatal(err)
+		}
+		res, err := r.Run(&Table{Profile: "example-network", Cases: []Case{{Name: tt.name, Raw: head + tt.raw, Expect: expect}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if d := res.Rows[0].Diffs; len(d) != tt.diffs || (tt.diffs > 0 && !strings.HasPrefix(d[0], "fireground_channels")) {
+			t.Errorf("%s: diffs %v, want %d", tt.name, d, tt.diffs)
+		}
+	}
+}

@@ -305,6 +305,12 @@ Then set `MAP_TILES_FILE=/path/to/map.pmtiles` in `.env`. The credit line comes 
 
 Browsers without WebGL can't draw the map. The map page tells them so, and still lists the located messages.
 
+## Beside RadioArchive
+
+RadioArchive, the live radio listening and archive, can run beside PagerArchive, each on its own subdomain of one parent domain (SPEC.md section 7.30). Set `RADIOARCHIVE_URL` in `.env` to the radio's address, such as `https://radio.example.com`, and recreate `api`. Unset, PagerArchive stands alone and shows nothing of the radio. A value that isn't an absolute `http` or `https` URL stops the API at start with an error naming it.
+
+With it set, a page that names a fireground channel shows a chip under its text, such as "Fireground 41", linking to `<RADIOARCHIVE_URL>/?fireground=41` in a new tab. The network profile's `fireground_channel_pattern` finds the channels (an RE2 pattern; a group named `number` holds the number, else the whole match does; numbers that aren't all digits give no link). Adding or changing the pattern re-parses every page in the background, as any profile change does (R23a). Without a pattern there are no chips, whatever `RADIOARCHIVE_URL` says.
+
 ## Retention and the nightly run
 
 Admins set how long messages are kept, in days, on the Retention page (default 3,650, minimum 30). A nightly run at `NIGHTLY_AT` (default `03:00`, in `TZ`):

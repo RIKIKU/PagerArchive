@@ -171,6 +171,14 @@ func networkRow(n *profile.Network, c Case) []string {
 		}
 		got["deployment_codes"] = codes
 	}
+	// Fireground channels (R92a) too: checked only when a row lists them.
+	if _, listed := c.Expect["fireground_channels"]; listed {
+		var nums any
+		if fs := pipeline.FiregroundChannels(n, p); len(fs) > 0 && !p.Dropped {
+			nums = fs
+		}
+		got["fireground_channels"] = nums
+	}
 	diffs := compare(c.Expect, got, map[string]any{"heartbeat": false})
 	if _, listed := c.Expect["opens_large_event"]; listed {
 		diffs = append(diffs, "opens_large_event: checked in agency tables only (it needs the agency's fields)")
