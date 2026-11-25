@@ -144,6 +144,16 @@ func TestR84aComposeNamesThisRelease(t *testing.T) {
 	}
 }
 
+// The folders a companion app drops its own files into (R84l, R76a): mounted
+// whole and read-only, and in the archive empty, so they're not the
+// archive's files and no hash label covers them.
+var dropIns = map[string][]string{
+	"deploy/authentik/blueprints.d":          {"authentik-server", "authentik-worker"},
+	"deploy/monitoring/include/alloy.d":      {"alloy"},
+	"deploy/monitoring/include/alerts.d":     {"grafana"},
+	"deploy/monitoring/include/dashboards.d": {"grafana"},
+}
+
 // mountSource is a mount's source if it's a file from the release's archive
 // (relative to the repository), or "" for a named volume or the deployment's
 // own data.
@@ -159,7 +169,11 @@ func mountSource(t *testing.T, c composeFile, service, volume string) string {
 	case named:
 		return ""
 	case strings.HasPrefix(source, "./"):
-		return filepath.ToSlash(filepath.Join(filepath.Dir(c.path), source))
+		path := filepath.ToSlash(filepath.Join(filepath.Dir(c.path), source))
+		if _, ok := dropIns[path]; ok {
+			return "" // TestR84lR76aDropInFolders
+		}
+		return path
 	}
 	t.Errorf("%s: %s mounts %q, which isn't a named volume, the deployment's data or a file from the archive", c.path, service, volume)
 	return ""
@@ -204,6 +218,59 @@ func TestR84MountsComeFromTheArchive(t *testing.T) {
 	for _, f := range inArchive {
 		if strings.HasSuffix(f, "compose.yaml") || strings.Contains(f, "/test/") || strings.HasSuffix(f, ".env") || strings.Contains(strings.ToUpper(f), "PRIVATE") {
 			t.Errorf("the archive holds %s, which doesn't belong in it", f)
+		}
+	}
+}
+
+// R84l, R76a, A144, A145: each folder a companion app drops its files into is
+// mounted read-only by the services that read it, and by no other; the
+// archive holds it as an empty folder, so unpacking a release (an install, an
+// upgrade by hand or automatic) makes it, and the mount never fails, but
+// never writes, replaces or deletes a file in it. In the repository it holds
+// only its README.
+func TestR84lR76aDropInFolders(t *testing.T) {
+	dir := releaseAssets(t)
+	out, err := exec.Command("tar", "-tzf", filepath.Join(dir, "pagerarchive-config.tar.gz")).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	inArchive := strings.Split(strings.TrimSpace(string(out)), "\n")
+	for folder, want := range dropIns {
+		if !slices.Contains(inArchive, folder+"/") {
+			t.Errorf("the archive has no %s/ folder: its mount would make one owned by root", folder)
+		}
+		for _, f := range inArchive {
+			if strings.HasPrefix(f, folder+"/") && f != folder+"/" {
+				t.Errorf("the archive holds %s: unpacking a release would write in %s", f, folder)
+			}
+		}
+		entries, err := os.ReadDir(folder)
+		if err != nil {
+			t.Errorf("%s: %v", folder, err)
+		}
+		for _, e := range entries {
+			if e.Name() != "README.md" {
+				t.Errorf("%s holds %s: it's a companion app's folder, with only its README in the repository", folder, e.Name())
+			}
+		}
+		var by []string
+		for _, c := range composeFiles(t) {
+			for name, s := range c.Services {
+				for _, v := range s.Volumes {
+					source, rest, _ := strings.Cut(v, ":")
+					if !strings.HasPrefix(source, "./") || filepath.ToSlash(filepath.Join(filepath.Dir(c.path), source)) != folder {
+						continue
+					}
+					by = append(by, name)
+					if !strings.HasSuffix(rest, ":ro") {
+						t.Errorf("%s: %s mounts %s writable: %s", c.path, name, folder, v)
+					}
+				}
+			}
+		}
+		slices.Sort(by)
+		if !slices.Equal(by, want) {
+			t.Errorf("%s is mounted by %v, want %v", folder, by, want)
 		}
 	}
 }

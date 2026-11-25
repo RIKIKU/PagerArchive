@@ -11,6 +11,9 @@
 #   - while it runs, the status says so (running_since) and the request stays;
 #   - a request waits while another backup (`now`) holds the lock;
 #   - a request that's a link is deleted, and what it points to isn't touched.
+#   - extra databases (R86e): dumped with the night, the named tables' rows
+#     left out, each checked and its state written; one failing leaves
+#     PagerArchive's backup good; a bad setting is refused, in the status.
 # The API's side (refusing a second request, admins only) is internal/backup's
 # and internal/acceptance's; the real thing is A80 (scripts/a80.sh).
 #
@@ -51,6 +54,13 @@ SH
 # The snapshot's holder gets the snapshot's id; the counts' query, one table.
 cat >"$bin/psql" <<'SH'
 #!/bin/sh
+# -c: the check that the database is there, which it is.
+for a; do
+	if [ "$a" = -c ]; then
+		echo 1
+		exit 0
+	fi
+done
 IFS= read -r first || exit 1
 case $first in
 *pg_export_snapshot*)
@@ -60,13 +70,20 @@ case $first in
 *) printf 'public.things\t3\n' ;;
 esac
 SH
-# pg_dump -d DB -Fc ... -f FILE: holds while $PA_FAKE/hold is there.
+# pg_dump -d DB -Fc ... -f FILE: holds while $PA_FAKE/hold is there. Its
+# arguments go to $PA_FAKE/pg_dump.args, a line a dump; a database named in
+# $PA_FAKE/fail fails.
 cat >"$bin/pg_dump" <<'SH'
 #!/bin/sh
+echo "$*" >>"$PA_FAKE/pg_dump.args"
 while [ $# -gt 0 ]; do
 	[ "$1" != -f ] || out=$2
+	[ "$1" != -d ] || db=$2
 	shift
 done
+if [ -e "$PA_FAKE/fail" ] && grep -qx "$db" "$PA_FAKE/fail"; then
+	exit 1
+fi
 if [ -e "$PA_FAKE/hold" ]; then
 	touch "$PA_FAKE/held"
 	while [ -e "$PA_FAKE/hold" ]; do /bin/sleep 0.05; done
@@ -101,13 +118,21 @@ answered() { gone && ! running; }
 # ask: what the API does: a new file, created only if there's none.
 ask() { (set -C && echo '{"requested_at":"made up"}' >"$request"); }
 
-# backup-check's part: each new night's check is "ok".
+# backup-check's part: each new night's check is "ok", an extra database's
+# (NAME.check) first, as backup-check writes them.
 (
 	while :; do
 		for c in "$root"/backups/*.counts.tsv; do
 			[ -e "$c" ] || continue
 			n=${c%.counts.tsv}
-			[ -e "$n.check" ] || echo ok >"$n.check"
+			[ ! -e "$n.check" ] || continue
+			for d in "$n".*.dump; do
+				[ -e "$d" ] || continue
+				x=${d%.dump}
+				case $x in *.pagerarchive | *.authentik) continue ;; esac
+				echo ok >"$x.check"
+			done
+			echo ok >"$n.check"
 		done
 		/bin/sleep 0.05
 	done
@@ -189,6 +214,52 @@ until_true "a link wasn't answered" answered
 ln -s "$work/nothing-here" "$request"
 until_true "a link to nothing wasn't answered" answered
 echo "--- a link is answered and deleted, its target untouched"
+
+# --- extra databases (R86e, A143): dumped with the night, rows left out of
+# the tables named, checked on their own, and each one's state in its file
+xfield() { sed -n "s/^ *\"$2\": \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" "$root/status/databases/$1.json"; }
+export BACKUP_EXTRA_DATABASES='companion:things;spare'
+night=2030-02-01
+: >"$ctl/pg_dump.args"
+sh "$repo/deploy/backup/backup.sh" now --night $night >"$work/extra.log" 2>&1 || fail "a backup with extra databases failed: $(cat "$work/extra.log")"
+for f in $night.companion.dump $night.spare.dump $night.companion.check $night.spare.check; do
+	[ -s "$root/backups/$f" ] || fail "no $f"
+done
+grep -q "^companion	public.things	0\$" "$root/backups/$night.counts.tsv" || fail "the left-out table's count isn't 0: $(cat "$root/backups/$night.counts.tsv")"
+grep -q "^spare	public.things	3\$" "$root/backups/$night.counts.tsv" || fail "spare's counts aren't in the night's"
+grep -- '-d companion ' "$ctl/pg_dump.args" | grep -q -- '--exclude-table-data=public.things' || fail "companion's dump doesn't leave out public.things: $(cat "$ctl/pg_dump.args")"
+grep -- '-d spare ' "$ctl/pg_dump.args" | grep -q -- '--exclude-table-data' && fail "spare's dump leaves rows out"
+grep -- '-d postgres ' "$ctl/pg_dump.args" | grep -q -- '--exclude-table-data' && fail "PagerArchive's dump leaves rows out"
+for x in companion spare; do
+	[ "$(xfield $x last_run_ok)" = true ] || fail "$x's state isn't good: $(cat "$root/status/databases/$x.json")"
+	[ "$(xfield $x last_good_night)" = $night ] || fail "$x's last good night is $(xfield $x last_good_night)"
+	[ "$(xfield $x database)" = $x ] || fail "$x's state names $(xfield $x database)"
+done
+[ "$(field last_run_ok)" = true ] || fail "PagerArchive's backup with extras wasn't good"
+echo "--- extra databases: dumped, checked, companion's things left out, each one's state good"
+
+# One that fails doesn't fail PagerArchive's, and keeps its last good night.
+echo spare >"$ctl/fail"
+sh "$repo/deploy/backup/backup.sh" now --night 2030-02-02 >"$work/extra.log" 2>&1 || fail "an extra's failure failed the backup: $(cat "$work/extra.log")"
+rm -f "$ctl/fail"
+[ "$(field last_run_ok)" = true ] || fail "an extra's failure failed PagerArchive's backup: $(field error)"
+[ "$(xfield spare last_run_ok)" = false ] || fail "spare's failed dump is good"
+case $(xfield spare error) in *"dump failed"*) ;; *) fail "spare's error: $(xfield spare error)" ;; esac
+[ "$(xfield spare last_good_night)" = $night ] || fail "spare's last good night went: $(xfield spare last_good_night)"
+[ ! -e "$root/backups/2030-02-02.spare.dump" ] || fail "spare's failed dump is in the folder"
+[ "$(xfield companion last_good_night)" = 2030-02-02 ] || fail "companion wasn't backed up with spare failing"
+echo "--- an extra that fails: $(xfield spare error); PagerArchive's and companion's backups good"
+
+# A bad setting: refused, and the status says why.
+if BACKUP_EXTRA_DATABASES='companion:Calls' sh "$repo/deploy/backup/backup.sh" now --night 2030-02-03 >"$work/extra.log" 2>&1; then
+	fail "a backup with a bad setting ran"
+fi
+grep -q "refusing to back up: BACKUP_EXTRA_DATABASES: Calls in companion isn't a table name" "$work/extra.log" || fail "a bad setting's message: $(cat "$work/extra.log")"
+[ ! -e "$root/backups/2030-02-03.counts.tsv" ] || fail "a bad setting backed up"
+[ "$(field last_run_ok)" = false ] || fail "a bad setting isn't a failure in the status"
+case $(field error) in "the setting isn't valid: BACKUP_EXTRA_DATABASES: Calls in companion"*) ;; *) fail "a bad setting's status error: $(field error)" ;; esac
+echo "--- a bad setting: refused, $(field error)"
+unset BACKUP_EXTRA_DATABASES
 
 if [ "$failed" -ne 0 ]; then
 	echo "--- the service's log:" >&2
