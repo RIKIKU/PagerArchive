@@ -429,6 +429,7 @@ Every night at `BACKUP_AT` (default `04:00`, in `TZ`, after the nightly run) the
 | `BACKUP_AT` | `04:00` | When each night's backup starts |
 | `BACKUP_KEEP_DAYS` | `14` | How many days are kept. Older nights are deleted, but only after a good backup, so failures never use up the good ones |
 | `BACKUP_UID`, `BACKUP_GID` | `0` | Who owns the files. They hold everything in both databases, so only that user and group can read them. Set `BACKUP_GID` to a group your file backup tool is in, or leave them if it runs as root |
+| `BACKUP_EXTRA_DATABASES` | none | Another app's databases in the same database server, backed up and checked too: see [A companion app](#its-databases-in-the-backups) |
 
 A night is four files:
 
@@ -541,7 +542,7 @@ Instead of upgrading by hand, you can have the server do it. It's off unless you
 
 - it's a new major version, or its release notes start with "Upgrade steps": those you do by hand, as above;
 - it failed here before: a failed release is never tried again by itself;
-- a backup is running or asked for: it tries again the next hour.
+- a backup is running or asked for, or another app on the host is upgrading ([One upgrade at a time](#one-upgrade-at-a-time)): it tries again the next hour.
 
 The upgrade is five steps, each logged:
 
@@ -581,6 +582,58 @@ The script comes in the release's archive, so a release from before automatic up
 **Switching it off.** `deploy/auto-upgrade/auto-upgrade.sh disable` removes the crontab line (or the timer). Administration then says it's off. You can also remove `AUTO_UPGRADE_STATUS_DIR` from `.env`, then run `docker compose up -d`.
 
 **Upgrading by hand still works**, whether it's on or off, exactly as in [Upgrading](#upgrading): the script only looks at the version that's running, so it carries on from whatever you installed. Switch it off first, or upgrade between its hourly runs: it never runs twice at once, and holds `auto-upgrade/lock` while it runs.
+
+## A companion app
+
+Another app can run on the same host beside PagerArchive, sharing its Authentik, its database server, its backups, its monitoring stack and its upgrade lock. It drops its own files into folders PagerArchive keeps for it, and PagerArchive's releases never write in them. With none of this used, PagerArchive is exactly as it is on its own.
+
+| What | Where | What PagerArchive does with it |
+|---|---|---|
+| Authentik blueprints (`*.yaml`), such as its OIDC client | `deploy/authentik/blueprints.d/` | Authentik's server and worker mount it read-only at `/blueprints/extra/` and apply every blueprint in it, as they do PagerArchive's. Restart them after adding one: `docker compose restart authentik-server authentik-worker` |
+| Its databases in PagerArchive's `db` | `BACKUP_EXTRA_DATABASES` in `.env`, then `docker compose up -d backup` | Dumped and checked with each night's backup (below) |
+| Alloy config, alert rules, dashboards | the monitoring stack's `include/alloy.d/`, `include/alerts.d/`, `include/dashboards.d/` | Loaded with the stack's own: [Monitoring](monitoring.md#a-companion-app) |
+| Its own automatic upgrades | the host-wide lock `/run/lock/archive-upgrade.lock` | Never upgrades while the other holds it (below) |
+
+The folders come empty in the release's archive, so unpacking a release, by hand or by the [automatic upgrades](#automatic-upgrades), makes them when they aren't there and never writes, replaces or deletes a file in them. A rollback leaves them as they are. Each is mounted read-only, so the containers can't change them either. Files there must be readable by the containers' users: `chmod -R a+rX` the folder after copying them in.
+
+### Its databases in the backups
+
+`BACKUP_EXTRA_DATABASES` names the other app's databases, each with the tables whose rows its backup leaves out (data it doesn't need restored, such as recorded calls). `;` separates databases, `:` a database from its tables, `,` the tables. A table is `table` (in the `public` schema) or `schema.table`; names are lower-case letters, digits and `_`. For example:
+
+```sh
+BACKUP_EXTRA_DATABASES=companion:calls,transmissions;companion_setup
+```
+
+Here `companion` is dumped without the rows of `calls` and `transmissions` (their tables are in the dump, empty), and `companion_setup` whole. Check what it reads before the night with `docker compose exec backup pagerarchive-backup databases`.
+
+Each is dumped with the night's two, into `NIGHT.companion.dump`, kept and deleted with them (`BACKUP_KEEP_DAYS`), and restored and compared by `backup-check` on its own, with its own result in `NIGHT.companion.check`. One that fails (it isn't there, it has no tables, its restore failed) fails on its own: PagerArchive's backup and its alert carry on. A bad setting (a space, an empty entry, a name that isn't one, a name twice, one of PagerArchive's own databases) stops every backup until it's fixed: the `backup` service's log says what's wrong, and so does **Administration → Backups**, where the backup shows as failed.
+
+**Its state, for the other app.** The backup service writes each extra database's state to the `pagerarchive_backup-status` volume, at `databases/NAME.json`. The other app mounts that volume read-only (in its compose file, a volume `external: true, name: pagerarchive_backup-status`) and reads, for example, `/backup-status/databases/companion.json`:
+
+```json
+{
+  "database": "companion",
+  "since": 1795577228,
+  "last_run_at": 1795577228,
+  "last_run_ok": true,
+  "last_good_at": 1795577228,
+  "last_good_night": "2030-01-06",
+  "last_good_bytes": 2593,
+  "last_good_dump_seconds": 0,
+  "nights": 14,
+  "error": ""
+}
+```
+
+Times are seconds since 1970; `last_good_*` stay from the last good run while later ones fail, and `error` says why the last run failed, in fixed text. PagerArchive's own `status.json` is beside it, with `running_since` while a backup runs. The restore command above restores PagerArchive's two databases only; the other app restores its own from its dump with `pg_restore`.
+
+### One upgrade at a time
+
+Each run of the automatic upgrades holds the host-wide lock `/run/lock/archive-upgrade.lock` (`flock`) from its check to its end, its pre-upgrade backup and any rollback included. The other app's upgrade script takes the same lock. While one holds it, the other's run logs "another upgrade is running", shows as skipped in **Administration → Upgrades**, and tries again the next hour. The script makes the file, readable and writable by everyone, as the two apps may run as different users. On a host where users can't create files in `/run/lock`, make it at every boot with a systemd-tmpfiles line, in `/etc/tmpfiles.d/archive-upgrade.conf`:
+
+```text
+f /run/lock/archive-upgrade.lock 0666 root root -
+```
 
 ## Reports' counts
 

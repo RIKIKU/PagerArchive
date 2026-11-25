@@ -76,6 +76,10 @@ x-authentik: &authentik
   # can't stay in use because it's still in the folder (ADR 0019).
   volumes:
     - ./deploy/authentik/blueprints/pagerarchive.yaml:/blueprints/pagerarchive/pagerarchive.yaml:ro
+    # A companion app's blueprints (R84l, docs/deploy.md, "A companion app"): a
+    # folder it drops its own into, which a release never writes in. Empty,
+    # nothing more. Authentik reads every .yaml under /blueprints.
+    - ./deploy/authentik/blueprints.d:/blueprints/extra:ro
     - ./deploy/authentik/templates/pagerarchive/code.html:/templates/pagerarchive/code.html:ro
     - ./deploy/authentik/templates/pagerarchive/code.txt:/templates/pagerarchive/code.txt:ro
     - ./deploy/authentik/templates/pagerarchive/invitation.html:/templates/pagerarchive/invitation.html:ro
@@ -198,7 +202,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [serve]
     labels:
-      pagerarchive.config: "2fb6d51a5ee1dbe3"
+      pagerarchive.config: "9d2207b56b0d6671"
     environment:
       PGHOST: db
       # The superuser, unlike the API (R84i): it dumps everything in both
@@ -211,6 +215,9 @@ services:
       BACKUP_KEEP_DAYS: ${BACKUP_KEEP_DAYS:-14}
       BACKUP_UID: ${BACKUP_UID:-0}
       BACKUP_GID: ${BACKUP_GID:-0}
+      # Another app's databases in this server too (R86e, docs/deploy.md, "A
+      # companion app"). Empty: only the two above.
+      BACKUP_EXTRA_DATABASES: ${BACKUP_EXTRA_DATABASES:-}
     volumes:
       - ./deploy/backup/backup.sh:/usr/local/bin/pagerarchive-backup:ro
       # What a restore runs to give the roles their rights back (R84i).
@@ -233,7 +240,7 @@ services:
     entrypoint: [sh, /usr/local/bin/pagerarchive-backup]
     command: [check-serve]
     labels:
-      pagerarchive.config: "6ccf19ac04054cf6"
+      pagerarchive.config: "a93d2e05b1822f11"
     environment:
       BACKUP_UID: ${BACKUP_UID:-0}
       BACKUP_GID: ${BACKUP_GID:-0}

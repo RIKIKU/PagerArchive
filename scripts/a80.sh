@@ -9,6 +9,11 @@
 # its volumes and restores into a new install with the documented command. The
 # alert firing is TestA80ToldWhenABackupFails, in the monitoring stack's check.
 #
+# Also a companion app on the same host (R84l, R86e): A144, its blueprint
+# dropped in deploy/authentik/blueprints.d is applied, and A143, its made-up
+# database (BACKUP_EXTRA_DATABASES) is dumped with one table's rows left out,
+# checked, kept and pruned with the night, with its state for that app.
+#
 # The folder also holds a test-only compose.override.yaml (deploy/test/backup.yaml):
 # a stand-in for pg_dump that runs the real one, and can hold it open or spoil
 # what it wrote, so a half-written dump and a bad one can be seen.
@@ -116,11 +121,46 @@ PA_TEST_CONTROL=$CTL
 VARS
 fill_env "$DIR/.env" deploy/test/stack.vars "$WORK/vars"
 chmod 777 "$CTL"
+# A144 (R84l): a companion app's blueprint, dropped in the folder the release
+# made (empty), is applied with PagerArchive's: a made-up group.
+[ -d "$DIR/deploy/authentik/blueprints.d" ] && [ -z "$(ls -A "$DIR/deploy/authentik/blueprints.d")" ] ||
+	fail "the release's files have no empty deploy/authentik/blueprints.d"
+cat >"$DIR/deploy/authentik/blueprints.d/companion.yaml" <<'YAML'
+# A144: a made-up companion app's blueprint.
+version: 1
+metadata:
+  name: A144 made-up companion
+entries:
+  - model: authentik_core.group
+    identifiers:
+      name: a144-made-up-companion
+    attrs:
+      name: a144-made-up-companion
+YAML
+chmod a+r "$DIR/deploy/authentik/blueprints.d/companion.yaml"
 
 stack_compose up -d
 start_mailpit
 stack_wait_ready
 limited "a new install"
+
+echo "=== A144: a blueprint in deploy/authentik/blueprints.d is applied (R84l)"
+i=0
+until [ "$(stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT count(*) FROM authentik_core_group WHERE name = 'a144-made-up-companion'" | tr -d '\r')" = 1 ]; do
+	i=$((i + 1))
+	if [ $i -gt 100 ]; then
+		fail "Authentik didn't apply the blueprint in blueprints.d after 300 s"
+		stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT path, status FROM authentik_blueprints_blueprintinstance" >&2
+		break
+	fi
+	sleep 3
+done
+echo "--- $(stack_compose exec -T db psql -X -At -U postgres -d authentik -c "SELECT path || ': ' || status FROM authentik_blueprints_blueprintinstance WHERE path LIKE 'extra/%'" | tr -d '\r')"
+for s in authentik-server authentik-worker; do
+	stack_compose exec -T "$s" test -r /blueprints/extra/companion.yaml || fail "$s doesn't see the blueprint at /blueprints/extra"
+	if stack_compose exec -T "$s" touch /blueprints/extra/x 2>/dev/null; then fail "$s can write in /blueprints/extra"; fi
+done
+
 gateway=$(docker network inspect "${COMPOSE_PROJECT_NAME}_default" -f '{{(index .IPAM.Config 0).Gateway}}')
 key=$(stack_compose exec -T api /usr/local/bin/pagerarchive client add a80-receiver "A80 receiver" | tail -n 1)
 export PA_STACK_APP_URL=http://localhost:8080 PA_STACK_AUTHENTIK_URL=http://localhost:9000 \
@@ -242,6 +282,48 @@ after=$(metric pagerarchive_backup_last_good_timestamp_seconds)
 [ "$after" != "$before" ] || fail "the last-good metric didn't move"
 echo "--- pagerarchive_backup_last_good_timestamp_seconds: $before to $after"
 
+echo "=== A143: a companion app's database, backed up and checked with the night (R86e)"
+stack_compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres -c 'CREATE DATABASE companion' >/dev/null
+stack_compose exec -T db psql -X -q -v ON_ERROR_STOP=1 -U postgres -d companion >/dev/null <<'SQL'
+CREATE TABLE calls (id int PRIMARY KEY, heard text NOT NULL);
+CREATE TABLE settings (name text PRIMARY KEY, value text NOT NULL);
+INSERT INTO calls SELECT g, 'made-up call ' || g FROM generate_series(1, 5) g;
+INSERT INTO settings VALUES ('look', 'made-up dark'), ('volume', 'made-up seven');
+SQL
+printf 'BACKUP_EXTRA_DATABASES=companion:calls\n' >"$WORK/vars"
+fill_env "$DIR/.env" "$WORK/vars"
+stack_compose up -d backup
+stack_compose exec -T backup pagerarchive-backup databases
+night=2030-01-06
+backup_now --night $night || fail "the night with the companion's database failed"
+want_metric pagerarchive_backup_failing 0
+[ "$(cat "$BACKUPS/$night.companion.check" 2>/dev/null)" = ok ] || fail "the companion's check says $(cat "$BACKUPS/$night.companion.check" 2>&1)"
+grep -q "^companion	public.calls	0\$" "$BACKUPS/$night.counts.tsv" || fail "the counts don't have calls at 0"
+grep -q "^companion	public.settings	2\$" "$BACKUPS/$night.counts.tsv" || fail "the counts don't have settings' 2 rows"
+toc=$(stack_compose exec -T backup pg_restore -l "/backups/$night.companion.dump" | tr -d '\r')
+printf '%s\n' "$toc" | grep -q 'TABLE DATA public settings' || fail "the dump has no data for settings"
+printf '%s\n' "$toc" | grep -q 'TABLE DATA public calls' && fail "the dump has data for calls, which is left out"
+printf '%s\n' "$toc" | grep -q 'TABLE public calls' || fail "the dump hasn't calls' table itself"
+rows=$(stack_compose exec -T backup pg_restore -f - "/backups/$night.companion.dump" | tr -d '\r')
+printf '%s\n' "$rows" | grep -q 'made-up seven' || fail "settings' rows aren't in the dump"
+printf '%s\n' "$rows" | grep -q 'made-up call' && fail "calls' rows are in the dump"
+state=$(stack_compose exec -T backup cat /status/databases/companion.json | tr -d '\r')
+printf '%s\n' "$state"
+for want in '"database": "companion"' '"last_run_ok": true' "\"last_good_night\": \"$night\"" '"error": ""'; do
+	printf '%s\n' "$state" | grep -qF "$want" || fail "the companion's state hasn't $want"
+done
+echo "--- the companion's dump: settings' rows in it, calls' table without its rows; checked ok; its state in the backup-status volume's databases/companion.json"
+
+echo "=== A143: a bad BACKUP_EXTRA_DATABASES refuses the backup, and says why"
+if stack_compose exec -T -e BACKUP_EXTRA_DATABASES='companion:Calls' backup pagerarchive-backup now --night 2030-01-07 >"$WORK/out.txt" 2>&1; then
+	fail "a backup with a bad setting ran"
+fi
+grep -q "refusing to back up: BACKUP_EXTRA_DATABASES: Calls in companion isn't a table name" "$WORK/out.txt" || fail "a bad setting: $(cat "$WORK/out.txt")"
+[ ! -e "$BACKUPS/2030-01-07.counts.tsv" ] || fail "a bad setting backed up"
+want_metric pagerarchive_backup_failing 1
+backup_now --night 2030-01-08 >/dev/null || fail "the good setting's backup after the bad one failed"
+want_metric pagerarchive_backup_failing 0
+
 echo "=== A80: 15 nights pass: 14 are kept"
 n=1
 while [ $n -le 15 ]; do
@@ -255,6 +337,10 @@ echo "--- nights kept: $kept, oldest $(ls "$BACKUPS" | head -n 1 | cut -d. -f1),
 [ ! -e "$BACKUPS/2031-01-01.pagerarchive.dump" ] && [ ! -e "$BACKUPS/2031-01-01.authentik.dump" ] && [ ! -e "$BACKUPS/2031-01-01.counts.tsv" ] && [ ! -e "$BACKUPS/2031-01-01.check" ] ||
 	fail "the 15th night back is still there"
 [ -e "$BACKUPS/2031-01-02.pagerarchive.dump" ] || fail "the 14th night back is gone"
+# A143: the companion's dumps are kept and pruned with the night's.
+companion_kept=$(find "$BACKUPS" -name '*.companion.dump' | wc -l)
+[ "$companion_kept" = 14 ] || fail "$companion_kept of the companion's nights kept, want 14"
+[ -e "$BACKUPS/2031-01-02.companion.dump" ] && [ ! -e "$BACKUPS/2031-01-01.companion.dump" ] || fail "the companion's nights weren't pruned with the night's"
 
 echo "=== A80: the setting"
 stack_compose exec -T -e BACKUP_KEEP_DAYS=2 backup pagerarchive-backup now --night 2031-01-16 >/dev/null
