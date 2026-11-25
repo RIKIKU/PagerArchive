@@ -84,7 +84,7 @@ func TestA135FiregroundLinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	changed := strings.Replace(string(b), `"fireground_channel_pattern": "\bFGND ?(?P<number>[0-9A-Z]+)\b"`, `"fireground_channel_pattern": "\bFGND (?P<number>[0-9]{2,})\b"`, 1)
+	changed := strings.Replace(string(b), `"fireground_channel_pattern": "\\bFGND ?(?P<number>[0-9A-Z]+)\\b"`, `"fireground_channel_pattern": "\\bFGND (?P<number>[0-9]{2,})\\b"`, 1)
 	if changed == string(b) {
 		t.Fatal("the example network profile's pattern wasn't found")
 	}
