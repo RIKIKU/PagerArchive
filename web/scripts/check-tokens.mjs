@@ -372,6 +372,11 @@ const tokenFile = join(src, 'app.css');
 // ArchiveUx's tokens (ADR 0049), at the release package.json pins.
 const sharedFile = fileURLToPath(import.meta.resolve('archiveux/tokens.css'));
 const found = [];
+// R77d: the tokens ArchiveUx's Frame sets on its root, measured
+// (style:--topbar-height={…}) or by its own rules (--frame-menu-width), which
+// the app's pages may use.
+const frameFile = fileURLToPath(import.meta.resolve('archiveux/components/Frame.svelte'));
+for (const m of readFileSync(frameFile, 'utf8').matchAll(/style:(--[\w-]+)|^\s*(--[\w-]+)\s*:/gm)) defined.add(m[1] ?? m[2]);
 // The token files first, so their tokens are known, even when not a target.
 for (const file of [sharedFile, tokenFile, ...targets.filter((t) => t !== tokenFile)]) {
 	const text = readFileSync(file, 'utf8');

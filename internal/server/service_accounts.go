@@ -107,6 +107,7 @@ var serviceReads = map[string]serviceAccess{
 	// Admins' settings and jobs: none records who started or changed it
 	// (that's in the log, by user ID); receiving clients are machines.
 	"GET /api/v1/admin/large-events":      serviceAllowed,
+	"GET /api/v1/admin/switcher":          serviceAllowed,
 	"GET /api/v1/admin/retention":         serviceAllowed,
 	"GET /api/v1/admin/areas":             serviceAllowed,
 	"GET /api/v1/admin/backup":            serviceAllowed,

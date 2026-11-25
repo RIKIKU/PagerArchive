@@ -1820,7 +1820,7 @@ const createServiceAccount = `-- name: CreateServiceAccount :one
 
 INSERT INTO users (kind, subject, name, role, invited_by, credential_expires_at)
 VALUES ('service', $1, $2::text, 'user', $3::bigint, $4)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher
 `
 
 type CreateServiceAccountParams struct {
@@ -1858,6 +1858,7 @@ func (q *Queries) CreateServiceAccount(ctx context.Context, arg CreateServiceAcc
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }
@@ -1936,7 +1937,7 @@ func (q *Queries) CreateTreeDeactivation(ctx context.Context, arg CreateTreeDeac
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (subject, email, email_key, name, role, invited_by)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events
+RETURNING id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher
 `
 
 type CreateUserParams struct {
@@ -1977,6 +1978,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }
@@ -2482,7 +2484,7 @@ func (q *Queries) DeleteTemplate(ctx context.Context, id int64) (int64, error) {
 const deleteUserAccount = `-- name: DeleteUserAccount :exec
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
     email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
-    look = 'harbour'
+    look = 'harbour', sees_switcher = false
 WHERE id = $1
 `
 
@@ -4396,7 +4398,9 @@ SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, 
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing,
        -- R42c: the trusted mark, who set it and when.
-       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name
+       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name,
+       -- R77f: marked to see the app switcher.
+       u.sees_switcher
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 LEFT JOIN users t ON t.id = u.trusted_by
@@ -4423,6 +4427,7 @@ type ListUsersRow struct {
 	TrustedByStatus     *string
 	TrustedByEmail      *string
 	TrustedByName       *string
+	SeesSwitcher        bool
 }
 
 func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
@@ -4453,6 +4458,7 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.TrustedByStatus,
 			&i.TrustedByEmail,
 			&i.TrustedByName,
+			&i.SeesSwitcher,
 		); err != nil {
 			return nil, err
 		}
@@ -6720,7 +6726,7 @@ func (q *Queries) SelectCapcodeInsteadOfAlias(ctx context.Context, arg SelectCap
 }
 
 const serviceAccountByName = `-- name: ServiceAccountByName :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE kind = 'service' AND name = $1::text AND status <> 'deleted'
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher FROM users WHERE kind = 'service' AND name = $1::text AND status <> 'deleted'
 `
 
 // The live one (active or deactivated) with that name.
@@ -6746,12 +6752,13 @@ func (q *Queries) ServiceAccountByName(ctx context.Context, name string) (User, 
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }
 
 const sessionUser = `-- name: SessionUser :one
-SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, u.kind, u.credential_expires_at, u.seen_large_events, s.last_used_at AS session_used_at
+SELECT u.id, u.subject, u.email, u.email_key, u.name, u.role, u.status, u.invited_by, u.created_at, u.deactivated_at, u.deleted_at, u.trusted_at, u.trusted_by, u.look, u.seen_release, u.kind, u.credential_expires_at, u.seen_large_events, u.sees_switcher, s.last_used_at AS session_used_at
 FROM sessions s JOIN users u ON u.id = s.user_id
 WHERE s.token_hash = $1 AND s.expires_at > now() AND u.status = 'active'
 `
@@ -6775,6 +6782,7 @@ type SessionUserRow struct {
 	Kind                string
 	CredentialExpiresAt *time.Time
 	SeenLargeEvents     *time.Time
+	SeesSwitcher        bool
 	SessionUsedAt       time.Time
 }
 
@@ -6800,6 +6808,7 @@ func (q *Queries) SessionUser(ctx context.Context, tokenHash []byte) (SessionUse
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 		&i.SessionUsedAt,
 	)
 	return i, err
@@ -7106,6 +7115,25 @@ type SetUserRoleParams struct {
 
 func (q *Queries) SetUserRole(ctx context.Context, arg SetUserRoleParams) (int64, error) {
 	result, err := q.db.Exec(ctx, setUserRole, arg.ID, arg.Role)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const setUserSeesSwitcher = `-- name: SetUserSeesSwitcher :execrows
+UPDATE users SET sees_switcher = $1::boolean
+WHERE id = $2 AND status <> 'deleted'
+`
+
+type SetUserSeesSwitcherParams struct {
+	Sees bool
+	ID   int64
+}
+
+// R77f: marks or unmarks a user to see the app switcher.
+func (q *Queries) SetUserSeesSwitcher(ctx context.Context, arg SetUserSeesSwitcherParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setUserSeesSwitcher, arg.Sees, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -7806,7 +7834,7 @@ func (q *Queries) UseInvitation(ctx context.Context, arg UseInvitationParams) (i
 }
 
 const userByEmailKey = `-- name: UserByEmailKey :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE email_key = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher FROM users WHERE email_key = $1
 `
 
 func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, error) {
@@ -7831,12 +7859,13 @@ func (q *Queries) UserByEmailKey(ctx context.Context, emailKey *string) (User, e
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }
 
 const userByID = `-- name: UserByID :one
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE id = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher FROM users WHERE id = $1
 `
 
 func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
@@ -7861,13 +7890,14 @@ func (q *Queries) UserByID(ctx context.Context, id int64) (User, error) {
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }
 
 const userBySubject = `-- name: UserBySubject :one
 
-SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events FROM users WHERE subject = $1
+SELECT id, subject, email, email_key, name, role, status, invited_by, created_at, deactivated_at, deleted_at, trusted_at, trusted_by, look, seen_release, kind, credential_expires_at, seen_large_events, sees_switcher FROM users WHERE subject = $1
 `
 
 // Accounts (R40-R44, ADR 0004).
@@ -7893,6 +7923,7 @@ func (q *Queries) UserBySubject(ctx context.Context, subject *string) (User, err
 		&i.Kind,
 		&i.CredentialExpiresAt,
 		&i.SeenLargeEvents,
+		&i.SeesSwitcher,
 	)
 	return i, err
 }

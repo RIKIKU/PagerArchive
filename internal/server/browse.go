@@ -198,11 +198,17 @@ type Meta struct {
 	// The radio beside it (R92), left out when it stands alone: the chips
 	// linking to a page's fireground channels (R92a) and the app switcher.
 	RadioArchiveURL string `json:"radioarchive_url,omitempty"`
+	// RadioArchiveName is the name the app switcher shows (R77e), with
+	// RadioArchiveURL only.
+	RadioArchiveName string `json:"radioarchive_name,omitempty"`
 }
 
 func (s *Server) getMeta(w http.ResponseWriter, r *http.Request) {
 	m := Meta{Role: currentUser(r).Role, AccountURL: s.AccountURL, Domains: s.Accounts.AllowedDomains, TimeZone: s.Location.String(), Attribution: s.Ingest.Network.Attribution,
 		MapTiles: s.MapTiles != "", MapAttribution: s.MapAttribution, Version: s.Version, Areas: s.metaAreas(), RadioArchiveURL: s.RadioArchiveURL}
+	if s.RadioArchiveURL != "" {
+		m.RadioArchiveName = s.RadioArchiveName
+	}
 	for _, c := range s.Ingest.Network.Categories {
 		m.Categories = append(m.Categories, c.Name)
 	}

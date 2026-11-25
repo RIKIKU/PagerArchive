@@ -111,6 +111,9 @@ serve reads its settings from the environment:
   MAP_TILES               path to a PMTiles map extract (default: no background map;
                           /dev/null mounted there means the example built into the image)
   MAP_ATTRIBUTION         the extract's credit line (default: the one in the extract's metadata)
+  RADIOARCHIVE_URL        RadioArchive's public URL: fireground links (R92a) and the app switcher
+                          (R77e; default: none, PagerArchive stands alone)
+  RADIOARCHIVE_NAME       the name the switcher shows (default Radio)
   INTEGRATION_SECRETS_KEY      32 random bytes in base64 that encrypt integrations' secrets
                                (openssl rand -base64 32); without it integrations are off
   INTEGRATION_SECRETS_KEY_OLD  the previous key, only while rotating
@@ -464,7 +467,8 @@ func serve(stderr io.Writer) error {
 		return err
 	}
 	srv := &server.Server{
-		Store: st,
+		RadioArchiveName: getenv("RADIOARCHIVE_NAME", "Radio"),
+		Store:            st,
 		Ingest: &ingest.Service{
 			Store:     st,
 			Network:   net,

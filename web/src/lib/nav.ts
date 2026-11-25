@@ -35,7 +35,7 @@ export const groups: Group[] = [
 		icon: 'albums',
 		text: 'Messages you keep, with your own notes',
 		href: '/albums',
-		// One per album, from the API (R77): see Menu.svelte.
+		// One per album, from the API (R77): see frame.ts.
 		entries: []
 	},
 	{

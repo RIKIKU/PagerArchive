@@ -184,6 +184,11 @@
 </div>
 
 <style>
+	/* Out of the frame's grid (R77d): it takes no cell of ArchiveUx's layout. */
+	.live {
+		position: fixed;
+		z-index: var(--layer-overlay);
+	}
 	/* Beside the side menu, at the bottom: it covers no part of the menu. */
 	.notice {
 		position: fixed;

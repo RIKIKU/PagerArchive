@@ -19,7 +19,19 @@
 	// longer works and needs a resend (ADR 0021).
 	const pending = $derived(invitations.filter((i) => i.status === 'pending' || i.status === 'link_lost'));
 
-	api.meta().then((m) => (meta = m));
+	// R77f: with RadioArchive set, who sees the app switcher: everyone, or
+	// those marked here. It only hides the switcher; it isn't access control.
+	let everyone = $state(false);
+	const combined = $derived(!!meta?.radioarchive_url);
+	const other = $derived(meta?.radioarchive_name ?? 'Radio');
+	api.meta().then((m) => {
+		meta = m;
+		if (m.radioarchive_url)
+			api
+				.switcherSettings()
+				.then((s) => (everyone = s.everyone))
+				.catch((e) => (error = e.message));
+	});
 	api.me().then((m) => (me = m));
 	function load() {
 		api
@@ -66,6 +78,21 @@
 			await api.reactivate(u.id);
 			return `${label(u)} reactivated. People they invited stay deactivated.`;
 		});
+	const setSees = (u: UserRow, sees: boolean) =>
+		run(async () => {
+			await api.setSeesSwitcher(u.id, sees);
+			return sees ? `${label(u)} sees the switcher to ${other}.` : `${label(u)} no longer sees the switcher to ${other}.`;
+		});
+	const setEveryone = (on: boolean) =>
+		run(async () => {
+			try {
+				everyone = (await api.setSwitcherSettings(on)).everyone;
+			} catch (e) {
+				everyone = !on;
+				throw e;
+			}
+			return on ? `Everyone sees the switcher to ${other}.` : `Only the people marked see the switcher to ${other}.`;
+		});
 	const cancel = (inv: Invitation) =>
 		run(async () => {
 			await api.cancelInvitation(inv.id);
@@ -92,6 +119,20 @@
 </div>
 {#if error}<p class="error" role="alert">{error}</p>{/if}
 
+{#if combined}
+	<section class="switcher" aria-labelledby="switcher-heading">
+		<h2 id="switcher-heading">Switcher to {other}</h2>
+		<p class="status">
+			The switcher in the top bar opens {other}. Only the people marked below see it, unless it's shown to everyone. It
+			only hides the switcher: anyone can still open {other} from its address.
+		</p>
+		<label class="check">
+			<input type="checkbox" checked={everyone} disabled={busy} onchange={(e) => setEveryone(e.currentTarget.checked)} />
+			Show the switcher to everyone
+		</label>
+	</section>
+{/if}
+
 <ul class="cards">
 	{#each users as u (u.id)}
 		<li class:off={u.status === 'deactivated'}>
@@ -101,6 +142,7 @@
 				{#if u.role === 'admin'}<span class="tag">Admin</span>{/if}
 				{#if u.status === 'deactivated'}<span class="tag warn">Deactivated</span>{/if}
 				{#if u.trusted}<span class="tag">Trusted</span>{/if}
+				{#if combined && u.sees_switcher}<span class="tag" data-testid="sees-switcher">Sees switcher</span>{/if}
 				{#if u.id === me?.id}<span class="tag">You</span>{/if}
 				{#if u.integrations_failing > 0}<span class="tag warn" data-testid="failing"
 						>{u.integrations_failing} integration{u.integrations_failing === 1 ? '' : 's'} paused for failing</span
@@ -137,6 +179,16 @@
 					</div>
 				{/if}
 			{/if}
+			{#if combined && !u.service_account}
+				<!-- R77f: yourself too, to try it before the others. -->
+				<div class="actions">
+					{#if u.sees_switcher}
+						<button class="secondary" type="button" disabled={busy} onclick={() => setSees(u, false)} aria-label="Hide switcher: {label(u)}">Hide switcher</button>
+					{:else}
+						<button class="secondary" type="button" disabled={busy} onclick={() => setSees(u, true)} aria-label="Show switcher: {label(u)}">Show switcher</button>
+					{/if}
+				</div>
+			{/if}
 		</li>
 	{/each}
 </ul>
@@ -169,6 +221,18 @@
 	}
 	.ok {
 		margin: 0;
+	}
+	.switcher {
+		margin: var(--space-lg) 0;
+	}
+	.switcher h2 {
+		margin-top: 0;
+	}
+	.check {
+		display: flex;
+		align-items: center;
+		gap: var(--space-xs);
+		min-height: var(--target);
 	}
 	.invite {
 		margin: var(--space-sm) 0;
