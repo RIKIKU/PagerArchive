@@ -199,37 +199,38 @@ type Locality struct {
 }
 
 type Message struct {
-	ID               int64
-	Capcode          string
-	Text             string
-	Priority         *string
-	Heartbeat        bool
-	SentAt           time.Time
-	DedupKey         []byte
-	Format           *string
-	JobNumber        *string
-	EventType        *string
-	Description      *string
-	Address          *string
-	Locality         *string
-	GridRef          *string
-	CallSign         *string
-	Units            []string
-	Extra            []byte
-	ParseFailed      bool
-	AddressUnsplit   bool
-	Function         *int16
-	Baud             *int32
-	CreatedAt        time.Time
-	AliasID          *int64
-	LocationMismatch bool
-	Location         interface{}
-	LocationSource   *string
-	Lon              *float64
-	Lat              *float64
-	LargeEventField  bool
-	CallSigns        []string
-	ProbablyNoise    bool
+	ID                 int64
+	Capcode            string
+	Text               string
+	Priority           *string
+	Heartbeat          bool
+	SentAt             time.Time
+	DedupKey           []byte
+	Format             *string
+	JobNumber          *string
+	EventType          *string
+	Description        *string
+	Address            *string
+	Locality           *string
+	GridRef            *string
+	CallSign           *string
+	Units              []string
+	Extra              []byte
+	ParseFailed        bool
+	AddressUnsplit     bool
+	Function           *int16
+	Baud               *int32
+	CreatedAt          time.Time
+	AliasID            *int64
+	LocationMismatch   bool
+	Location           interface{}
+	LocationSource     *string
+	Lon                *float64
+	Lat                *float64
+	LargeEventField    bool
+	CallSigns          []string
+	FiregroundChannels []int32
+	ProbablyNoise      bool
 }
 
 type MessageArea struct {

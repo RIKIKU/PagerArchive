@@ -42,6 +42,11 @@
               "parse_failed": { "type": "boolean" },
               "address_unsplit": { "type": "boolean" },
               "deployment_codes": { "$ref": "#/$defs/list" },
+              "fireground_channels": {
+                "description": "The fireground channel numbers the network's pattern finds, in text order, each once (R92a); null for none. Network tables; checked only when a row lists it.",
+                "type": ["array", "null"],
+                "items": { "type": "integer", "minimum": 0 }
+              },
               "opens_large_event": { "type": "boolean" }
             },
             "additionalProperties": false

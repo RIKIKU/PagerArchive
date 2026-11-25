@@ -4,6 +4,7 @@
 #
 #   serve         the `backup` service: dumps both databases each night at BACKUP_AT,
 #                 and when an admin asks (Back up now: the API's request file)
+#   databases     what's backed up, with BACKUP_EXTRA_DATABASES checked
 #   check-serve   the `backup-check` service, which has no network: restores each
 #                 new night's dumps into a throwaway database and compares them
 #   now           one backup, at once: docker compose exec backup pagerarchive-backup now
@@ -14,6 +15,7 @@
 #   2026-11-03.pagerarchive.dump, 2026-11-03.authentik.dump   pg_dump's custom format
 #   2026-11-03.counts.tsv   each table's rows, from the snapshot the dump read
 #   2026-11-03.check        the check's result: "ok", or "failed: why"
+#   2026-11-03.NAME.dump, 2026-11-03.NAME.check   an extra database's (R86e)
 # Each is written as <name>.partial and renamed when complete, and the check's
 # trigger, counts.tsv, is renamed last. So a file with a final name is complete.
 #
@@ -22,6 +24,18 @@
 # serve loop sees it within a minute, runs the same backup and check, and then
 # deletes it. Its contents are never read. While it's there, or a backup is
 # running (running_since in the status), the API refuses another.
+#
+# Extra databases (R86e): another app on the host, a companion app, can have
+# its own databases in this server backed up with PagerArchive's, by naming
+# them in BACKUP_EXTRA_DATABASES:
+#   NAME[:TABLE,TABLE...][;NAME...]     e.g. companion:calls,transmissions;other
+# A TABLE is `table` (in the public schema) or `schema.table`: its rows are
+# left out of the dump (pg_dump --exclude-table-data), so its count is 0. Each
+# is dumped with the night's two, kept and pruned with them, restore-checked
+# by backup-check on its own (NAME.check), and its state is written to
+# status/databases/NAME.json for that app. A failed extra never fails
+# PagerArchive's own backup. A bad setting refuses every backup, saying why in
+# the log and the status.
 #
 # P1: what pg_dump, pg_restore and PostgreSQL say on failure can quote a row, so
 # it's thrown away, and every error here is fixed text. Nothing reads a dump's
@@ -33,6 +47,8 @@ set -u
 ROOT=${PA_TEST_ROOT:-}
 DIR=$ROOT/backups
 STATUS=$ROOT/status/status.json
+# One file per extra database (R86e), for the app it belongs to.
+EXTRA_STATUS_DIR=$ROOT/status/databases
 REQUESTS=$ROOT/requests
 REQUEST=$REQUESTS/request.json
 LOCK=$ROOT/tmp/pagerarchive-backup.lock
@@ -62,9 +78,147 @@ place() {
 	chown "$OWNER" "$1" && chmod 640 "$1"
 }
 
-# field <key>: a value from the status file, which only this script writes.
+# field <key> [file]: a value from the status file, or an extra database's,
+# which only this script writes.
 field() {
-	sed -n "s/^ *\"$1\": \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" "$STATUS" 2>/dev/null
+	sed -n "s/^ *\"$1\": \"\{0,1\}\([^\",]*\)\"\{0,1\},\{0,1\}\$/\1/p" "${2:-$STATUS}" 2>/dev/null
+}
+
+# ── Extra databases (R86e) ─────────────────────────────────────────────────
+# A name or table as the setting may write it: lower case, so pg_dump's
+# patterns and PostgreSQL's names agree, and nothing a shell or JSON would
+# treat specially.
+IDENT='[a-z_][a-z0-9_]{0,62}'
+
+# shown <text>: an item from the setting, safe to print in a message.
+shown() { printf '%s' "$1" | tr ',' ' ' | tr -cd 'A-Za-z0-9_.: -' | cut -c1-70; }
+
+# parse_extra: BACKUP_EXTRA_DATABASES into EXTRA_NAMES ("name name") and
+# EXTRA_TABLES_<name> ("schema.table,schema.table"), or EXTRA_ERROR saying
+# what's wrong, and a non-zero return.
+parse_extra() {
+	EXTRA_NAMES="" EXTRA_ERROR=""
+	_v=${BACKUP_EXTRA_DATABASES:-}
+	[ -n "$_v" ] || return 0
+	case $_v in *[[:space:]]*)
+		EXTRA_ERROR="BACKUP_EXTRA_DATABASES has a space or line break in it"
+		return 1
+		;;
+	esac
+	_rest="$_v;"
+	while [ -n "$_rest" ]; do
+		_item=${_rest%%;*} _rest=${_rest#*;}
+		if [ -z "$_item" ]; then
+			EXTRA_ERROR="BACKUP_EXTRA_DATABASES has an empty entry (two semicolons together or one at an end)"
+			return 1
+		fi
+		_name=${_item%%:*} _tables=""
+		case $_item in *:*) _tables=${_item#*:} ;; esac
+		if ! printf '%s' "$_name" | grep -Eqx "$IDENT"; then
+			EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $(shown "$_name") isn't a database name (lower-case letters and digits and _ only and at most 63 of them)"
+			return 1
+		fi
+		case $_name in postgres | pagerarchive | authentik | template0 | template1)
+			EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $_name isn't an extra database: PagerArchive's own are always backed up"
+			return 1
+			;;
+		esac
+		case " $EXTRA_NAMES " in *" $_name "*)
+			EXTRA_ERROR="BACKUP_EXTRA_DATABASES names $_name twice"
+			return 1
+			;;
+		esac
+		_list=""
+		case $_item in *:*)
+			case $_tables in *:*)
+				EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $(shown "$_item") has more than one colon: separate databases with a semicolon"
+				return 1
+				;;
+			esac
+			if [ -z "$_tables" ]; then
+				EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $_name has a colon but no tables after it"
+				return 1
+			fi
+			_trest="$_tables,"
+			while [ -n "$_trest" ]; do
+				_t=${_trest%%,*} _trest=${_trest#*,}
+				if [ -z "$_t" ]; then
+					EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $_name has an empty table name (two commas together or one at an end)"
+					return 1
+				fi
+				if ! printf '%s' "$_t" | grep -Eqx "($IDENT\\.)?$IDENT"; then
+					EXTRA_ERROR="BACKUP_EXTRA_DATABASES: $(shown "$_t") in $_name isn't a table name (table or schema.table in lower-case letters and digits and _)"
+					return 1
+				fi
+				case $_t in *.*) ;; *) _t=public.$_t ;; esac
+				_list=${_list:+$_list,}$_t
+			done
+			;;
+		esac
+		EXTRA_NAMES=${EXTRA_NAMES:+$EXTRA_NAMES }$_name
+		eval "EXTRA_TABLES_$_name=\$_list"
+	done
+}
+
+# extra_tables <name>: the tables whose rows that database's dump leaves out.
+extra_tables() { eval "printf '%s' \"\${EXTRA_TABLES_$1:-}\""; }
+
+# settings_ok: the setting is checked before any backup. A bad one refuses
+# the backup, in the log and the status (so Administration and the alert
+# show it), and the script stops.
+settings_ok() {
+	parse_extra && return 0
+	say "refusing to back up: $EXTRA_ERROR" >&2
+	read_status
+	s_run_at=$(date +%s) s_ok=false s_running=0 s_error="the setting isn't valid: $EXTRA_ERROR"
+	mkdir -p "${STATUS%/*}" 2>/dev/null
+	write_status 2>/dev/null
+	return 1
+}
+
+# write_extra <name> <run at> <ok> <error> [<night> <bytes> <dump seconds>]:
+# that database's state, for the app it belongs to. Times are seconds since
+# 1970. A good run sets the last good backup; a failed one keeps it.
+write_extra() {
+	_ef=$EXTRA_STATUS_DIR/$1.json
+	mkdir -p "$EXTRA_STATUS_DIR" && chmod 755 "$EXTRA_STATUS_DIR"
+	_esince=$(field since "$_ef")
+	# Since its first state: its first run, or the service's start with it set.
+	[ -n "$_esince" ] && [ "$_esince" != 0 ] || _esince=${2:-0}
+	[ "$_esince" != 0 ] || _esince=$(date +%s)
+	if [ "$3" = true ]; then
+		_egat=$2 _egn=$5 _egb=$6 _egd=$7
+	else
+		_egat=$(field last_good_at "$_ef") _egn=$(field last_good_night "$_ef")
+		_egb=$(field last_good_bytes "$_ef") _egd=$(field last_good_dump_seconds "$_ef")
+	fi
+	_enights=0
+	for _f in "$DIR"/*."$1".dump; do
+		[ ! -e "$_f" ] || _enights=$((_enights + 1))
+	done
+	cat >"$_ef.partial" <<JSON
+{
+  "database": "$1",
+  "since": $_esince,
+  "last_run_at": ${2:-0},
+  "last_run_ok": $3,
+  "last_good_at": ${_egat:-0},
+  "last_good_night": "${_egn:-}",
+  "last_good_bytes": ${_egb:-0},
+  "last_good_dump_seconds": ${_egd:-0},
+  "nights": $_enights,
+  "error": "$4"
+}
+JSON
+	chmod 644 "$_ef.partial" && mv -f "$_ef.partial" "$_ef"
+}
+
+# extras_started: a database newly in the setting has a state from now, so
+# the app it belongs to sees "not yet" rather than nothing.
+extras_started() {
+	for _x in $EXTRA_NAMES; do
+		[ -e "$EXTRA_STATUS_DIR/$_x.json" ] || write_extra "$_x" 0 false ""
+	done
 }
 
 # write_status: for the API (R86a). Times are seconds since 1970.
@@ -108,8 +262,17 @@ nights() {
 # dump_database <database> <name> <night> <counts file>: the dump and the table
 # counts from one snapshot, so the check compares like with like while pages
 # keep arriving. An open transaction holds the snapshot for both.
+# [excluded]: an extra database's "schema.table,..." whose rows are left out
+# (R86e): their counts are 0, as a restore of the dump has them.
 dump_database() {
-	_db=$1 _partial=$DIR/$3.$2.dump.partial
+	_db=$1 _partial=$DIR/$3.$2.dump.partial _excluded=${5:-} _exargs=""
+	# Checked names (parse_extra): no space, quote or wildcard in them.
+	for _t in $(printf '%s' "$_excluded" | tr , ' '); do
+		_exargs="$_exargs --exclude-table-data=$_t"
+	done
+	# A database that isn't there (an extra one, dropped) fails here: the
+	# snapshot's holder below would have gone, and writing to it stop the script.
+	psql -X -q -At -d "$_db" -c 'SELECT 1' >/dev/null 2>&1 || return 1
 	_fifo=$(mktemp -u) _snap=$(mktemp)
 	mkfifo "$_fifo"
 	psql -X -q -At -d "$_db" <"$_fifo" >"$_snap" 2>/dev/null &
@@ -128,9 +291,11 @@ dump_database() {
 			echo "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY; SET TRANSACTION SNAPSHOT '$_id';"
 			echo "$COUNT_SQL"
 			echo "COMMIT;"
-		} | psql -X -q -At -F "$TAB" -v ON_ERROR_STOP=1 -d "$_db" 2>/dev/null | LC_ALL=C sort >"$4"
+		} | psql -X -q -At -F "$TAB" -v ON_ERROR_STOP=1 -d "$_db" 2>/dev/null |
+			awk -F "$TAB" -v OFS="$TAB" -v ex=",$_excluded," 'index(ex, "," $1 ",") { $2 = 0 } { print }' | LC_ALL=C sort >"$4"
 		# No tables at all counts as a failure: a backup with no users in it is no backup.
-		if [ -s "$4" ] && nice -n 10 pg_dump -d "$_db" -Fc --no-privileges --snapshot="$_id" -f "$_partial" >/dev/null 2>&1; then
+		# shellcheck disable=SC2086 # $_exargs: checked names, one argument each
+		if [ -s "$4" ] && nice -n 10 pg_dump -d "$_db" -Fc --no-privileges --snapshot="$_id" $_exargs -f "$_partial" >/dev/null 2>&1; then
 			_rc=0
 		fi
 	fi
@@ -163,10 +328,43 @@ finished() {
 }
 
 # backup_failed <at> <why>: records a failed run. The last good backup stays.
+# An extra database not yet recorded failed with it.
 backup_failed() {
 	s_run_at=$1 s_ok=false s_error=$2
+	for _x in $EXTRA_NAMES; do
+		[ -z "$(extra_var REC "$_x")" ] || continue
+		_e=$(extra_var ERR "$_x")
+		write_extra "$_x" "$1" false "${_e:-PagerArchive's backup failed: $2}"
+	done
 	finished
 	say "failed: $2"
+}
+
+# extra_var <what> <name> / set_extra <what> <name> <value>: a run's notes on
+# an extra database: DUMP (its seconds), ERR (why it failed), REC (recorded).
+extra_var() { eval "printf '%s' \"\${EXTRA_$1_$2:-}\""; }
+set_extra() { eval "EXTRA_$1_$2=\$3"; }
+
+# extras_checked <at> <night>: each extra database's result, once the check
+# has finished, in its state file and the log.
+extras_checked() {
+	for _x in $EXTRA_NAMES; do
+		_e=$(extra_var ERR "$_x")
+		if [ -z "$_e" ]; then
+			_r=$(cat "$DIR/$2.$_x.check" 2>/dev/null || echo "failed: wasn't checked")
+			if [ "$_r" = ok ]; then
+				_b=$(wc -c <"$DIR/$2.$_x.dump")
+				write_extra "$_x" "$1" true "" "$2" "$_b" "$(extra_var DUMP "$_x")"
+				say "$2 $_x good: its dump took $(extra_var DUMP "$_x") s, $_b bytes"
+				set_extra REC "$_x" 1
+				continue
+			fi
+			_e="the check ${_r#failed: }"
+		fi
+		write_extra "$_x" "$1" false "$_e"
+		say "$2 $_x failed: $_e"
+		set_extra REC "$_x" 1
+	done
 }
 
 remove_partials() {
@@ -177,6 +375,11 @@ remove_partials() {
 # check, prune. "requested" is Back up now, answering the request file.
 run_backup() {
 	_night=$1 _at=$2 _requested=${3:-} _start=$(date +%s)
+	for _x in $EXTRA_NAMES; do
+		set_extra DUMP "$_x" ""
+		set_extra ERR "$_x" ""
+		set_extra REC "$_x" ""
+	done
 	read_status
 	# What the schedule goes by. A test's clock (now --night) leaves it alone.
 	# Back up now moves it only once it's good (below): then that night's
@@ -201,10 +404,26 @@ run_backup() {
 		fi
 		sed "s/^/${_pair##*:}$TAB/" "$_counts" >>"$DIR/$_night.counts.tsv.partial"
 	done
+	# Extra databases (R86e): one that fails is left out of the night, and
+	# PagerArchive's backup goes on.
+	for _x in $EXTRA_NAMES; do
+		_xs=$(date +%s)
+		if dump_database "$_x" "$_x" "$_night" "$_counts" "$(extra_tables "$_x")"; then
+			sed "s/^/$_x$TAB/" "$_counts" >>"$DIR/$_night.counts.tsv.partial"
+			set_extra DUMP "$_x" $(($(date +%s) - _xs))
+		else
+			rm -f "$DIR/$_night.$_x.dump.partial" "$DIR/$_night.$_x.dump"
+			set_extra ERR "$_x" "the dump failed: is the database there and does it have tables?"
+		fi
+	done
 	rm -f "$_counts"
 	place "$DIR/$_night.counts.tsv.partial"
 	# A night done again replaces the old one's files, its check's result first.
 	rm -f "$DIR/$_night.check" "$DIR/$_night.counts.tsv"
+	for _x in $EXTRA_NAMES; do
+		rm -f "$DIR/$_night.$_x.check"
+		[ -n "$(extra_var ERR "$_x")" ] || mv -f "$DIR/$_night.$_x.dump.partial" "$DIR/$_night.$_x.dump"
+	done
 	for _pair in $DATABASES; do
 		mv -f "$DIR/$_night.${_pair##*:}.dump.partial" "$DIR/$_night.${_pair##*:}.dump"
 	done
@@ -223,11 +442,13 @@ run_backup() {
 	done
 	_result=$(cat "$DIR/$_night.check")
 	if [ "$_result" != ok ]; then
+		extras_checked "$_at" "$_night"
 		backup_failed "$_at" "the check ${_result#failed: }"
 		return 1
 	fi
 
 	prune "$_night"
+	extras_checked "$_at" "$_night"
 	# R86d: the three numbers the dashboard shows for each night.
 	s_run_at=$_at s_ok=true s_error="" s_good_at=$_at s_good_night=$_night
 	s_good_dump=$((_dumped - _start)) s_good_check=$(($(date +%s) - _dumped))
@@ -320,31 +541,69 @@ differs() {
 	rm -f "$_want" "$_got"
 }
 
-# check_night <night>: restores both dumps and compares tables and row counts.
-# Prints "ok", or "failed: why".
+# check_one <database> <name> <night>: restores one dump into the throwaway
+# database and compares tables and row counts. Prints "ok", or "failed: why".
+check_one() {
+	if [ "$1" != postgres ] && ! gosu postgres createdb -h "$SOCKET" -U postgres "$1" >/dev/null 2>&1; then
+		echo "failed: couldn't create a database to restore into"
+		return
+	fi
+	# Opened here, as root: the folder's files aren't the postgres user's.
+	if ! gosu postgres pg_restore -h "$SOCKET" -U postgres -d "$1" --exit-on-error --no-owner --no-privileges \
+		<"$DIR/$3.$2.dump" >/dev/null 2>&1; then
+		echo "failed: couldn't restore the $2 dump"
+		return
+	fi
+	_diff=$(echo "$COUNT_SQL" | gosu postgres psql -h "$SOCKET" -U postgres -X -q -At -F "$TAB" -d "$1" 2>/dev/null | differs "$2" "$3")
+	if [ -n "$_diff" ]; then
+		echo "failed: found the $2 restore differs from the dump at $_diff"
+		return
+	fi
+	echo ok
+}
+
+# extras_in <night>: the extra databases dumped that night (R86e), from their
+# files' names. backup-check has no settings: the folder says what to check.
+extras_in() {
+	for _f in "$DIR/$1".*.dump; do
+		[ -e "$_f" ] || continue
+		_x=${_f#"$DIR/$1".}
+		_x=${_x%.dump}
+		case $_x in pagerarchive | authentik) continue ;; esac
+		# Only a name the setting could have given reaches a command.
+		printf '%s' "$_x" | grep -Eqx "$IDENT" && echo "$_x"
+	done
+}
+
+# put <file> <text>: a result, under its final name only when complete.
+put() {
+	printf '%s\n' "$2" >"$1.partial"
+	place "$1.partial"
+	mv -f "$1.partial" "$1"
+}
+
+# check_night <night>: each extra database's dump checked on its own, its
+# result in NAME.check, then PagerArchive's two. Prints PagerArchive's
+# result: "ok", or "failed: why".
 check_night() {
 	if ! throwaway_start; then
+		for _x in $(extras_in "$1"); do
+			put "$DIR/$1.$_x.check" "failed: couldn't start its throwaway database"
+		done
 		echo "failed: couldn't start its throwaway database"
 		return
 	fi
+	for _x in $(extras_in "$1"); do
+		_xr=$(check_one "$_x" "$_x" "$1")
+		put "$DIR/$1.$_x.check" "$_xr"
+		# To stderr: what's printed is PagerArchive's result.
+		say "$1 $_x checked: $_xr" >&2
+	done
 	for _pair in $DATABASES; do
-		_db=${_pair%%:*} _name=${_pair##*:}
-		if [ "$_db" != postgres ] && ! gosu postgres createdb -h "$SOCKET" -U postgres "$_db" >/dev/null 2>&1; then
-			echo "failed: couldn't create a database to restore into"
+		_r=$(check_one "${_pair%%:*}" "${_pair##*:}" "$1")
+		if [ "$_r" != ok ]; then
 			throwaway_stop
-			return
-		fi
-		# Opened here, as root: the folder's files aren't the postgres user's.
-		if ! gosu postgres pg_restore -h "$SOCKET" -U postgres -d "$_db" --exit-on-error --no-owner --no-privileges \
-			<"$DIR/$1.$_name.dump" >/dev/null 2>&1; then
-			echo "failed: couldn't restore the $_name dump"
-			throwaway_stop
-			return
-		fi
-		_diff=$(echo "$COUNT_SQL" | gosu postgres psql -h "$SOCKET" -U postgres -X -q -At -F "$TAB" -d "$_db" 2>/dev/null | differs "$_name" "$1")
-		if [ -n "$_diff" ]; then
-			echo "failed: found the $_name restore differs from the dump at $_diff"
-			throwaway_stop
+			echo "$_r"
 			return
 		fi
 	done
@@ -359,9 +618,7 @@ check_serve() {
 			[ ! -e "$DIR/$_n.check" ] || continue
 			_start=$(date +%s)
 			_r=$(check_night "$_n")
-			printf '%s\n' "$_r" >"$DIR/$_n.check.partial"
-			place "$DIR/$_n.check.partial"
-			mv -f "$DIR/$_n.check.partial" "$DIR/$_n.check"
+			put "$DIR/$_n.check" "$_r"
 			say "$_n checked in $(($(date +%s) - _start)) s: $_r"
 		done
 		sleep 10
@@ -459,9 +716,35 @@ SQL
 	say "$_night is restored. Start the stack: docker compose up -d"
 }
 
+# refuse_bad_settings: a bad BACKUP_EXTRA_DATABASES stops here (R86e), with
+# the reason in the log and, under the lock, the status.
+refuse_bad_settings() {
+	parse_extra && return 0
+	mkdir -p "${LOCK%/*}" 2>/dev/null
+	locked settings_ok
+	exit 2
+}
+
 case ${1:-} in
-serve) serve ;;
+serve)
+	refuse_bad_settings
+	extras_started
+	serve
+	;;
 check-serve) check_serve ;;
+databases)
+	# What's backed up, for you to check the setting before a night.
+	if ! parse_extra; then
+		echo "$EXTRA_ERROR" >&2
+		exit 2
+	fi
+	echo "pagerarchive (PostgreSQL's postgres)"
+	echo "authentik"
+	for _x in $EXTRA_NAMES; do
+		_t=$(extra_tables "$_x")
+		echo "$_x${_t:+ (rows left out: $_t)}"
+	done
+	;;
 now)
 	# A backup at once, for you or a test. A test sets the clock (A80):
 	# --night YYYY-MM-DD names the night, and --at SECONDS when it happened.
@@ -478,6 +761,7 @@ now)
 		esac
 		shift 2
 	done
+	refuse_bad_settings
 	locked run_backup "$_n" "$_a"
 	;;
 restore)
@@ -485,7 +769,7 @@ restore)
 	restore "$@"
 	;;
 *)
-	echo "usage: pagerarchive-backup serve | check-serve | now | restore YYYY-MM-DD" >&2
+	echo "usage: pagerarchive-backup serve | check-serve | now | databases | restore YYYY-MM-DD" >&2
 	exit 2
 	;;
 esac

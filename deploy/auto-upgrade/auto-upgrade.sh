@@ -39,6 +39,10 @@
 #
 # Never two runs at once (a lock), and never while a backup is running: the
 # backup service's `now` refuses then, and the run tries again next hour.
+# Nor while another app on the host upgrades (R84m): every run holds the
+# host-wide lock /run/lock/archive-upgrade.lock (flock), which a companion
+# app's own upgrade script takes too, from its check to its rollback. Held,
+# the run is skipped ("another upgrade is running") and tried next hour.
 
 PA_GH_VERSION=2.103.3
 PA_GH_SHA256=4c806978ffce1cec70853302a56d70ac6da4f19bae7adca4e1a8ab00633dd91d
@@ -512,7 +516,8 @@ back_up() {
 	[ ! -f "$PA_DIR/compose.override.yaml" ] || cp -a "$PA_DIR/compose.override.yaml" "$FILES_DIR/"
 	if [ -n "$MON_DIR" ]; then
 		mkdir -p "$FILES_DIR/monitoring"
-		for f in compose.yaml compose.override.yaml .env alloy grafana loki prometheus tempo; do
+		# Not include/: a companion app's, which a rollback leaves as it is (R76a).
+		for f in compose.yaml compose.override.yaml .env alloy grafana include.sh loki prometheus tempo; do
 			[ ! -e "$MON_DIR/$f" ] || cp -a "$MON_DIR/$f" "$FILES_DIR/monitoring/"
 		done
 	fi
@@ -668,6 +673,36 @@ rollback() {
 		ROLLBACK_FAILED="after the rollback: $REASON"
 		return 1
 	fi
+}
+
+# ── The host-wide lock ─────────────────────────────────────────────────────
+# One lock for every app's automatic upgrades on this host (R84m), so two
+# never upgrade at once: a companion app's script takes the same file with
+# flock -n. Made readable and writable by everyone, as each app may run as its
+# own user; a read is all flock needs. PA_TEST_HOST_LOCK: tests only.
+HOST_LOCK=${PA_TEST_HOST_LOCK:-/run/lock/archive-upgrade.lock}
+
+# host_locked_run: a run, holding the host-wide lock the whole time, its
+# pre-upgrade backup and any rollback included. While another upgrade holds
+# it, the run is skipped like any other, and the next hour's tries again.
+host_locked_run() {
+	[ -e "$HOST_LOCK" ] || (umask 000 && : >>"$HOST_LOCK") 2>/dev/null
+	if [ ! -r "$HOST_LOCK" ]; then
+		STEP_START=$(now)
+		event error check refused "the host-wide upgrade lock $HOST_LOCK can't be made or read: see docs/deploy.md"
+		checked refused "the host-wide upgrade lock can't be made or read, so nothing was done"
+		return 1
+	fi
+	exec 8<"$HOST_LOCK"
+	if ! flock -n 8; then
+		FROM=$(status_get .running_version) TO=$(status_get .latest_version)
+		STEP_START=$(now)
+		event info check skipped "another upgrade is running"
+		checked skipped "another upgrade is running on this host: trying again next hour"
+		exec 8<&-
+		return 0
+	fi
+	run
 }
 
 # ── A run ──────────────────────────────────────────────────────────────────
@@ -965,7 +1000,7 @@ main() {
 			echo "auto-upgrade is off: deploy/auto-upgrade/auto-upgrade.sh enable" >&2
 			return 1
 		fi
-		run
+		host_locked_run
 		;;
 	status) "$JQ" . "$STATUS" 2>/dev/null || echo "no status yet: auto-upgrade has never run here" ;;
 	retry)

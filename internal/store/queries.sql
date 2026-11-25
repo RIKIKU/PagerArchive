@@ -71,6 +71,7 @@ UPDATE messages SET
     event_type = sqlc.narg(event_type), description = sqlc.narg(description), address = sqlc.narg(address),
     locality = sqlc.narg(locality), grid_ref = sqlc.narg(grid_ref), call_sign = sqlc.narg(call_sign),
     units = sqlc.arg(units), call_signs = sqlc.arg(call_signs), extra = sqlc.arg(extra),
+    fireground_channels = sqlc.arg(fireground_channels),
     parse_failed = sqlc.arg(parse_failed), address_unsplit = sqlc.arg(address_unsplit),
     large_event_field = sqlc.arg(large_event_field),
     sent_at = LEAST(sent_at, sqlc.arg(received_at)::timestamptz)
@@ -157,9 +158,9 @@ INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
     call_sign, units, call_signs, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
-    location, location_source, location_mismatch
+    fireground_channels, location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
     CASE WHEN sqlc.narg(lon)::float8 IS NULL THEN NULL
          ELSE ST_SetSRID(ST_MakePoint(sqlc.narg(lon)::float8, sqlc.narg(lat)::float8), 4326)::geography END,
     sqlc.narg(location_source)::text,
@@ -348,6 +349,7 @@ UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
     extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17,
+    fireground_channels = $18,
     -- R35h: a format found clears "probably noise"; one taken away marks
     -- nothing (no lock is taken for the rule's other legs here).
     probably_noise = probably_noise AND $3::text IS NULL
@@ -441,7 +443,7 @@ ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value;
 -- not empty, keeps just those messages (a live update, a catch-up batch).
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
-       m.call_sign, m.units, m.call_signs, m.extra, m.parse_failed, m.address_unsplit,
+       m.call_sign, m.units, m.call_signs, m.fireground_channels, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source, m.probably_noise

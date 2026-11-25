@@ -52,6 +52,8 @@ const icons = {
 	dark: 'moon',
 	// M15: the look (R82d), in the account menu.
 	look: 'palette',
+	// R92a: a page's fireground channel, linking to the radio.
+	fireground: 'radio',
 	location: 'map-pin',
 	list: 'list',
 	warning: 'alert-triangle',

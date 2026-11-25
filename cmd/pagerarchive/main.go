@@ -459,6 +459,10 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
+	radio, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
+	if err != nil {
+		return err
+	}
 	srv := &server.Server{
 		Store: st,
 		Ingest: &ingest.Service{
@@ -510,6 +514,7 @@ func serve(stderr io.Writer) error {
 		Started:               time.Now(),
 		MapTiles:              mapTiles,
 		MapAttribution:        os.Getenv("MAP_ATTRIBUTION"),
+		RadioArchiveURL:       radio,
 		Areas:                 areaLayers,
 		Integrations:          integ,
 		MetricsToken:          os.Getenv("METRICS_TOKEN"),
@@ -739,4 +744,19 @@ func expireSessions(ctx context.Context, st *store.Store, log *slog.Logger) {
 		case <-t.C:
 		}
 	}
+}
+
+// radioArchiveURL reads RADIOARCHIVE_URL (R92): the radio beside this
+// PagerArchive, an absolute http(s) URL with a host, without its trailing
+// slash. Empty: it stands alone.
+func radioArchiveURL(v string) (string, error) {
+	v = strings.TrimRight(strings.TrimSpace(v), "/")
+	if v == "" {
+		return "", nil
+	}
+	u, err := url.Parse(v)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("RADIOARCHIVE_URL must be an absolute http(s) URL, such as https://radio.example.com")
+	}
+	return v, nil
 }
