@@ -6941,15 +6941,15 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 	}
 });
 
-// A135, A136 (R77e, R77f): the app switcher. The run's API is standalone (no
+// A140, A141 (R77e, R77f): the app switcher. The run's API is standalone (no
 // RADIOARCHIVE_URL); these start a second API on the same database with
 // RadioArchive set, for their own run only (scripts/e2e.sh), and stop it
 // after, so no worker runs twice while other tests do.
-const RADIO = 'http://radio.example.test/';
+const RADIO = 'http://radio.example.test'; // as RADIOARCHIVE_URL is read: no trailing slash
 async function combinedApi(): Promise<{ url: string; stop: () => Promise<void> }> {
 	const bin = process.env.PA_E2E_BIN;
 	const port = process.env.PA_E2E_COMBINED_PORT;
-	if (!bin || !port) throw new Error('A135: PA_E2E_BIN and PA_E2E_COMBINED_PORT come from scripts/e2e.sh');
+	if (!bin || !port) throw new Error('A140: PA_E2E_BIN and PA_E2E_COMBINED_PORT come from scripts/e2e.sh');
 	const url = `http://127.0.0.1:${port}`;
 	const p = spawn(bin, ['serve'], {
 		env: {
@@ -6972,7 +6972,7 @@ async function combinedApi(): Promise<{ url: string; stop: () => Promise<void> }
 	let exited = false;
 	p.on('exit', () => (exited = true));
 	for (const until = Date.now() + 60_000; ; await new Promise((r) => setTimeout(r, 200))) {
-		if (exited || Date.now() > until) throw new Error(`A135: the combined API didn't start:\n${log.slice(-3000)}`);
+		if (exited || Date.now() > until) throw new Error(`A140: the combined API didn't start:\n${log.slice(-3000)}`);
 		try {
 			if ((await fetch(`${url}/healthz`)).ok) break;
 		} catch {
@@ -7011,7 +7011,7 @@ async function listAt(browser: Browser, base: string, role: Role, width: number,
 	return page;
 }
 
-test('A135 the app switcher: none standalone, for whom R77f says with RadioArchive set', async ({ browser, request }, info) => {
+test('A140 the app switcher: none standalone, for whom R77f says with RadioArchive set', async ({ browser, request }, info) => {
 	test.setTimeout(240_000);
 	const switcher = (p: Page) => p.getByRole('banner').getByRole('link', { name: 'Switch to Radio' });
 	// Standalone (this run's API): no switcher for anyone, even marked or for
@@ -7064,9 +7064,9 @@ test('A135 the app switcher: none standalone, for whom R77f says with RadioArchi
 				await page.screenshot({ path: info.outputPath(`a135-switcher-${width}-${colorScheme}.png`) });
 				expect(await axeOf(page), `${where}: axe`).toEqual([]);
 				if (width === 1280 && colorScheme === 'light') {
-					await page.route(`${RADIO}**`, (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Radio stand-in</title><p>Radio stand-in</p>' }));
+					await page.route(`${RADIO}/**`, (r) => r.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Radio stand-in</title><p>Radio stand-in</p>' }));
 					await s.click();
-					await expect(page).toHaveURL(RADIO);
+					await expect(page).toHaveURL(`${RADIO}/`);
 					expect(page.context().pages(), 'no new tab').toHaveLength(1);
 				}
 				await page.context().close();
@@ -7089,7 +7089,7 @@ test('A135 the app switcher: none standalone, for whom R77f says with RadioArchi
 	}
 });
 
-test('A136 who sees the switcher: the admin controls on Users', async ({ browser, request }, info) => {
+test('A141 who sees the switcher: the admin controls on Users', async ({ browser, request }, info) => {
 	test.setTimeout(240_000);
 	const userLabel = 'Test User (user@example.test)';
 	// Standalone: neither control.
@@ -7154,10 +7154,10 @@ test('A136 who sees the switcher: the admin controls on Users', async ({ browser
 	}
 });
 
-// A137 (R77d): the frame is ArchiveUx's, and differs from PagerArchive's own
+// A142 (R77d): the frame is ArchiveUx's, and differs from PagerArchive's own
 // only as R77d lists. The frame's other checks (A68, A70, A74, A125, A133,
 // the version's tag and R77b's notice) run on it unchanged.
-test("A137 the frame is ArchiveUx's", async ({ browser }) => {
+test("A142 the frame is ArchiveUx's", async ({ browser }) => {
 	const desk = await (await signedIn(browser, 'user', { viewport: { width: 1280, height: 900 } })).newPage();
 	await desk.goto('/');
 	await waitLive(desk);

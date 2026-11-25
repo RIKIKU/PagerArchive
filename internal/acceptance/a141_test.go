@@ -8,9 +8,9 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
-// A135, A136 at the API level (R77e, R77f): who the frame shows the app
+// A140, A141 at the API level (R77e, R77f): who the frame shows the app
 // switcher to, worked out by the server.
-func TestA136SwitcherAPI(t *testing.T) {
+func TestA141SwitcherAPI(t *testing.T) {
 	e := setup(t)
 	other := e.newMember("other@example.com", "user", e.admin)
 	show := func(m *member) bool {
@@ -55,8 +55,8 @@ func TestA136SwitcherAPI(t *testing.T) {
 	mark(e.user, false)
 	everyone(false)
 
-	e.srv.RadioArchiveURL, e.srv.RadioArchiveName = "http://radio.example.test/", "Radio"
-	if m := meta(); m.RadioArchiveURL != "http://radio.example.test/" || m.RadioArchiveName != "Radio" {
+	e.srv.RadioArchiveURL, e.srv.RadioArchiveName = "http://radio.example.test", "Radio"
+	if m := meta(); m.RadioArchiveURL != "http://radio.example.test" || m.RadioArchiveName != "Radio" {
 		t.Errorf("combined meta: %q %q", m.RadioArchiveURL, m.RadioArchiveName)
 	}
 	// A new install: nobody marked, everyone off.

@@ -166,18 +166,19 @@ func run(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// radioArchiveURL is RADIOARCHIVE_URL (R77e): RadioArchive's address, for
-// the app switcher, or "" for none. It must be an http(s) URL.
-func radioArchiveURL() (string, error) {
-	v := strings.TrimSpace(os.Getenv("RADIOARCHIVE_URL"))
+// radioArchiveURL reads RADIOARCHIVE_URL (R77e): the radio beside this
+// PagerArchive, an absolute http(s) URL with a host, without its trailing
+// slash. Empty: it stands alone.
+func radioArchiveURL(v string) (string, error) {
+	v = strings.TrimRight(strings.TrimSpace(v), "/")
 	if v == "" {
 		return "", nil
 	}
 	u, err := url.Parse(v)
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("RADIOARCHIVE_URL must be an http(s) URL")
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", errors.New("RADIOARCHIVE_URL must be an absolute http(s) URL, such as https://radio.example.com")
 	}
-	return u.String(), nil
+	return v, nil
 }
 
 func getenv(name, def string) string {
@@ -459,7 +460,7 @@ func serve(stderr io.Writer) error {
 	if err != nil {
 		return err
 	}
-	radioURL, err := radioArchiveURL()
+	radioURL, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
 	if err != nil {
 		return err
 	}
