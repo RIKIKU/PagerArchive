@@ -267,6 +267,11 @@
 			flex-wrap: nowrap;
 			align-items: flex-start;
 		}
+		/* At the top level the breadcrumbs hide (Crumbs.svelte): so does their
+		   place, or the row's gap stays above the search box. */
+		:global(header.top > .start:not(:has(.crumbs.deep))) {
+			display: none;
+		}
 		.note {
 			padding: 0 var(--page-pad-phone) var(--space-lg);
 		}
