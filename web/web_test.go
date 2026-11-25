@@ -19,7 +19,9 @@ const page = `<!doctype html>
 // root element, so the first paint is already that look.
 func TestPageIsSentWithTheLook(t *testing.T) {
 	root := fstest.MapFS{"index.html": {Data: []byte(page)}, "_app/immutable/app.css": {Data: []byte("body{}")}}
-	h := Serve(root, func(r *http.Request) string { return r.Header.Get("X-Test-Look") })
+	h := Serve(root, func(r *http.Request) (string, bool) {
+		return r.Header.Get("X-Test-Look"), r.Header.Get("X-Test-Shared") != ""
+	})
 	get := func(path, look string) (*http.Response, string) {
 		r := httptest.NewRequest(http.MethodGet, path, nil)
 		r.Header.Set("X-Test-Look", look)
@@ -46,6 +48,15 @@ func TestPageIsSentWithTheLook(t *testing.T) {
 		if _, body := get("/", bad); body != page {
 			t.Errorf("look %q: %q", bad, body)
 		}
+	}
+	// R92b: a look that follows the shared look cookie says so.
+	r := httptest.NewRequest(http.MethodGet, "/", nil)
+	r.Header.Set("X-Test-Look", "harbour")
+	r.Header.Set("X-Test-Shared", "1")
+	sw := httptest.NewRecorder()
+	h.ServeHTTP(sw, r)
+	if b, _ := io.ReadAll(sw.Result().Body); !strings.Contains(string(b), `<html data-look-shared="" data-look="harbour" lang="en-AU">`) {
+		t.Errorf("shared: %q", b)
 	}
 	// Other files are served as they are.
 	if _, body := get("/_app/immutable/app.css", "console"); body != "body{}" {

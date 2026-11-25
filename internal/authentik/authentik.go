@@ -220,6 +220,46 @@ func (c *Client) SetActive(ctx context.Context, subject string, active bool) err
 	return err
 }
 
+// GroupMembers finds a group by name (R92e): its ID and its members'
+// subjects. A group that isn't there yet (the blueprint hasn't been applied)
+// is an error, so the caller asks again.
+func (c *Client) GroupMembers(ctx context.Context, group string) (string, map[string]bool, error) {
+	var out struct {
+		Results []struct {
+			PK    string  `json:"pk"`
+			Name  string  `json:"name"`
+			Users []int64 `json:"users"`
+		} `json:"results"`
+	}
+	q := url.Values{"name": {group}, "include_users": {"false"}}
+	if _, err := c.do(ctx, "find group", http.MethodGet, "/api/v3/core/groups/?"+q.Encode(), nil, &out, http.StatusOK); err != nil {
+		return "", nil, err
+	}
+	for _, g := range out.Results {
+		if g.Name != group {
+			continue
+		}
+		members := make(map[string]bool, len(g.Users))
+		for _, pk := range g.Users {
+			members[strconv.FormatInt(pk, 10)] = true
+		}
+		return g.PK, members, nil
+	}
+	return "", nil, fmt.Errorf("find group: Authentik has no %s group yet", group)
+}
+
+// AddToGroup adds a user to a group; already a member is fine, and so is a
+// user Authentik no longer has (nothing to add).
+func (c *Client) AddToGroup(ctx context.Context, groupID, subject string) error {
+	pk, err := strconv.ParseInt(subject, 10, 64)
+	if err != nil {
+		return nil // not an Authentik user's ID: nothing to add
+	}
+	_, err = c.do(ctx, "add to group", http.MethodPost, "/api/v3/core/groups/"+url.PathEscape(groupID)+"/add_user/",
+		map[string]any{"pk": pk}, nil, http.StatusNoContent, http.StatusNotFound)
+	return err
+}
+
 // DeleteUser deletes a user.
 func (c *Client) DeleteUser(ctx context.Context, subject string) error {
 	_, err := c.do(ctx, "delete user", http.MethodDelete, "/api/v3/core/users/"+url.PathEscape(subject)+"/",

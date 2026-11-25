@@ -6946,7 +6946,7 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 // RadioArchive set, for their own run only (scripts/e2e.sh), and stop it
 // after, so no worker runs twice while other tests do.
 const RADIO = 'http://radio.example.test'; // as RADIOARCHIVE_URL is read: no trailing slash
-async function combinedApi(): Promise<{ url: string; stop: () => Promise<void> }> {
+async function combinedApi(extra: Record<string, string> = {}): Promise<{ url: string; stop: () => Promise<void> }> {
 	const bin = process.env.PA_E2E_BIN;
 	const port = process.env.PA_E2E_COMBINED_PORT;
 	if (!bin || !port) throw new Error('A140: PA_E2E_BIN and PA_E2E_COMBINED_PORT come from scripts/e2e.sh');
@@ -6963,7 +6963,8 @@ async function combinedApi(): Promise<{ url: string; stop: () => Promise<void> }
 			AUTHENTIK_API_TOKEN: 'unused',
 			ALLOWED_EMAIL_DOMAINS: 'example.test',
 			INTEGRATION_SECRETS_KEY: '',
-			RADIOARCHIVE_URL: RADIO
+			RADIOARCHIVE_URL: RADIO,
+			...extra
 		},
 		stdio: ['ignore', 'ignore', 'pipe']
 	});
@@ -7269,4 +7270,90 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 	await expect(page.getByRole('link', { name: /fireground/i })).toHaveCount(0);
 	await ctx.close();
 	console.log(`A135 (${info.project.name}): chips 41 and 7 in the list and detail view with RADIOARCHIVE_URL set, none unset; ${report.join('; ')}`);
+});
+
+// A148 (R92b): beside RadioArchive with LOOK_COOKIE_DOMAIN set, the shared
+// look cookie decides the first paint, over the account's look, and the page
+// never switches when the account loads; the sign-in page follows it too; a
+// change in the account menu saves to the account and the cookie (Domain,
+// Path=/, a year, SameSite=Lax). Standalone, the cookie changes nothing.
+// The cookie is set host-only here (the test's host is an address); what the
+// server writes is read from its answer.
+test('A148 the shared look cookie decides the first paint', async ({ browser, request }, info) => {
+	test.setTimeout(120_000);
+	await setLook(request, 'user', 'harbour');
+	// Every change of the root's look after the page starts, and the first.
+	const watchLook = (page: Page) =>
+		page.addInitScript(() => {
+			const w = window as unknown as { looks: (string | null)[] };
+			w.looks = [];
+			new MutationObserver(() => w.looks.push(document.documentElement.getAttribute('data-look'))).observe(document, {
+				subtree: true,
+				attributes: true,
+				attributeFilter: ['data-look']
+			});
+		});
+	const looks = (page: Page) => page.evaluate(() => (window as unknown as { looks: (string | null)[] }).looks);
+	const report: string[] = [];
+
+	// Standalone (this run's API): a look cookie is ignored.
+	const alone = await signedIn(browser, 'user');
+	await alone.addCookies([{ name: 'look', value: 'console', url: URL }]);
+	const ap = await alone.newPage();
+	await ap.goto('/');
+	await waitLive(ap);
+	await expect(ap.locator('html')).toHaveAttribute('data-look', 'harbour');
+	expect(await ap.locator('html').getAttribute('data-look-shared')).toBeNull();
+	await ap.goto('/signin');
+	expect(await ap.locator('html').getAttribute('data-look'), 'standalone sign-in page').toBeNull();
+	await alone.close();
+
+	const api = await combinedApi({ LOOK_COOKIE_DOMAIN: '127.0.0.1' });
+	try {
+		const base = api.url;
+		const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+		await ctx.addCookies([
+			{ name: 'pa_session', value: SESSIONS.user, url: base },
+			{ name: 'look', value: 'console', url: base }
+		]);
+		const page = await ctx.newPage();
+		await watchLook(page);
+		const res = await page.goto(`${base}/`);
+		expect(await res?.text(), 'the page as sent').toMatch(/<html data-look-shared="" data-look="console"/);
+		await waitLive(page);
+		await expect(page.getByRole('button', { name: /^Account menu/ })).toBeVisible();
+		await page.waitForTimeout(500);
+		await expect(page.locator('html')).toHaveAttribute('data-look', 'console');
+		expect(await looks(page), 'the look never changed as the page loaded').toEqual([]);
+		report.push('cookie console over the account harbour: sent and kept as console');
+
+		// A change in the account menu: at once, saved to the account and the cookie.
+		const saved = page.waitForResponse((r) => r.url() === `${base}/api/v1/me` && r.request().method() === 'PATCH');
+		await page.getByRole('button', { name: /^Account menu/ }).click();
+		const choice = page.getByRole('combobox', { name: 'Look', exact: true });
+		await expect(choice).toHaveValue('console');
+		await choice.selectOption('harbour');
+		await expect(page.locator('html')).toHaveAttribute('data-look', 'harbour');
+		const setCookie = (await (await saved).headerValue('set-cookie')) ?? '';
+		for (const part of ['look=harbour', 'Domain=127.0.0.1', 'Path=/', 'Max-Age=31536000', 'SameSite=Lax'])
+			expect(setCookie, `the change's Set-Cookie has ${part}`).toContain(part);
+		expect(setCookie).not.toMatch(/HttpOnly/i);
+		expect((await meOf(request, base, 'user')) as unknown as { look: string }).toMatchObject({ look: 'harbour' });
+		report.push(`a change saved to the account and wrote ${setCookie}`);
+
+		// The sign-in page, before sign-in, follows the cookie too.
+		const out = await browser.newContext();
+		await out.addCookies([{ name: 'look', value: 'console', url: base }]);
+		const sp = await out.newPage();
+		await sp.goto(`${base}/signin`);
+		await expect(sp.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+		await expect(sp.locator('html')).toHaveAttribute('data-look', 'console');
+		report.push('the sign-in page in the cookie\'s console');
+		await out.close();
+		await ctx.close();
+	} finally {
+		await api.stop();
+		await setLook(request, 'user', 'harbour');
+	}
+	console.log(`A148 (${info.project.name}): standalone ignores the cookie; ${report.join('; ')}`);
 });

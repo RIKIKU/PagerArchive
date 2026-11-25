@@ -19,7 +19,7 @@ var files embed.FS
 // browser's router can handle them. If the app wasn't built (e.g. a Go-only
 // test build), it says so. look, if not nil, names the look to send the
 // page with (R82d): see Serve.
-func Handler(look func(*http.Request) string) http.Handler {
+func Handler(look LookFunc) http.Handler {
 	root, _ := fs.Sub(files, "build")
 	return Serve(root, look)
 }
@@ -28,8 +28,10 @@ func Handler(look func(*http.Request) string) http.Handler {
 // sent with the request's look, look(r), as data-look on its root element,
 // so the stylesheet draws the first paint in that look and the page never
 // shows the default look first (R82d, ADR 0028). With no look, or "", the
-// page is sent as built: the default look, Harbour.
-func Serve(root fs.FS, look func(*http.Request) string) http.Handler {
+// page is sent as built: the default look, Harbour. With shared, the page also
+// says the look follows the look cookie the apps share (R92b), as
+// data-look-shared, so the app's script follows it too.
+func Serve(root fs.FS, look LookFunc) http.Handler {
 	index, err := fs.ReadFile(root, "index.html")
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +75,11 @@ func Serve(root fs.FS, look func(*http.Request) string) http.Handler {
 		}
 		page := index
 		if look != nil {
-			page = WithLook(index, look(r))
+			name, shared := look(r)
+			page = WithLook(index, name)
+			if shared {
+				page = withAttr(page, ` data-look-shared=""`)
+			}
 		}
 		// The page depends on who asks, so no cache may keep one person's.
 		w.Header().Set("Cache-Control", "no-cache, private")
@@ -84,6 +90,10 @@ func Serve(root fs.FS, look func(*http.Request) string) http.Handler {
 	})
 }
 
+// LookFunc names the look a request's page is sent in, and whether it follows
+// the look cookie the apps share (R92b).
+type LookFunc func(*http.Request) (look string, shared bool)
+
 var lookName = regexp.MustCompile(`^[a-z]{1,32}$`)
 
 // WithLook is the page with data-look="look" on its root element. A look
@@ -93,14 +103,19 @@ func WithLook(page []byte, look string) []byte {
 	if !lookName.MatchString(look) {
 		return page
 	}
+	return withAttr(page, ` data-look="`+look+`"`)
+}
+
+// withAttr is the page with attr written into its root element.
+func withAttr(page []byte, attr string) []byte {
 	i := bytes.Index(page, []byte("<html"))
 	if i < 0 {
 		return page
 	}
 	i += len("<html")
-	out := make([]byte, 0, len(page)+len(look)+13)
+	out := make([]byte, 0, len(page)+len(attr))
 	out = append(out, page[:i]...)
-	out = append(out, ` data-look="`+look+`"`...)
+	out = append(out, attr...)
 	return append(out, page[i:]...)
 }
 

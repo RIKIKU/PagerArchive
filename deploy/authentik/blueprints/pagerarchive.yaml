@@ -405,8 +405,19 @@ entries:
             plan.context["pagerarchive_invitation_gone"] = True
             return False
         # The next user write activates the user, forgets wrong codes carried
-        # from earlier runs, and changes nothing else.
-        plan.context["prompt_data"] = {"is_active": True, "attributes": {"pagerarchive_code_failures": None}}
+        # from earlier runs, records the address the code proved (R92e:
+        # email_proven, which the companion app reads too), puts the user in
+        # the pagerarchive-users group (R92e: the companion app admits only
+        # its members), and changes nothing else.
+        from authentik.core.models import Group
+        from authentik.stages.user_write.stage import PLAN_CONTEXT_GROUPS
+
+        proven = EmailDevice.objects.filter(user=user, confirmed=True).values_list("email", flat=True).first()
+        plan.context["prompt_data"] = {"is_active": True, "attributes": {
+            "pagerarchive_code_failures": None,
+            "email_proven": proven or invitation.fixed_data.get("email", ""),
+        }}
+        plan.context[PLAN_CONTEXT_GROUPS] = list(Group.objects.filter(name="pagerarchive-users"))
         return True
   - model: authentik_stages_user_write.userwritestage
     id: enrolment-activate
@@ -871,11 +882,20 @@ entries:
           url: !Format ["%s/signin?signed_out=1", !Context app_url]
           redirect_uri_type: logout
       signing_key: !Find [authentik_crypto.certificatekeypair, [name, authentik Self-signed Certificate]]
+      # R92d (ADR 0052): when one of a browser's Authentik sessions ends (a
+      # sign-out in any app that signs in here, a session revoked, a user
+      # disabled), Authentik posts a logout token to the app, server to
+      # server, and the app ends its sessions from it. Authentik sends it only
+      # to clients holding an unexpired access token from that session, so
+      # the access token lasts as long as the app's session (R40, 30 days).
+      # The app never keeps or sends it on: it signs in with the ID token.
+      logout_uri: http://api:8080/auth/backchannel-logout
+      logout_method: backchannel
       sub_mode: user_id
       grant_types: [authorization_code]
       include_claims_in_id_token: true
       access_code_validity: minutes=1
-      access_token_validity: minutes=5
+      access_token_validity: days=30
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-openid]]
         - !Find [authentik_providers_oauth2.scopemapping, [managed, goauthentik.io/providers/oauth2/scope-email]]
@@ -1057,3 +1077,20 @@ entries:
       expiring: false
       user: !KeyOf api-user
       key: !Env PA_AUTHENTIK_API_TOKEN
+
+  # ------------------------------------------- everyone with an account (R92e)
+  # Every PagerArchive user is a member: enrolment adds them (above), and the
+  # API adds those who enrolled before it did, on every start. A companion
+  # app signing in through this Authentik admits only members. The API may
+  # see this group and add members to it, and no other group.
+  - model: authentik_core.group
+    id: users-group
+    identifiers:
+      name: pagerarchive-users
+    attrs:
+      is_superuser: false
+    permissions:
+      - permission: authentik_core.view_group
+        role: !KeyOf api-role
+      - permission: authentik_core.add_user_to_group
+        role: !KeyOf api-role

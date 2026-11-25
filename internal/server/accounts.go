@@ -421,5 +421,7 @@ func (s *Server) patchMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	u.Look = req.Look
+	// R92b: and into the shared look cookie, beside RadioArchive.
+	s.setLookCookie(w, req.Look)
 	s.writeMe(w, r, u)
 }

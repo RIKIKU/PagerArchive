@@ -818,6 +818,21 @@ DELETE FROM sessions WHERE user_id = ANY(sqlc.arg(ids)::bigint[]);
 -- name: DeleteExpiredSessions :exec
 DELETE FROM sessions WHERE expires_at <= now();
 
+-- name: UserSessionIDTokens :many
+-- R92d: a user's browser sessions with the ID token each signed in with,
+-- whose sid says which Authentik session it came from.
+SELECT token_hash, id_token FROM sessions WHERE user_id = $1;
+
+-- name: DeleteSessionsByHash :execrows
+DELETE FROM sessions WHERE token_hash = ANY(sqlc.arg(hashes)::bytea[]);
+
+-- name: DirectoryPeople :many
+-- R92e: the Authentik users of everyone with an account (not service
+-- accounts), who belong in the pagerarchive-users group.
+SELECT subject::text FROM users
+WHERE subject IS NOT NULL AND status <> 'deleted' AND kind = 'person'
+ORDER BY id;
+
 -- name: CreateInvitation :one
 INSERT INTO invitations (email, email_key, invited_by, first_admin, reactivates, expires_at)
 VALUES ($1, $2, $3, $4, $5, $6)

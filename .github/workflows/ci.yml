@@ -536,7 +536,7 @@ jobs:
       matrix:
         include:
           - part: accounts
-            title: A23-A28, A33, A50 join during a preview, the locked-accounts metric
+            title: A23-A28, A33, A50 join during a preview, the locked-accounts metric, A148-A152 beside RadioArchive
           - part: secretstore
             title: the PowerShell module (A20, A21, A51-A56, A58, A59) with a SecretStore vault
           - part: none
