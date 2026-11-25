@@ -414,7 +414,7 @@ func (s *Service) merge(ctx context.Context, q *db.Queries, d Draft, c db.NearCa
 		Text: p.Text, DedupKey: p.DedupKey, Priority: p.Priority, AliasID: p.AliasID, Format: f.Format, JobNumber: f.JobNumber,
 		EventType: f.EventType, Description: f.Description, Address: f.Address, Locality: f.Locality, GridRef: f.GridRef,
 		CallSign: f.CallSign, Units: f.Units, CallSigns: f.CallSigns, Extra: f.Extra, ParseFailed: f.ParseFailed,
-		AddressUnsplit: f.AddressUnsplit, LargeEventField: f.LargeEventField, ReceivedAt: d.ReceivedAt, ID: c.ID,
+		AddressUnsplit: f.AddressUnsplit, LargeEventField: f.LargeEventField, FiregroundChannels: f.Fireground, ReceivedAt: d.ReceivedAt, ID: c.ID,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -490,6 +490,8 @@ type Fields struct {
 	// large_event_fields (R87). Stored, so it is what the page was parsed
 	// with until it is re-parsed (R23a).
 	LargeEventField bool
+	// Fireground: the fireground channel numbers it names (R92a); nil for none.
+	Fireground []int32
 }
 
 // FieldsOf converts a parse result to column values.
@@ -526,6 +528,7 @@ func FieldsOf(parsed pipeline.Parsed) (Fields, error) {
 		ParseFailed:     parsed.ParseFailed,
 		AddressUnsplit:  parsed.AddressUnsplit,
 		LargeEventField: parsed.LargeEventField,
+		Fireground:      parsed.Fireground,
 	}, nil
 }
 
@@ -565,28 +568,29 @@ func BestAlias(rows []Candidate) *Candidate {
 func messageParams(prep pipeline.Prepared, f Fields, pg Page) db.InsertMessageParams {
 	fn, baud := int16(pg.Function), int32(pg.Baud)
 	return db.InsertMessageParams{
-		Capcode:         prep.Capcode,
-		Text:            prep.Text,
-		Priority:        nilIfEmpty(string(prep.Priority)),
-		Heartbeat:       prep.Heartbeat,
-		SentAt:          pg.ReceivedAt,
-		DedupKey:        pipeline.DedupKey(prep),
-		Format:          f.Format,
-		JobNumber:       f.JobNumber,
-		EventType:       f.EventType,
-		Description:     f.Description,
-		Address:         f.Address,
-		Locality:        f.Locality,
-		GridRef:         f.GridRef,
-		CallSign:        f.CallSign,
-		Units:           f.Units,
-		CallSigns:       f.CallSigns,
-		Extra:           f.Extra,
-		ParseFailed:     f.ParseFailed,
-		AddressUnsplit:  f.AddressUnsplit,
-		LargeEventField: f.LargeEventField,
-		Function:        &fn,
-		Baud:            &baud,
+		Capcode:            prep.Capcode,
+		Text:               prep.Text,
+		Priority:           nilIfEmpty(string(prep.Priority)),
+		Heartbeat:          prep.Heartbeat,
+		SentAt:             pg.ReceivedAt,
+		DedupKey:           pipeline.DedupKey(prep),
+		Format:             f.Format,
+		JobNumber:          f.JobNumber,
+		EventType:          f.EventType,
+		Description:        f.Description,
+		Address:            f.Address,
+		Locality:           f.Locality,
+		GridRef:            f.GridRef,
+		CallSign:           f.CallSign,
+		Units:              f.Units,
+		CallSigns:          f.CallSigns,
+		Extra:              f.Extra,
+		ParseFailed:        f.ParseFailed,
+		AddressUnsplit:     f.AddressUnsplit,
+		LargeEventField:    f.LargeEventField,
+		FiregroundChannels: f.Fireground,
+		Function:           &fn,
+		Baud:               &baud,
 	}
 }
 

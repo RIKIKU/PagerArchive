@@ -209,6 +209,68 @@ func TestDeploymentCodes(t *testing.T) {
 	}
 }
 
+// R92a: the example network's fireground channels are FGND and a number,
+// found in the text a pager displays after redaction: digits only, leading
+// zeros dropped, each distinct number once, in text order.
+func TestFiregroundChannels(t *testing.T) {
+	n, ag := example(t)
+	for _, c := range []struct {
+		name, raw string
+		want      []int32
+	}{
+		{"none", "@@EX0000101 GRS3 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", nil},
+		{"one", "@@EX0000101 GRS3 GRASS FIRE FGND 41 @ SAMPLE RD, MADEUPTON #STN1", []int32{41}},
+		{"several, in text order", "@@EX0000101 FGND 7 GRASS FIRE FGND 41 FGND 12 #STN1", []int32{7, 41, 12}},
+		{"duplicates once", "@@EX0000101 FGND 41 FGND 7 FGND 41 FGND041 #STN1", []int32{41, 7}},
+		{"leading zeros", "@@EX0000101 FGND 041 FGND 0007 FGND 000 #STN1", []int32{41, 7, 0}},
+		{"non-digit group gives none", "@@EX0000101 FGND 4A FGND ABC FGND 9 #STN1", []int32{9}},
+		{"too many digits gives none", "@@EX0000101 FGND 1234567890 FGND 0123456789 #STN1", []int32{123456789}},
+		{"not a whole word", "@@EX0000101 XFGND 41 FGND41X #STN1", nil},
+		{"marker removed: none at the start", "QDFGND 41 ready", []int32{41}},
+		{"admin page too", "QDTRAINING ON FGND 3 TONIGHT", []int32{3}},
+	} {
+		if got := FiregroundChannels(n, Prepare(n, "0100001", c.raw)); !slices.Equal(got, c.want) {
+			t.Errorf("%s: FiregroundChannels(%q) = %v, want %v", c.name, c.raw, got, c.want)
+		}
+	}
+	// Parse carries them, whatever the agency profile (or none).
+	p := Prepare(n, "0100001", "@@EX0000101 GRS3 GRASS FIRE FGND 041 @ SAMPLE RD, MADEUPTON #STN1")
+	if got := Parse(n, ag, nil, p).Fireground; !slices.Equal(got, []int32{41}) {
+		t.Errorf("Parse with the agency: %v", got)
+	}
+	if got := Parse(n, nil, nil, p).Fireground; !slices.Equal(got, []int32{41}) {
+		t.Errorf("Parse text only: %v", got)
+	}
+	// After redaction: a number a redaction rule removes is no channel.
+	if got := FiregroundChannels(n, Prepare(n, "0100001", "QDFGND 0412345678")); got != nil {
+		t.Errorf("redacted number: %v", got)
+	}
+
+	// With no group named number the whole match is the number; a network
+	// with no pattern has none.
+	set, err := loadAgencyJSON(t, `{
+	  "kind": "network", "name": "n",
+	  "priority_markers": {"@@": "Emergency"}, "ignored_capcodes": [], "heartbeat_capcodes": [],
+	  "redaction_rules": [], "job_number_patterns": [], "event_categories": [],
+	  "fireground_channel_pattern": "\\b[0-9]{2}\\b",
+	  "address_dataset": {"path": "x.json", "attribution": "x"}, "street_types": {}
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := set.Networks["n"]
+	if got := FiregroundChannels(g, Prepare(g, "0100001", "@@CH 41 AND 07 AND 123")); !slices.Equal(got, []int32{41, 7}) {
+		t.Errorf("whole match: %v", got)
+	}
+	g.Fireground = nil
+	if got := FiregroundChannels(g, Prepare(g, "0100001", "@@CH 41")); got != nil {
+		t.Errorf("no pattern: %v", got)
+	}
+	if got := Parse(g, nil, nil, Prepare(g, "0100001", "@@CH 41")).Fireground; got != nil {
+		t.Errorf("Parse with no pattern: %v", got)
+	}
+}
+
 // R7, R8, ADR 0047: a split field's tokens that are known values, alone, or
 // that the pattern matches in full move into the other list, in their
 // order; the rest stay. A list left with none is null.

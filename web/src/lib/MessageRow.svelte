@@ -5,6 +5,7 @@
 	import PriorityBadge from './PriorityBadge.svelte';
 	import PrintTick from './PrintTick.svelte';
 	import AlbumNote from './AlbumNote.svelte';
+	import FiregroundChips from './FiregroundChips.svelte';
 
 	// pick: a tick box for the print sheet, on the print page only (R67).
 	// selected: the message open beside the list (R80); keepScroll: opening
@@ -38,7 +39,7 @@
 </script>
 
 <!-- R35d: the whole row opens the detail view (the text's link stretches over
-     it); the alias and job links sit above it. R31: priority, date and time,
+     it); the alias and job links, and the fireground chips (R92a), sit above it. R31: priority, date and time,
      the template's icon and the alias (R66), call sign and job, then the text. -->
 <article class="row {priority}" class:fresh class:selected aria-labelledby="m{m.id}-who" data-message-id={m.id}>
 	<header>
@@ -64,6 +65,7 @@
 			>{m.display_text || '(no text)'}</a
 		>
 	</p>
+	<FiregroundChips {m} />
 	{#if album !== undefined}<AlbumNote {m} {album} {onremoved} />{/if}
 	{#if m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
 		<footer>

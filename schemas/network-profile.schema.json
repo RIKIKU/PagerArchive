@@ -61,6 +61,11 @@
       "type": "string",
       "minLength": 1
     },
+    "fireground_channel_pattern": {
+      "description": "Optional (R92a). Finds the fireground channels a page names, in the text a pager displays. Every match counts; with a group named number, that group is the number, else the whole match. A number that isn't all digits gives no link; leading zeros are ignored. With no pattern, no page links to the radio.",
+      "type": "string",
+      "minLength": 1
+    },
     "event_categories": {
       "description": "Report categories. A code ending in * matches by prefix. Unmapped codes count as Other.",
       "type": "array",

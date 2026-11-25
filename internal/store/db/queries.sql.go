@@ -3103,45 +3103,46 @@ INSERT INTO messages (
     capcode, text, priority, heartbeat, sent_at, dedup_key, format,
     job_number, event_type, description, address, locality, grid_ref,
     call_sign, units, call_signs, extra, parse_failed, address_unsplit, function, baud, alias_id, large_event_field,
-    location, location_source, location_mismatch
+    fireground_channels, location, location_source, location_mismatch
 ) VALUES (
-    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23,
-    CASE WHEN $24::float8 IS NULL THEN NULL
-         ELSE ST_SetSRID(ST_MakePoint($24::float8, $25::float8), 4326)::geography END,
-    $26::text,
-    $27::bool
+    $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24,
+    CASE WHEN $25::float8 IS NULL THEN NULL
+         ELSE ST_SetSRID(ST_MakePoint($25::float8, $26::float8), 4326)::geography END,
+    $27::text,
+    $28::bool
 )
 RETURNING id
 `
 
 type InsertMessageParams struct {
-	Capcode          string
-	Text             string
-	Priority         *string
-	Heartbeat        bool
-	SentAt           time.Time
-	DedupKey         []byte
-	Format           *string
-	JobNumber        *string
-	EventType        *string
-	Description      *string
-	Address          *string
-	Locality         *string
-	GridRef          *string
-	CallSign         *string
-	Units            []string
-	CallSigns        []string
-	Extra            []byte
-	ParseFailed      bool
-	AddressUnsplit   bool
-	Function         *int16
-	Baud             *int32
-	AliasID          *int64
-	LargeEventField  bool
-	Lon              *float64
-	Lat              *float64
-	LocationSource   *string
-	LocationMismatch bool
+	Capcode            string
+	Text               string
+	Priority           *string
+	Heartbeat          bool
+	SentAt             time.Time
+	DedupKey           []byte
+	Format             *string
+	JobNumber          *string
+	EventType          *string
+	Description        *string
+	Address            *string
+	Locality           *string
+	GridRef            *string
+	CallSign           *string
+	Units              []string
+	CallSigns          []string
+	Extra              []byte
+	ParseFailed        bool
+	AddressUnsplit     bool
+	Function           *int16
+	Baud               *int32
+	AliasID            *int64
+	LargeEventField    bool
+	FiregroundChannels []int32
+	Lon                *float64
+	Lat                *float64
+	LocationSource     *string
+	LocationMismatch   bool
 }
 
 func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (int64, error) {
@@ -3169,6 +3170,7 @@ func (q *Queries) InsertMessage(ctx context.Context, arg InsertMessageParams) (i
 		arg.Baud,
 		arg.AliasID,
 		arg.LargeEventField,
+		arg.FiregroundChannels,
 		arg.Lon,
 		arg.Lat,
 		arg.LocationSource,
@@ -6272,7 +6274,7 @@ func (q *Queries) SearchCallSigns(ctx context.Context) ([]string, error) {
 const searchMessages = `-- name: SearchMessages :many
 SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, m.format,
        m.job_number, m.event_type, m.description, m.address, m.locality, m.grid_ref,
-       m.call_sign, m.units, m.call_signs, m.extra, m.parse_failed, m.address_unsplit,
+       m.call_sign, m.units, m.call_signs, m.fireground_channels, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
        m.lon, m.lat, m.location_source
@@ -6410,36 +6412,37 @@ type SearchMessagesParams struct {
 }
 
 type SearchMessagesRow struct {
-	ID               int64
-	Capcode          string
-	AliasID          *int64
-	Text             string
-	Priority         *string
-	Heartbeat        bool
-	SentAt           time.Time
-	Format           *string
-	JobNumber        *string
-	EventType        *string
-	Description      *string
-	Address          *string
-	Locality         *string
-	GridRef          *string
-	CallSign         *string
-	Units            []string
-	CallSigns        []string
-	Extra            []byte
-	ParseFailed      bool
-	AddressUnsplit   bool
-	LocationMismatch bool
-	AliasName        *string
-	AliasIgnored     bool
-	Agency           *string
-	IconSha256       *string
-	Colour           *string
-	AgencyProfile    *string
-	Lon              *float64
-	Lat              *float64
-	LocationSource   *string
+	ID                 int64
+	Capcode            string
+	AliasID            *int64
+	Text               string
+	Priority           *string
+	Heartbeat          bool
+	SentAt             time.Time
+	Format             *string
+	JobNumber          *string
+	EventType          *string
+	Description        *string
+	Address            *string
+	Locality           *string
+	GridRef            *string
+	CallSign           *string
+	Units              []string
+	CallSigns          []string
+	FiregroundChannels []int32
+	Extra              []byte
+	ParseFailed        bool
+	AddressUnsplit     bool
+	LocationMismatch   bool
+	AliasName          *string
+	AliasIgnored       bool
+	Agency             *string
+	IconSha256         *string
+	Colour             *string
+	AgencyProfile      *string
+	Lon                *float64
+	Lat                *float64
+	LocationSource     *string
 }
 
 // R33. Every filter is optional (NULL or an empty array = any). An array
@@ -6520,6 +6523,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			&i.CallSign,
 			&i.Units,
 			&i.CallSigns,
+			&i.FiregroundChannels,
 			&i.Extra,
 			&i.ParseFailed,
 			&i.AddressUnsplit,
@@ -7091,33 +7095,35 @@ UPDATE messages SET
     event_type = $7, description = $8, address = $9,
     locality = $10, grid_ref = $11, call_sign = $12,
     units = $13, call_signs = $14, extra = $15,
-    parse_failed = $16, address_unsplit = $17,
-    large_event_field = $18,
-    sent_at = LEAST(sent_at, $19::timestamptz)
-WHERE id = $20
+    fireground_channels = $16,
+    parse_failed = $17, address_unsplit = $18,
+    large_event_field = $19,
+    sent_at = LEAST(sent_at, $20::timestamptz)
+WHERE id = $21
 `
 
 type SwapMessageTextParams struct {
-	Text            string
-	DedupKey        []byte
-	Priority        *string
-	AliasID         *int64
-	Format          *string
-	JobNumber       *string
-	EventType       *string
-	Description     *string
-	Address         *string
-	Locality        *string
-	GridRef         *string
-	CallSign        *string
-	Units           []string
-	CallSigns       []string
-	Extra           []byte
-	ParseFailed     bool
-	AddressUnsplit  bool
-	LargeEventField bool
-	ReceivedAt      time.Time
-	ID              int64
+	Text               string
+	DedupKey           []byte
+	Priority           *string
+	AliasID            *int64
+	Format             *string
+	JobNumber          *string
+	EventType          *string
+	Description        *string
+	Address            *string
+	Locality           *string
+	GridRef            *string
+	CallSign           *string
+	Units              []string
+	CallSigns          []string
+	Extra              []byte
+	FiregroundChannels []int32
+	ParseFailed        bool
+	AddressUnsplit     bool
+	LargeEventField    bool
+	ReceivedAt         time.Time
+	ID                 int64
 }
 
 // R19a (ADR 0050): a better copy of a page came in after the first was
@@ -7141,6 +7147,7 @@ func (q *Queries) SwapMessageText(ctx context.Context, arg SwapMessageTextParams
 		arg.Units,
 		arg.CallSigns,
 		arg.Extra,
+		arg.FiregroundChannels,
 		arg.ParseFailed,
 		arg.AddressUnsplit,
 		arg.LargeEventField,
@@ -7564,28 +7571,30 @@ const updateParsed = `-- name: UpdateParsed :execrows
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
-    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17
+    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17,
+    fireground_channels = $18
 WHERE id = $1 AND text = $16
 `
 
 type UpdateParsedParams struct {
-	ID              int64
-	AliasID         *int64
-	Format          *string
-	JobNumber       *string
-	EventType       *string
-	Description     *string
-	Address         *string
-	Locality        *string
-	GridRef         *string
-	CallSign        *string
-	Units           []string
-	Extra           []byte
-	ParseFailed     bool
-	AddressUnsplit  bool
-	LargeEventField bool
-	Text            string
-	CallSigns       []string
+	ID                 int64
+	AliasID            *int64
+	Format             *string
+	JobNumber          *string
+	EventType          *string
+	Description        *string
+	Address            *string
+	Locality           *string
+	GridRef            *string
+	CallSign           *string
+	Units              []string
+	Extra              []byte
+	ParseFailed        bool
+	AddressUnsplit     bool
+	LargeEventField    bool
+	Text               string
+	CallSigns          []string
+	FiregroundChannels []int32
 }
 
 // A page's parsed fields, written only beside the text they were parsed
@@ -7610,6 +7619,7 @@ func (q *Queries) UpdateParsed(ctx context.Context, arg UpdateParsedParams) (int
 		arg.LargeEventField,
 		arg.Text,
 		arg.CallSigns,
+		arg.FiregroundChannels,
 	)
 	if err != nil {
 		return 0, err

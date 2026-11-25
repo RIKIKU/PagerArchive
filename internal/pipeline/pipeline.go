@@ -92,6 +92,9 @@ type Parsed struct {
 	// lists, so the page opens a large event if it counts (R87: Emergency,
 	// to an aliased capcode).
 	LargeEventField bool
+	// Fireground: the fireground channel numbers the page names (R92a), from
+	// the network profile, whatever its agency profile.
+	Fireground []int32
 }
 
 // String returns a text field, or "" if it's null.
@@ -133,6 +136,7 @@ func Parse(n *profile.Network, agency *profile.Agency, ix *streets.Index, p Prep
 		}
 	}
 	res.LargeEventField = agency.OpensLargeEvent(res.Fields)
+	res.Fireground = FiregroundChannels(n, p)
 	return res
 }
 
@@ -222,4 +226,49 @@ func DeploymentCodes(n *profile.Network, p Prepared) []string {
 		}
 	}
 	return out
+}
+
+// maxFiregroundDigits is the most digits a fireground channel number has
+// once its leading zeros are dropped (R92a): a longer one gives no link.
+const maxFiregroundDigits = 9
+
+// FiregroundChannels are the fireground channel numbers a page names (R92a),
+// found by the network's pattern in the text a pager displays: each match's
+// group "number" (else the whole match), when it's all ASCII digits, with
+// its leading zeros dropped; each distinct number once, in the order it
+// first appears. nil when there are none or the network has no pattern.
+func FiregroundChannels(n *profile.Network, p Prepared) []int32 {
+	if n == nil || n.Fireground == nil {
+		return nil
+	}
+	var out []int32
+	for _, m := range n.Fireground.FindAllStringSubmatch(Body(p), -1) {
+		num, ok := channelNumber(m[n.FiregroundGroup])
+		if ok && !slices.Contains(out, num) {
+			out = append(out, num)
+		}
+	}
+	return out
+}
+
+// channelNumber reads a fireground channel number: all ASCII digits, at
+// least one, leading zeros ignored ("041" is 41, "000" is 0).
+func channelNumber(s string) (int32, bool) {
+	if s == "" {
+		return 0, false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	s = strings.TrimLeft(s, "0")
+	if s == "" {
+		return 0, true
+	}
+	if len(s) > maxFiregroundDigits {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(s, 10, 32)
+	return int32(v), err == nil
 }
