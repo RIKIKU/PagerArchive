@@ -230,6 +230,7 @@ type Message struct {
 	LargeEventField    bool
 	CallSigns          []string
 	FiregroundChannels []int32
+	ProbablyNoise      bool
 }
 
 type MessageArea struct {

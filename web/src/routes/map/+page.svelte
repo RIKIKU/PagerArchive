@@ -114,7 +114,7 @@
 		{#each shown as m (m.id)}
 			<li>
 				<a href="/messages/{m.id}">
-					<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+					<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} noise={m.probably_noise} />
 					<span class="when"><time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time></span>
 					{#if m.icon}<AgencyIcon src={m.icon} alt={m.agency ?? ''} />{/if}
 					<span class="who">{m.alias ?? m.capcode}</span>
