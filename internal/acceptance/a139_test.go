@@ -12,7 +12,7 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
-// A135: "probably noise" (R35h). Every page is made up; each case has its
+// A139: "probably noise" (R35h). Every page is made up; each case has its
 // own hour and its own capcodes, so the cases' 10-minute windows don't meet.
 
 // garble is a made-up garbled decode: no format, no alias.
@@ -33,7 +33,7 @@ func (e *env) noisy(id int64) bool {
 	return m.ProbablyNoise
 }
 
-func TestA135ProbablyNoise(t *testing.T) {
+func TestA139ProbablyNoise(t *testing.T) {
 	e := setup(t)
 	key, err := e.st.AddClient(e.ctx, "c", "Client C")
 	if err != nil {
@@ -191,9 +191,9 @@ func TestA135ProbablyNoise(t *testing.T) {
 	})
 }
 
-// A135: an install with one receiver never marks a page, live or in the
+// A139: an install with one receiver never marks a page, live or in the
 // pass over pages stored before.
-func TestA135OneReceiver(t *testing.T) {
+func TestA139OneReceiver(t *testing.T) {
 	e := setup(t)
 	t0 := e.now.Add(-time.Hour)
 	var ids []int64

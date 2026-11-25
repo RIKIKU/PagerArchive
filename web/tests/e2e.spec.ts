@@ -206,11 +206,11 @@ test('R35c flags are shown to admins only', async ({ page, browser, request }) =
 	await expect(admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 });
 
-// A135, R35h: a page that's probably noise shows the badge, with its reason
+// A139, R35h: a page that's probably noise shows the badge, with its reason
 // as the tooltip and the accessible description, on its row and its detail
 // view; a page that isn't shows none. One receiver here, so the mark is set
-// in the database (the rule's legs are A135's Go checks).
-test('A135 a probably-noise page shows the badge with its reason', async ({ page, request }, info) => {
+// in the database (the rule's legs are A139's Go checks).
+test('A139 a probably-noise page shows the badge with its reason', async ({ page, request }, info) => {
 	const marker = `NOISE-${projectN(info)}-${Date.now()}`;
 	await post(request, '0100001', `${marker} NOISY`);
 	await post(request, '0100001', `${marker} CLEAN`);
