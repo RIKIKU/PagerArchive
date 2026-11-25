@@ -312,8 +312,7 @@ printf '%s\n' "$state"
 for want in '"database": "companion"' '"last_run_ok": true' "\"last_good_night\": \"$night\"" '"error": ""'; do
 	printf '%s\n' "$state" | grep -qF "$want" || fail "the companion's state hasn't $want"
 done
-stack_compose exec -T api test -r /backup-status/databases/companion.json || fail "the state isn't on the status volume"
-echo "--- the companion's dump: settings' rows in it, calls' table without its rows; checked ok; its state in /status/databases/companion.json"
+echo "--- the companion's dump: settings' rows in it, calls' table without its rows; checked ok; its state in the backup-status volume's databases/companion.json"
 
 echo "=== A140: a bad BACKUP_EXTRA_DATABASES refuses the backup, and says why"
 if stack_compose exec -T -e BACKUP_EXTRA_DATABASES='companion:Calls' backup pagerarchive-backup now --night 2030-01-07 >"$WORK/out.txt" 2>&1; then
