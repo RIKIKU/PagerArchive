@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// R86e, A140: BACKUP_EXTRA_DATABASES, as the backup script reads it
+// R86e, A143: BACKUP_EXTRA_DATABASES, as the backup script reads it
 // (`pagerarchive-backup databases` lists what a night backs up, or says why
 // the setting is refused, as every backup then does). The backups
 // themselves are scripts/backup-checks.sh's and A80's.
-func TestA140BackupExtraDatabasesSetting(t *testing.T) {
+func TestA143BackupExtraDatabasesSetting(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("needs sh")
 	}

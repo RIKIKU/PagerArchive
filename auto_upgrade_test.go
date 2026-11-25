@@ -213,12 +213,12 @@ echo "up-to-date: $(snap)"`
 	}
 }
 
-// R84m, A143: two upgrades at once on one host, this install's and another's
+// R84m, A146: two upgrades at once on one host, this install's and another's
 // (a companion app's copy of the script takes the same lock): the second
 // says "another upgrade is running", records a skipped check and exits 0,
 // and the first, holding the lock from its check through its backup and
 // upgrade, carries on. Each step stubbed; the first waits in its backup.
-func TestA143AutoUpgradeHostWideLock(t *testing.T) {
+func TestA146AutoUpgradeHostWideLock(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("needs jq")
 	}
@@ -304,11 +304,11 @@ host_locked_run; echo "exit $?"; jq -c "{state, last_check_result, last_check_no
 	}
 }
 
-// R76a, R84l, A141, A142: an automatic upgrade unpacks the release's archive
+// R76a, R84l, A144, A145: an automatic upgrade unpacks the release's archive
 // over the install and the monitoring stack's own folder: what a companion
 // app dropped in their include folders is still there, unchanged, and a
 // rollback's copy of the monitoring stack's files leaves them out.
-func TestA142UpgradeKeepsDropIns(t *testing.T) {
+func TestA145UpgradeKeepsDropIns(t *testing.T) {
 	assets := releaseAssets(t)
 	pa, mon := installDir(t), t.TempDir()
 	release := filepath.Join(pa, "au", "releases", "1.19.0")

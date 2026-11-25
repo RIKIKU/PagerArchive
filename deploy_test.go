@@ -222,7 +222,7 @@ func TestR84MountsComeFromTheArchive(t *testing.T) {
 	}
 }
 
-// R84l, R76a, A141, A142: each folder a companion app drops its files into is
+// R84l, R76a, A144, A145: each folder a companion app drops its files into is
 // mounted read-only by the services that read it, and by no other; the
 // archive holds it as an empty folder, so unpacking a release (an install, an
 // upgrade by hand or automatic) makes it, and the mount never fails, but
