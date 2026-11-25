@@ -67,6 +67,10 @@ type Message struct {
 	Colour      *string   `json:"colour"`
 	Ignored     bool      `json:"ignored"`
 	Category    *string   `json:"category"` // report category of event_type (R38)
+	// ProbablyNoise: heard by one receiver only while another was
+	// receiving, matched no format, and its capcode has no other page
+	// (R35h). Shown to everyone; nothing else treats the page differently.
+	ProbablyNoise bool `json:"probably_noise"`
 
 	Format      *string           `json:"format"`
 	JobNumber   *string           `json:"job_number"`
@@ -125,7 +129,7 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 	out := Message{
 		ID: m.ID, Capcode: m.Capcode, Text: m.Text, DisplayText: m.Text, Priority: m.Priority,
 		Heartbeat: m.Heartbeat, SentAt: m.SentAt.UTC(), AliasID: m.AliasID, Alias: m.AliasName, Agency: m.Agency,
-		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored,
+		Icon: iconURL(m.IconSha256), Colour: m.Colour, Ignored: m.AliasIgnored, ProbablyNoise: m.ProbablyNoise,
 		Format: m.Format, JobNumber: m.JobNumber, EventType: m.EventType, Description: m.Description,
 		Address: m.Address, Locality: m.Locality, GridRef: m.GridRef, CallSign: m.CallSign,
 		Units: m.Units, CallSigns: m.CallSigns, Extra: map[string]any{}, Labels: map[string]string{},

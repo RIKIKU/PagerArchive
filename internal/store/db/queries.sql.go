@@ -1001,6 +1001,29 @@ func (q *Queries) AllIntegrationSecrets(ctx context.Context) ([]AllIntegrationSe
 	return items, nil
 }
 
+const backfillNoise = `-- name: BackfillNoise :execrows
+UPDATE messages m SET probably_noise = true
+WHERE m.sent_at >= $1::timestamptz AND m.sent_at < $2::timestamptz
+  AND m.format IS NULL AND NOT m.probably_noise
+  AND message_probably_noise(m.id, m.capcode, m.format, m.sent_at)
+`
+
+type BackfillNoiseParams struct {
+	SentFrom time.Time
+	SentTo   time.Time
+}
+
+// R35h: the background pass over pages stored before (internal/noise): the
+// pages with no format sent in [sent_from, sent_to) that are probably noise
+// and aren't marked. It only marks: a page stored since is worked out live.
+func (q *Queries) BackfillNoise(ctx context.Context, arg BackfillNoiseParams) (int64, error) {
+	result, err := q.db.Exec(ctx, backfillNoise, arg.SentFrom, arg.SentTo)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cancelFirstAdminInvitations = `-- name: CancelFirstAdminInvitations :many
 UPDATE invitations SET status = 'cancelled', cancelled_at = now()
 WHERE first_admin AND status = 'pending'
@@ -1267,6 +1290,18 @@ func (q *Queries) ClaimReparseRequests(ctx context.Context) ([]ClaimReparseReque
 		return nil, err
 	}
 	return items, nil
+}
+
+const clearCapcodeNoise = `-- name: ClearCapcodeNoise :exec
+UPDATE messages SET probably_noise = false
+WHERE capcode = $1::text AND probably_noise
+`
+
+// R35h (d): an imported page to a capcode means none of its pages is
+// probably noise. An import has no client, so it marks nothing (a).
+func (q *Queries) ClearCapcodeNoise(ctx context.Context, capcode string) error {
+	_, err := q.db.Exec(ctx, clearCapcodeNoise, capcode)
+	return err
 }
 
 const clearIntegrationAliases = `-- name: ClearIntegrationAliases :exec
@@ -2798,6 +2833,34 @@ func (q *Queries) FinishRetentionAlbums(ctx context.Context, now time.Time) (int
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const firstReceptions = `-- name: FirstReceptions :many
+SELECT f.first_at::timestamptz AS first_at
+FROM (SELECT (SELECT min(r.received_at) FROM receptions r WHERE r.client_id = c.id) AS first_at FROM clients c) f
+WHERE f.first_at IS NOT NULL
+ORDER BY f.first_at
+`
+
+// R35h: each client's first copy, earliest first, for clients with any.
+func (q *Queries) FirstReceptions(ctx context.Context) ([]time.Time, error) {
+	rows, err := q.db.Query(ctx, firstReceptions)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []time.Time
+	for rows.Next() {
+		var first_at time.Time
+		if err := rows.Scan(&first_at); err != nil {
+			return nil, err
+		}
+		items = append(items, first_at)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const forgetImportSourceID = `-- name: ForgetImportSourceID :exec
@@ -4497,6 +4560,19 @@ func (q *Queries) LockLargeEvents(ctx context.Context) error {
 	return err
 }
 
+const lockNoise = `-- name: LockNoise :exec
+SELECT pg_advisory_xact_lock(hashtextextended('probably noise', 0))
+`
+
+// R35h: a client's copy can change "probably noise" on pages to other
+// capcodes (leg b), so live copies work it out one at a time, each seeing
+// the copies committed before it. Taken after the capcode's lock and before
+// any write, so it holds no row another live copy waits for.
+func (q *Queries) LockNoise(ctx context.Context) error {
+	_, err := q.db.Exec(ctx, lockNoise)
+	return err
+}
+
 const lockRedactionRun = `-- name: LockRedactionRun :one
 SELECT id, state, reason, rules_hash, total, done, redacted, after_id, pages_done, source_after, sources_done, epoch,
        started_at, changed_at, finished_at FROM redaction_runs FOR UPDATE
@@ -5615,6 +5691,41 @@ func (q *Queries) RefreshLargeEventSpans(ctx context.Context) (int64, error) {
 	return result.RowsAffected(), nil
 }
 
+const refreshNoise = `-- name: RefreshNoise :exec
+UPDATE messages m
+SET probably_noise = message_probably_noise(m.id, m.capcode, m.format, m.sent_at)
+WHERE m.id IN (
+        SELECT $1::bigint
+        UNION ALL
+        (SELECT o.id FROM messages o
+         WHERE o.capcode = $2::text AND o.id <> $1::bigint
+         ORDER BY o.sent_at DESC LIMIT 1)
+        UNION ALL
+        SELECT w.id FROM messages w
+        WHERE w.sent_at BETWEEN $3::timestamptz - interval '10 minutes'
+                            AND $3::timestamptz + interval '10 minutes'
+          AND w.format IS NULL)
+  AND m.probably_noise IS DISTINCT FROM message_probably_noise(m.id, m.capcode, m.format, m.sent_at)
+`
+
+type RefreshNoiseParams struct {
+	ID         int64
+	Capcode    string
+	ReceivedAt time.Time
+}
+
+// R35h: after client's copy received at received_at was saved as message
+// id: works out again the pages it can change, and writes only those that
+// did. They're the message itself (legs a and c), the one other page to its
+// capcode, which is the only one that can be marked (d), and the pages with
+// no format sent within 10 minutes of the copy (b). The rule is worked out
+// on the row as UPDATE finds it, so a re-parse's format written meanwhile
+// wins.
+func (q *Queries) RefreshNoise(ctx context.Context, arg RefreshNoiseParams) error {
+	_, err := q.db.Exec(ctx, refreshNoise, arg.ID, arg.Capcode, arg.ReceivedAt)
+	return err
+}
+
 const regroupEventsNear = `-- name: RegroupEventsNear :many
 
 SELECT id, first_at, last_at, COALESCE(opened_at, created_at)::timestamptz AS opened_at FROM large_events
@@ -6275,7 +6386,7 @@ SELECT m.id, m.capcode, m.alias_id, m.text, m.priority, m.heartbeat, m.sent_at, 
        m.call_sign, m.units, m.call_signs, m.extra, m.parse_failed, m.address_unsplit,
        m.location_mismatch, a.name AS alias_name, COALESCE(a.ignored, false)::bool AS alias_ignored,
        t.agency, t.icon_sha256, t.colour, t.agency_profile,
-       m.lon, m.lat, m.location_source
+       m.lon, m.lat, m.location_source, m.probably_noise
 FROM messages m
 LEFT JOIN aliases a ON a.id = m.alias_id
 LEFT JOIN templates t ON t.id = a.template_id
@@ -6440,6 +6551,7 @@ type SearchMessagesRow struct {
 	Lon              *float64
 	Lat              *float64
 	LocationSource   *string
+	ProbablyNoise    bool
 }
 
 // R33. Every filter is optional (NULL or an empty array = any). An array
@@ -6533,6 +6645,7 @@ func (q *Queries) SearchMessages(ctx context.Context, arg SearchMessagesParams) 
 			&i.Lon,
 			&i.Lat,
 			&i.LocationSource,
+			&i.ProbablyNoise,
 		); err != nil {
 			return nil, err
 		}
@@ -7564,7 +7677,10 @@ const updateParsed = `-- name: UpdateParsed :execrows
 UPDATE messages SET
     alias_id = $2, format = $3, job_number = $4, event_type = $5, description = $6,
     address = $7, locality = $8, grid_ref = $9, call_sign = $10, units = $11,
-    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17
+    extra = $12, parse_failed = $13, address_unsplit = $14, large_event_field = $15, call_signs = $17,
+    -- R35h: a format found clears "probably noise"; one taken away marks
+    -- nothing (no lock is taken for the rule's other legs here).
+    probably_noise = probably_noise AND $3::text IS NULL
 WHERE id = $1 AND text = $16
 `
 

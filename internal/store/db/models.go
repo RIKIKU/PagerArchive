@@ -229,6 +229,7 @@ type Message struct {
 	Lat              *float64
 	LargeEventField  bool
 	CallSigns        []string
+	ProbablyNoise    bool
 }
 
 type MessageArea struct {

@@ -79,7 +79,7 @@
 					<div>
 						<svelte:element this={heading} class="title">{m.alias ?? m.capcode}</svelte:element>
 						<p class="meta">
-							<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+							<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} noise={m.probably_noise} />
 							<time datetime={isoAttr(m.sent_at)}>{dateTime(m.sent_at, tz)}</time>
 						</p>
 					</div>

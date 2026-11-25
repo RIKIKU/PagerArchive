@@ -31,6 +31,9 @@ export interface Message {
 	icon: string | null;
 	colour: string | null;
 	ignored: boolean;
+	/** R35h: heard by one receiver only while another was receiving,
+	 * matched no format, capcode never seen before. */
+	probably_noise: boolean;
 	category: string | null;
 	format: string | null;
 	job_number: string | null;

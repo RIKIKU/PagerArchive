@@ -42,7 +42,7 @@
      the template's icon and the alias (R66), call sign and job, then the text. -->
 <article class="row {priority}" class:fresh class:selected aria-labelledby="m{m.id}-who" data-message-id={m.id}>
 	<header>
-		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} />
+		<PriorityBadge priority={m.priority} heartbeat={m.heartbeat} noise={m.probably_noise} />
 		<time datetime={isoAttr(m.sent_at)}>
 			<span class="date">{date(m.sent_at, tz)}</span>
 			<span class="time">{time(m.sent_at, tz)}</span>

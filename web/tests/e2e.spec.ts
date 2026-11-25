@@ -206,6 +206,35 @@ test('R35c flags are shown to admins only', async ({ page, browser, request }) =
 	await expect(admin.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Admin' })).toBeVisible();
 });
 
+// A135, R35h: a page that's probably noise shows the badge, with its reason
+// as the tooltip and the accessible description, on its row and its detail
+// view; a page that isn't shows none. One receiver here, so the mark is set
+// in the database (the rule's legs are A135's Go checks).
+test('A135 a probably-noise page shows the badge with its reason', async ({ page, request }, info) => {
+	const marker = `NOISE-${projectN(info)}-${Date.now()}`;
+	await post(request, '0100001', `${marker} NOISY`);
+	await post(request, '0100001', `${marker} CLEAN`);
+	sql(`UPDATE messages SET probably_noise = true WHERE text = '${marker} NOISY';`);
+	const why = 'Heard by one receiver only, matched no format, capcode never seen before';
+
+	await page.goto(`/?q=${marker}`);
+	const list = page.getByTestId('message-list');
+	await expect(list.locator('article')).toHaveCount(2);
+	const noisy = list.locator('article').filter({ hasText: `${marker} NOISY` });
+	const clean = list.locator('article').filter({ hasText: `${marker} CLEAN` });
+	const badge = noisy.getByText('Probably noise');
+	await expect(badge).toBeVisible();
+	await expect(badge).toHaveAttribute('title', why);
+	await expect(badge).toContainText(why); // read out after its name
+	await expect(clean.getByText('Probably noise')).toHaveCount(0);
+
+	await noisy.getByRole('link', { name: `${marker} NOISY` }).click();
+	await expect(page).toHaveURL(/\/messages\/\d+/);
+	const detail = page.locator('article.detail').getByText('Probably noise');
+	await expect(detail.first()).toBeVisible();
+	await expect(detail.first()).toHaveAttribute('title', why);
+});
+
 // ADR 0010 §4: a role change closes that person's live connections, and the
 // open list reconnects with the new role's view, without reloading the page.
 test('a demoted admin\'s open list loses admin-only details without a reload', async ({ browser, request }, info) => {
