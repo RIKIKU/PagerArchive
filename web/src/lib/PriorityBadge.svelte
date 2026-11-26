@@ -16,7 +16,7 @@
 	// neutral state badge (a hint, not an alarm), as RadioArchive shows states;
 	// StateBadge takes no other attributes, so the tooltip and the tests' hook
 	// (data-noise) sit on a span around it.
-	const noiseWhy = 'Heard by one receiver only, matched no format, capcode never seen before';
+	const noiseWhy = 'Heard by one receiver only, matched no format, nothing else to its capcode was really heard';
 
 	const cls: Record<Priority, string> = { Emergency: 'emergency', 'Non-emergency': 'non-emergency', Admin: 'admin' };
 </script>

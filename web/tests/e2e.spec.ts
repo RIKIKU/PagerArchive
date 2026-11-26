@@ -220,7 +220,7 @@ test('A147 a probably-noise page shows the badge with its reason', async ({ page
 	await post(request, '0100001', `${marker} NOISY`);
 	await post(request, '0100001', `${marker} CLEAN`);
 	sql(`UPDATE messages SET probably_noise = true WHERE text = '${marker} NOISY';`);
-	const why = 'Heard by one receiver only, matched no format, capcode never seen before';
+	const why = 'Heard by one receiver only, matched no format, nothing else to its capcode was really heard';
 
 	await page.goto(`/?q=${marker}`);
 	const list = page.getByTestId('message-list');
