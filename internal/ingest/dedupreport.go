@@ -83,7 +83,7 @@ func dedupReport(ctx context.Context, q *db.Queries, net *profile.Network, agenc
 		return nil, fmt.Errorf("close messages: %s", store.SafeError(err))
 	}
 	for _, c := range close {
-		rep.AddClose(c.FirstText, c.SecondText, OtherJob(c.FirstJob, c.SecondJob))
+		rep.AddClose(c.FirstText, c.SecondText, OtherJob(c.FirstJob, c.SecondJob), c.OneReceiver)
 	}
 	if err := voteReport(ctx, q, rep, quality, since); err != nil {
 		return nil, err
