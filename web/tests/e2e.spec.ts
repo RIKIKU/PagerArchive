@@ -220,24 +220,27 @@ test('A147 a probably-noise page shows the badge with its reason', async ({ page
 	await post(request, '0100001', `${marker} NOISY`);
 	await post(request, '0100001', `${marker} CLEAN`);
 	sql(`UPDATE messages SET probably_noise = true WHERE text = '${marker} NOISY';`);
-	const why = 'Heard by one receiver only, matched no format, capcode never seen before';
+	const why = 'Heard by one receiver only, matched no format, nothing else to its capcode was really heard';
 
 	await page.goto(`/?q=${marker}`);
 	const list = page.getByTestId('message-list');
 	await expect(list.locator('article')).toHaveCount(2);
 	const noisy = list.locator('article').filter({ hasText: `${marker} NOISY` });
 	const clean = list.locator('article').filter({ hasText: `${marker} CLEAN` });
-	const badge = noisy.getByText('Probably noise');
+	// ArchiveUx's neutral state badge, in a span (data-noise) holding the tooltip.
+	const badge = noisy.locator('[data-noise]');
 	await expect(badge).toBeVisible();
 	await expect(badge).toHaveAttribute('title', why);
+	await expect(badge.locator('.state-badge[data-state="neutral"]')).toContainText('Probably noise');
 	await expect(badge).toContainText(why); // read out after its name
 	await expect(clean.getByText('Probably noise')).toHaveCount(0);
 
 	await noisy.getByRole('link', { name: `${marker} NOISY` }).click();
 	await expect(page).toHaveURL(/\/messages\/\d+/);
-	const detail = page.locator('article.detail').getByText('Probably noise');
+	const detail = page.locator('article.detail [data-noise]');
 	await expect(detail.first()).toBeVisible();
 	await expect(detail.first()).toHaveAttribute('title', why);
+	await expect(detail.first()).toContainText('Probably noise');
 });
 
 // ADR 0010 §4: a role change closes that person's live connections, and the

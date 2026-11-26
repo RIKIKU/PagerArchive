@@ -32,7 +32,7 @@ export interface Message {
 	colour: string | null;
 	ignored: boolean;
 	/** R35h: heard by one receiver only while another was receiving,
-	 * matched no format, capcode never seen before. */
+	 * matched no format, nothing else to its capcode was really heard. */
 	probably_noise: boolean;
 	category: string | null;
 	format: string | null;
