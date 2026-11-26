@@ -1061,8 +1061,12 @@ WHERE m.sent_at >= sqlc.arg(since)::timestamptz AND i.text IS NOT NULL;
 -- name: DedupReportCloseMessages :many
 -- R19b: pairs of messages to one capcode sent within 10 s of each other
 -- since a time: pages R19a kept apart, for the dedup-report to measure how
--- far apart they were. Neither text leaves the command (P1).
-SELECT a.text AS first_text, b.text AS second_text, a.job_number AS first_job, b.job_number AS second_job
+-- far apart they were. one_receiver says a client has a copy of both: by
+-- R19a its second copy is another transmission, never merged as near.
+-- Neither text leaves the command (P1).
+SELECT a.text AS first_text, b.text AS second_text, a.job_number AS first_job, b.job_number AS second_job,
+       EXISTS (SELECT 1 FROM receptions ra JOIN receptions rb ON rb.client_id = ra.client_id
+               WHERE ra.message_id = a.id AND rb.message_id = b.id) AS one_receiver
 FROM messages a
 JOIN messages b ON b.capcode = a.capcode AND b.id <> a.id
  AND b.sent_at BETWEEN a.sent_at AND a.sent_at + interval '10 seconds'

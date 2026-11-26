@@ -15,8 +15,8 @@ func TestReport(t *testing.T) {
 	r.AddKept(page, garbled2, parsed, parsed)       // substitution, both parse
 	r.AddKept(page, page[:50], parsed, failed)      // truncation: the longer parses
 	r.AddKept(page, page+" \u00ff", parsed, failed) // junk tail
-	r.AddClose(page, correction, false)
-	r.AddClose(page, strings.Replace(page, "0123", "0124", 1), true) // another job: never merged
+	r.AddClose(page, correction, false, false)
+	r.AddClose(page, strings.Replace(page, "0123", "0124", 1), true, false) // another job: never merged
 	var b bytes.Buffer
 	r.Write(&b)
 	out := b.String()
@@ -28,9 +28,22 @@ func TestReport(t *testing.T) {
 	}
 	// Two short pages a character apart would merge at 0.1 (1 edit in 13),
 	// not at 0.05.
-	r.AddClose("QDTest page 1", "QDTest page 2", false)
+	r.AddClose("QDTest page 1", "QDTest page 2", false, false)
 	for _, a := range r.AtRatio {
 		if (a.Ratio == 0.05 && a.CloseMerged != 0) || (a.Ratio == 0.1 && a.CloseMerged != 1) || a.KeptApart != 0 {
+			t.Errorf("at %v: %+v", a.Ratio, a)
+		}
+	}
+	// One receiver's near repeat is another transmission (ADR 0050 decision
+	// 5): counted, in the histograms, never among the pairs that'd merge. An
+	// exact repeat is R19's, so it isn't one.
+	r.AddClose(page, garbled2, false, true)
+	r.AddClose(page, page, false, true)
+	if r.Close.OneReceiver != 1 || r.Close.Pairs != 5 || r.Close.PerChar.counts[0] != 1 {
+		t.Errorf("close %+v", r.Close)
+	}
+	for _, a := range r.AtRatio {
+		if (a.Ratio == 0.1 && (a.CloseMerged != 1 || a.CloseOneHeard != 1)) || (a.Ratio == 0.05 && a.CloseOneHeard != 1) {
 			t.Errorf("at %v: %+v", a.Ratio, a)
 		}
 	}

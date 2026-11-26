@@ -11,6 +11,54 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/profile"
 )
 
+// R19b (2026-11-26): dedup-report's close pairs, as ingest stored them. A
+// receiver's near repeat of a page is another transmission (R19a, ADR 0050
+// decision 5): the pair is counted as one receiver heard both, and never
+// among the pairs that'd merge, at any ratio.
+func TestA131DedupReportClosePairs(t *testing.T) {
+	e := setup(t)
+	t0 := e.now.Add(-10 * time.Minute)
+	page := "@@EX0007101 HSF1 ZORBLAX QUENTIFY @ 12 FLUMMOX ST, WIBBLETON GRID 123456 UNITS T1 T2 #STN1"
+	repeat := strings.Replace(page, "QUENTIFY", "QU}NTIFY", 1)
+	first := e.mustPost("a", "0100001", page, t0)
+	second := e.mustPost("a", "0100001", repeat, t0.Add(3*time.Second)) // A's repeat, decoded differently
+	e.mustPost("b", "0100001", repeat, t0.Add(3300*time.Millisecond))   // B's copy of the repeat
+	if first.MessageID == second.MessageID {
+		t.Fatal("a receiver's near repeat was merged into its first copy")
+	}
+	other := "@@EX0007102 HSF1 ZORBLAX QUENTIFY @ 12 FLUMMOX ST, WIBBLETON GRID 123456 UNITS T1 T2 #STN2"
+	e.mustPost("a", "0100002", other, t0.Add(time.Minute))
+	e.mustPost("b", "0100002", strings.Replace(other, "FLUMMOX", "FLUM}OX", 1), t0.Add(time.Minute+400*time.Millisecond)) // merged
+
+	set, err := profile.LoadDir("../../profiles/example")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := ingest.DedupReport(e.ctx, e.st, set.Networks["example-network"], set.Agencies, neardup.DefaultRatio, t0.Add(-time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := rep.Close; c.Pairs != 1 || c.OtherJobs != 0 || c.OneReceiver != 1 {
+		t.Errorf("close pairs %+v", c)
+	}
+	for _, a := range rep.AtRatio {
+		if a.CloseMerged != 0 || a.CloseOneHeard != 1 {
+			t.Errorf("at %v: %+v", a.Ratio, a)
+		}
+	}
+	var b bytes.Buffer
+	rep.Write(&b)
+	out := b.String()
+	if !strings.Contains(out, "one receiver heard both") {
+		t.Errorf("the report doesn't say one receiver heard both:\n%s", out)
+	}
+	for _, frag := range []string{"ZORBLAX", "QU}NTIFY", "FLUMMOX", "WIBBLETON", "EX000710", "0100001", "Client "} {
+		if strings.Contains(out, frag) {
+			t.Errorf("the report holds %q:\n%s", frag, out)
+		}
+	}
+}
+
 // R19b, ADR 0050's measuring voting: dedup-report's section on messages
 // three receivers heard, read from the database as ingest stored them, with
 // counts only (P1).

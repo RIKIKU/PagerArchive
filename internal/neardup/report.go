@@ -27,13 +27,18 @@ type Report struct {
 	// Close are pairs of messages to one capcode sent within 10 s of each
 	// other: pages kept apart, near or not. OtherJobs name different job
 	// numbers, which are never merged (ADR 0050): they're counted, and left
-	// out of the rest.
+	// out of the rest. OneReceiver are those of the rest whose texts differ
+	// and one client has a copy of both: its second copy is another
+	// transmission, never merged as near (ADR 0050 decision 5). They stay
+	// in the histograms (how near different pages come), not in what would
+	// merge.
 	Close struct {
-		Pairs, OtherJobs int
-		Edits, PerChar   histogram
+		Pairs, OtherJobs, OneReceiver int
+		Edits, PerChar                histogram
 	}
 	// AtRatio is, for each of the ratios tried, how many kept pairs would be
-	// kept apart and how many close pairs would be merged.
+	// kept apart, how many close pairs would be merged, and how many more are
+	// as near but one receiver heard both.
 	AtRatio []ratioCount
 	// Heard is ADR 0050's "measuring voting": messages by how many clients
 	// heard them, and for those heard by three or more, how their copies
@@ -78,8 +83,8 @@ type Receiver struct {
 }
 
 type ratioCount struct {
-	Ratio                  float64
-	KeptApart, CloseMerged int
+	Ratio                                 float64
+	KeptApart, CloseMerged, CloseOneHeard int
 }
 
 // The ratios a report tries beside the one in use.
@@ -159,18 +164,29 @@ func (r *Report) AddKept(message, variant string, qm, qv Quality) {
 }
 
 // AddClose counts two messages to one capcode sent within 10 s of each
-// other; otherJob says they name different job numbers.
-func (r *Report) AddClose(a, b string, otherJob bool) {
+// other; otherJob says they name different job numbers, and oneReceiver
+// that one client has a copy of both.
+func (r *Report) AddClose(a, b string, otherJob, oneReceiver bool) {
 	r.Close.Pairs++
 	if otherJob {
 		r.Close.OtherJobs++
 		return
 	}
+	// Equal texts are R19's (exact) to merge, whoever heard them.
+	oneReceiver = oneReceiver && a != b
+	if oneReceiver {
+		r.Close.OneReceiver++
+	}
 	edits, perChar, _, _ := distance(a, b)
 	r.Close.Edits.add(float64(edits))
 	r.Close.PerChar.add(perChar)
 	for i := range r.AtRatio {
-		if a != b && Compare(a, b, r.AtRatio[i].Ratio).Near {
+		if a == b || !Compare(a, b, r.AtRatio[i].Ratio).Near {
+			continue
+		}
+		if oneReceiver {
+			r.AtRatio[i].CloseOneHeard++
+		} else {
 			r.AtRatio[i].CloseMerged++
 		}
 	}
@@ -278,14 +294,15 @@ func (r *Report) Write(w io.Writer) {
 	fmt.Fprintln(w, "messages to one capcode sent within 10 s of each other (kept apart)")
 	line("pairs", r.Close.Pairs)
 	line("  naming different job numbers (never merged; not counted below)", r.Close.OtherJobs)
+	line("  one receiver heard both, texts differ (never merged as near)", r.Close.OneReceiver)
 	r.Close.Edits.write(w, "edits between them")
 	r.Close.PerChar.write(w, "edits per character of the shorter")
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "at other ratios (DEDUP_NEAR_RATIO)")
-	fmt.Fprintf(w, "  %-10s %-26s %s\n", "ratio", "kept pairs that'd be apart", "close pairs that'd merge")
+	fmt.Fprintf(w, "  %-10s %-26s %-26s %s\n", "ratio", "kept pairs that'd be apart", "close pairs that'd merge", "as near, one receiver heard both")
 	for _, a := range r.AtRatio {
-		fmt.Fprintf(w, "  %-10.2f %-26d %d\n", a.Ratio, a.KeptApart, a.CloseMerged)
+		fmt.Fprintf(w, "  %-10.2f %-26d %-26d %d\n", a.Ratio, a.KeptApart, a.CloseMerged, a.CloseOneHeard)
 	}
 
 	h := &r.Heard
