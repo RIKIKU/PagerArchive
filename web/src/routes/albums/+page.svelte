@@ -66,7 +66,7 @@
 <section class="new" aria-labelledby="new-album">
 	<h2 id="new-album">New album</h2>
 	<form novalidate onsubmit={create} oninput={fc.cleared}>
-		<FormSummary check={fc} />
+		<FormSummary check={fc} level={3} />
 		<label for="album-name">Name <span class="required">required</span></label>
 		<input id="album-name" bind:value={name} required maxlength={MAX_NAME} autocomplete="off" aria-invalid={fc.invalid('album-name')} aria-describedby={fc.describedBy('album-name')} />
 		<FieldError check={fc} id="album-name" />

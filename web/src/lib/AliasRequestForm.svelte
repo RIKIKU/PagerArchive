@@ -90,7 +90,7 @@
 
 <form class="request-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="request-form">
 	<h2 id="{uid}-h">{heading}</h2>
-	<FormSummary check={fc} />
+	<FormSummary check={fc} level={3} />
 	{#if kind === 'add'}
 		<div class="field">
 			<!-- A waiting request's capcode can't change: read-only, so not marked. -->

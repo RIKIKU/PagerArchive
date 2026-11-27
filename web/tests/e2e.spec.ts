@@ -934,12 +934,16 @@ test('capcode report counts Emergency messages by category', async ({ page, requ
 	// Something that's neither is refused, without asking the API.
 	await box.fill('no such alias anywhere');
 	await page.getByRole('button', { name: 'Run report' }).click();
-	// R82e: under the box, which says it's invalid and takes focus; the top line only counts.
+	// R82g: under the box, which says it's invalid; the error summary at the
+	// top takes focus and names the box, and its link moves focus there.
 	await expect(page.locator('#report-box-error')).toHaveText(`There's no alias "no such alias anywhere". Pick one from the suggestions.`);
 	await expect(box).toHaveAttribute('aria-invalid', 'true');
 	await expect(box).toHaveAttribute('aria-describedby', 'report-box-error');
+	const summary = page.getByTestId('form-summary').locator('.error-summary');
+	await expect(summary).toBeFocused();
+	await expect(summary.getByRole('heading')).toHaveText('1 field needs attention');
+	await summary.getByRole('link', { name: `Alias or capcode: There's no alias "no such alias anywhere". Pick one from the suggestions.` }).click();
 	await expect(box).toBeFocused();
-	await expect(page.getByTestId('form-summary')).toHaveText('1 field needs attention');
 });
 
 // R78, A6: the Unknown capcodes page lists the most messages first, then
@@ -1439,10 +1443,14 @@ test('A44 request rejected', async ({ page, browser, request }, info) => {
 	await expect(card.getByRole('row', { name: `Name ${current} Station 7 ${n}` })).toBeVisible();
 	await card.getByRole('button', { name: /^Reject:/ }).click();
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
-	// R82e: the empty feedback is caught before it's sent, under the field, which takes focus.
+	// R82g: the empty feedback is caught before it's sent, under the field; the
+	// error summary takes focus, and its link names the field and leads to it.
 	await expect(card.locator('.field-error')).toHaveText("Say why it's rejected: they'll see this.");
+	const summary = card.getByTestId('form-summary').locator('.error-summary');
+	await expect(summary).toBeFocused();
+	await expect(summary.getByRole('heading')).toHaveText('1 field needs attention');
+	await summary.getByRole('link', { name: "Feedback for the person who asked: Say why it's rejected: they'll see this." }).click();
 	await expect(card.getByLabel('Feedback for the person who asked required')).toBeFocused();
-	await expect(card.getByTestId('form-summary')).toHaveText('1 field needs attention');
 	await card.getByLabel('Feedback for the person who asked required').fill('Wrong station');
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
 	await expect(admin.getByRole('status')).toContainText('Rejected');
@@ -6591,10 +6599,18 @@ test('A132 required fields say so, and each form checks itself', async ({ browse
 		await expect(pages).toHaveAccessibleName(/^Which pages\W*required$/);
 		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias.');
 
-		// Saved empty: nothing is sent; a message under each problem; focus on the first.
+		// Saved empty: nothing is sent; a message under each problem; focus on
+		// the error summary, which names and links each field (ArchiveUx 0.6.0).
 		await form.getByRole('button', { name: 'Save integration' }).click();
-		const summary = form.getByTestId('form-summary');
-		await expect(summary).toHaveText('3 fields need attention');
+		const summary = form.getByTestId('form-summary').locator('.error-summary');
+		await expect(summary).toBeFocused();
+		await expect(summary).toHaveAccessibleName('3 fields need attention');
+		await expect(summary.getByRole('heading')).toHaveText('3 fields need attention');
+		await expect(summary.getByRole('link')).toHaveText([
+			'Name: Fill this in.',
+			'Which pages: None chosen yet. Choose at least one capcode or alias.',
+			'URL: Fill this in.'
+		]);
 		for (const [what, control] of [
 			['Name', nameBox],
 			['URL', url]
@@ -6606,16 +6622,34 @@ test('A132 required fields say so, and each form checks itself', async ({ browse
 			await expect(message, what).toBeVisible();
 		}
 		await expect(form.locator('[id$="-name-error"]')).toHaveText('Fill this in.');
-		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias. Nothing chosen yet: choose at least one capcode or alias.');
-		await expect(nameBox).toBeFocused();
+		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias. None chosen yet. Choose at least one capcode or alias.');
+		const box = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		// The group's message sits by the part it's about: after the capcode box, in its group.
+		expect(
+			await pages.evaluate((group) => {
+				const error = group.querySelector(':scope > .field-error');
+				const input = group.querySelector('[role="combobox"]');
+				return !!error && !!input && !!(input.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING);
+			}),
+			'Which pages: its message after the capcode box'
+		).toBe(true);
 		expect(await axeOf(admin), 'axe: after a save with problems').toEqual([]);
+		// The first link is one Tab away; a link moves focus to its field.
+		await admin.keyboard.press('Tab');
+		await expect(summary.getByRole('link', { name: /^Name:/ })).toBeFocused();
+		await summary.getByRole('link', { name: /^URL:/ }).click();
+		await expect(url).toBeFocused();
+		await expect(url).toBeInViewport();
 
-		// Name filled and saved again: its message goes; focus moves to the capcode box.
+		// Name filled and saved again: its message and link go; focus on the
+		// summary again, whose Which pages link moves focus to the capcode box.
 		await nameBox.fill(name);
 		await expect(nameBox).not.toHaveAttribute('aria-invalid', 'true');
+		await expect(summary.getByRole('link', { name: /^Name:/ })).toHaveCount(0);
 		await form.getByRole('button', { name: 'Save integration' }).click();
-		await expect(summary).toHaveText('2 fields need attention');
-		const box = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		await expect(summary).toBeFocused();
+		await expect(summary.getByRole('heading')).toHaveText('2 fields need attention');
+		await summary.getByRole('link', { name: /^Which pages:/ }).click();
 		await expect(box).toBeFocused();
 		expect(posted, 'nothing was sent').toBe(0);
 
