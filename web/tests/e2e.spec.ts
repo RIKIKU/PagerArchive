@@ -185,6 +185,60 @@ test('R31 phone width keeps date, time and alias visible', async ({ browser, req
 	expect(overflow).toBeLessThanOrEqual(0);
 });
 
+// R81, R33a: on a phone the search box has a row of its own and its
+// controls (Help, the dates, Clear all, Search) share one row under it, in
+// that order, each a target's size, down to 320 px, with or without the
+// breadcrumbs beside it; on a desktop they're all on the box's row. In
+// Chromium the 320 px includes a scrollbar, as a desktop zoomed to 400 % does.
+test('R81 phone search header: the box, then one row of its controls', async ({ browser }) => {
+	for (const [width, path] of [
+		[320, '/?q=HEADERCHECK'],
+		[375, '/?q=HEADERCHECK'],
+		[320, '/capcodes'],
+		[1280, '/?q=HEADERCHECK']
+	] as const) {
+		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 740 } })).newPage();
+		await page.goto(path);
+		const form = page.getByRole('search', { name: 'Search messages' });
+		// Clear all shows once the search is set; the page then settles
+		// (its fonts, and its content's scrollbar), so it's measured until
+		// it holds.
+		if (path.includes('?q=')) await expect(form.getByRole('button', { name: 'Clear all', exact: true })).toBeVisible();
+		await page.evaluate(() => document.fonts.ready);
+		const target = await page.evaluate(() => parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--target')) * 16);
+		const names = ['Search help', 'Dates', 'Clear all', 'Search'];
+		await expect(async () => {
+			const box = await form.locator('.suggest').boundingBox();
+			const controls = [];
+			for (const name of names) {
+				// Clear all is hidden, in its place, until something is set.
+				const b = name === 'Clear all' ? form.locator('.clear button') : form.getByRole('button', { name, exact: true });
+				controls.push(await b.boundingBox());
+			}
+			expect(box, `${width} ${path}`).not.toBeNull();
+			for (const [i, c] of controls.entries()) {
+				expect(c, `${names[i]} at ${width}`).not.toBeNull();
+				expect(Math.abs(c!.y - controls[0]!.y), `${names[i]} on the row at ${width} ${path}`).toBeLessThanOrEqual(1);
+				expect(c!.width, `${names[i]} wide enough at ${width}`).toBeGreaterThanOrEqual(target - 0.5);
+				expect(c!.height, `${names[i]} high enough at ${width}`).toBeGreaterThanOrEqual(target - 0.5);
+				if (i > 0) expect(c!.x, `${names[i]} after ${names[i - 1]} at ${width}`).toBeGreaterThan(controls[i - 1]!.x);
+			}
+			const search = controls[3]!;
+			if (width < 768) {
+				expect(controls[0]!.y, `the controls under the box at ${width} ${path}`).toBeGreaterThanOrEqual(box!.y + box!.height);
+				expect(Math.abs(controls[0]!.x - box!.x), `Help at the row's start at ${width}`).toBeLessThanOrEqual(1);
+				expect(Math.abs(search.x + search.width - (box!.x + box!.width)), `Search at the row's end at ${width}`).toBeLessThanOrEqual(1);
+			} else {
+				expect(Math.abs(search.y - box!.y), 'Search on the box row on a desktop').toBeLessThanOrEqual(1);
+			}
+			const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
+			expect(overflow, `no sideways scroll at ${width} ${path}`).toBeLessThanOrEqual(0);
+		}).toPass({ timeout: 10_000 });
+		await expect(form.getByRole('button', { name: 'Search', exact: true })).toHaveText('Search');
+		await page.context().close();
+	}
+});
+
 // A1 in the browser: the job view lists every call sign's copy.
 test('A1 job view shows every copy', async ({ page, request }) => {
 	const job = uniqueJob();
