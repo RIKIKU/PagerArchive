@@ -167,7 +167,7 @@
 		<button type="button" class="ghost icon-button" aria-label="Clear all" onclick={clearAll}><Icon name="clear" /></button>
 		<span class="tooltip" aria-hidden="true">Clear all</span>
 	</div>
-	<button type="submit"><Icon name="search" />Search</button>
+	<button type="submit" class="go"><Icon name="search" />Search</button>
 	{#if problem}<p class="problem" id="{uid}-problem" role="alert">{problem}</p>{/if}
 </form>
 
@@ -248,14 +248,33 @@
 		color: var(--danger-text);
 		font-size: var(--text-sm);
 	}
-	/* Phones: the box has a row of its own, with the controls under it. */
+	/* Phones: the box has a row of its own, and its controls share one row
+	   under it, Help, the dates and Clear all at its start and Search at its
+	   end, down to 320 px (a desktop browser's scrollbar too, as zoomed to
+	   400 %). So they fit: the dates are an icon's width until
+	   a range is chosen (then its text shows, and the row wraps), and
+	   Search is its word, the box already showing the icon. */
 	@media (max-width: 47.99rem) {
 		.search {
 			width: 100%;
-			justify-content: flex-end;
+			column-gap: var(--space-2xs);
 		}
 		.search > :global(.suggest) {
 			flex-basis: 100%;
+		}
+		.search :global(.when:not(.set)) {
+			width: var(--target);
+			padding: 0;
+		}
+		.search :global(.when.set) {
+			padding: 0 var(--space-sm);
+		}
+		.go {
+			margin-left: auto;
+			padding: 0 var(--space-sm);
+		}
+		.go :global(.ui-icon) {
+			display: none;
 		}
 		/* The calendar fits under the row, which is narrower than the screen. */
 		.search :global(.calendar) {
