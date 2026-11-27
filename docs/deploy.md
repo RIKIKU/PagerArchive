@@ -547,6 +547,8 @@ Before version 1.0.0, a release can break the upgrade. If so, its release notes 
 
 Instead of upgrading by hand, you can have the server do it. It's off unless you switch it on, and it's for a deployment installed as above, from the release's files (R84). It runs on the host, as the user who runs `docker compose` for PagerArchive, from that user's crontab, so it needs no root: the user only needs to be able to run Docker. PagerArchive itself never runs Docker or upgrades anything.
 
+Receiving clients on their own hosts can upgrade themselves too, to the release the server runs and never past it: [Receiving client](client.md#automatic-upgrades). A client in this install's own `compose.override.yaml`, named by a major.minor tag, moves with the server, below.
+
 **What it does, every hour:** it asks GitHub's releases API (no account or token needed) for the newest full release, ignoring drafts and pre-releases. If that's newer than the version running, it upgrades, unless:
 
 - it's a new major version, or its release notes start with "Upgrade steps": those you do by hand, as above;

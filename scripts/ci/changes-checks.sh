@@ -50,11 +50,12 @@ expect "test $STACKS" deploy/authentik/blueprints/pagerarchive.yaml
 expect "test upgrade install backups monitoring" deploy/backup/backup.sh
 expect "test monitoring" deploy/monitoring/grafana/dashboards/requests.json
 expect "images $STACKS" Dockerfile
-expect "images stack-e2e install monitoring" Dockerfile.client
+expect "images stack-e2e upgrade install monitoring" Dockerfile.client
 expect "web" scripts/e2e.sh
 expect "upgrade" scripts/a77.sh
 expect "upgrade" scripts/a90.sh
 expect "test upgrade install" deploy/auto-upgrade/auto-upgrade.sh
+expect "test upgrade" deploy/client/auto-upgrade.sh
 expect all scripts/test-releases/gh
 expect "backups" scripts/backup-checks.sh
 expect "search import" scripts/speed-report.sh

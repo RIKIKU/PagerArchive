@@ -135,7 +135,7 @@ func run(plain *slog.Logger) (err error) {
 	buf.Metrics = metrics
 	sender := &client.Sender{
 		URL: serverURL, Key: key, HTTP: &http.Client{}, Buffer: buf, Log: log,
-		MinBackoff: time.Second, MaxBackoff: time.Minute, Tracer: tracer, Metrics: metrics,
+		MinBackoff: time.Second, MaxBackoff: time.Minute, Tracer: tracer, Metrics: metrics, Version: version,
 	}
 	sendDone := make(chan struct{})
 	sendCtx, stopSend := context.WithCancel(context.Background())

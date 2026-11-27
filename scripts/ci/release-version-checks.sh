@@ -65,7 +65,7 @@ git checkout -q -B old "$here"
 sh scripts/ci/stamp-version.sh 9.4.1 >/dev/null
 git commit -qam "old-style release 9.4.1" && git tag -a v9.4.1 -m "made-up release" HEAD
 git checkout -q -B main old
-git checkout -q "$here" -- VERSION compose.yaml
+git checkout -q "$here" -- VERSION compose.yaml deploy/client/compose.yaml
 git commit -qam "the version leaves the repository: VERSION 0.0.0-dev, compose.yaml :main"
 
 # expect <what> <args> <release> <version> [<text why has>]: release-version.sh's answer.
@@ -181,6 +181,7 @@ sh scripts/ci/stamp-version.sh 9.5.0 >/dev/null
 grep -q '^ *image: ghcr.io/rikiku/pagerarchive:9.5$' compose.yaml || fail "stamped 9.5.0, compose.yaml doesn't name :9.5"
 sh scripts/ci/release-assets.sh "$work/assets" >/dev/null || fail "release-assets.sh refuses a stamped checkout"
 grep -q '^ *image: ghcr.io/rikiku/pagerarchive:9.5$' "$work/assets/compose.yaml" || fail "the attached compose.yaml doesn't name :9.5"
+grep -q '^ *image: ghcr.io/rikiku/pagerarchive-client:9.5.0$' "$work/assets/client-compose.yaml" || fail "the attached client-compose.yaml doesn't name the client by 9.5.0, exactly"
 dev=9.4.3-dev+$(git rev-parse --short=7 HEAD)
 sh scripts/ci/stamp-version.sh "$dev" >/dev/null
 grep -q '^ *image: ghcr.io/rikiku/pagerarchive:9.4$' compose.yaml || fail "stamped $dev, compose.yaml doesn't name :9.4"

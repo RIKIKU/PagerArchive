@@ -87,7 +87,7 @@ previous_from_release() {
 	url=https://github.com/RIKIKU/PagerArchive/releases/download/$1
 	if curl -fsIL -o /dev/null "$url/compose.yaml"; then
 		echo "=== A77: starting from $1's attached files"
-		for asset in $(sh scripts/ci/release-assets.sh --list); do
+		for asset in $(sh scripts/ci/release-assets.sh --list-server); do
 			curl -fsSL -o "$WORK/previous/$asset" "$url/$asset"
 		done
 	else
@@ -110,6 +110,7 @@ previous_from_here() {
 	copy_checkout "$src"
 	echo "$old" >"$src/VERSION"
 	sed -i "s#ghcr.io/rikiku/pagerarchive:$IMAGE_TAG#ghcr.io/rikiku/pagerarchive:${old%.*}#" "$src/compose.yaml"
+	sed -i -E "s#(image: ghcr\.io/rikiku/pagerarchive-client:).*#\1$old#" "$src/deploy/client/compose.yaml"
 	newest=$(ls "$src"/internal/store/migrations/*.sql | sort | tail -n 1)
 	rm "$newest"
 	echo "--- without the migration $(basename "$newest")"

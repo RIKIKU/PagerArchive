@@ -103,6 +103,10 @@ type Client struct {
 	RevokedAt       *time.Time
 	LastSeenAt      *time.Time
 	ClockAheadSince *time.Time
+	Version         *string
+	BehindSince     *time.Time
+	AutoUpgrade     []byte
+	AutoUpgradeAt   *time.Time
 }
 
 type Delivery struct {

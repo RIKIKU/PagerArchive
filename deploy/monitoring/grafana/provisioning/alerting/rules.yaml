@@ -53,6 +53,54 @@ groups:
             connection: the "Clients" dashboard (in the PagerArchive folder) shows whether
             it still reads lines and whether its sends fail.
 
+      # R14b, R14c (owner, 2026-11-27, after a client was found two versions
+      # behind; ADR 0054): a client has run an older release than the
+      # server's for more than a day. The server works out since when, from
+      # the version each client says it runs, and keeps it across its own
+      # restarts. One alert per client; it clears when the client runs the
+      # server's version (its host's automatic upgrades do that within the
+      # hour, docs/client.md). A client that never said its version (one
+      # from before R14c) has no series: nothing fires for it.
+      - uid: pa-client-behind
+        title: Client behind the server
+        condition: behind
+        data:
+          - refId: seconds
+            relativeTimeRange: {from: 300, to: 0}
+            datasourceUid: prometheus
+            model:
+              refId: seconds
+              instant: true
+              range: false
+              expr: time() - max by (client) (pagerarchive_client_behind_since_timestamp_seconds{job="pagerarchive"})
+          - refId: behind
+            datasourceUid: __expr__
+            model:
+              refId: behind
+              type: threshold
+              expression: seconds
+              conditions:
+                - evaluator:
+                    type: gt
+                    # THE THRESHOLD SETTING: seconds a client may run an
+                    # older release than the server's before it alerts (a
+                    # day). Change it here and restart Grafana.
+                    params: [86400]
+        noDataState: OK
+        execErrState: Error
+        for: 0s
+        labels:
+          severity: warning
+        annotations:
+          summary: "Client {{ $labels.client }} has run an older release than the server's for {{ humanizeDuration $values.seconds.Value }}"
+          description: >-
+            The "Clients" dashboard (in the PagerArchive folder) shows the
+            client's version, the server's, and what its host's automatic
+            upgrades last did. Switched on, they upgrade it within the hour;
+            if they failed, the client host's ./client-auto-upgrade.sh status
+            says why (docs/client.md, "Automatic upgrades"). Otherwise upgrade
+            it by hand to the release the server runs.
+
       # R86a: the last backup failed, or the last good one is more than 36 hours
       # old. The API works that out, as Administration shows the same thing.
       # It clears after the next good backup. While the API is down there's no

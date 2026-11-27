@@ -150,13 +150,23 @@ func Read(path string, now time.Time) Status {
 	if errors.Is(err, fs.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
 		return off
 	}
-	var f file
-	if err == nil {
-		err = json.Unmarshal(data, &f)
-	}
 	if err != nil {
-		return Status{State: StateFailed, Run: "idle", FailedVersions: []string{}, History: []Done{},
-			LastFailure: &Failure{Reason: "the automatic upgrades' status can't be read"}}
+		return unreadable()
+	}
+	return Parse(data, now)
+}
+
+func unreadable() Status {
+	return Status{State: StateFailed, Run: "idle", FailedVersions: []string{}, History: []Done{},
+		LastFailure: &Failure{Reason: "the automatic upgrades' status can't be read"}}
+}
+
+// Parse is the state at now of a status file's contents: the server's own
+// (Read), or a client host's, as its report brought it (R84p).
+func Parse(data []byte, now time.Time) Status {
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		return unreadable()
 	}
 	s := Status{
 		Run: f.State, RunningSince: at(f.RunningSince), EnabledAt: at(f.EnabledAt), DisabledAt: at(f.DisabledAt),
@@ -213,6 +223,45 @@ var Runs = []string{"idle", "checking", "verifying", "backing-up", "upgrading", 
 
 // Steps are where an upgrade can fail.
 var Steps = []string{"upgrade", "health"}
+
+// Results are what a check's result can be, as the scripts write it.
+var Results = []string{"in-progress", "up-to-date", "upgraded", "skipped", "refused", "error", "rolled-back", "rollback-failed", "interrupted", "cleared"}
+
+// Sanitize is a client host's status file (R84p) cut down to what the server
+// keeps: versions, known words, times and counts. Its notes, failure reasons
+// and history are the host's own text, so they never reach the server's
+// database, a label or a page. Anything that isn't a status file's JSON
+// object is refused.
+func Sanitize(data []byte) ([]byte, error) {
+	var f file
+	if err := json.Unmarshal(data, &f); err != nil {
+		return nil, err
+	}
+	if f.State != "" && oneOf(f.State, Runs) == "" {
+		f.State = "idle"
+	}
+	clean := file{
+		Enabled: f.Enabled, EnabledAt: f.EnabledAt, DisabledAt: f.DisabledAt, State: f.State, RunningSince: f.RunningSince,
+		TargetVersion: version(f.TargetVersion), LastCheckAt: f.LastCheckAt, LastCheckResult: oneOf(f.LastCheckResult, Results),
+		RunningVersion: version(f.RunningVersion), LatestVersion: version(f.LatestVersion), Failures: f.Failures, Rollbacks: f.Rollbacks,
+		FailedVersions: []string{},
+	}
+	for _, v := range f.FailedVersions {
+		if v = version(v); v != "" && len(clean.FailedVersions) < 20 {
+			clean.FailedVersions = append(clean.FailedVersions, v)
+		}
+	}
+	if u := f.LastUpgrade; u != nil {
+		clean.LastUpgrade = u
+		u.From, u.To = version(u.From), version(u.To)
+	}
+	if l := f.LastFailure; l != nil {
+		l.From, l.To, l.Step = version(l.From), version(l.To), oneOf(l.Step, Steps)
+		l.Reason, l.RollbackError = "", ""
+		clean.LastFailure = l
+	}
+	return json.Marshal(clean)
+}
 
 var versionRE = regexp.MustCompile(`^[0-9A-Za-z.+-]{1,64}$`)
 

@@ -22,6 +22,15 @@
 # the real pinned GitHub CLI verifies the real latest release (auto-upgrade.sh
 # verify), so the stand-in isn't the only thing that ever verified.
 #
+# A155 runs in the same stack: a receiving client on its own "host" (its own
+# folder and compose project, this checkout's client files, the previous
+# release's client image) with its automatic upgrades switched on. With the
+# server still on the previous release, which can't say its version, nothing
+# is installed; with the server on N, N's client (published first unable to
+# start) fails its health check and is rolled back; republished working and
+# retried, it's installed; with B out but the server on N, the client stays
+# on N. The server's metrics have the client's version and each run.
+#
 # usage: scripts/a90.sh [-o OUT]
 # needs: Docker with compose, Go, curl. Uses ports 8080, 9000, 15000, 15080.
 set -eu
@@ -50,6 +59,10 @@ RELEASES_ADDR=127.0.0.1:15080
 SERVER=""
 POSTER=""
 stack_compose() { in_folder "$DIR" "$@"; }
+# A155: the receiving client's own folder and compose project, on its "host".
+CDIR=$WORK/client
+CLIENT_PROJECT="pa-a155-$$"
+client_compose() { (cd "$CDIR" && COMPOSE_PROJECT_NAME="$CLIENT_PROJECT" docker compose "$@"); }
 
 cleanup() {
 	[ -z "$POSTER" ] || kill "$POSTER" 2>/dev/null || true
@@ -57,6 +70,10 @@ cleanup() {
 	stack_compose logs --no-color api db backup >"$OUT/a90-logs.txt" 2>&1 || true
 	cp "$DIR/auto-upgrade/status/auto-upgrade.log" "$OUT/auto-upgrade.log" 2>/dev/null || true
 	cp "$DIR/auto-upgrade/status/status.json" "$OUT/status.json" 2>/dev/null || true
+	cp "$CDIR/auto-upgrade/status/auto-upgrade.log" "$OUT/client-auto-upgrade.log" 2>/dev/null || true
+	cp "$CDIR/auto-upgrade/status/status.json" "$OUT/client-status.json" 2>/dev/null || true
+	[ ! -d "$CDIR" ] || client_compose down -v --remove-orphans >/dev/null 2>&1 || true
+	docker rmi -f "pa-a155-client:${N:-none}" "pa-a155-client-bad:${N:-none}" >/dev/null 2>&1 || true
 	stack_compose down -v --remove-orphans >/dev/null 2>&1 || true
 	registry_stop
 	rm -rf "$WORK" 2>/dev/null || true
@@ -84,7 +101,7 @@ echo "=== A90: $PREV installed; then N $N and B $B built here, pre-release $P an
 
 registry_start
 mkdir -p "$WORK/previous"
-for asset in $(sh scripts/ci/release-assets.sh --list); do
+for asset in $(sh scripts/ci/release-assets.sh --list-server); do
 	curl -fsSL -o "$WORK/previous/$asset" "https://github.com/RIKIKU/PagerArchive/releases/download/$previous/$asset"
 done
 install_folder "$DIR" "$WORK/previous"
@@ -150,8 +167,10 @@ release() {
 	_v=$1 _src=$2
 	echo "$_v" >"$_src/VERSION"
 	sed -i "s#ghcr.io/rikiku/pagerarchive:$IMAGE_TAG#ghcr.io/rikiku/pagerarchive:${_v%.*}#" "$_src/compose.yaml"
+	sed -i -E "s#(image: ghcr\.io/rikiku/pagerarchive-client:).*#\1$_v#" "$_src/deploy/client/compose.yaml"
 	sh "$_src/scripts/ci/release-assets.sh" "$REL/files/v$_v" >/dev/null
 	use_registry "$REL/files/v$_v/compose.yaml"
+	use_registry "$REL/files/v$_v/client-compose.yaml"
 	docker build -q -t "$REGISTRY/rikiku/pagerarchive:$_v" -t "$REGISTRY/rikiku/pagerarchive:${_v%.*}" "$_src" >/dev/null
 	docker push -q "$REGISTRY/rikiku/pagerarchive:$_v" >/dev/null
 	docker push -q "$REGISTRY/rikiku/pagerarchive:${_v%.*}" >/dev/null
@@ -192,9 +211,27 @@ releases_json() {
 	echo "]"
 }
 
-echo "--- building N ($N), B ($B, with an extra migration) and P ($P)"
+# release_client <version> <source folder>: A155's client image for a
+# release, built from the folder release() stamped. It's kept here as
+# pa-a155-client:<version>; what's published first, and printed (its digest),
+# is one that can't start: it prints its version and exits, so a client host
+# that installs it restarts it over and over.
+release_client() {
+	_v=$1 _src=$2
+	docker build -q -f "$_src/Dockerfile.client" -t "pa-a155-client:$_v" "$_src" >/dev/null
+	printf 'FROM pa-a155-client:%s\nENTRYPOINT ["/usr/local/bin/pagerarchive-client", "version"]\n' "$_v" |
+		docker build -q -t "pa-a155-client-bad:$_v" - >/dev/null
+	docker tag "pa-a155-client-bad:$_v" "$REGISTRY/rikiku/pagerarchive-client:$_v"
+	docker push -q "$REGISTRY/rikiku/pagerarchive-client:$_v" >/dev/null
+	_d=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$REGISTRY/rikiku/pagerarchive-client:$_v" | head -n 1)
+	docker rmi -f "$REGISTRY/rikiku/pagerarchive-client:$_v" >/dev/null
+	echo "${_d#*@}"
+}
+
+echo "--- building N ($N), B ($B, with an extra migration) and P ($P), and N's client"
 copy_checkout "$WORK/n-src"
 N_DIGEST=$(release "$N" "$WORK/n-src")
+N_CLIENT_BAD=$(release_client "$N" "$WORK/n-src")
 copy_checkout "$WORK/b-src"
 cat >"$WORK/b-src/internal/store/migrations/99999_a90_bad.sql" <<'SQL'
 -- +goose Up
@@ -216,6 +253,15 @@ au() {
 }
 log_has() { grep -q "\"step\":\"$1\",\"result\":\"$2\"" "$DIR/auto-upgrade/status/auto-upgrade.log"; }
 st() { "$DIR/auto-upgrade/bin/jq-1.8.2" -r "$1" "$DIR/auto-upgrade/status/status.json"; }
+# A155: the client host's automatic upgrades, as its cron line runs them.
+cau() {
+	(cd "$CDIR" && env -i PATH="$PATH" HOME="$HOME" COMPOSE_PROJECT_NAME="$CLIENT_PROJECT" ${DOCKER_HOST:+DOCKER_HOST="$DOCKER_HOST"} \
+		AUTO_UPGRADE_API="http://$RELEASES_ADDR/repos/RIKIKU/PagerArchive" AUTO_UPGRADE_GH="$REPO/scripts/test-releases/gh" \
+		AUTO_UPGRADE_IMAGE_PREFIX="$REGISTRY/rikiku/" AUTO_UPGRADE_START_TIMEOUT=60 AUTO_UPGRADE_HEALTH_WAIT=20 \
+		bash client-auto-upgrade.sh "$@")
+}
+clog_has() { grep -q "\"step\":\"$1\",\"result\":\"$2\"" "$CDIR/auto-upgrade/status/auto-upgrade.log"; }
+cst() { "$CDIR/auto-upgrade/bin/jq-1.8.2" -r "$1" "$CDIR/auto-upgrade/status/status.json"; }
 status=0
 
 echo "=== A90: switched on"
@@ -223,6 +269,56 @@ au enable --no-schedule
 grep -q '^AUTO_UPGRADE_STATUS_DIR=./auto-upgrade/status$' "$DIR/.env" || fail "enable didn't set AUTO_UPGRADE_STATUS_DIR"
 stack_compose up -d
 stack_wait_ready
+
+# ── A155: a receiving client on its own host ───────────────────────────────
+# The documented install (docs/client.md): this checkout's client files, as
+# the next release attaches them, in a folder of their own, running the
+# previous release's client image (from the registry, as GHCR has it). The
+# test's own override only lets it run here: the host's network (to reach the
+# API on 127.0.0.1), stdin held open (a client reading stdin, no radio) and no
+# dongle.
+echo "=== A155: a client at $PREV on its own host, its automatic upgrades switched on"
+docker pull -q "ghcr.io/rikiku/pagerarchive-client:$PREV" >/dev/null
+docker tag "ghcr.io/rikiku/pagerarchive-client:$PREV" "$REGISTRY/rikiku/pagerarchive-client:$PREV"
+docker push -q "$REGISTRY/rikiku/pagerarchive-client:$PREV" >/dev/null
+docker rmi -f "$REGISTRY/rikiku/pagerarchive-client:$PREV" >/dev/null
+mkdir -p "$CDIR"
+cp deploy/client/compose.yaml "$CDIR/compose.yaml"
+sed -i -E "s#^( *image: ).*pagerarchive-client:.*#\1$REGISTRY/rikiku/pagerarchive-client:$PREV#" "$CDIR/compose.yaml"
+cp deploy/client/.env.example "$CDIR/.env"
+cp deploy/client/auto-upgrade.sh "$CDIR/client-auto-upgrade.sh"
+cat >"$WORK/client-vars" <<VARS
+SERVER_URL=http://127.0.0.1:8080
+CLIENT_ID=a155-receiver
+RADIO_FREQUENCY=
+ALLOW_PLAIN_HTTP=true
+VARS
+fill_env "$CDIR/.env" "$WORK/client-vars"
+cat >"$CDIR/compose.override.yaml" <<'YAML'
+services:
+  client:
+    network_mode: host
+    stdin_open: true
+    devices: !reset []
+YAML
+stack_compose exec -T api /usr/local/bin/pagerarchive client add a155-receiver "A155 receiver" | tail -n 1 >"$CDIR/key"
+chmod 600 "$CDIR/key"
+client_compose up -d
+client_version_now() { client_compose exec -T client /usr/local/bin/pagerarchive-client --version 2>/dev/null | sed 's/^pagerarchive-client //' | tr -d '\r'; }
+_i=0
+until [ "$(client_version_now)" = "$PREV" ] || [ $_i -gt 30 ]; do
+	sleep 2
+	_i=$((_i + 1))
+done
+[ "$(client_version_now)" = "$PREV" ] || fail "the client didn't start at $PREV"
+cau enable --no-schedule || fail "the client's automatic upgrades didn't switch on"
+[ "$(cst .enabled)" = true ] || fail "the client's status isn't enabled"
+
+echo "=== A155: the server runs $PREV, from before client upgrades: the client isn't upgraded"
+if cau run; then fail "a client was upgraded, or checked, without its server's version"; fi
+[ "$(cst .last_check_result)" = error ] || fail "the client's check says $(cst .last_check_result)"
+[ "$(client_version_now)" = "$PREV" ] || fail "the client is $(client_version_now) with a server that can't say its version"
+cst .last_check_note
 
 echo "=== A90: verification fails: refused"
 attest "$N" compose.yaml
@@ -238,7 +334,7 @@ if GH=/nonexistent/gh au run; then fail "an upgrade went ahead with no GitHub CL
 tail -n 1 "$DIR/auto-upgrade/status/auto-upgrade.log"
 
 echo "=== A90: N attested: installed while pages arrive; P and D ignored"
-attest "$N" pagerarchive-config.tar.gz monitoring-compose.yaml
+attest "$N" pagerarchive-config.tar.gz monitoring-compose.yaml client-compose.yaml client-auto-upgrade.sh
 echo "$N_DIGEST" >>"$REL/attested"
 poster_start
 before=$(q "SELECT count(*) FROM messages")
@@ -271,6 +367,62 @@ stack_compose exec -T backup sh -c 'ls /backups/pre-upgrade/*/' | grep -q 'pager
 au run || fail "the run after the upgrade failed"
 [ "$(st .last_check_result)" = up-to-date ] || fail "after the upgrade the check says $(st .last_check_result), not up-to-date: P or D was taken"
 poster_stop
+
+echo "=== A155: the server runs $N; the client's $N fails its health check: rolled back to $PREV"
+# N's client image, as published, can't start (it exits at once), and is attested.
+echo "$N_CLIENT_BAD" >>"$REL/attested"
+started=$(date +%s)
+if cau run; then fail "the client's upgrade to a client that can't start passed"; fi
+echo "--- the run took $(($(date +%s) - started)) s"
+[ "$(client_version_now)" = "$PREV" ] || fail "the client is $(client_version_now) after the rollback, not $PREV"
+for step in "check newer" "verify ok" "backup ok" "upgrade ok" "health failed" "rollback started" "rollback ok"; do
+	clog_has $step || fail "no '$step' in the client's log"
+done
+grep -E '"step":"(health|rollback)"' "$CDIR/auto-upgrade/status/auto-upgrade.log" | tail -n 3
+[ "$(cst .last_failure.to)" = "$N" ] && [ "$(cst .last_failure.rolled_back)" = true ] || fail "the client's last failure: $(cst .last_failure)"
+[ "$(cst '.failed_versions | index("'"$N"'")')" != null ] || fail "$N isn't marked failed on the client"
+grep -q "pagerarchive-client:$PREV\$" "$CDIR/compose.yaml" || fail "the client's compose.yaml isn't $PREV's after the rollback"
+metrics=$(curl -fsS -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics)
+for want in "pagerarchive_client_auto_upgrade_failing{client=\"a155-receiver\"} 1" "pagerarchive_client_version_info{client=\"a155-receiver\",version=\"$PREV\"} 1" \
+	"pagerarchive_client_auto_upgrade_last_check_result{client=\"a155-receiver\",result=\"rolled-back\"} 1" "pagerarchive_client_behind_since_timestamp_seconds{client=\"a155-receiver\"}"; do
+	printf '%s\n' "$metrics" | grep -qF "$want" || fail "the server's metrics after the client's rollback: no $want"
+done
+cau run || fail "the client's run after its rollback failed"
+[ "$(cst .last_check_result)" = skipped ] && [ "$(client_version_now)" = "$PREV" ] || fail "$N was tried again on the client: $(cst .last_check_result)"
+
+echo "=== A155: $N's client republished, working: retry, and the client is upgraded to $N"
+docker tag "pa-a155-client:$N" "$REGISTRY/rikiku/pagerarchive-client:$N"
+docker push -q "$REGISTRY/rikiku/pagerarchive-client:$N" >/dev/null
+N_CLIENT=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$REGISTRY/rikiku/pagerarchive-client:$N" | head -n 1)
+docker rmi -f "$REGISTRY/rikiku/pagerarchive-client:$N" >/dev/null
+echo "${N_CLIENT#*@}" >>"$REL/attested"
+cau retry "$N"
+# While it runs, the server's metrics, as the dashboard reads them: a run in
+# progress, its step and its target (R84p).
+(while :; do
+	curl -fsS -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics 2>/dev/null |
+		grep -E '^pagerarchive_client_auto_upgrade_(run|target_info)\{client="a155-receiver"' || true
+	sleep 0.5
+done) >"$WORK/client-run-metrics.txt" &
+WATCHER=$!
+cau run || fail "the client's upgrade to $N failed"
+kill "$WATCHER" 2>/dev/null || true
+wait "$WATCHER" 2>/dev/null || true
+[ "$(client_version_now)" = "$N" ] || fail "the client is $(client_version_now), not $N"
+[ "$(cst .last_upgrade.to)" = "$N" ] && [ "$(cst .last_check_result)" = upgraded ] || fail "the client's status says $(cst .last_check_result) to $(cst .last_upgrade.to)"
+grep -q "pagerarchive-client:$N\$" "$CDIR/compose.yaml" || fail "the client's compose.yaml isn't $N's"
+cmp -s "$CDIR/client-auto-upgrade.sh" "$REL/files/v$N/client-auto-upgrade.sh" || fail "the client's script isn't $N's"
+grep -q "step=\"health-check\"" "$WORK/client-run-metrics.txt" && grep -q "to=\"$N\"" "$WORK/client-run-metrics.txt" ||
+	fail "the server's metrics never had the client's run going, with $N as its target: $(sort -u "$WORK/client-run-metrics.txt" | tr '\n' ' ')"
+echo "--- during the run: $(sort -u "$WORK/client-run-metrics.txt" | tr '\n' ' ')"
+metrics=$(curl -fsS -H "Authorization: Bearer $METRICS_TOKEN" http://127.0.0.1:8080/metrics)
+for want in "pagerarchive_client_auto_upgrade_failing{client=\"a155-receiver\"} 0" "pagerarchive_client_version_info{client=\"a155-receiver\",version=\"$N\"} 1" \
+	"pagerarchive_client_auto_upgrade_last_success_timestamp_seconds{client=\"a155-receiver\",from=\"$PREV\",to=\"$N\"}"; do
+	printf '%s\n' "$metrics" | grep -qF "$want" || fail "the server's metrics after the client's upgrade: no $want"
+done
+for not in 'pagerarchive_client_behind_since_timestamp_seconds{client="a155-receiver"}' 'pagerarchive_client_auto_upgrade_run{client="a155-receiver"'; do
+	if printf '%s\n' "$metrics" | grep -qF "$not"; then fail "the server's metrics after the client's upgrade still have $not"; fi
+done
 
 echo "=== A90: B fails its health check: rolled back, the database restored"
 attest "$B" compose.yaml pagerarchive-config.tar.gz monitoring-compose.yaml
@@ -305,8 +457,16 @@ au run || fail "the run after the rollback failed"
 [ "$(st .last_check_result)" = skipped ] || fail "the check says $(st .last_check_result)"
 st .last_check_note
 
+echo "=== A155: $B is out, but the server runs $N: the client stays at $N"
+cau run || fail "the client's check with $B out failed"
+[ "$(client_version_now)" = "$N" ] || fail "the client is $(client_version_now): it went past its server"
+[ "$(cst .last_check_result)" = up-to-date ] || fail "the client's check says $(cst .last_check_result)"
+cst .last_check_note | grep -q "$B is out: the client waits for its server ($N)" || fail "the client's note: $(cst .last_check_note)"
+cst .last_check_note
+
 echo "=== A90: no page text in the log or the status"
-if grep -q 'A90 PAGE' "$DIR/auto-upgrade/status/auto-upgrade.log" "$DIR/auto-upgrade/status/status.json"; then fail "page text in the log or status"; fi
+if grep -q 'A90 PAGE' "$DIR/auto-upgrade/status/auto-upgrade.log" "$DIR/auto-upgrade/status/status.json" \
+	"$CDIR/auto-upgrade/status/auto-upgrade.log" "$CDIR/auto-upgrade/status/status.json"; then fail "page text in the log or status"; fi
 
 echo "=== A90: the real GitHub CLI verifies the real latest release, $previous"
 (cd "$DIR" && env -i PATH="$PATH" HOME="$HOME" COMPOSE_PROJECT_NAME="$COMPOSE_PROJECT_NAME" ${AUTO_UPGRADE_GITHUB_TOKEN:+AUTO_UPGRADE_GITHUB_TOKEN="$AUTO_UPGRADE_GITHUB_TOKEN"} \

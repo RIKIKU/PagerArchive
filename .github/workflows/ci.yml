@@ -625,7 +625,7 @@ jobs:
   # every pull request and every build of main, so a change that breaks the
   # upgrade is caught before a release is cut (ADR 0024). Needs the v* tags.
   upgrade:
-    name: Upgrade from the latest release (A77, A90)
+    name: Upgrade from the latest release (A77, A90, A155)
     needs: [stamp, changes]
     if: needs.changes.outputs.upgrade == 'true'
     runs-on: ubuntu-24.04
@@ -646,7 +646,7 @@ jobs:
       # The previous release's images: a77.sh pulls them the same way, once it
       # knows which release that is.
       - name: Pull the images (retried)
-        run: sh scripts/ci/pull-images.sh Dockerfile compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
+        run: sh scripts/ci/pull-images.sh Dockerfile Dockerfile.client compose.yaml deploy/test/compose.yaml scripts/install-lib.sh
       - name: A77
         run: sh scripts/a77.sh -o a77-results
       # A90: the same previous release switched to automatic upgrades, with a
