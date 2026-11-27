@@ -314,10 +314,18 @@ done
 cau enable --no-schedule || fail "the client's automatic upgrades didn't switch on"
 [ "$(cst .enabled)" = true ] || fail "the client's status isn't enabled"
 
-echo "=== A155: the server runs $PREV, from before client upgrades: the client isn't upgraded"
-if cau run; then fail "a client was upgraded, or checked, without its server's version"; fi
-[ "$(cst .last_check_result)" = error ] || fail "the client's check says $(cst .last_check_result)"
-[ "$(client_version_now)" = "$PREV" ] || fail "the client is $(client_version_now) with a server that can't say its version"
+echo "=== A155: the server runs $PREV while $N is out: the client isn't upgraded"
+# $PREV is the latest release. One from before client upgrades can't say its
+# version (404): the check is an error. One from after says $PREV: the check
+# is up to date, the client waiting for its server. Either way the client
+# stays on $PREV.
+if cau run; then
+	[ "$(cst .last_check_result)" = up-to-date ] || fail "the check passed but says $(cst .last_check_result)"
+	cst .last_check_note | grep -q "waits for its server" || fail "the check passed without waiting for its server: $(cst .last_check_note)"
+else
+	[ "$(cst .last_check_result)" = error ] || fail "the client's check says $(cst .last_check_result)"
+fi
+[ "$(client_version_now)" = "$PREV" ] || fail "the client is $(client_version_now) while its server runs $PREV"
 cst .last_check_note
 
 echo "=== A90: verification fails: refused"
