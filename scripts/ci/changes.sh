@@ -93,8 +93,8 @@ area_jobs() {
 	# Automatic upgrades' script: A90 (in the upgrade job), the archive's checks,
 	# and A78, which installs from the archive.
 	auto-upgrade) echo "test upgrade install" ;;
-	# A client on its own host and its automatic upgrades (ADR 0053): the root
-	# package's checks of the files, and A153 in the upgrade job.
+	# A client on its own host and its automatic upgrades (ADR 0054): the root
+	# package's checks of the files, and A155 in the upgrade job.
 	client-deploy) echo "test upgrade" ;;
 	# The example monitoring stack, and the root package's and telemetry's checks of it.
 	monitoring) echo "test monitoring" ;;

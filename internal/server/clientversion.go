@@ -17,7 +17,7 @@ import (
 )
 
 // Client versions (R14b, R14c) and client hosts' automatic upgrades (R84n-R84p,
-// ADR 0053). A client says its version in its User-Agent
+// ADR 0054). A client says its version in its User-Agent
 // (pagerarchive-client/<version>) on every post, and its host's automatic
 // upgrades say it again in their report. The server keeps the last one and
 // since when it's been an older release than its own ("behind"), for the

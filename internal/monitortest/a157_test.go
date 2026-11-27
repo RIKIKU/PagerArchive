@@ -11,7 +11,7 @@ import (
 	"time"
 )
 
-// A155 (R14b, R14c, R84p; ADR 0053): with the example stack scraping
+// A157 (R14b, R14c, R84p; ADR 0054): with the example stack scraping
 // PagerArchive, a client host's automatic upgrades' report (a run in its
 // health check, for a target release) and the client's version reach
 // Prometheus through the API's metrics, and the Clients dashboard shows them,
@@ -20,8 +20,8 @@ import (
 // client, through the same contact point as every other alert, and it
 // resolves when the client is no longer behind. Since when it's been behind
 // is moved back in the database, as A65 moves a last-seen time; the API's
-// own working out of it is A154, and the client host's script A153.
-func TestA155ClientVersionsInGrafana(t *testing.T) {
+// own working out of it is A156, and the client host's script A155.
+func TestA157ClientVersionsInGrafana(t *testing.T) {
 	s := newStack(t)
 	hook := &webhook{}
 	l, err := net.Listen("tcp", os.Getenv("PA_MON_WEBHOOK_ADDR"))
@@ -36,7 +36,7 @@ func TestA155ClientVersionsInGrafana(t *testing.T) {
 	behind, current := "mon-behind-"+run, "mon-current-"+run
 	keys := map[string]string{}
 	for _, id := range []string{behind, current} {
-		key, err := s.st.AddClient(ctx, id, "A155 "+id)
+		key, err := s.st.AddClient(ctx, id, "A157 "+id)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -112,7 +112,7 @@ func TestA155ClientVersionsInGrafana(t *testing.T) {
 	if len(server["A"]) != 1 || server["A"][0].labels["version"] == "" {
 		t.Errorf("dashboard: the server's version %+v, want one series with its version", server)
 	}
-	t.Logf("A155: the dashboard shows %s at 0.0.1, behind for 25 hours, its host's run in its health check; the server runs %s", behind, server["A"][0].labels["version"])
+	t.Logf("A157: the dashboard shows %s at 0.0.1, behind for 25 hours, its host's run in its health check; the server runs %s", behind, server["A"][0].labels["version"])
 
 	// The alert: for the client behind for more than a day only.
 	firedAt, fired := time.Time{}, false
@@ -122,7 +122,7 @@ func TestA155ClientVersionsInGrafana(t *testing.T) {
 	}) {
 		t.Fatalf(`no "Client behind the server" for %s within 2 minutes; got %d notifications`, behind, len(hook.got))
 	}
-	t.Logf(`A155: "Client behind the server" fired for %s %v after its version reached Prometheus`, behind, firedAt.Sub(since).Round(time.Second))
+	t.Logf(`A157: "Client behind the server" fired for %s %v after its version reached Prometheus`, behind, firedAt.Sub(since).Round(time.Second))
 	time.Sleep(35 * time.Second)
 	if _, wrong := hook.find(since, "Client behind the server", "firing", current); wrong {
 		t.Errorf(`"Client behind the server" fired for %s, behind for only an hour`, current)
@@ -136,7 +136,7 @@ func TestA155ClientVersionsInGrafana(t *testing.T) {
 	if !waitFor(3*time.Minute, func() bool { _, ok := hook.find(cleared, "Client behind the server", "resolved", behind); return ok }) {
 		t.Fatalf(`"Client behind the server" didn't resolve for %s within 3 minutes of it catching up`, behind)
 	}
-	t.Logf(`A155: "Client behind the server" resolved for %s once it caught up`, behind)
+	t.Logf(`A157: "Client behind the server" resolved for %s once it caught up`, behind)
 	for _, id := range []string{behind, current} {
 		_, _ = s.st.Pool.Exec(ctx, `UPDATE clients SET revoked_at = now(), behind_since = NULL WHERE id = $1`, id)
 	}

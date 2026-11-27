@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Automatic upgrades for a receiving client on its own host (SPEC.md R84n-R84p,
-# ADR 0053; docs/client.md, "Automatic upgrades"). Off unless switched on.
+# ADR 0054; docs/client.md, "Automatic upgrades"). Off unless switched on.
 # Attached to every release as client-auto-upgrade.sh, and kept beside the
 # client's compose.yaml, .env and key; it runs on the client's host, as the
 # user who runs `docker compose` for the client, from cron (or a systemd user
@@ -215,7 +215,7 @@ host_arch() {
 
 # tools: jq, and the GitHub CLI for `gh attestation verify`, each a pinned
 # release for this host's architecture, checked against its published
-# checksum (ADR 0030, ADR 0053). No sign-in: the attestations come from
+# checksum (ADR 0030, ADR 0054). No sign-in: the attestations come from
 # GitHub's API and are verified offline against Sigstore's public roots.
 tools() {
 	local bin=$HOME_AU/bin arch gh_sha jq_sha

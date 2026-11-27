@@ -1,6 +1,6 @@
 -- +goose Up
 -- R14c, R84p (owner, 2026-11-27: "I think we should have an automated
--- upgrade for this as well"; ADR 0053). What the server knows of each
+-- upgrade for this as well"; ADR 0054). What the server knows of each
 -- receiving client's version and its automatic upgrades:
 --
 -- clients.version: the version the client last said it runs (its

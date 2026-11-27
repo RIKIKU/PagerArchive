@@ -122,7 +122,7 @@
 		ev.preventDefault();
 		error = '';
 		const noPages = selects === 'pages' && capcodes.length === 0 && chosenAliases.length === 0;
-		if (!fc.check(ev.currentTarget as HTMLFormElement, { [f('pages')]: noPages && 'Nothing chosen yet: choose at least one capcode or alias.' })) return;
+		if (!fc.check(ev.currentTarget as HTMLFormElement, { [f('pages')]: noPages && 'None chosen yet. Choose at least one capcode or alias.' })) return;
 		saving = true;
 		const req: IntegrationRequest = {
 			name,
@@ -163,7 +163,7 @@
 
 <form class="integration-form" novalidate onsubmit={submit} oninput={fc.cleared} onchange={fc.cleared} aria-labelledby="{id}-heading">
 	<h2 id="{id}-heading">{existing ? `Edit “${existing.name}”` : 'New integration'}</h2>
-	<FormSummary check={fc} />
+	<FormSummary check={fc} level={3} />
 
 	<div class="field">
 		<label for={f('name')}>Name <span class="required">required</span></label>

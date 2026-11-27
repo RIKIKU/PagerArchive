@@ -625,7 +625,7 @@ jobs:
   # every pull request and every build of main, so a change that breaks the
   # upgrade is caught before a release is cut (ADR 0024). Needs the v* tags.
   upgrade:
-    name: Upgrade from the latest release (A77, A90, A153)
+    name: Upgrade from the latest release (A77, A90, A155)
     needs: [stamp, changes]
     if: needs.changes.outputs.upgrade == 'true'
     runs-on: ubuntu-24.04
@@ -805,6 +805,16 @@ jobs:
         run: |
           docker run --rm pagerarchive-client:ci --version | tee client-version.txt
           test "$(cat client-version.txt)" = "pagerarchive-client $PA_VERSION"
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+      - name: A153, the client recovers its radio by itself (client image, stand-in rtl_fm)
+        # R13b: a quiet channel, a hang after "cb transfer status", a stall,
+        # and a dongle missing for a moment and for longer, on the image's
+        # own multimon-ng; about 7 minutes.
+        env:
+          PA_RADIO_CLIENT_IMAGE: pagerarchive-client:ci
+        run: go test -count=1 -v -timeout 15m -run TestA153 ./internal/radiotest/
       - name: Build server image (amd64 only)
         if: matrix.server
         run: docker build -t pagerarchive:ci .

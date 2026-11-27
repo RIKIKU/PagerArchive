@@ -87,7 +87,7 @@ check_compose_image() {
 # client_image_tag_for <version>: the tag the client's compose.yaml
 # (deploy/client/compose.yaml, attached as client-compose.yaml) names the
 # client's image by: a release's own version, exactly, as a client is never
-# newer than its server (R14b, ADR 0053); main for any other build.
+# newer than its server (R14b, ADR 0054); main for any other build.
 client_image_tag_for() {
 	if is_version "$1"; then
 		echo "$1"

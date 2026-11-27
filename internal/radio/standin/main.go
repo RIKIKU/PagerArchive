@@ -15,10 +15,24 @@
 //	           is removed
 //	message    writes this file's first line to stderr once, then is
 //	           removed
+//	quiet      while it exists, no pages are sent: hiss only, as on a quiet
+//	           channel
+//	hang       as rtl_fm does when the dongle drops off USB (R13b): says
+//	           "cb transfer status: 5, canceling..." 15 times, then writes
+//	           nothing more and ignores SIGTERM and SIGINT, until killed;
+//	           removed when it's taken, so the next start works
+//	stall      writes nothing more from now on, says nothing, and still
+//	           stops when asked; removed when it's taken
+//	gone       while it exists, a start finds no dongle: says what rtl_fm
+//	           says then and exits 1
+//	unopenable while it exists, a start finds a dongle it can't open, as in
+//	           a container started before the dongle came back: says what
+//	           rtl_fm says then and exits 1
 //
 // and it keeps there:
 //
 //	args       the arguments it was started with
+//	starts     a line for each time it was started
 //	pages      each page it has written, "capcode text", one a line
 //	written    the bytes of audio written so far and the seconds spent
 //	           writing (not paused)
@@ -35,6 +49,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -79,6 +94,23 @@ func main() {
 		}
 	}
 	put("args", strings.Join(os.Args[1:], " ")+"\n")
+	if f, err := os.OpenFile(filepath.Join(dir, "starts"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+		fmt.Fprintln(f, time.Now().UTC().Format(time.RFC3339Nano))
+		f.Close()
+	}
+	has := func(name string) bool { _, err := os.Stat(filepath.Join(dir, name)); return err == nil }
+	// rtl_fm 2.0.2's messages with no dongle, and with one it can't open (in
+	// a container without the dongle's device node: "usb_open error -4").
+	if has("gone") {
+		fmt.Fprintln(os.Stderr, "No supported devices found.")
+		os.Exit(1)
+	}
+	if has("unopenable") {
+		for _, l := range []string{"Found 1 device(s):", "  0:  , , SN: ", "", "Using device 0: Generic RTL2832U OEM", "usb_open error -4", "Failed to open rtlsdr device #0."} {
+			fmt.Fprintln(os.Stderr, l)
+		}
+		os.Exit(1)
+	}
 	_ = os.Remove(filepath.Join(dir, "pages"))
 	marker := fmt.Sprintf("STANDIN-AUDIO-%08x", rand.Uint32())
 	put("marker", marker+"\n")
@@ -93,10 +125,15 @@ func main() {
 
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM, syscall.SIGQUIT)
+	var hung atomic.Bool
 	go func() {
-		<-sig
-		fmt.Fprintln(os.Stderr, "Signal caught, exiting!")
-		os.Exit(0)
+		for range sig {
+			if hung.Load() {
+				continue // hung, as rtl_fm can be: only SIGKILL stops it
+			}
+			fmt.Fprintln(os.Stderr, "Signal caught, exiting!")
+			os.Exit(0)
+		}
 	}()
 
 	rng := rand.New(rand.NewPCG(1, 2))
@@ -119,6 +156,22 @@ func main() {
 			fmt.Fprintln(os.Stderr, strings.SplitN(strings.TrimSpace(string(b)), "\n", 2)[0])
 			_ = os.Remove(filepath.Join(dir, "message"))
 		}
+		if has("hang") {
+			_ = os.Remove(filepath.Join(dir, "hang"))
+			hung.Store(true)
+			for range 15 { // one for each of librtlsdr's transfers
+				fmt.Fprintln(os.Stderr, "cb transfer status: 5, canceling...")
+			}
+			for {
+				time.Sleep(time.Hour) // writes nothing more, and doesn't exit
+			}
+		}
+		if has("stall") {
+			_ = os.Remove(filepath.Join(dir, "stall"))
+			for {
+				time.Sleep(time.Hour) // writes nothing more; a signal still stops it
+			}
+		}
 		if _, err := os.Stat(filepath.Join(dir, "pause")); err == nil {
 			last, next = now, now.Add(3*time.Second) // nothing is written, and nothing is caught up afterwards
 			continue
@@ -126,7 +179,7 @@ func main() {
 		want := int(now.Sub(last).Seconds() * rate)
 		spent += now.Sub(last)
 		last = now
-		if len(queue) == 0 && !now.Before(next) {
+		if len(queue) == 0 && !now.Before(next) && !has("quiet") {
 			p := pages[n%len(pages)]
 			text := fmt.Sprintf(p.text, n)
 			queue = audio(encode(p.capcode, text), 1200, rate, rng)

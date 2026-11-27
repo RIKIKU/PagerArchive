@@ -54,7 +54,7 @@ groups:
             it still reads lines and whether its sends fail.
 
       # R14b, R14c (owner, 2026-11-27, after a client was found two versions
-      # behind; ADR 0053): a client has run an older release than the
+      # behind; ADR 0054): a client has run an older release than the
       # server's for more than a day. The server works out since when, from
       # the version each client says it runs, and keeps it across its own
       # restarts. One alert per client; it clears when the client runs the

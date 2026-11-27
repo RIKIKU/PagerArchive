@@ -11,7 +11,7 @@
 #   monitoring-env.example       its settings
 #   client-compose.yaml          a receiving client on its own host (docs/client.md)
 #   client-env.example           its settings
-#   client-auto-upgrade.sh       its automatic upgrades (R84n, ADR 0053)
+#   client-auto-upgrade.sh       its automatic upgrades (R84n, ADR 0054)
 #
 # usage: scripts/ci/release-assets.sh <folder>
 #        scripts/ci/release-assets.sh --list

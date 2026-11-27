@@ -13,13 +13,13 @@ import (
 	"github.com/RIKIKU/PagerArchive/internal/server"
 )
 
-// A154 (R14b, R14c, R84p; ADR 0053): the server knows which version each
+// A156 (R14b, R14c, R84p; ADR 0054): the server knows which version each
 // client runs, from its User-Agent and its host's automatic upgrades' report,
 // and since when it's been behind the server's release; the report, with the
 // client's own key, answers with the server's version and keeps only
 // versions, known words, times and counts; the metrics have all of it, per
-// client. The script's side is A153 (scripts/a90.sh), Grafana's TestA155.
-func TestA154ClientVersions(t *testing.T) {
+// client. The script's side is A155 (scripts/a90.sh), Grafana's TestA157.
+func TestA156ClientVersions(t *testing.T) {
 	e := setup(t)
 	e.srv.Version = "1.12.0"
 	scrape := func() string {
@@ -52,7 +52,7 @@ func TestA154ClientVersions(t *testing.T) {
 	}
 	post := func(ua string) {
 		t.Helper()
-		text := fmt.Sprintf("A154 PAGE %d", time.Now().UnixNano())
+		text := fmt.Sprintf("A156 PAGE %d", time.Now().UnixNano())
 		e.posts = append(e.posts, text)
 		body, _ := json.Marshal(server.PageRequest{ClientID: "a", Capcode: "0100001", Text: text, ReceivedAt: time.Now().UTC(), Baud: 512})
 		req, _ := http.NewRequest(http.MethodPost, e.url+"/api/v1/pages", bytes.NewReader(body))
@@ -118,10 +118,10 @@ func TestA154ClientVersions(t *testing.T) {
 	// The report: the client's key only.
 	running := time.Now().Add(-2 * time.Minute).Unix()
 	status := fmt.Sprintf(`{"enabled":true,"state":"health-check","running_since":%d,"target_version":"1.12.0","last_check_at":%d,
-		"last_check_result":"in-progress","last_check_note":"A154 SECRET NOTE","running_version":"1.11.0","latest_version":"1.11.0",
+		"last_check_result":"in-progress","last_check_note":"A156 SECRET NOTE","running_version":"1.11.0","latest_version":"1.11.0",
 		"server_version":"1.12.0","failures":1,"rollbacks":1,"failed_versions":["1.11.9","1.0;id"],
 		"last_upgrade":{"at":%d,"from":"1.10.0","to":"1.11.0"},
-		"last_failure":{"at":%d,"from":"1.10.0","to":"1.11.9","step":"health","reason":"A154 SECRET REASON","rolled_back":true},
+		"last_failure":{"at":%d,"from":"1.10.0","to":"1.11.9","step":"health","reason":"A156 SECRET REASON","rolled_back":true},
 		"history":[{"at":1,"from":"1.0.0","to":"1.1.0","result":"upgraded"}]}`, running, running, running-86400, running-90000)
 	body := fmt.Sprintf(`{"client_version":"1.11.0","status":%s,"later_field":1}`, status)
 	if code, _ := report("", body); code != http.StatusUnauthorized {

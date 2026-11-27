@@ -30,7 +30,7 @@ func clientAutoUpgrade(t *testing.T, dir, script string, env ...string) (string,
 func clientDir(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	for name, data := range map[string]string{"compose.yaml": "services: {}\n", ".env": "SERVER_URL=http://127.0.0.1:1\n", "key": "a153-secret-key\n"} {
+	for name, data := range map[string]string{"compose.yaml": "services: {}\n", ".env": "SERVER_URL=http://127.0.0.1:1\n", "key": "a155-secret-key\n"} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -38,10 +38,10 @@ func clientDir(t *testing.T) string {
 	return dir
 }
 
-// A153 (R14b, R84n, R84k): the client's automatic upgrades take versions only
+// A155 (R14b, R84n, R84k): the client's automatic upgrades take versions only
 // whole, never pick a release newer than the server's, a pre-release, a draft
 // or another major version, and refuse bad arguments before anything runs.
-func TestA153ClientAutoUpgradeVersions(t *testing.T) {
+func TestA155ClientAutoUpgradeVersions(t *testing.T) {
 	dir := clientDir(t)
 	for _, v := range []string{"", "1.2", "1.2.3.4", " 1.2.3", "1.2.3 ", "1.2.3\n", "1.2.3;id", "1.2.3$(id)", "1.2.3-rc.1", "1.2.3/../x", "v1.2.3"} {
 		if out, ok := clientAutoUpgrade(t, dir, `is_release "$V"`, "V="+v); ok {
@@ -95,10 +95,10 @@ if pick_release "$MAJOR"; then printf '%s %s' "$TARGET_TAG" "$NEWEST_TAG"; else 
 	}
 }
 
-// A153 (R84p): the report goes to the server with the client's key in a
+// A155 (R84p): the report goes to the server with the client's key in a
 // header file only this user can read, never on curl's command line (which
 // any user on the host can see), and brings back the server's version.
-func TestA153ClientReportKeepsTheKeyOffTheCommandLine(t *testing.T) {
+func TestA155ClientReportKeepsTheKeyOffTheCommandLine(t *testing.T) {
 	if _, err := exec.LookPath("jq"); err != nil {
 		t.Skip("needs jq")
 	}
@@ -108,19 +108,19 @@ RUNNING=1.11.0; SERVER_URL=http://server.example.test/
 curl() {
 	local a prev="" hdr=""
 	for a in "$@"; do
-		case $a in *a153-secret-key*) echo "KEY ON THE COMMAND LINE" >>"$PA_DIR/curl.txt" ;; esac
+		case $a in *a155-secret-key*) echo "KEY ON THE COMMAND LINE" >>"$PA_DIR/curl.txt" ;; esac
 		[ "$prev" = -H ] && case $a in @*) hdr=${a#@} ;; esac
 		prev=$a
 	done
 	printf 'header:%s mode:%s url:%s body:%s\n' "$(cat "$hdr")" "$(stat -c %a "$hdr")" "${@: -1}" "$(cat)" >>"$PA_DIR/curl.txt"
-	printf '{"client_id":"a153","server_version":"1.12.0"}'
+	printf '{"client_id":"a155","server_version":"1.12.0"}'
 }
 report && printf 'server says %s; left: %s\n' "$SERVER_SAYS" "$(ls -A au | tr '\n' ' ')"; cat curl.txt`
 	out, ok := clientAutoUpgrade(t, dir, script)
 	if !ok || strings.Contains(out, "KEY ON THE COMMAND LINE") {
 		t.Fatalf("report: %s", out)
 	}
-	for _, want := range []string{"header:Authorization: Bearer a153-secret-key", "mode:600", "url:http://server.example.test/api/v1/client/auto-upgrade",
+	for _, want := range []string{"header:Authorization: Bearer a155-secret-key", "mode:600", "url:http://server.example.test/api/v1/client/auto-upgrade",
 		`body:{"client_version":"1.11.0","status":{"enabled":true,"state":"checking"}}`, "server says 1.12.0; left: status "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("report: no %q in %s", want, out)
@@ -128,7 +128,7 @@ report && printf 'server says %s; left: %s\n' "$SERVER_SAYS" "$(ls -A au | tr '\
 	}
 }
 
-// R14b, ADR 0053: a release's client-compose.yaml names the client's image by
+// R14b, ADR 0054: a release's client-compose.yaml names the client's image by
 // the release's own version, so `docker compose pull` never moves it past the
 // server; any other build's names main.
 func TestR14bClientComposeNamesTheExactVersion(t *testing.T) {

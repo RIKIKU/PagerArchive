@@ -21,7 +21,7 @@ fi
 printf '%s\n' "$version" >VERSION
 tag=$(image_tag_for "$version")
 sed -i "s|^\([[:space:]]*image:[[:space:]]*ghcr\.io/rikiku/pagerarchive:\).*\$|\1$tag|" compose.yaml
-# The client's compose.yaml: a release's exact version (R14b, ADR 0053).
+# The client's compose.yaml: a release's exact version (R14b, ADR 0054).
 client_tag=$(client_image_tag_for "$version")
 sed -i "s|^\([[:space:]]*image:[[:space:]]*ghcr\.io/rikiku/pagerarchive-client:\).*\$|\1$client_tag|" deploy/client/compose.yaml
 failed=0

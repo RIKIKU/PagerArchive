@@ -1,8 +1,8 @@
-# ADR 0053: Automatic upgrades for receiving clients (M30)
+# ADR 0054: Automatic upgrades for receiving clients (M30)
 
 ## Status
 
-Status: Proposed. The owner's request of 2026-11-27, after a client was found two versions behind its server: "I think we should have an automated upgrade for this as well." SPEC.md R14b, R14c, R84n-R84p and A153-A155. It adds a feature and a migration, so the next release is a minor version. The PowerShell module doesn't change.
+Status: Proposed. The owner's request of 2026-11-27, after a client was found two versions behind its server: "I think we should have an automated upgrade for this as well." SPEC.md R14b, R14c, R84n-R84p and A155-A157. It adds a feature and a migration, so the next release is a minor version. The PowerShell module doesn't change.
 
 ## Context
 
@@ -53,9 +53,9 @@ docs/client.md showed `docker run`. Automatic upgrades need a folder whose files
 
 ### 7. Testing
 
-- **A153**, in A90's run (the upgrade job): the previous release's client image from GHCR in the throwaway registry, this build's client files, a client on its own Compose project reading stdin (no dongle; the host's network to reach the API). N's client image is first published broken (it prints its version and exits), so its health check fails and it's rolled back; then republished working, retried and upgraded; then B, which the server rolled back, is out and the client stays on N. The server's PREV can't say its version, so the first check installs nothing.
-- **A154**, in the acceptance tests: the User-Agent, the report, the sanitising and the metrics, with the server at made-up versions.
-- **A155**, in the monitoring check: the dashboard and the alert, with since when moved back a day in the database.
+- **A155**, in A90's run (the upgrade job): the previous release's client image from GHCR in the throwaway registry, this build's client files, a client on its own Compose project reading stdin (no dongle; the host's network to reach the API). N's client image is first published broken (it prints its version and exits), so its health check fails and it's rolled back; then republished working, retried and upgraded; then B, which the server rolled back, is out and the client stays on N. The server's PREV can't say its version, so the first check installs nothing.
+- **A156**, in the acceptance tests: the User-Agent, the report, the sanitising and the metrics, with the server at made-up versions.
+- **A157**, in the monitoring check: the dashboard and the alert, with since when moved back a day in the database.
 - The root package's tests source the script for its version checks, its choice of release and the key's path to curl.
 
 ## Consequences

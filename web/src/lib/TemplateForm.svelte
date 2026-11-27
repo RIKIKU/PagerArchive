@@ -57,7 +57,7 @@
 
 <form class="template-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="template-form">
 	<h2 id="{uid}-h">{heading}</h2>
-	<FormSummary check={fc} />
+	<FormSummary check={fc} level={3} />
 	<div class="grid">
 		<div class="field">
 			<label for="{uid}-name">Name <span class="required">required</span></label>

@@ -123,7 +123,7 @@ func TestRadioExportsKindsOnly(t *testing.T) {
 	if kinds[radio.USBTransferFailed] != 1 || kinds[radio.Other] != 2 || len(kinds) != len(radio.Kinds) {
 		t.Errorf("message counts %v, want usb_transfer_failed 1, other 2 and every kind reported", kinds)
 	}
-	for _, name := range []string{"pagerarchive.client.radio_running", "pagerarchive.client.radio.audio", "pagerarchive.client.radio.level", "pagerarchive.client.radio.silent"} {
+	for _, name := range []string{"pagerarchive.client.radio_running", "pagerarchive.client.radio.audio", "pagerarchive.client.radio.level", "pagerarchive.client.radio.silent", "pagerarchive.client.radio.restarts"} {
 		if !seen[name] {
 			t.Errorf("no %s", name)
 		}

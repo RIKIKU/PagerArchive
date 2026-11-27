@@ -16,6 +16,11 @@
 //	RADIO_PPM        rtl_fm frequency correction (default 0)
 //	POCSAG_BAUDS     comma-separated baud rates to decode (default 512,1200,2400)
 //	MULTIMON_MODE    multimon-ng -f mode: alpha, numeric or auto (default alpha)
+//	RADIO_EXIT_AFTER failed starts of the radio in a row before the client exits to be
+//	                 started afresh, once the dongle worked or was missing (default 5; 0 never; R13b)
+//
+// The client starts rtl_fm and multimon-ng again whenever they fail
+// (R13b, internal/radio's Supervisor).
 //
 // Telemetry (R69-R74, docs/monitoring.md) is off unless the standard
 // OTEL_EXPORTER_OTLP_ENDPOINT is set; the other OTEL_* settings apply as
@@ -86,6 +91,14 @@ func run(plain *slog.Logger) (err error) {
 		}
 		bufSize = n
 	}
+	exitAfter := radio.DefaultExitAfter
+	if v := os.Getenv("RADIO_EXIT_AFTER"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 0 {
+			return errors.New("RADIO_EXIT_AFTER must be 0 or a positive number")
+		}
+		exitAfter = n
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -134,30 +147,30 @@ func run(plain *slog.Logger) (err error) {
 		PrintPages: os.Getenv("PRINT_PAGES") == "true", Stdout: os.Stdout, Log: log,
 		Tracer: tracer, Metrics: metrics,
 	}
-	var input io.Reader = os.Stdin
-	var wait func() error
+	var readErr error
 	if health != nil {
+		// The radio pipeline, started again whenever it fails (R13b); the
+		// client exits for it only when a fresh start could help.
 		freq := os.Getenv("RADIO_FREQUENCY")
-		out, w, err := radio.Start(ctx, radio.Settings{
-			Frequency: freq, Gain: os.Getenv("RADIO_GAIN"), PPM: getenv("RADIO_PPM", "0"), Mode: getenv("MULTIMON_MODE", "alpha"),
-			Bauds: strings.Split(getenv("POCSAG_BAUDS", "512,1200,2400"), ","),
-		}, health, os.Stderr) // rtl_fm's messages to stderr, as before; never page text
-		if err != nil {
-			return err
+		sup := &radio.Supervisor{
+			Settings: radio.Settings{
+				Frequency: freq, Gain: os.Getenv("RADIO_GAIN"), PPM: getenv("RADIO_PPM", "0"), Mode: getenv("MULTIMON_MODE", "alpha"),
+				Bauds: strings.Split(getenv("POCSAG_BAUDS", "512,1200,2400"), ","),
+			},
+			Health: health, Messages: os.Stderr, // rtl_fm's messages to stderr, as before; never page text
+			Log: log, ExitAfter: exitAfter, Running: metrics.Radio,
 		}
-		input, wait = out, w
-		metrics.Radio(true)
 		log.Info("receiving", "frequency", freq, "client", id, "version", version)
+		if err := sup.Run(ctx, func(out io.Reader) {
+			if err := reader.Run(out); err != nil {
+				log.Warn("decoder output unreadable", "error", err.Error())
+			}
+		}); err != nil {
+			readErr = fmt.Errorf("radio pipeline: %w", err)
+		}
 	} else {
 		log.Info("reading decoder output on stdin", "client", id, "version", version)
-	}
-	readErr := reader.Run(input)
-	if wait != nil {
-		err := wait()
-		metrics.Radio(false)
-		if err != nil && ctx.Err() == nil {
-			readErr = errors.Join(readErr, fmt.Errorf("radio pipeline stopped: %w", err))
-		}
+		readErr = reader.Run(os.Stdin)
 	}
 
 	// Input ended: give buffered pages a short time to go out.
