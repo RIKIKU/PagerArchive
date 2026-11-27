@@ -2,15 +2,12 @@
 // passes through the client on its way to multimon-ng and is measured on
 // the way (R74a): how much arrives and how loud it is. None of it is kept
 // or exported. rtl_fm's messages go to the client's log as before and are
-// counted by kind.
+// counted by kind. When the pipeline fails, the client starts it again
+// (R13b, Supervisor).
 package radio
 
 import (
-	"context"
-	"errors"
 	"fmt"
-	"io"
-	"os/exec"
 	"strings"
 )
 
@@ -48,56 +45,4 @@ func MultimonArgs(s Settings) []string {
 		args = append(args, "-a", "POCSAG"+strings.TrimSpace(b))
 	}
 	return append(args, "/dev/stdin")
-}
-
-// Start runs rtl_fm and multimon-ng, passing the audio from one to the
-// other through h, and returns multimon-ng's output and a function that
-// waits for both to end. rtl_fm's messages are written to log as they come
-// (never page text) and counted in h.
-func Start(ctx context.Context, s Settings, h *Health, log io.Writer) (io.Reader, func() error, error) {
-	rtl := exec.CommandContext(ctx, "rtl_fm", RTLFMArgs(s)...)
-	mm := exec.CommandContext(ctx, "stdbuf", MultimonArgs(s)...)
-	audio, err := rtl.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	messages, err := rtl.StderrPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	in, err := mm.StdinPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	out, err := mm.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := rtl.Start(); err != nil {
-		return nil, nil, fmt.Errorf("start rtl_fm: %w", err)
-	}
-	if err := mm.Start(); err != nil {
-		_ = rtl.Process.Kill()
-		_ = rtl.Wait()
-		return nil, nil, fmt.Errorf("start multimon-ng: %w", err)
-	}
-	watched := make(chan struct{})
-	go func() { h.Watch(messages, log); close(watched) }()
-	passed := make(chan struct{})
-	go func() {
-		// When multimon-ng stops taking audio, closing rtl_fm's output
-		// stops rtl_fm too; when rtl_fm stops, closing multimon-ng's input
-		// lets it finish.
-		if err := h.Pass(in, audio); err != nil {
-			audio.Close()
-		}
-		in.Close()
-		close(passed)
-	}()
-	wait := func() error {
-		<-passed
-		<-watched // all reads are done before Wait closes the pipes
-		return errors.Join(mm.Wait(), rtl.Wait())
-	}
-	return out, wait, nil
 }

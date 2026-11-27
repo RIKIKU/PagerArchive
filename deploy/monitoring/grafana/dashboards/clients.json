@@ -11,7 +11,7 @@
     {
       "id": 1, "type": "text", "title": "How to read this",
       "gridPos": {"h": 7, "w": 24, "x": 0, "y": 0},
-      "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The rest comes from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server. A client that stops reporting keeps its row in **each client's own view**, with its last values and **last report** saying how long ago they came.\n\n**Radio health** (R74a), for clients that run the radio: The client deliberately runs rtl_fm with squelch (-l) off, so a working dongle always gives about 44 kB of audio a second, hiss included; with squelch on, a quiet channel would look like a stuck dongle. **Silent for** growing while the client still reports means a stuck dongle: reset it. Audio but far fewer pages than usual (**Pages decoded: the last 30 minutes against the usual**, near its dashed line) means a weak or detuned signal, or a quiet network: **Radio not decoding** fires for it (R74b). rtl_fm's errors are counted by kind; **other** includes its normal start-up lines. A client reading stdin shows *not run by the client*."}
+      "options": {"mode": "markdown", "content": "**Not receiving** comes from the server: nothing heard from that client for 30 minutes (R39). A client that's switched off can't report, so that's the alarm. The rest comes from the clients themselves (R74): **lines read** stopping means the radio or decoder; lines still read but **sends failing** and pages **buffered** means the network or the server. A client that stops reporting keeps its row in **each client's own view**, with its last values and **last report** saying how long ago they came.\n\n**Radio health** (R74a), for clients that run the radio: The client deliberately runs rtl_fm with squelch (-l) off, so a working dongle always gives about 44 kB of audio a second, hiss included; with squelch on, a quiet channel would look like a stuck dongle. **Silent for** growing while the client still reports means a stuck dongle: the client starts rtl_fm again by itself within 30 seconds, counted in **pipeline restarts** (R13b); if it stays silent, reset the dongle. Audio but far fewer pages than usual (**Pages decoded: the last 30 minutes against the usual**, near its dashed line) means a weak or detuned signal, or a quiet network: **Radio not decoding** fires for it (R74b). rtl_fm's errors are counted by kind; **other** includes its normal start-up lines. A client reading stdin shows *not run by the client*."}
     },
     {
       "id": 2, "type": "table", "title": "Clients, as the server sees them",
@@ -102,8 +102,17 @@
       "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
     },
     {
-      "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
+      "id": 13, "type": "timeseries", "title": "Radio: pipeline restarts by reason (per 10 minutes)",
+      "description": "Times each client started rtl_fm and multimon-ng again by itself (R13b): lost_device (rtl_fm said the dongle was lost, missing or couldn't be opened, and no audio followed), stalled (no audio for 30 seconds with nothing said) or exited (one of them ended). Normal: none. A restart now and then is a USB hiccup the client got over. Worry: a steady climb, a dongle that's gone or keeps dropping out; if its audio doesn't come back within 2 minutes, \"Radio stalled\" fires. A client in Docker that can't start a dongle that worked exits after 5 tries to be started afresh, so its counts start again from 0.",
       "gridPos": {"h": 8, "w": 24, "x": 0, "y": 49},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance, reason) (increase(pagerarchive_client_radio_restarts_total[10m])) > 0", "legendFormat": "{{instance}} {{reason}}"}],
+      "fieldConfig": {"defaults": {"unit": "short", "min": 0, "noValue": "none in the last 10 minutes"}, "overrides": []},
+      "options": {"legend": {"displayMode": "list", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Lines read from the decoder, per minute",
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 57},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [{"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_lines_read_total[$__rate_interval])) * 60", "legendFormat": "{{instance}}"}],
       "fieldConfig": {"defaults": {"unit": "short"}, "overrides": []},
@@ -111,7 +120,7 @@
     },
     {
       "id": 5, "type": "timeseries", "title": "Pages decoded and sent, per minute",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 57},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 65},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_pages_decoded_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} decoded"},
@@ -123,7 +132,7 @@
     {
       "id": 12, "type": "timeseries", "title": "Pages decoded: the last 30 minutes against the usual",
       "description": "Each client's pages decoded in the 30 minutes before each point, against what it usually decodes in those 30 minutes: its average for the same half hour on the 7 days before, the busiest of them left out, so one busy day doesn't lift it (the days it has; none for a client with fewer than two). The dashed line is a quarter of the usual: \"Radio not decoding\" fires after 5 minutes below it, with the radio still giving audio, and clears above half (R74b). Normal: the solid line wanders around the usual. Worry: it sits near the dashed line while Audio per second is normal: the signal (antenna, RADIO_GAIN, RADIO_PPM), not the dongle.",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 65},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 73},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (increase(pagerarchive_client_pages_decoded_total[30m]))", "legendFormat": "{{instance}} last 30 min"},
@@ -137,7 +146,7 @@
     },
     {
       "id": 6, "type": "timeseries", "title": "Failed sends and retries, per minute",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 73},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 81},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "sum by (instance) (rate(pagerarchive_client_send_failures_total[$__rate_interval])) * 60", "legendFormat": "{{instance}} failed"},
@@ -148,7 +157,7 @@
     },
     {
       "id": 7, "type": "timeseries", "title": "Pages buffered in memory, and dropped (R15)",
-      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 81},
+      "gridPos": {"h": 8, "w": 24, "x": 0, "y": 89},
       "datasource": {"type": "prometheus", "uid": "prometheus"},
       "targets": [
         {"refId": "A", "datasource": {"type": "prometheus", "uid": "prometheus"}, "expr": "max by (instance) (pagerarchive_client_pages_buffered)", "legendFormat": "{{instance}} buffered"},
