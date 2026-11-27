@@ -4,7 +4,9 @@ package web
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"embed"
+	"encoding/base64"
 	"io/fs"
 	"net/http"
 	"path"
@@ -39,6 +41,10 @@ func Serve(root fs.FS, look LookFunc) http.Handler {
 		})
 	}
 	fileServer := http.FileServerFS(root)
+	// Worked out from the page as built, so every build's inline start-up
+	// script, and nothing else inline, runs (R36a). A look written into the
+	// page changes only its root element, never a script.
+	pagePolicy := policy(index)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -57,10 +63,15 @@ func Serve(root fs.FS, look LookFunc) http.Handler {
 				switch {
 				case strings.HasSuffix(p, ".webmanifest"):
 					w.Header().Set("Content-Type", "application/manifest+json")
-				case strings.HasSuffix(p, ".html"), p == "service-worker.js":
-					// The offline page, and the service worker, whose own
-					// policy limits what it may fetch: this origin only.
-					w.Header().Set("Content-Security-Policy", csp)
+				case strings.HasSuffix(p, ".html"):
+					// The offline page: its own inline scripts, if it ever
+					// has any, and no others (R36a).
+					b, _ := fs.ReadFile(root, p)
+					w.Header().Set("Content-Security-Policy", policy(b))
+				case p == "service-worker.js":
+					// The service worker, whose own policy limits what it
+					// may fetch: this origin only.
+					w.Header().Set("Content-Security-Policy", policy(nil))
 				}
 				fileServer.ServeHTTP(w, r)
 				return
@@ -85,7 +96,7 @@ func Serve(root fs.FS, look LookFunc) http.Handler {
 		w.Header().Set("Cache-Control", "no-cache, private")
 		w.Header().Set("Vary", "Cookie")
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Content-Security-Policy", csp)
+		w.Header().Set("Content-Security-Policy", pagePolicy)
 		_, _ = w.Write(page)
 	})
 }
@@ -119,6 +130,45 @@ func withAttr(page []byte, attr string) []byte {
 	return append(out, page[i:]...)
 }
 
-// csp allows only this origin. Map tiles are self-hosted (R35), so no third
-// party is ever contacted. SvelteKit's static bootstrap script is inline.
-const csp = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+// policy is the Content-Security-Policy page is sent with (R36a, ADR 0053).
+// It allows only this origin: map tiles are self-hosted (R35), so no third
+// party is ever contacted. Scripts come from this origin, and the page's own
+// inline scripts (SvelteKit's start-up script, whose text changes with every
+// build) run by their SHA-256; no other inline script, inline event handler
+// or javascript: link runs, and nothing is eval'd. Inline styles are still
+// allowed: the app's markup carries style attributes.
+func policy(page []byte) string {
+	var src strings.Builder
+	src.WriteString("'self'")
+	for _, h := range inlineScriptHashes(page) {
+		src.WriteString(" 'sha256-" + h + "'")
+	}
+	return "default-src 'self'; script-src " + src.String() + "; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+}
+
+var (
+	inlineScript = regexp.MustCompile(`(?is)<script\b([^>]*)>(.*?)</script\s*>`)
+	srcAttr      = regexp.MustCompile(`(?i)(^|\s)src\s*=`)
+)
+
+// inlineScriptHashes is the base64 SHA-256 of each inline script in page
+// (one without a src), once each, in the order they appear. A browser hashes
+// a script's text as it reads it, with every CRLF or lone CR read as LF.
+func inlineScriptHashes(page []byte) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range inlineScript.FindAllSubmatch(page, -1) {
+		if srcAttr.Match(m[1]) {
+			continue
+		}
+		text := bytes.ReplaceAll(m[2], []byte("\r\n"), []byte("\n"))
+		text = bytes.ReplaceAll(text, []byte("\r"), []byte("\n"))
+		sum := sha256.Sum256(text)
+		h := base64.StdEncoding.EncodeToString(sum[:])
+		if !seen[h] {
+			seen[h] = true
+			out = append(out, h)
+		}
+	}
+	return out
+}
