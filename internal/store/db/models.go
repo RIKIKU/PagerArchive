@@ -380,6 +380,10 @@ type StreetPoint struct {
 	Geom     interface{}
 }
 
+type SwitcherMarksToMove struct {
+	UserID int64
+}
+
 type Template struct {
 	ID            int64
 	Name          string
@@ -425,5 +429,4 @@ type User struct {
 	Kind                string
 	CredentialExpiresAt *time.Time
 	SeenLargeEvents     *time.Time
-	SeesSwitcher        bool
 }

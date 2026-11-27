@@ -312,6 +312,16 @@ func TestRadioArchiveURL(t *testing.T) {
 	}
 }
 
+// R77f: RADIOARCHIVE_GROUP names the switcher's group, radioarchive-preview
+// unless set.
+func TestSwitcherGroup(t *testing.T) {
+	for in, want := range map[string]string{"": "radioarchive-preview", "  ": "radioarchive-preview", "radio-testers": "radio-testers", " radio-testers ": "radio-testers"} {
+		if got := switcherGroup(in); got != want {
+			t.Errorf("switcherGroup(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 // R92b: LOOK_COOKIE_DOMAIN is a domain name that APP_URL's host is in, in
 // lower case and without a leading dot; unset or empty, there's no shared look.
 func TestLookCookieDomain(t *testing.T) {

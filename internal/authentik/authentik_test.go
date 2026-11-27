@@ -3,6 +3,7 @@ package authentik
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -187,4 +188,66 @@ func TestErrorsLeaveOutTheQuery(t *testing.T) {
 	if strings.Contains(err.Error(), "example.org") || strings.Contains(err.Error(), "owner") {
 		t.Errorf("the address is in the error: %v", err)
 	}
+}
+
+// R77f: the switcher's group is read by name (its members' IDs are the
+// subjects), a missing one is ErrNoGroup, and one person is added or
+// removed by ID; a subject that isn't an Authentik ID, or a refusal, is an
+// error.
+func TestSwitcherGroupCalls(t *testing.T) {
+	var calls []string
+	missing := false
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var b map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&b)
+		calls = append(calls, r.Method+" "+r.URL.Path+" "+r.URL.RawQuery+" "+strings.TrimSpace(toJSON(b)))
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.URL.Path == "/api/v3/core/groups/" && missing:
+			_, _ = w.Write([]byte(`{"results":[{"pk":"g-2","name":"radioarchive-preview-old","users":[1]}]}`))
+		case r.URL.Path == "/api/v3/core/groups/":
+			_, _ = w.Write([]byte(`{"results":[{"pk":"g-1","name":"radioarchive-preview","users":[7,12]}]}`))
+		case strings.HasSuffix(r.URL.Path, "/remove_user/") && b["pk"] == float64(99):
+			w.WriteHeader(http.StatusForbidden)
+		default:
+			w.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer srv.Close()
+	u, _ := url.Parse(srv.URL)
+	c := &Client{URL: u, Token: "tok", HTTP: srv.Client()}
+	ctx := context.Background()
+
+	id, members, err := c.GroupMembers(ctx, "radioarchive-preview")
+	if err != nil || id != "g-1" || len(members) != 2 || !members["7"] || !members["12"] {
+		t.Fatalf("GroupMembers: %q %v %v", id, members, err)
+	}
+	if want := "GET /api/v3/core/groups/ include_users=false&name=radioarchive-preview null"; calls[0] != want {
+		t.Errorf("read: %s, want %s", calls[0], want)
+	}
+	if err := c.SetGroupMember(ctx, "g-1", "12", false); err != nil {
+		t.Error(err)
+	}
+	if err := c.SetGroupMember(ctx, "g-1", "13", true); err != nil {
+		t.Error(err)
+	}
+	if got := calls[1:3]; got[0] != `POST /api/v3/core/groups/g-1/remove_user/  {"pk":12}` || got[1] != `POST /api/v3/core/groups/g-1/add_user/  {"pk":13}` {
+		t.Errorf("changes: %q", got)
+	}
+	if err := c.SetGroupMember(ctx, "g-1", "99", false); err == nil {
+		t.Error("a refused removal isn't an error")
+	}
+	n := len(calls)
+	if err := c.SetGroupMember(ctx, "g-1", "fixture-someone", true); err == nil || len(calls) != n {
+		t.Errorf("a subject that isn't an Authentik ID: %v, %d calls", err, len(calls)-n)
+	}
+	missing = true
+	if _, _, err := c.GroupMembers(ctx, "radioarchive-preview"); !errors.Is(err, accounts.ErrNoGroup) {
+		t.Errorf("a missing group: %v, want ErrNoGroup", err)
+	}
+}
+
+func toJSON(v any) string {
+	b, _ := json.Marshal(v)
+	return string(b)
 }

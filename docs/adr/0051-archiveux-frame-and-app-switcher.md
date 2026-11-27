@@ -4,6 +4,8 @@
 
 Proposed (the implementer's calls, 2026-11-25), for the owner's review on the pull request. #106, items 1 and 2, and the owner's soft launch decision of 2026-11-25. SPEC.md R77d, R77e and R77f; A140, A141 and A142.
 
+Decisions 6 and 7 (who sees the switcher, and the controls) are changed by ADR 0055 (2026-11-28): the switcher follows an Authentik group, and the admin's mark adds and removes its members.
+
 ## Context
 
 ArchiveUx 0.3.0 moved PagerArchive's frame into the design system as Svelte components (its ADR 0002, decisions 7 and 8): `Frame`, `Menu`, `BottomBar`, `AccountMenu` and `Icon`, with the app's tree, counts, version and account as props, and an app switcher drawn when the app names the other app. PagerArchive still drew its own copies, and took only ArchiveUx's tokens and base styles (ADR 0049) at v0.2.1. RadioArchive's frame is ArchiveUx's already. The two apps feel like one application only if both draw the same frame, and the switcher lives in it.

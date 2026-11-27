@@ -714,15 +714,13 @@ LIMIT 1;
 UPDATE users SET subject = NULL WHERE id = $1;
 
 -- name: ListUsers :many
-SELECT u.id, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, u.kind,
+SELECT u.id, u.subject, u.email, u.name, u.role, u.status, u.created_at, u.deactivated_at, u.kind,
        u.invited_by, i.status AS inviter_status, i.email AS inviter_email, i.name AS inviter_name,
        -- R44b: how many integrations, and how many paused for failing.
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id) AS integrations,
        (SELECT count(*) FROM integrations g WHERE g.owner_id = u.id AND g.paused_by = 'failing') AS integrations_failing,
        -- R42c: the trusted mark, who set it and when.
-       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name,
-       -- R77f: marked to see the app switcher.
-       u.sees_switcher
+       u.trusted_at, t.status AS trusted_by_status, t.email AS trusted_by_email, t.name AS trusted_by_name
 FROM users u
 LEFT JOIN users i ON i.id = u.invited_by
 LEFT JOIN users t ON t.id = u.trusted_by
@@ -777,10 +775,15 @@ UPDATE users SET trusted_at = CASE WHEN sqlc.narg(by)::bigint IS NULL THEN NULL 
     trusted_by = sqlc.narg(by)::bigint
 WHERE id = sqlc.arg(id) AND status <> 'deleted';
 
--- name: SetUserSeesSwitcher :execrows
--- R77f: marks or unmarks a user to see the app switcher.
-UPDATE users SET sees_switcher = sqlc.arg(sees)::boolean
-WHERE id = sqlc.arg(id) AND status <> 'deleted';
+-- name: SwitcherMarksToMove :many
+-- R77f (ADR 0055): the users an admin marked to see the app switcher before
+-- the mark became the Authentik group's membership, still to be added to it.
+SELECT m.user_id, u.subject, u.status, u.kind
+FROM switcher_marks_to_move m JOIN users u ON u.id = m.user_id
+ORDER BY m.user_id;
+
+-- name: DeleteSwitcherMarkToMove :exec
+DELETE FROM switcher_marks_to_move WHERE user_id = $1;
 
 -- name: CreateTreeDeactivation :one
 INSERT INTO tree_deactivations (root_id, actor_id, reason, invitations_cancelled)
@@ -826,7 +829,7 @@ UPDATE users SET role = $2 WHERE id = $1 AND status <> 'deleted';
 -- connected (owner, 2026-10-13).
 UPDATE users SET status = 'deleted', deleted_at = now(), subject = NULL, email = NULL,
     email_key = NULL, name = NULL, role = 'user', deactivated_at = NULL, trusted_at = NULL, trusted_by = NULL,
-    look = 'harbour', sees_switcher = false
+    look = 'harbour'
 WHERE id = $1;
 
 -- Service accounts (R62a, ADR 0048).

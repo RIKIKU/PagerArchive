@@ -115,6 +115,8 @@ serve reads its settings from the environment:
   RADIOARCHIVE_URL        RadioArchive's public URL: fireground links (R92a) and the app switcher
                           (R77e; default: none, PagerArchive stands alone)
   RADIOARCHIVE_NAME       the name the switcher shows (default Radio)
+  RADIOARCHIVE_GROUP      the Authentik group whose members see the switcher, the one
+                          RadioArchive's gate admits (R77f; default radioarchive-preview)
   LOOK_COOKIE_DOMAIN      the parent domain whose look cookie the apps share, such as
                           example.org for pager.example.org (R92b; default: none, the
                           look is the account's alone)
@@ -380,10 +382,22 @@ func serve(stderr io.Writer) error {
 	}
 	go redactor.Run(ctx)
 
+	radio, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
+	if err != nil {
+		return err
+	}
 	dir := &authentik.Client{URL: auth.authentikURL, Token: auth.apiToken, HTTP: auth.http}
 	acc := &accounts.Service{
 		Store: st, Dir: dir, AllowedDomains: auth.domains, InitialAdmin: auth.initialAdmin,
 		Now: time.Now, Log: log, CloseLive: hub.CloseUsers,
+	}
+	// R77f, ADR 0055: beside RadioArchive, who sees the switcher is an
+	// Authentik group, read every 30 s; standalone, it's never read.
+	if radio != "" {
+		acc.Switcher = &accounts.SwitcherGroup{Name: switcherGroup(os.Getenv("RADIOARCHIVE_GROUP")), Dir: dir, Log: log}
+		go acc.Switcher.Run(ctx)
+		// The marks kept on users before, moved into the group once.
+		go acc.MoveSwitcherMarks(ctx, adminAddressCheckEvery, adminAddressCheckTries)
 	}
 	if v := os.Getenv("INVITATION_SENDER_LIMITS"); v != "" {
 		if acc.SenderLimits, err = accounts.ParseSenderLimits(v); err != nil {
@@ -465,10 +479,6 @@ func serve(stderr io.Writer) error {
 	}
 
 	nearRatio, err := nearRatioSetting()
-	if err != nil {
-		return err
-	}
-	radio, err := radioArchiveURL(os.Getenv("RADIOARCHIVE_URL"))
 	if err != nil {
 		return err
 	}
@@ -805,4 +815,13 @@ func radioArchiveURL(v string) (string, error) {
 		return "", errors.New("RADIOARCHIVE_URL must be an absolute http(s) URL, such as https://radio.example.com")
 	}
 	return v, nil
+}
+
+// switcherGroup reads RADIOARCHIVE_GROUP (R77f): the Authentik group whose
+// members see the app switcher, radioarchive-preview unless set.
+func switcherGroup(v string) string {
+	if v = strings.TrimSpace(v); v != "" {
+		return v
+	}
+	return accounts.DefaultSwitcherGroup
 }
