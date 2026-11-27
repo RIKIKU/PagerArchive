@@ -1,0 +1,37 @@
+# A receiving client on its own host (docs/client.md, SPEC.md R13): a
+# Raspberry Pi, a small VM, any machine with Docker and the dongle. Attached
+# to every release as client-compose.yaml, with client-env.example and
+# client-auto-upgrade.sh. In a folder of its own, this file saved as
+# compose.yaml, client-env.example as .env (filled in), the client's API key
+# in a file named key, then:
+#
+#   docker compose up -d
+#
+# It names the client's image by the release's exact version, the server's
+# own (a client is never newer than its server, R14b), so `docker compose
+# pull` never moves it. Upgrading is getting the files of the release the
+# server runs; with automatic upgrades switched on (./client-auto-upgrade.sh
+# enable, R84n) that happens on its own, hourly.
+name: pagerarchive-client
+
+services:
+  client:
+    image: ghcr.io/rikiku/pagerarchive-client:main
+    restart: unless-stopped
+    # SERVER_URL, CLIENT_ID, RADIO_FREQUENCY and the rest (docs/client.md,
+    # "Settings"): every setting in .env reaches the client.
+    env_file: .env
+    environment:
+      CLIENT_KEY_FILE: /run/secrets/pagerarchive-client-key
+    volumes:
+      # The client's API key, read only (it's never in .env or the logs).
+      - ./key:/run/secrets/pagerarchive-client-key:ro
+    # The RTL-SDR dongle (docs/client.md, "The dongle").
+    devices:
+      - /dev/bus/usb:/dev/bus/usb
+    # Page text only reaches the console with PRINT_PAGES=true (R13a); even
+    # then, these logs stay small and are rotated.
+    logging:
+      driver: local
+      options:
+        max-size: 1m

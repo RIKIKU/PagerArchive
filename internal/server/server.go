@@ -120,7 +120,9 @@ type Server struct {
 
 	pages pageCounts
 	dedup dedupCounts
-	http  *telemetry.HTTP
+	// versions is each client's version as last stored (R14c).
+	versions clientVersions
+	http     *telemetry.HTTP
 	// ingest stores one page at a time and announces it before the next, so
 	// message IDs reach live connections in increasing order (ADR 0010 §3).
 	ingest sync.Mutex
@@ -139,6 +141,8 @@ func (s *Server) Handler() http.Handler {
 		patterns = append(patterns, pattern)
 	}
 	handle("POST /api/v1/pages", http.HandlerFunc(s.postPage))
+	// R84p: a client host's automatic upgrades report, with the client's own key.
+	handle("POST /api/v1/client/auto-upgrade", http.HandlerFunc(s.postClientAutoUpgrade))
 	// Everything else under /api/v1 needs a signed-in user (A29).
 	// A service account only reads, and not people's details (R62a).
 	for pattern, h := range s.apiRoutes() {
@@ -213,6 +217,8 @@ func (s *Server) postPage(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// R14c: the version the client says it runs, stored when it changes.
+	s.noteClientVersion(ctx, clientID, userAgentVersion(r.Header.Get("User-Agent")))
 	// The ingest span: its outcome, and the stored message's ID (R71).
 	ctx, span := telemetry.Or(s.Tracer).Start(ctx, "ingest", trace.WithAttributes(attribute.String("pagerarchive.client.id", clientID)))
 	defer span.End()

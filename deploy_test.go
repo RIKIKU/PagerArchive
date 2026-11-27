@@ -323,6 +323,9 @@ func TestR84ReleaseAttachesTheFiles(t *testing.T) {
 	for name, from := range map[string]string{
 		"compose.yaml": "compose.yaml", "env.example": ".env.example",
 		"monitoring-compose.yaml": "deploy/monitoring/compose.yaml", "monitoring-env.example": "deploy/monitoring/.env.example",
+		// A receiving client on its own host, and its automatic upgrades (R84n).
+		"client-compose.yaml": "deploy/client/compose.yaml", "client-env.example": "deploy/client/.env.example",
+		"client-auto-upgrade.sh": "deploy/client/auto-upgrade.sh",
 	} {
 		if !slices.Contains(names, name) {
 			t.Errorf("--list doesn't name %s", name)

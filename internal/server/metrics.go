@@ -240,6 +240,8 @@ func (s *Server) metrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.clientVersionMetrics(m, clients, now)
+
 	m.family("pagerarchive_pages_received_total", "counter", "Pages posted by clients since the API started, by outcome.")
 	for _, o := range []string{"stored", "duplicate", "ignored", "clock_ahead"} {
 		m.sample("pagerarchive_pages_received_total", labels{"outcome", o}, float64(s.pages.get(o)))

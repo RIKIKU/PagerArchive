@@ -84,6 +84,33 @@ check_compose_image() {
 	fi
 }
 
+# client_image_tag_for <version>: the tag the client's compose.yaml
+# (deploy/client/compose.yaml, attached as client-compose.yaml) names the
+# client's image by: a release's own version, exactly, as a client is never
+# newer than its server (R14b, ADR 0053); main for any other build.
+client_image_tag_for() {
+	if is_version "$1"; then
+		echo "$1"
+	else
+		echo "$UNSTAMPED_IMAGE_TAG"
+	fi
+}
+
+# client_compose_image_tag [<file>]: the tag the client's compose.yaml names its image by.
+client_compose_image_tag() {
+	tr -d '\r' <"${1:-deploy/client/compose.yaml}" | sed -n 's/^[[:space:]]*image:[[:space:]]*ghcr\.io\/rikiku\/pagerarchive-client:\(.*\)$/\1/p'
+}
+
+# check_client_compose_image <version>: the client's compose.yaml names the
+# client's image as client_image_tag_for says. Needs $failed.
+check_client_compose_image() {
+	_named=$(client_compose_image_tag)
+	_want=$(client_image_tag_for "$1")
+	if [ "$_named" != "$_want" ]; then
+		fail deploy/client/compose.yaml "deploy/client/compose.yaml's image is ghcr.io/rikiku/pagerarchive-client:${_named:-(none)}, but VERSION is $1, so it should be ghcr.io/rikiku/pagerarchive-client:$_want. In the repository it's :$UNSTAMPED_IMAGE_TAG; a build stamps it (scripts/ci/stamp-version.sh)."
+	fi
+}
+
 # CONFIG_PATHS: what a deployment only gets by downloading a release's files.
 CONFIG_PATHS="compose.yaml deploy/monitoring/compose.yaml deploy/authentik deploy/backup deploy/postgres deploy/monitoring/alloy deploy/monitoring/grafana deploy/monitoring/loki deploy/monitoring/prometheus deploy/monitoring/tempo"
 # Our own image's line in compose.yaml. Releases before ADR 0024 committed

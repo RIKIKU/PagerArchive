@@ -4175,7 +4175,9 @@ func (q *Queries) ListAliases(ctx context.Context) ([]ListAliasesRow, error) {
 }
 
 const listClients = `-- name: ListClients :many
-SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since FROM clients ORDER BY id
+SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since,
+       version, behind_since, auto_upgrade, auto_upgrade_at
+FROM clients ORDER BY id
 `
 
 type ListClientsRow struct {
@@ -4185,6 +4187,10 @@ type ListClientsRow struct {
 	RevokedAt       *time.Time
 	LastSeenAt      *time.Time
 	ClockAheadSince *time.Time
+	Version         *string
+	BehindSince     *time.Time
+	AutoUpgrade     []byte
+	AutoUpgradeAt   *time.Time
 }
 
 func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
@@ -4203,6 +4209,10 @@ func (q *Queries) ListClients(ctx context.Context) ([]ListClientsRow, error) {
 			&i.RevokedAt,
 			&i.LastSeenAt,
 			&i.ClockAheadSince,
+			&i.Version,
+			&i.BehindSince,
+			&i.AutoUpgrade,
+			&i.AutoUpgradeAt,
 		); err != nil {
 			return nil, err
 		}
@@ -6911,6 +6921,43 @@ func (q *Queries) SetAlias(ctx context.Context, arg SetAliasParams) error {
 		arg.TemplateID,
 		arg.Ignored,
 	)
+	return err
+}
+
+const setClientAutoUpgrade = `-- name: SetClientAutoUpgrade :exec
+UPDATE clients SET auto_upgrade = $1::jsonb, auto_upgrade_at = now()
+WHERE id = $2
+`
+
+type SetClientAutoUpgradeParams struct {
+	Report []byte
+	ID     string
+}
+
+// R84p: the client host's automatic upgrades' last report, as the API keeps it.
+func (q *Queries) SetClientAutoUpgrade(ctx context.Context, arg SetClientAutoUpgradeParams) error {
+	_, err := q.db.Exec(ctx, setClientAutoUpgrade, arg.Report, arg.ID)
+	return err
+}
+
+const setClientVersion = `-- name: SetClientVersion :exec
+UPDATE clients
+SET version = $1::text,
+    behind_since = CASE WHEN $2::boolean THEN COALESCE(behind_since, now()) END
+WHERE id = $3
+`
+
+type SetClientVersionParams struct {
+	Version string
+	Behind  bool
+	ID      string
+}
+
+// R14c: the version a client says it runs, and whether it's behind the
+// server's (R14b), which the API works out: since when is kept while it
+// stays behind, even when the client's version changes.
+func (q *Queries) SetClientVersion(ctx context.Context, arg SetClientVersionParams) error {
+	_, err := q.db.Exec(ctx, setClientVersion, arg.Version, arg.Behind, arg.ID)
 	return err
 }
 

@@ -314,7 +314,7 @@ PA_MON_REQUIRE=1 PA_MON_API_URL=http://127.0.0.1:18091 PA_MON_GRAFANA_URL=http:/
 	PA_MON_AUTHENTIK_URL=http://127.0.0.1:19091 \
 	PA_MON_STOP_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES stop authentik-server" \
 	PA_MON_START_AUTHENTIK="docker compose -p $P --project-directory $PWD $APP_FILES start authentik-server" \
-	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA83|TestA90|TestA113|TestA115|TestA119|TestA122|TestA123|TestA124}" ./internal/monitortest/ || status=1
+	go test -count=1 -timeout 45m -v -run "${PA_MON_RUN:-TestA65|TestA67|TestA80|TestA83|TestA90|TestA113|TestA115|TestA119|TestA122|TestA123|TestA124|TestA155}" ./internal/monitortest/ || status=1
 echo "--- disk use under Docker's data after the checks: $(disk_used)%"
 
 if [ -n "$SHOTS" ]; then

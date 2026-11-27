@@ -106,7 +106,7 @@ services:
     # include.sh copies both into one provisioning folder, then starts Grafana.
     entrypoint: [/bin/sh, /etc/pagerarchive/include.sh, grafana, /run.sh]
     labels:
-      pagerarchive.config: "c0a0b69b8873b645"
+      pagerarchive.config: "dd07aab9c50d806c"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}

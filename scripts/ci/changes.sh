@@ -50,6 +50,7 @@ area_of() {
 	compose.yaml | .env.example | deploy/authentik/* | deploy/postgres/*) echo deployment ;;
 	deploy/backup/*) echo backup ;;
 	deploy/auto-upgrade/*) echo auto-upgrade ;;
+	deploy/client/*) echo client-deploy ;;
 	deploy/monitoring/*) echo monitoring ;;
 	Dockerfile) echo server-image ;;
 	Dockerfile.client) echo client-image ;;
@@ -92,12 +93,15 @@ area_jobs() {
 	# Automatic upgrades' script: A90 (in the upgrade job), the archive's checks,
 	# and A78, which installs from the archive.
 	auto-upgrade) echo "test upgrade install" ;;
+	# A client on its own host and its automatic upgrades (ADR 0053): the root
+	# package's checks of the files, and A153 in the upgrade job.
+	client-deploy) echo "test upgrade" ;;
 	# The example monitoring stack, and the root package's and telemetry's checks of it.
 	monitoring) echo "test monitoring" ;;
 	# The server image, and every job that builds it.
 	server-image) echo "images stack stack-e2e import upgrade install backups budget monitoring" ;;
 	# The client image, and every job that builds it.
-	client-image) echo "images stack-e2e install monitoring" ;;
+	client-image) echo "images stack-e2e upgrade install monitoring" ;;
 	images) echo "images stack stack-e2e import upgrade install backups budget monitoring" ;;
 	# A75's and A76's timings' report (ADR 0046).
 	speed) echo "search import" ;;

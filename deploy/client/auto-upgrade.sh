@@ -164,7 +164,7 @@ client_key() {
 report() {
 	local key hdr out rc
 	SERVER_SAYS=""
-	[ -n "$SERVER_URL" ] && [ -x "${JQ:-}" ] || return 1
+	[ -n "$SERVER_URL" ] && [ -n "${JQ:-}" ] && command -v "$JQ" >/dev/null || return 1
 	key=$(client_key)
 	[ -n "$key" ] || return 1
 	hdr=$(umask 077 && mktemp "$HOME_AU/.header.XXXXXX") || return 1

@@ -203,6 +203,10 @@ type Sender struct {
 	// Metrics counts sends (R74). nil does neither.
 	Tracer  trace.Tracer
 	Metrics *Metrics
+	// Version is sent with every post as the User-Agent,
+	// pagerarchive-client/<version>, so the server knows which version each
+	// client runs (R14c). "" sends Go's own.
+	Version string
 }
 
 // Run posts pages until ctx ends.
@@ -311,6 +315,9 @@ func (s *Sender) postOnce(ctx context.Context, p Page) (status int, outcome stri
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+s.Key)
+	if s.Version != "" {
+		req.Header.Set("User-Agent", "pagerarchive-client/"+s.Version)
+	}
 	telemetry.TraceContext.Inject(ctx, propagation.HeaderCarrier(req.Header))
 	resp, err := s.HTTP.Do(req)
 	if err != nil {

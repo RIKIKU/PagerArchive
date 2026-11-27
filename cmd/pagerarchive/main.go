@@ -536,6 +536,11 @@ func serve(stderr io.Writer) error {
 		Locks:                 locks,
 		Version:               version,
 	}
+	// R14c: which clients are behind this version, worked out again now, as
+	// the server's version may have changed since they last said theirs.
+	if err := srv.RecheckClientVersions(ctx); err != nil {
+		log.Error("client versions", "error", store.SafeError(err))
+	}
 	// R52: the flagged counts are counted in the background, once a minute,
 	// and only while the metrics are on: a scrape never counts them.
 	if srv.MetricsToken != "" {
@@ -637,9 +642,15 @@ func clientCmd(args []string, stdout io.Writer) error {
 			return fmt.Errorf("list: %s", store.SafeError(err))
 		}
 		tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-		fmt.Fprintln(tw, "ID\tNAME\tSTATUS\tLAST SEEN")
+		fmt.Fprintln(tw, "ID\tNAME\tSTATUS\tLAST SEEN\tVERSION")
 		for _, c := range rows {
-			status, seen := "active", "never"
+			status, seen, ver := "active", "never", "unknown"
+			if c.Version != nil {
+				ver = *c.Version
+				if c.BehindSince != nil {
+					ver += " (behind since " + c.BehindSince.UTC().Format(time.RFC3339) + ")"
+				}
+			}
 			switch {
 			case c.RevokedAt != nil:
 				status = "revoked"
@@ -649,7 +660,7 @@ func clientCmd(args []string, stdout io.Writer) error {
 			if c.LastSeenAt != nil {
 				seen = c.LastSeenAt.UTC().Format(time.RFC3339)
 			}
-			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\n", c.ID, c.Name, status, seen)
+			fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\n", c.ID, c.Name, status, seen, ver)
 		}
 		return tw.Flush()
 	default:

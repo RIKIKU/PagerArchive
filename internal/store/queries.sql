@@ -5,7 +5,23 @@ INSERT INTO clients (id, name, key_hash) VALUES ($1, $2, $3);
 UPDATE clients SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL;
 
 -- name: ListClients :many
-SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since FROM clients ORDER BY id;
+SELECT id, name, created_at, revoked_at, last_seen_at, clock_ahead_since,
+       version, behind_since, auto_upgrade, auto_upgrade_at
+FROM clients ORDER BY id;
+
+-- name: SetClientVersion :exec
+-- R14c: the version a client says it runs, and whether it's behind the
+-- server's (R14b), which the API works out: since when is kept while it
+-- stays behind, even when the client's version changes.
+UPDATE clients
+SET version = sqlc.arg(version)::text,
+    behind_since = CASE WHEN sqlc.arg(behind)::boolean THEN COALESCE(behind_since, now()) END
+WHERE id = sqlc.arg(id);
+
+-- name: SetClientAutoUpgrade :exec
+-- R84p: the client host's automatic upgrades' last report, as the API keeps it.
+UPDATE clients SET auto_upgrade = sqlc.arg(report)::jsonb, auto_upgrade_at = now()
+WHERE id = sqlc.arg(id);
 
 -- name: MarkClockAhead :exec
 UPDATE clients SET clock_ahead_since = COALESCE(clock_ahead_since, now()) WHERE id = $1;
