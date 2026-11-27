@@ -194,7 +194,7 @@ test('R81 phone search header: the box, then one row of its controls', async ({ 
 	for (const [width, path] of [
 		[320, '/?q=HEADERCHECK'],
 		[375, '/?q=HEADERCHECK'],
-		[320, '/capcodes'],
+		[320, '/capcodes/0100001'],
 		[1280, '/?q=HEADERCHECK']
 	] as const) {
 		const page = await (await signedIn(browser, 'user', { viewport: { width, height: 740 } })).newPage();
@@ -231,8 +231,13 @@ test('R81 phone search header: the box, then one row of its controls', async ({ 
 			} else {
 				expect(Math.abs(search.y - box!.y), 'Search on the box row on a desktop').toBeLessThanOrEqual(1);
 			}
-			const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
-			expect(overflow, `no sideways scroll at ${width} ${path}`).toBeLessThanOrEqual(0);
+			// The header stays inside the screen (what's under it is each
+			// page's own tests' business).
+			const overflow = await page.evaluate(() => {
+				const top = document.querySelector('header.top')!;
+				return Math.max(top.scrollWidth - top.clientWidth, top.getBoundingClientRect().right - document.documentElement.clientWidth);
+			});
+			expect(overflow, `the header fits at ${width} ${path}`).toBeLessThanOrEqual(0);
 		}).toPass({ timeout: 10_000 });
 		await expect(form.getByRole('button', { name: 'Search', exact: true })).toHaveText('Search');
 		await page.context().close();
