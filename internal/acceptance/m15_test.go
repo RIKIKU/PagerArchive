@@ -23,7 +23,7 @@ const builtPage = `<!doctype html><html lang="en-AU"><head></head><body></body><
 // session), with the server's own look for the request (Server.PageLook).
 func (e *env) page(m *member, path string) string {
 	e.t.Helper()
-	h := web.Serve(fstest.MapFS{"index.html": {Data: []byte(builtPage)}}, e.srv.PageLook)
+	h := web.Serve(fstest.MapFS{"index.html": {Data: []byte(builtPage)}}, e.srv.PageLook, e.srv.LookCookieDomain)
 	r := httptest.NewRequest(http.MethodGet, path, nil)
 	if m != nil {
 		r.AddCookie(m.cookie)

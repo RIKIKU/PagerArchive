@@ -2399,7 +2399,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	// The browser's storage: the 4 IDs, in order, and none of their text.
 	const order = [b, c, a, d];
 	const stored = await storage(page);
-	expect(Object.keys(stored).sort()).toEqual([sheetKey(userId), 'theme'].sort());
+	expect(Object.keys(stored)).toEqual([sheetKey(userId)]);
 	expect(JSON.parse(stored[sheetKey(userId)])).toEqual(order);
 	const all = JSON.stringify(stored) + (await page.evaluate(() => JSON.stringify({ ...sessionStorage })));
 	for (const t of [...Object.values(texts), ref, job, 'TRAINING', 'DRILL', 'REDACTED', 'FICTION']) expect(all, 'storage').not.toContain(t);
@@ -2462,7 +2462,7 @@ test('A60 print sheet', async ({ browser, request }, info) => {
 	expect(asked).toBe('Remove all 3 messages from the print sheet?');
 	await expect(page.getByTestId('sheet-count')).toContainText('The print sheet is empty.');
 	await expect(page.getByRole('link', { name: SHEET_LINK })).toHaveAccessibleName('Print sheet, 0 messages');
-	expect(Object.keys(await storage(page))).toEqual(['theme']);
+	expect(Object.keys(await storage(page))).toEqual([]);
 	for (const id of [a, b, c]) await expect(tickOf(page, id)).not.toBeChecked();
 	await ctx.close();
 });
@@ -7620,6 +7620,138 @@ test('A148 the shared look cookie decides the first paint', async ({ browser, re
 		await setLook(request, 'user', 'harbour');
 	}
 	console.log(`A148 (${info.project.name}): standalone ignores the cookie; ${report.join('; ')}`);
+});
+
+// A162 (R92b, ArchiveUx 0.7.0's rule 8): the colour theme is kept in its own
+// cookie, `theme`, on LOOK_COOKIE_DOMAIN beside RadioArchive (host-only
+// standalone), written by the page when it's chosen and read by the server
+// for every page's first paint; Auto deletes it; a theme kept in localStorage
+// from before is moved into it once. What the page writes is recorded at
+// document.cookie, as the browser is given it.
+test('A162 the shared colour theme cookie decides the first paint', async ({ browser }, info) => {
+	test.setTimeout(120_000);
+	// Every cookie the page writes, and every change of the root's theme.
+	const watch = (page: Page) =>
+		page.addInitScript(() => {
+			const w = window as unknown as { written: string[]; themes: (string | null)[] };
+			w.written = [];
+			w.themes = [];
+			const d = Object.getOwnPropertyDescriptor(Document.prototype, 'cookie')!;
+			Object.defineProperty(document, 'cookie', {
+				configurable: true,
+				get: () => d.get!.call(document),
+				set: (v: string) => {
+					w.written.push(v);
+					d.set!.call(document, v);
+				}
+			});
+			new MutationObserver(() => w.themes.push(document.documentElement.getAttribute('data-theme'))).observe(document.documentElement, {
+				attributes: true,
+				attributeFilter: ['data-theme']
+			});
+		});
+	const written = (page: Page) => page.evaluate(() => (window as unknown as { written: string[] }).written.filter((c) => c.startsWith('theme=')));
+	const themes = (page: Page) => page.evaluate(() => (window as unknown as { themes: (string | null)[] }).themes);
+	const theme = (page: Page) => page.locator('html').getAttribute('data-theme');
+	const chooseTheme = async (page: Page, value: 'system' | 'light' | 'dark') => {
+		await page.getByRole('button', { name: /^Account menu/ }).click();
+		await page.getByLabel('Colour theme').selectOption(value);
+		await page.keyboard.press('Escape');
+	};
+	const themeCookies = async (ctx: BrowserContext) => (await ctx.cookies()).filter((c) => c.name === 'theme');
+	const bg = (page: Page) => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+	const report: string[] = [];
+
+	// Beside RadioArchive, with LOOK_COOKIE_DOMAIN set. The system's theme is
+	// light, so dark can only come from the cookie.
+	const api = await combinedApi({ LOOK_COOKIE_DOMAIN: '127.0.0.1' });
+	try {
+		const base = api.url;
+		const ctx = await newContext(browser, { viewport: { width: 1280, height: 900 }, colorScheme: 'light' });
+		await ctx.addCookies([{ name: 'pa_session', value: SESSIONS.user, url: base }]);
+		const page = await ctx.newPage();
+		await watch(page);
+		const first = await page.goto(`${base}/`);
+		expect(await first?.text(), 'no cookie: no theme sent').toMatch(/<html data-look-shared="" data-look="[a-z]+" data-cookie-domain="127\.0\.0\.1" lang=/);
+		await waitLive(page);
+		const lightBg = await bg(page);
+
+		await chooseTheme(page, 'dark');
+		await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+		expect(await written(page), 'Dark: the host-only one deleted, then the shared one written').toEqual([
+			'theme=; Path=/; Max-Age=0; SameSite=Lax',
+			'theme=dark; Domain=127.0.0.1; Path=/; Max-Age=31536000; SameSite=Lax'
+		]);
+		const stored = await themeCookies(ctx);
+		expect(stored.map((c) => [c.value, c.path, c.httpOnly, c.sameSite]), 'the cookie the browser keeps').toEqual([['dark', '/', false, 'Lax']]);
+		report.push(`Dark wrote ${(await written(page))[1]}`);
+
+		// The next page is sent dark and never changes as it loads.
+		const next = await ctx.newPage();
+		await watch(next);
+		const sent = await next.goto(`${base}/`);
+		expect(await sent?.text(), 'the page as sent').toMatch(/<html data-look-shared="" data-look="[a-z]+" data-theme="dark" data-cookie-domain="127\.0\.0\.1" lang=/);
+		await waitLive(next);
+		await expect(next.getByRole('button', { name: /^Account menu/ })).toBeVisible();
+		await next.waitForTimeout(500);
+		expect(await theme(next)).toBe('dark');
+		expect(await themes(next), 'the theme never changed as the page loaded').toEqual([]);
+		expect(await bg(next), 'drawn dark').not.toBe(lightBg);
+		report.push('the next page sent with data-theme="dark", never changing');
+
+		// The sign-in page, signed out, is dark too.
+		const out = await newContext(browser, { colorScheme: 'light' });
+		await out.addCookies([{ name: 'theme', value: 'dark', url: base }]);
+		const sp = await out.newPage();
+		await sp.goto(`${base}/signin`);
+		await expect(sp.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+		expect(await theme(sp), 'the sign-in page').toBe('dark');
+		await out.close();
+
+		// Auto deletes it, and the next page follows the system.
+		await chooseTheme(next, 'system');
+		expect(await theme(next)).toBeNull();
+		expect(await written(next), 'Auto: both deleted').toEqual(['theme=; Path=/; Max-Age=0; SameSite=Lax', 'theme=; Domain=127.0.0.1; Path=/; Max-Age=0; SameSite=Lax']);
+		expect(await themeCookies(ctx), 'no theme cookie after Auto').toEqual([]);
+		const after = await (await ctx.newPage()).goto(`${base}/`);
+		expect(await after?.text(), 'after Auto').not.toContain('data-theme');
+		report.push('Auto deleted it and the next page has no data-theme');
+		await ctx.close();
+	} finally {
+		await api.stop();
+	}
+
+	// Standalone (this run's API): host-only, and the next page sent dark.
+	const alone = await signedIn(browser, 'user', { colorScheme: 'light' });
+	const ap = await alone.newPage();
+	await watch(ap);
+	await ap.goto('/');
+	await waitLive(ap);
+	expect(await ap.locator('html').getAttribute('data-cookie-domain'), 'standalone names no domain').toBeNull();
+	await chooseTheme(ap, 'dark');
+	expect(await written(ap), 'standalone Dark').toEqual(['theme=dark; Path=/; Max-Age=31536000; SameSite=Lax']);
+	expect(await (await ap.goto('/'))?.text(), 'standalone, the next page').toMatch(/<html data-look="[a-z]+" data-theme="dark" lang=/);
+	report.push('standalone: a host-only cookie, and the next page sent dark');
+
+	// A theme kept in localStorage before is moved into the cookie once.
+	await alone.clearCookies({ name: 'theme' });
+	await ap.evaluate(() => localStorage.setItem('theme', 'dark'));
+	await ap.reload();
+	await waitLive(ap);
+	await expect(ap.locator('html')).toHaveAttribute('data-theme', 'dark');
+	expect((await themeCookies(alone)).map((c) => c.value), 'moved into the cookie').toEqual(['dark']);
+	expect(await ap.evaluate(() => localStorage.getItem('theme')), 'and forgotten').toBeNull();
+	// A cookie already there wins over it.
+	await alone.addCookies([{ name: 'theme', value: 'light', url: URL }]);
+	await ap.evaluate(() => localStorage.setItem('theme', 'dark'));
+	await ap.reload();
+	await waitLive(ap);
+	await ap.waitForTimeout(500);
+	expect(await theme(ap), 'the cookie wins').toBe('light');
+	expect(await ap.evaluate(() => localStorage.getItem('theme')), 'forgotten all the same').toBeNull();
+	report.push('a localStorage theme moved into the cookie once, and a cookie already there wins');
+	await alone.close();
+	console.log(`A162 (${info.project.name}): ${report.join('; ')}`);
 });
 
 // A154 (R36a, ADR 0053): the page's policy runs no inline script but the

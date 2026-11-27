@@ -20,10 +20,10 @@ var files embed.FS
 // Handler serves the built app. Unknown paths get index.html so the
 // browser's router can handle them. If the app wasn't built (e.g. a Go-only
 // test build), it says so. look, if not nil, names the look to send the
-// page with (R82d): see Serve.
-func Handler(look LookFunc) http.Handler {
+// page with (R82d), and cookieDomain is LOOK_COOKIE_DOMAIN (R92b): see Serve.
+func Handler(look LookFunc, cookieDomain string) http.Handler {
 	root, _ := fs.Sub(files, "build")
-	return Serve(root, look)
+	return Serve(root, look, cookieDomain)
 }
 
 // Serve serves the app built into root. index.html, the app's one page, is
@@ -33,7 +33,13 @@ func Handler(look LookFunc) http.Handler {
 // page is sent as built: the default look, Harbour. With shared, the page also
 // says the look follows the look cookie the apps share (R92b), as
 // data-look-shared, so the app's script follows it too.
-func Serve(root fs.FS, look LookFunc) http.Handler {
+//
+// The page is also sent in the colour theme of the request's theme cookie
+// (R92b, ArchiveUx's rule 8), as data-theme="light" or "dark", or with none
+// to follow the system's, so it never shows the system's first. With
+// cookieDomain (LOOK_COOKIE_DOMAIN; "" standalone), the page names it as
+// data-cookie-domain, for its script to write the theme cookie on.
+func Serve(root fs.FS, look LookFunc, cookieDomain string) http.Handler {
 	index, err := fs.ReadFile(root, "index.html")
 	if err != nil {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -42,8 +48,8 @@ func Serve(root fs.FS, look LookFunc) http.Handler {
 	}
 	fileServer := http.FileServerFS(root)
 	// Worked out from the page as built, so every build's inline start-up
-	// script, and nothing else inline, runs (R36a). A look written into the
-	// page changes only its root element, never a script.
+	// script, and nothing else inline, runs (R36a). A look, theme or domain
+	// written into the page changes only its root element, never a script.
 	pagePolicy := policy(index)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet && r.Method != http.MethodHead {
@@ -84,10 +90,12 @@ func Serve(root fs.FS, look LookFunc) http.Handler {
 				return
 			}
 		}
-		page := index
+		// Each is written in front of the last, so the root reads
+		// data-look-shared, data-look, data-theme, data-cookie-domain.
+		page := WithTheme(withCookieDomain(index, cookieDomain), ThemeFromCookies(r))
 		if look != nil {
 			name, shared := look(r)
-			page = WithLook(index, name)
+			page = WithLook(page, name)
 			if shared {
 				page = withAttr(page, ` data-look-shared=""`)
 			}
