@@ -138,11 +138,22 @@ func TestR14bClientComposeNamesTheExactVersion(t *testing.T) {
 			t.Errorf("client_image_tag_for %s: %q (%v), want %s", v, out, err, want)
 		}
 	}
+	// The repository's file names main; a release build has stamped its own
+	// version there before the tests run (stamp-version.sh), as
+	// TestR84aComposeNamesThisRelease allows for the server's compose.yaml.
+	tag := "main"
+	if Version != unstampedVersion {
+		out, err := exec.Command("sh", "-c", `. scripts/ci/versions-lib.sh; client_image_tag_for "$1"`, "sh", Version).Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		tag = strings.TrimSpace(string(out))
+	}
 	data, err := os.ReadFile("deploy/client/compose.yaml")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(data), "\n    image: ghcr.io/rikiku/pagerarchive-client:main\n") {
-		t.Error("deploy/client/compose.yaml doesn't name ghcr.io/rikiku/pagerarchive-client:main: a build stamps it (stamp-version.sh)")
+	if want := "\n    image: ghcr.io/rikiku/pagerarchive-client:" + tag + "\n"; !strings.Contains(string(data), want) {
+		t.Errorf("deploy/client/compose.yaml doesn't name ghcr.io/rikiku/pagerarchive-client:%s (stamp-version.sh writes it)", tag)
 	}
 }
