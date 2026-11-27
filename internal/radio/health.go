@@ -28,21 +28,44 @@ type Health struct {
 
 	mu       sync.Mutex
 	messages map[string]int64 // rtl_fm's messages by kind
+	restarts map[string]int64 // the pipeline's restarts by reason (R13b)
 }
 
 // NewHealth starts counting. now is the clock (time.Now).
 func NewHealth(now func() time.Time) *Health {
-	h := &Health{now: now, start: now(), messages: map[string]int64{}}
+	h := &Health{now: now, start: now(), messages: map[string]int64{}, restarts: map[string]int64{}}
 	for _, k := range Kinds {
 		h.messages[k] = 0 // every kind is reported from the start, so a first one shows as an increase
+	}
+	for _, r := range Reasons {
+		h.restarts[r] = 0
 	}
 	return h
 }
 
+// Restarts is the pipeline's restarts so far, by reason (R13b).
+func (h *Health) Restarts() map[string]int64 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	out := make(map[string]int64, len(h.restarts))
+	for k, v := range h.restarts {
+		out[k] = v
+	}
+	return out
+}
+
+func (h *Health) restarted(reason string) {
+	h.mu.Lock()
+	h.restarts[reason]++
+	h.mu.Unlock()
+}
+
 // Pass copies rtl_fm's audio to multimon-ng unchanged, measuring each
 // chunk after it's written: measuring never delays the audio it measures,
-// and takes no lock.
+// and takes no lock. Each run of the pipeline has its own Pass, one at a
+// time, and starts on a whole sample.
 func (h *Health) Pass(dst io.Writer, src io.Reader) error {
+	h.odd = false
 	buf := make([]byte, 32<<10)
 	for {
 		n, err := src.Read(buf)
@@ -132,13 +155,19 @@ func (h *Health) count(kind string) {
 // Watch writes each of rtl_fm's messages to log, as rtl_fm wrote it, and
 // counts it by kind. Only the kind is kept: a message can name the device
 // and its serial number, and its text is never exported (R70).
-func (h *Health) Watch(r io.Reader, log io.Writer) {
+func (h *Health) Watch(r io.Reader, log io.Writer) { h.watch(r, log, nil) }
+
+// watch is Watch, telling seen of each kind as it's counted.
+func (h *Health) watch(r io.Reader, log io.Writer, seen func(kind string)) {
 	sc := bufio.NewScanner(r)
 	for sc.Scan() {
 		line := sc.Text()
 		fmt.Fprintln(log, line)
 		if k := Kind(line); k != "" {
 			h.count(k)
+			if seen != nil {
+				seen(k)
+			}
 		}
 	}
 	_, _ = io.Copy(log, r) // a line too long to scan: pass the rest on as it is

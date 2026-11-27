@@ -2,7 +2,7 @@
 // Browser acceptance checks (SPEC.md section 9). scripts/e2e.sh starts the API
 // on a fresh database with the standard test fixture, a client key, and a
 // signed-in user and admin (their session tokens).
-import { test, expect, type Browser, type BrowserContextOptions, type Locator, type Page, type APIRequestContext, type TestInfo } from '@playwright/test';
+import { test, expect, type Browser, type BrowserContext, type BrowserContextOptions, type Locator, type Page, type APIRequestContext, type TestInfo } from '@playwright/test';
 import AxeBuilder from '@axe-core/playwright';
 import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -25,9 +25,35 @@ const VERSION_TAG = /^Release notes for v/;
 
 const sessionCookie = (role: Role) => ({ name: 'pa_session', value: SESSIONS[role], url: URL });
 
+// R36a (A154): every securitypolicyviolation event on the pages a test opens,
+// as "<directive> <blocked URI> on <path>". The test fails on any, after it
+// has run, but those it says it causes (expectCspViolation).
+let cspViolations: string[] = [];
+
+/** Watches ctx's pages for CSP violations, from before their first script. */
+async function watchCsp(ctx: BrowserContext) {
+	await ctx.exposeBinding('__paCspViolation', (_source, v: string) => void cspViolations.push(v));
+	await ctx.addInitScript(() => {
+		document.addEventListener('securitypolicyviolation', (e) =>
+			(window as unknown as { __paCspViolation: (v: string) => void }).__paCspViolation(`${e.effectiveDirective} ${e.blockedURI} on ${location.pathname}`)
+		);
+	});
+	return ctx;
+}
+
+/** A test causes violations starting "<directive> <blocked URI>" on purpose. */
+function expectCspViolation(info: TestInfo, violation: string) {
+	info.annotations.push({ type: 'csp-violation-expected', description: violation });
+}
+
+/** A new browser context, watched for CSP violations. */
+async function newContext(browser: Browser, opts: BrowserContextOptions = {}) {
+	return watchCsp(await browser.newContext(opts));
+}
+
 /** A browser context signed in as role. */
 async function signedIn(browser: Browser, role: Role = 'user', opts: BrowserContextOptions = {}) {
-	const ctx = await browser.newContext(opts);
+	const ctx = await newContext(browser, opts);
 	await ctx.addCookies([sessionCookie(role)]);
 	return ctx;
 }
@@ -44,9 +70,17 @@ async function setLooks(request: APIRequestContext, look: 'harbour' | 'console')
 	await setLook(request, 'admin', look);
 }
 
-// The page fixture is signed in as the user.
+// The page fixture is signed in as the user, and watched for CSP violations.
 test.beforeEach(async ({ context }) => {
+	cspViolations = [];
+	await watchCsp(context);
 	await context.addCookies([sessionCookie('user')]);
+});
+test.afterEach(async ({}, info) => {
+	const expected = info.annotations.filter((a) => a.type === 'csp-violation-expected').map((a) => a.description ?? '');
+	const unexpected = cspViolations.filter((v) => !expected.some((e) => v.startsWith(e)));
+	cspViolations = [];
+	expect(unexpected, 'Content-Security-Policy violations on the pages this test opened (R36a)').toEqual([]);
 });
 const KEY = process.env.PA_CLIENT_KEY ?? '';
 
@@ -314,7 +348,7 @@ test('a demoted admin\'s open list loses admin-only details without a reload', a
 INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE email_key = '${email}';`);
 	await post(request, '0100004', `@@GARBLED ${marker} ONE`);
-	const ctx = await browser.newContext();
+	const ctx = await newContext(browser);
 	await ctx.addCookies([{ name: 'pa_session', value: token, url: URL }]);
 	const page = await ctx.newPage();
 	await page.goto(`/?q=${marker}`);
@@ -348,7 +382,7 @@ INSERT INTO sessions (token_hash, user_id, expires_at)
 // admin exists here, so that's Authentik straight away. (No Authentik runs
 // here, so the sign-in page says it can't be reached.)
 test('A29 signed-out visitors are sent to sign in', async ({ browser }) => {
-	const page = await (await browser.newContext()).newPage();
+	const page = await (await newContext(browser)).newPage();
 	await page.goto('/jobs/EX0000001');
 	await expect(page).toHaveURL(/\/signin\?error=directory_unavailable$/);
 	await expect(page.getByRole('alert')).toContainText("couldn't be reached");
@@ -363,7 +397,7 @@ test("A117 signing out with Authentik unreachable still ends the app's session, 
 	const token = `e2e-signout-${Date.now()}-${Math.random().toString(36).slice(2)}`;
 	sql(`INSERT INTO sessions (token_hash, user_id, expires_at)
   SELECT sha256(convert_to('${token}', 'UTF8')), id, now() + interval '1 day' FROM users WHERE subject = 'e2e-user';`);
-	const ctx = await browser.newContext();
+	const ctx = await newContext(browser);
 	await ctx.addCookies([{ name: 'pa_session', value: token, url: URL }]);
 	const page = await ctx.newPage();
 	await page.goto('/account/profile');
@@ -380,7 +414,7 @@ test("A117 signing out with Authentik unreachable still ends the app's session, 
 // admin exists here, so the status is answered for the test; the stack test
 // checks it for real from the root URL.
 test('R44 signed-out visitors on a new install see first-admin set-up', async ({ browser }) => {
-	const page = await (await browser.newContext()).newPage();
+	const page = await (await newContext(browser)).newPage();
 	await page.route('/auth/status', (r) => r.fulfill({ json: { first_admin_setup: true } }));
 	await page.goto('/');
 	await expect(page).toHaveURL(/\/signin$/);
@@ -398,7 +432,7 @@ test('R82e the favicon loads before sign-in, from the root URL', async ({ browse
 		['head link[rel="icon"][type="image/png"]', 'image/png', 32],
 		['head link[rel="apple-touch-icon"]', 'image/png', 180]
 	];
-	const ctx = await browser.newContext();
+	const ctx = await newContext(browser);
 	const out = await ctx.newPage();
 	await out.goto('/');
 	await expect(out).toHaveURL(/\/signin/);
@@ -993,12 +1027,16 @@ test('capcode report counts Emergency messages by category', async ({ page, requ
 	// Something that's neither is refused, without asking the API.
 	await box.fill('no such alias anywhere');
 	await page.getByRole('button', { name: 'Run report' }).click();
-	// R82e: under the box, which says it's invalid and takes focus; the top line only counts.
+	// R82g: under the box, which says it's invalid; the error summary at the
+	// top takes focus and names the box, and its link moves focus there.
 	await expect(page.locator('#report-box-error')).toHaveText(`There's no alias "no such alias anywhere". Pick one from the suggestions.`);
 	await expect(box).toHaveAttribute('aria-invalid', 'true');
 	await expect(box).toHaveAttribute('aria-describedby', 'report-box-error');
+	const summary = page.getByTestId('form-summary').locator('.error-summary');
+	await expect(summary).toBeFocused();
+	await expect(summary.getByRole('heading')).toHaveText('1 field needs attention');
+	await summary.getByRole('link', { name: `Alias or capcode: There's no alias "no such alias anywhere". Pick one from the suggestions.` }).click();
 	await expect(box).toBeFocused();
-	await expect(page.getByTestId('form-summary')).toHaveText('1 field needs attention');
 });
 
 // R78, A6: the Unknown capcodes page lists the most messages first, then
@@ -1498,10 +1536,14 @@ test('A44 request rejected', async ({ page, browser, request }, info) => {
 	await expect(card.getByRole('row', { name: `Name ${current} Station 7 ${n}` })).toBeVisible();
 	await card.getByRole('button', { name: /^Reject:/ }).click();
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
-	// R82e: the empty feedback is caught before it's sent, under the field, which takes focus.
+	// R82g: the empty feedback is caught before it's sent, under the field; the
+	// error summary takes focus, and its link names the field and leads to it.
 	await expect(card.locator('.field-error')).toHaveText("Say why it's rejected: they'll see this.");
+	const summary = card.getByTestId('form-summary').locator('.error-summary');
+	await expect(summary).toBeFocused();
+	await expect(summary.getByRole('heading')).toHaveText('1 field needs attention');
+	await summary.getByRole('link', { name: "Feedback for the person who asked: Say why it's rejected: they'll see this." }).click();
 	await expect(card.getByLabel('Feedback for the person who asked required')).toBeFocused();
-	await expect(card.getByTestId('form-summary')).toHaveText('1 field needs attention');
 	await card.getByLabel('Feedback for the person who asked required').fill('Wrong station');
 	await card.getByRole('button', { name: 'Reject', exact: true }).click();
 	await expect(admin.getByRole('status')).toContainText('Rejected');
@@ -2022,6 +2064,9 @@ test('A57 icons shown', async ({ browser, request }, info) => {
 	});
 	await new Promise<void>((r) => other.listen(0, '127.0.0.1', r));
 	const probe = `http://127.0.0.1:${(other.address() as { port: number }).port}/elsewhere.png`;
+	// R36a: the one violation this test causes, the probe from another site
+	// below (A154); a browser may report its address or only its origin.
+	expectCspViolation(info, `img-src ${new globalThis.URL(probe).origin}`);
 	// The browsers reach PagerArchive through a proxy that counts the icon
 	// requests the server gets: each browser fetches an icon once.
 	const apiPort = Number(new globalThis.URL(URL).port);
@@ -3500,7 +3545,7 @@ test('R77 R81 the version at the foot of the menu', async ({ browser, request },
 		await page.context().close();
 	}
 	// Signed out: no menu, no version.
-	const out = await (await browser.newContext()).newPage();
+	const out = await (await newContext(browser)).newPage();
 	await out.goto('/signin');
 	await expect(out.getByRole('link', { name: VERSION_TAG })).toHaveCount(0);
 	await out.context().close();
@@ -3989,7 +4034,7 @@ test('A74 choosing a look', async ({ browser, request }, info) => {
 		// The page comes from the server already in Console...
 		const sent = await (await request.get(`${URL}/`, { headers: { Cookie: `pa_session=${phoneToken}` } })).text();
 		expect(sent).toMatch(/<html data-look="console"/);
-		const phoneCtx = await browser.newContext({ viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
+		const phoneCtx = await newContext(browser, { viewport: { width: 375, height: 812 }, hasTouch: true, colorScheme: 'dark' });
 		await phoneCtx.addCookies([{ name: 'pa_session', value: phoneToken, url: URL }]);
 		// ...so the first frame is Console, and the look never changes after:
 		// any change of data-look on the root is recorded.
@@ -5943,7 +5988,7 @@ async function controlled(page: Page, path = '/') {
 }
 
 test('A116 installable: the manifest, its icons and theme from the tokens, before sign-in', async ({ browser, browserName }) => {
-	const ctx = await browser.newContext({ colorScheme: 'light', serviceWorkers: 'allow' });
+	const ctx = await newContext(browser, { colorScheme: 'light', serviceWorkers: 'allow' });
 	const page = await ctx.newPage();
 	await page.goto('/');
 	await expect(page).toHaveURL(/\/signin/);
@@ -6650,10 +6695,18 @@ test('A132 required fields say so, and each form checks itself', async ({ browse
 		await expect(pages).toHaveAccessibleName(/^Which pages\W*required$/);
 		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias.');
 
-		// Saved empty: nothing is sent; a message under each problem; focus on the first.
+		// Saved empty: nothing is sent; a message under each problem; focus on
+		// the error summary, which names and links each field (ArchiveUx 0.6.0).
 		await form.getByRole('button', { name: 'Save integration' }).click();
-		const summary = form.getByTestId('form-summary');
-		await expect(summary).toHaveText('3 fields need attention');
+		const summary = form.getByTestId('form-summary').locator('.error-summary');
+		await expect(summary).toBeFocused();
+		await expect(summary).toHaveAccessibleName('3 fields need attention');
+		await expect(summary.getByRole('heading')).toHaveText('3 fields need attention');
+		await expect(summary.getByRole('link')).toHaveText([
+			'Name: Fill this in.',
+			'Which pages: None chosen yet. Choose at least one capcode or alias.',
+			'URL: Fill this in.'
+		]);
 		for (const [what, control] of [
 			['Name', nameBox],
 			['URL', url]
@@ -6665,16 +6718,34 @@ test('A132 required fields say so, and each form checks itself', async ({ browse
 			await expect(message, what).toBeVisible();
 		}
 		await expect(form.locator('[id$="-name-error"]')).toHaveText('Fill this in.');
-		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias. Nothing chosen yet: choose at least one capcode or alias.');
-		await expect(nameBox).toBeFocused();
+		await expect(pages).toHaveAccessibleDescription('Choose at least one capcode or alias. None chosen yet. Choose at least one capcode or alias.');
+		const box = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		// The group's message sits by the part it's about: after the capcode box, in its group.
+		expect(
+			await pages.evaluate((group) => {
+				const error = group.querySelector(':scope > .field-error');
+				const input = group.querySelector('[role="combobox"]');
+				return !!error && !!input && !!(input.compareDocumentPosition(error) & Node.DOCUMENT_POSITION_FOLLOWING);
+			}),
+			'Which pages: its message after the capcode box'
+		).toBe(true);
 		expect(await axeOf(admin), 'axe: after a save with problems').toEqual([]);
+		// The first link is one Tab away; a link moves focus to its field.
+		await admin.keyboard.press('Tab');
+		await expect(summary.getByRole('link', { name: /^Name:/ })).toBeFocused();
+		await summary.getByRole('link', { name: /^URL:/ }).click();
+		await expect(url).toBeFocused();
+		await expect(url).toBeInViewport();
 
-		// Name filled and saved again: its message goes; focus moves to the capcode box.
+		// Name filled and saved again: its message and link go; focus on the
+		// summary again, whose Which pages link moves focus to the capcode box.
 		await nameBox.fill(name);
 		await expect(nameBox).not.toHaveAttribute('aria-invalid', 'true');
+		await expect(summary.getByRole('link', { name: /^Name:/ })).toHaveCount(0);
 		await form.getByRole('button', { name: 'Save integration' }).click();
-		await expect(summary).toHaveText('2 fields need attention');
-		const box = form.getByRole('combobox', { name: 'Capcodes and aliases' });
+		await expect(summary).toBeFocused();
+		await expect(summary.getByRole('heading')).toHaveText('2 fields need attention');
+		await summary.getByRole('link', { name: /^Which pages:/ }).click();
 		await expect(box).toBeFocused();
 		expect(posted, 'nothing was sent').toBe(0);
 
@@ -7402,7 +7473,7 @@ test('A148 the shared look cookie decides the first paint', async ({ browser, re
 	const api = await combinedApi({ LOOK_COOKIE_DOMAIN: '127.0.0.1' });
 	try {
 		const base = api.url;
-		const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+		const ctx = await newContext(browser, { viewport: { width: 1280, height: 900 } });
 		await ctx.addCookies([
 			{ name: 'pa_session', value: SESSIONS.user, url: base },
 			{ name: 'look', value: 'console', url: base }
@@ -7433,7 +7504,7 @@ test('A148 the shared look cookie decides the first paint', async ({ browser, re
 		report.push(`a change saved to the account and wrote ${setCookie}`);
 
 		// The sign-in page, before sign-in, follows the cookie too.
-		const out = await browser.newContext();
+		const out = await newContext(browser);
 		await out.addCookies([{ name: 'look', value: 'console', url: base }]);
 		const sp = await out.newPage();
 		await sp.goto(`${base}/signin`);
@@ -7447,4 +7518,65 @@ test('A148 the shared look cookie decides the first paint', async ({ browser, re
 		await setLook(request, 'user', 'harbour');
 	}
 	console.log(`A148 (${info.project.name}): standalone ignores the cookie; ${report.join('; ')}`);
+});
+
+// A154 (R36a, ADR 0053): the page's policy runs no inline script but the
+// build's own. Signed out at the root URL, the header's script-src is this
+// origin and the hash of each inline script the page as built has, no
+// 'unsafe-inline' or 'unsafe-eval'; neither the page nor the offline page has
+// an inline event handler or a javascript: link; and the app boots to the
+// sign-in page. Then, as a user and as an admin, it boots and opens the main
+// screens. No violation fires on any of them: afterEach checks every test's
+// pages, A116's with the service worker in control and offline among them.
+test("A154 no inline script but the build's", async ({ browser, request }, info) => {
+	const out = await (await newContext(browser)).newPage();
+	const res = await out.goto('/');
+	// Authentik isn't running here, so the sign-in page says it can't be reached.
+	await expect(out).toHaveURL(/\/signin(\?|$)/);
+	await expect(out.getByRole('heading', { level: 1, name: 'Sign in' })).toBeVisible();
+	const scriptSrc = (res!.headers()['content-security-policy'] ?? '')
+		.split(';')
+		.map((d) => d.trim())
+		.find((d) => d.startsWith('script-src '));
+	expect(scriptSrc).toMatch(/^script-src 'self'( 'sha256-[A-Za-z0-9+/]{43}=')+$/);
+	// The hashes are the page's own inline scripts', worked out here. (The
+	// page itself, as sent: the browser has moved on to the sign-in page.)
+	const html = await (await out.context().request.get(`${URL}/`)).text();
+	const inline = [...html.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script\s*>/gi)].filter((m) => !/(^|\s)src\s*=/i.test(m[1]));
+	expect(inline.length).toBeGreaterThan(0);
+	const hashes = [...new Set(inline.map((m) => `'sha256-${createHash('sha256').update(m[2].replace(/\r\n?/g, '\n')).digest('base64')}'`))];
+	expect(scriptSrc).toBe(`script-src 'self' ${hashes.join(' ')}`);
+	for (const [path, text] of [
+		['/', html],
+		['/offline.html', await (await request.get(`${URL}/offline.html`)).text()]
+	]) {
+		expect(text.match(/<[^>]*\son[a-z]+\s*=/gi), `inline event handlers in ${path}`).toBeNull();
+		expect(text.match(/javascript:/gi), `javascript: links in ${path}`).toBeNull();
+	}
+	await out.context().close();
+
+	// Signed in, the app boots and its screens open.
+	const job = uniqueJob();
+	await post(request, '0100001', `@@${job} HSF1 SMOKE FROM ROOF @ 12 FICTION ST, MADEUPTON #STN1`);
+	const found = await request.get(`${URL}/api/v1/messages?job=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
+	const id = ((await found.json()).messages[0] as { id: number }).id;
+	const opened: string[] = [];
+	for (const role of ['user', 'admin'] as const) {
+		const page = await (await signedIn(browser, role)).newPage();
+		await page.goto('/');
+		await expect(page.getByTestId('message-list')).toContainText(job);
+		await page.goto(`/messages/${id}`);
+		await expect(page.getByText(job).first()).toBeVisible();
+		await page.goto('/map');
+		await expect(page.getByTestId('map')).toHaveAttribute('data-ready', /^(true|unavailable)$/, { timeout: 15_000 });
+		await page.goto('/reports');
+		await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+		if (role === 'admin') {
+			await page.goto('/admin');
+			await expect(page.getByRole('heading', { level: 1, name: 'Administration' })).toBeVisible();
+		}
+		opened.push(role);
+		await page.context().close();
+	}
+	console.log(`A154 (${info.project.name}): ${scriptSrc}; booted signed out and as ${opened.join(' and ')}`);
 });

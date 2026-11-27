@@ -136,7 +136,7 @@
 			{/if}
 		</div>
 		<form novalidate onsubmit={upload} onchange={fc.cleared}>
-			<FormSummary check={fc} />
+			<FormSummary check={fc} level={3} />
 			<label for="icon-file">{t.icon ? 'Replace it with' : 'Add an icon'} <span class="required">required</span></label>
 			<input id="icon-file" type="file" bind:files={file} accept=".png,.ico,.gif,.jpg,.jpeg,.webp,image/png,image/x-icon,image/gif,image/jpeg,image/webp" required
 				data-problem="Choose an image file." aria-invalid={fc.invalid('icon-file')} aria-describedby={fc.describedBy('icon-file', 'icon-help')} />

@@ -107,7 +107,7 @@
 		<p>You have no albums yet: make one here.</p>
 	{/if}
 	<form novalidate onsubmit={create} oninput={fc.cleared}>
-		<FormSummary check={fc} />
+		<FormSummary check={fc} level={3} />
 		<label for="{uid}-name">New album <span class="required">required</span></label>
 		<div class="row">
 			<input id="{uid}-name" bind:value={name} required maxlength="100" autocomplete="off" aria-invalid={fc.invalid(`${uid}-name`)} aria-describedby={fc.describedBy(`${uid}-name`)} />
