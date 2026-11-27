@@ -1,6 +1,8 @@
 package web
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,8 +88,8 @@ func TestInstalledAppFiles(t *testing.T) {
 	h := Serve(root, nil)
 	for _, c := range []struct{ path, typ, cache, csp string }{
 		{"/manifest.webmanifest", "application/manifest+json", "no-cache", ""},
-		{"/service-worker.js", "text/javascript; charset=utf-8", "no-cache", csp},
-		{"/offline.html", "text/html; charset=utf-8", "no-cache", csp},
+		{"/service-worker.js", "text/javascript; charset=utf-8", "no-cache", selfOnly},
+		{"/offline.html", "text/html; charset=utf-8", "no-cache", selfOnly},
 		{"/_app/immutable/app.js", "text/javascript; charset=utf-8", "public, max-age=31536000, immutable", ""},
 	} {
 		w := httptest.NewRecorder()
@@ -105,5 +107,49 @@ func TestInstalledAppFiles(t *testing.T) {
 		if got := res.Header.Get("Content-Security-Policy"); got != c.csp {
 			t.Errorf("%s: Content-Security-Policy %q, want %q", c.path, got, c.csp)
 		}
+	}
+}
+
+// selfOnly is the policy of a page with no inline script, and of the service
+// worker: R36a's, with scripts from this origin only.
+const selfOnly = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
+
+// A153 (R36a, ADR 0053): the app's page goes out with the SHA-256 of each of
+// its own inline scripts in script-src, worked out from the page as built,
+// and never 'unsafe-inline' or 'unsafe-eval' for scripts.
+func TestPolicyHashesThePagesOwnInlineScripts(t *testing.T) {
+	// The hashes are worked out here independently: base64 SHA-256 of each
+	// script's text as the browser reads it (CRLF read as LF).
+	first := "\n\t\t\tvar a = 1;\n\t\t"
+	second := "console.log('second')"
+	sum := func(s string) string {
+		h := sha256.Sum256([]byte(s))
+		return "'sha256-" + base64.StdEncoding.EncodeToString(h[:]) + "'"
+	}
+	built := `<!doctype html>
+<html lang="en-AU">
+	<head><script type="module" src="/_app/immutable/start.js"></script><link rel="stylesheet" href="/_app/immutable/app.css"></head>
+	<body><div style="display: contents"><script>` + strings.ReplaceAll(first, "\n", "\r\n") + `</script><SCRIPT nonce="x">` + second + `</SCRIPT><script>` + second + `</script></div></body>
+</html>`
+	want := strings.Replace(selfOnly, "script-src 'self';", "script-src 'self' "+sum(first)+" "+sum(second)+";", 1)
+
+	root := fstest.MapFS{"index.html": {Data: []byte(built)}}
+	h := Serve(root, func(r *http.Request) (string, bool) { return "console", r.URL.Path == "/albums/3" })
+	for _, path := range []string{"/", "/index.html", "/albums/3", "/signin"} {
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		got := w.Result().Header.Get("Content-Security-Policy")
+		if got != want {
+			t.Errorf("%s: Content-Security-Policy\n %q\nwant\n %q", path, got, want)
+		}
+		scripts := got[strings.Index(got, "script-src"):]
+		scripts = scripts[:strings.Index(scripts, ";")]
+		if strings.Contains(scripts, "unsafe-inline") || strings.Contains(scripts, "unsafe-eval") {
+			t.Errorf("%s: %s", path, scripts)
+		}
+	}
+	// A page with no inline script: this origin's scripts only.
+	if got := policy([]byte(page)); got != selfOnly {
+		t.Errorf("no inline script: %q", got)
 	}
 }
