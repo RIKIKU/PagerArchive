@@ -7106,7 +7106,8 @@ test('A134 a large event shows its areas', async ({ browser, request }, info) =>
 // A140, A141 (R77e, R77f): the app switcher. The run's API is standalone (no
 // RADIOARCHIVE_URL); these start a second API on the same database with
 // RadioArchive set, for their own run only (scripts/e2e.sh), and stop it
-// after, so no worker runs twice while other tests do.
+// after, so no worker runs twice while other tests do. Its Authentik is
+// groupStandIn: who sees the switcher is that group's members.
 const RADIO = 'http://radio.example.test'; // as RADIOARCHIVE_URL is read: no trailing slash
 async function combinedApi(extra: Record<string, string> = {}): Promise<{ url: string; stop: () => Promise<void> }> {
 	const bin = process.env.PA_E2E_BIN;
@@ -7154,8 +7155,59 @@ async function combinedApi(extra: Record<string, string> = {}): Promise<{ url: s
 	};
 }
 
-/** Nobody marked and the switcher for everyone off: a new install's state. */
-const resetSwitcher = () => sql(`UPDATE users SET sees_switcher = false; DELETE FROM settings WHERE key = 'switcher_everyone';`);
+// The seeded users' Authentik IDs while the switcher's tests run: Authentik's
+// are numbers, and the API adds and removes people by them.
+const AUTHENTIK_IDS = { 'user@example.test': 90001, 'admin@example.test': 90002, 'user-c@example.test': 90003 } as const;
+const RADIO_OPERATOR = 777; // in the group, and no PagerArchive user: the radio's own service account
+const withAuthentikIDs = () =>
+	sql(Object.entries(AUTHENTIK_IDS).map(([email, id]) => `UPDATE users SET subject = '${id}' WHERE email = '${email}';`).join('\n'));
+const withoutAuthentikIDs = () =>
+	sql(`UPDATE users SET subject = 'e2e-user' WHERE email = 'user@example.test';
+UPDATE users SET subject = 'e2e-admin' WHERE email = 'admin@example.test';
+UPDATE users SET subject = 'e2e-user-c' WHERE email = 'user-c@example.test';`);
+
+/**
+ * A stand-in for Authentik's API for the switcher's group, radioarchive-preview
+ * (R77f): its members by Authentik user ID, as the API reads and changes them.
+ * Anything else it's asked is 404. missing: there's no such group.
+ */
+async function groupStandIn(members: number[], missing = false) {
+	const http = await import('node:http');
+	const state = { members: new Set(members), missing };
+	const srv = http.createServer((req, res) => {
+		const u = new globalThis.URL(req.url ?? '/', 'http://authentik.example.test');
+		let body = '';
+		req.on('data', (d) => (body += d));
+		req.on('end', () => {
+			if (req.method === 'GET' && u.pathname === '/api/v3/core/groups/') {
+				const name = u.searchParams.get('name');
+				const results = !state.missing && name === 'radioarchive-preview' ? [{ pk: 'g-preview', name, users: [...state.members] }] : [];
+				res.writeHead(200, { 'content-type': 'application/json' });
+				res.end(JSON.stringify({ pagination: { count: results.length }, results }));
+				return;
+			}
+			const m = /^\/api\/v3\/core\/groups\/g-preview\/(add_user|remove_user)\/$/.exec(u.pathname);
+			if (req.method === 'POST' && m && !state.missing) {
+				const pk = (JSON.parse(body || '{}') as { pk?: number }).pk;
+				if (typeof pk === 'number') {
+					if (m[1] === 'add_user') state.members.add(pk);
+					else state.members.delete(pk);
+					res.writeHead(204);
+					res.end();
+					return;
+				}
+			}
+			res.writeHead(404, { 'content-type': 'application/json' });
+			res.end('{"detail":"Not found."}');
+		});
+	});
+	await new Promise<void>((r) => srv.listen(0, '127.0.0.1', r));
+	const port = (srv.address() as { port: number }).port;
+	return { url: `http://127.0.0.1:${port}`, state, stop: () => new Promise<void>((r) => srv.close(() => r())) };
+}
+
+/** "Everyone" off: a new install's state. */
+const resetSwitcher = () => sql(`DELETE FROM settings WHERE key = 'switcher_everyone';`);
 
 async function meOf(request: APIRequestContext, base: string, role: Role) {
 	const res = await request.get(`${base}/api/v1/me`, { headers: asRole(role) });
@@ -7174,15 +7226,23 @@ async function listAt(browser: Browser, base: string, role: Role, width: number,
 	return page;
 }
 
+/** The admin's mark, through the API: adds role's user to the group or removes them. */
+async function markThroughApi(request: APIRequestContext, base: string, email: string, sees: boolean) {
+	const users = (await (await request.get(`${base}/api/v1/admin/users`, { headers: asRole('admin') })).json()) as { id: number; email: string }[];
+	const u = users.find((x) => x.email === email)!;
+	const res = await request.put(`${base}/api/v1/admin/users/${u.id}/switcher`, { headers: asRole('admin'), data: { sees_switcher: sees } });
+	expect(res.status(), `mark ${email} ${sees}`).toBe(204);
+}
+
 test('A140 the app switcher: none standalone, for whom R77f says with RadioArchive set', async ({ browser, request }, info) => {
 	test.setTimeout(240_000);
 	const switcher = (p: Page) => p.getByRole('banner').getByRole('link', { name: 'Switch to Radio' });
-	// Standalone (this run's API): no switcher for anyone, even marked or for
-	// everyone, at either width, and no RadioArchive in meta.
+	// Standalone (this run's API): no switcher for anyone, even for everyone,
+	// at either width, and no RadioArchive in meta.
 	const meta = await (await request.get(`${URL}/api/v1/meta`, { headers: asRole('user') })).json();
 	expect(meta.radioarchive_url, 'standalone: no RadioArchive in meta').toBeUndefined();
 	try {
-		sql(`UPDATE users SET sees_switcher = true WHERE email = 'user@example.test'; INSERT INTO settings (key, value) VALUES ('switcher_everyone', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';`);
+		sql(`INSERT INTO settings (key, value) VALUES ('switcher_everyone', 'true') ON CONFLICT (key) DO UPDATE SET value = 'true';`);
 		for (const role of ['user', 'admin'] as const) {
 			expect((await meOf(request, URL, role)).show_switcher, `standalone ${role}`).toBe(false);
 			for (const width of [1280, 375]) {
@@ -7195,21 +7255,25 @@ test('A140 the app switcher: none standalone, for whom R77f says with RadioArchi
 		resetSwitcher();
 	}
 
-	const api = await combinedApi();
+	const authentik = await groupStandIn([]);
+	withAuthentikIDs();
+	const api = await combinedApi({ AUTHENTIK_URL: authentik.url });
 	try {
 		const base = api.url;
 		const cmeta = await (await request.get(`${base}/api/v1/meta`, { headers: asRole('user') })).json();
 		expect([cmeta.radioarchive_url, cmeta.radioarchive_name], 'combined: meta names RadioArchive').toEqual([RADIO, 'Radio']);
-		// Set, nobody marked: none.
+		// Set, nobody in the group: none.
 		expect((await meOf(request, base, 'user')).show_switcher, 'unmarked').toBe(false);
 		for (const width of [1280, 375]) {
 			const page = await listAt(browser, base, 'user', width);
 			await expect(page.locator('[data-app-switcher]'), `unmarked ${width}`).toHaveCount(0);
 			await page.context().close();
 		}
-		// Marked: they see it, desktop and phone, light and dark, in the top bar
-		// before the account menu; it opens RadioArchive in the same tab.
-		sql(`UPDATE users SET sees_switcher = true WHERE email = 'user@example.test';`);
+		// Marked (in the group): they see it, desktop and phone, light and
+		// dark, in the top bar before the account menu; it opens RadioArchive
+		// in the same tab.
+		await markThroughApi(request, base, 'user@example.test', true);
+		expect([...authentik.state.members], 'marked: in the group').toEqual([AUTHENTIK_IDS['user@example.test']]);
 		expect((await meOf(request, base, 'user')).show_switcher, 'marked').toBe(true);
 		expect((await meOf(request, base, 'userC')).show_switcher, 'someone else, unmarked').toBe(false);
 		for (const width of [1280, 375]) {
@@ -7249,12 +7313,15 @@ test('A140 the app switcher: none standalone, for whom R77f says with RadioArchi
 	} finally {
 		resetSwitcher();
 		await api.stop();
+		await authentik.stop();
+		withoutAuthentikIDs();
 	}
 });
 
 test('A141 who sees the switcher: the admin controls on Users', async ({ browser, request }, info) => {
 	test.setTimeout(240_000);
 	const userLabel = 'Test User (user@example.test)';
+	const userID = AUTHENTIK_IDS['user@example.test'];
 	// Standalone: neither control.
 	{
 		const page = await (await signedIn(browser, 'admin', { viewport: { width: 1280, height: 900 } })).newPage();
@@ -7266,16 +7333,19 @@ test('A141 who sees the switcher: the admin controls on Users', async ({ browser
 		await page.context().close();
 	}
 	resetSwitcher();
-	const api = await combinedApi();
+	const authentik = await groupStandIn([RADIO_OPERATOR]);
+	withAuthentikIDs();
+	let api = await combinedApi({ AUTHENTIK_URL: authentik.url });
 	try {
-		const base = api.url;
+		let base = api.url;
 		// Only an admin changes them; nobody marked and everyone off to start with.
 		expect((await request.put(`${base}/api/v1/admin/switcher`, { headers: asRole('user'), data: { everyone: true } })).status(), 'a user: everyone').toBe(403);
 		const users = (await (await request.get(`${base}/api/v1/admin/users`, { headers: asRole('admin') })).json()) as { id: number; email: string; sees_switcher: boolean }[];
 		const target = users.find((u) => u.email === 'user@example.test')!;
 		expect(users.filter((u) => u.sees_switcher), 'nobody marked').toEqual([]);
 		expect((await request.put(`${base}/api/v1/admin/users/${target.id}/switcher`, { headers: asRole('user'), data: { sees_switcher: true } })).status(), 'a user: a mark').toBe(403);
-		expect((await (await request.get(`${base}/api/v1/admin/switcher`, { headers: asRole('admin') })).json()).everyone, 'everyone off').toBe(false);
+		const settings = await (await request.get(`${base}/api/v1/admin/switcher`, { headers: asRole('admin') })).json();
+		expect(settings, 'everyone off, the group named').toEqual({ everyone: false, group: 'radioarchive-preview' });
 
 		for (const width of [1280, 375]) {
 			for (const colorScheme of ['light', 'dark'] as const) {
@@ -7284,20 +7354,28 @@ test('A141 who sees the switcher: the admin controls on Users', async ({ browser
 				await ctx.addCookies([{ name: 'pa_session', value: SESSIONS.admin, url: base }]);
 				const page = await ctx.newPage();
 				await page.goto(`${base}/admin/users`);
-				await expect(page.getByRole('heading', { name: 'Switcher to Radio' }), where).toBeVisible();
+				const section = page.getByRole('region', { name: 'Switcher to Radio' });
+				await expect(section, where).toBeVisible();
+				await expect(section).toContainText('radioarchive-preview');
 				const everyone = page.getByRole('checkbox', { name: 'Show the switcher to everyone' });
 				await expect(everyone).not.toBeChecked();
 				const row = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: userLabel, exact: true }) });
-				// Mark them: the tag, the mark in the API, and their switcher.
+				// Mark them: the tag, the group in Authentik, and their switcher.
 				await row.getByRole('button', { name: `Show switcher: ${userLabel}` }).click();
-				await expect(page.getByRole('status')).toHaveText(`${userLabel} sees the switcher to Radio.`);
+				await expect(page.getByRole('status')).toHaveText(`${userLabel} sees the switcher to Radio, and is in radioarchive-preview.`);
 				await expect(row.getByTestId('sees-switcher')).toHaveText('Sees switcher');
+				expect([...authentik.state.members].sort(), `${where}: in the group, the radio's member kept`).toEqual([RADIO_OPERATOR, userID].sort());
 				expect((await meOf(request, base, 'user')).show_switcher, `${where}: marked`).toBe(true);
 				await page.screenshot({ path: info.outputPath(`a136-users-${width}-${colorScheme}.png`) });
+				if (width < 768) {
+					await section.evaluate((el) => el.scrollIntoView({ block: 'center' }));
+					await page.screenshot({ path: info.outputPath(`a136-users-section-${width}-${colorScheme}.png`) });
+				}
 				expect(await axeOf(page), `${where}: axe`).toEqual([]);
 				await row.getByRole('button', { name: `Hide switcher: ${userLabel}` }).click();
-				await expect(page.getByRole('status')).toHaveText(`${userLabel} no longer sees the switcher to Radio.`);
+				await expect(page.getByRole('status')).toHaveText(`${userLabel} no longer sees the switcher to Radio, and is out of radioarchive-preview.`);
 				await expect(row.getByTestId('sees-switcher')).toHaveCount(0);
+				expect([...authentik.state.members], `${where}: out of the group, the radio's member kept`).toEqual([RADIO_OPERATOR]);
 				expect((await meOf(request, base, 'user')).show_switcher, `${where}: unmarked`).toBe(false);
 				// Everyone: on, kept after a reload, then off.
 				await everyone.check();
@@ -7306,14 +7384,38 @@ test('A141 who sees the switcher: the admin controls on Users', async ({ browser
 				await page.reload();
 				await expect(page.getByRole('checkbox', { name: 'Show the switcher to everyone' })).toBeChecked();
 				await page.getByRole('checkbox', { name: 'Show the switcher to everyone' }).uncheck();
-				await expect(page.getByRole('status')).toHaveText('Only the people marked see the switcher to Radio.');
+				await expect(page.getByRole('status')).toHaveText('Only the people in radioarchive-preview see the switcher to Radio.');
 				expect((await meOf(request, base, 'userC')).show_switcher, `${where}: everyone off`).toBe(false);
 				await ctx.close();
 			}
 		}
+
+		// No such group in Authentik: the section says so, and a mark is refused, saying so.
+		await api.stop();
+		authentik.state.missing = true;
+		api = await combinedApi({ AUTHENTIK_URL: authentik.url });
+		base = api.url;
+		for (const width of [1280, 375]) {
+			const ctx = await signedIn(browser, 'admin', { viewport: { width, height: width < 768 ? 740 : 900 } });
+			await ctx.addCookies([{ name: 'pa_session', value: SESSIONS.admin, url: base }]);
+			const page = await ctx.newPage();
+			await page.goto(`${base}/admin/users`);
+			await expect(page.getByTestId('switcher-group-problem'), `no group ${width}`).toHaveText(/Authentik has no group radioarchive-preview/);
+			await page.getByTestId('switcher-group-problem').evaluate((el) => el.scrollIntoView({ block: 'center' }));
+			await page.screenshot({ path: info.outputPath(`a136-no-group-${width}.png`) });
+			const row = page.getByRole('listitem').filter({ has: page.getByRole('link', { name: userLabel, exact: true }) });
+			await row.getByRole('button', { name: `Show switcher: ${userLabel}` }).click();
+			await expect(page.getByRole('alert')).toContainText('Authentik has no group radioarchive-preview');
+			await expect(row.getByTestId('sees-switcher')).toHaveCount(0);
+			expect(await axeOf(page), `no group ${width}: axe`).toEqual([]);
+			await ctx.close();
+		}
+		expect([...authentik.state.members], 'no group: nothing changed').toEqual([RADIO_OPERATOR]);
 	} finally {
 		resetSwitcher();
 		await api.stop();
+		await authentik.stop();
+		withoutAuthentikIDs();
 	}
 });
 

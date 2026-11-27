@@ -41,7 +41,7 @@ x-authentik: &authentik
   # so a release's new files take effect (R84a, ADR 0019). A test checks it
   # and prints the right value.
   labels:
-    pagerarchive.config: "eedcf45640f33bf8"
+    pagerarchive.config: "85687bec100c8ac5"
   environment:
     AUTHENTIK_SECRET_KEY: ${AUTHENTIK_SECRET_KEY:?set AUTHENTIK_SECRET_KEY in .env}
     AUTHENTIK_POSTGRESQL__HOST: db
@@ -72,6 +72,8 @@ x-authentik: &authentik
     PA_APP_URL: ${APP_URL:?set APP_URL in .env}
     PA_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
     PA_AUTHENTIK_API_TOKEN: ${AUTHENTIK_API_TOKEN:?set AUTHENTIK_API_TOKEN in .env}
+    # The app switcher's group (R77f): the API's RADIOARCHIVE_GROUP.
+    PA_RADIOARCHIVE_GROUP: ${RADIOARCHIVE_GROUP:-radioarchive-preview}
   # File by file, from the release's archive: a file a later release drops
   # can't stay in use because it's still in the folder (ADR 0019).
   volumes:
@@ -163,6 +165,10 @@ services:
       RADIOARCHIVE_URL: ${RADIOARCHIVE_URL:-}
       # The name the app switcher shows (R77e; default Radio).
       RADIOARCHIVE_NAME: ${RADIOARCHIVE_NAME:-}
+      # The Authentik group whose members see the switcher, the one the
+      # radio's gate admits (R77f; default radioarchive-preview). The
+      # blueprint makes it if it's missing (Authentik's PA_RADIOARCHIVE_GROUP).
+      RADIOARCHIVE_GROUP: ${RADIOARCHIVE_GROUP:-}
       # Beside the radio, the parent domain both apps share their look cookie
       # on (R92b), such as example.org: unset, the look is the account's alone.
       LOOK_COOKIE_DOMAIN: ${LOOK_COOKIE_DOMAIN:-}

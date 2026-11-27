@@ -498,7 +498,7 @@ export interface Me {
 	invited_by: string | null;
 	/** The look they chose (R82d), saved on the account. */
 	look: Look;
-	/** R77f: whether the frame shows them the app switcher (worked out by the server: RadioArchive set, and they're marked or it's shown to everyone). */
+	/** R77f: whether the frame shows them the app switcher (worked out by the server: RadioArchive set, and they're in its Authentik group or it's shown to everyone). */
 	show_switcher: boolean;
 }
 
@@ -546,8 +546,17 @@ export interface UserRow {
 	trusted: TrustedMark | null;
 	// R62a: a read-only service account, a tool rather than a person.
 	service_account: boolean;
-	// R77f: marked to see the app switcher.
+	// R77f: in the switcher's Authentik group, as last read.
 	sees_switcher: boolean;
+}
+
+/** R77f: who sees the app switcher. group and group_problem only with RadioArchive set. */
+export interface SwitcherSettings {
+	everyone: boolean;
+	/** The Authentik group whose members see it (RADIOARCHIVE_GROUP). */
+	group?: string;
+	/** missing: Authentik has no such group; unreadable: the last read failed. */
+	group_problem?: 'missing' | 'unreadable';
 }
 
 // Invite trees (R42a-R42d, ADR 0008). Admins only.
@@ -954,7 +963,7 @@ export const api = {
 	setRole: (id: number, role: 'admin' | 'user') => request<void>('PUT', `/api/v1/admin/users/${id}/role`, { role }),
 	// R77f: who sees the app switcher.
 	setSeesSwitcher: (id: number, sees: boolean) => request<void>('PUT', `/api/v1/admin/users/${id}/switcher`, { sees_switcher: sees }),
-	switcherSettings: () => get<{ everyone: boolean }>('/api/v1/admin/switcher'),
+	switcherSettings: () => get<SwitcherSettings>('/api/v1/admin/switcher'),
 	setSwitcherSettings: (everyone: boolean) => request<{ everyone: boolean }>('PUT', '/api/v1/admin/switcher', { everyone }),
 	// Integrations (R47-R51c).
 	selection: (q: string) => get<Suggestion[]>(`/api/v1/integrations/selection?q=${encodeURIComponent(q)}`),

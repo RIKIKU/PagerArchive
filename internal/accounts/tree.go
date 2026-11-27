@@ -320,33 +320,6 @@ func (s *Service) SetTrusted(ctx context.Context, actor db.User, targetID int64,
 	return nil
 }
 
-// SetSeesSwitcher marks or unmarks a user to see the app switcher (R77f).
-// It only hides the switcher, so it's no more than a mark: a service
-// account, which never sees the web app, has none. There's no audit trail
-// of user changes, so it's logged, as the trusted mark is.
-func (s *Service) SetSeesSwitcher(ctx context.Context, actor db.User, targetID int64, sees bool) error {
-	u, err := s.Store.UserByID(ctx, targetID)
-	switch {
-	case errors.Is(err, pgx.ErrNoRows) || (err == nil && u.Status == "deleted"):
-		return refuse(http.StatusNotFound, "no_user", "No such user.")
-	case err != nil:
-		return dbErr("user", err)
-	case IsServiceAccount(u):
-		return errServiceShellOnly
-	case u.SeesSwitcher == sees:
-		return nil
-	}
-	n, err := s.Store.SetUserSeesSwitcher(ctx, db.SetUserSeesSwitcherParams{ID: targetID, Sees: sees})
-	if err != nil {
-		return dbErr("set switcher", err)
-	}
-	if n != 1 {
-		return refuse(http.StatusNotFound, "no_user", "No such user.")
-	}
-	s.Log.Info("switcher mark", "by", actor.ID, "user", targetID, "sees_switcher", sees)
-	return nil
-}
-
 // Named is a person as admins see them now: "name (email)", or "deleted
 // user" (R43c).
 type Named struct {

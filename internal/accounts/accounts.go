@@ -124,6 +124,9 @@ type Service struct {
 	// sessions (R43b), or their role changed, so what they may see changed
 	// (ADR 0010 §4).
 	CloseLive func(userIDs []int64)
+	// Switcher is the Authentik group whose members see the app switcher
+	// (R77f), when RADIOARCHIVE_URL is set; nil standalone.
+	Switcher *SwitcherGroup
 
 	// SenderLimits, if set, replaces SenderLimits for this service (R43e).
 	SenderLimits []Limit
@@ -555,7 +558,7 @@ func (s *Service) Session(ctx context.Context, token string) (db.User, error) {
 		}
 	}
 	return db.User{ID: r.ID, Subject: r.Subject, Email: r.Email, EmailKey: r.EmailKey, Name: r.Name, Role: r.Role,
-		Status: r.Status, InvitedBy: r.InvitedBy, CreatedAt: r.CreatedAt, Look: r.Look, SeesSwitcher: r.SeesSwitcher}, nil
+		Status: r.Status, InvitedBy: r.InvitedBy, CreatedAt: r.CreatedAt, Look: r.Look}, nil
 }
 
 // EndSession signs one browser out. It returns the ID token kept with the

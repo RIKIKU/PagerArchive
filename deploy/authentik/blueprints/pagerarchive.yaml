@@ -5,6 +5,7 @@
 #   PA_APP_URL             the app's public URL, e.g. https://pager.example.org
 #   PA_OIDC_CLIENT_SECRET  the app's OIDC client secret
 #   PA_AUTHENTIK_API_TOKEN the token the app uses for Authentik's API
+#   PA_RADIOARCHIVE_GROUP  the group whose members see the app switcher (R77f)
 #
 # Enrolment: invitation (created by the app, with the invitee's email fixed)
 # -> name and password -> user created inactive -> one-time code emailed to
@@ -1093,4 +1094,25 @@ entries:
       - permission: authentik_core.view_group
         role: !KeyOf api-role
       - permission: authentik_core.add_user_to_group
+        role: !KeyOf api-role
+
+  # ------------------------------- who sees the app switcher (R77f, ADR 0055)
+  # The group RadioArchive's gate admits while it's in preview; its members
+  # see PagerArchive's switcher to the radio. Found by name, or made, empty,
+  # when there's none (on a standalone install too, where nothing reads it).
+  # Nothing here sets its members, so applying this again keeps a group made
+  # by hand and everyone in it: the API adds and removes them as admins mark
+  # people on the Users page. The API may see this group and add and remove
+  # its members, and change nothing else about it.
+  - model: authentik_core.group
+    id: switcher-group
+    state: present
+    identifiers:
+      name: !Env [PA_RADIOARCHIVE_GROUP, "radioarchive-preview"]
+    permissions:
+      - permission: authentik_core.view_group
+        role: !KeyOf api-role
+      - permission: authentik_core.add_user_to_group
+        role: !KeyOf api-role
+      - permission: authentik_core.remove_user_from_group
         role: !KeyOf api-role

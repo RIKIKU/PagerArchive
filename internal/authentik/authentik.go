@@ -245,7 +245,24 @@ func (c *Client) GroupMembers(ctx context.Context, group string) (string, map[st
 		}
 		return g.PK, members, nil
 	}
-	return "", nil, fmt.Errorf("find group: Authentik has no %s group yet", group)
+	return "", nil, fmt.Errorf("find group: Authentik has no %s group yet: %w", group, accounts.ErrNoGroup)
+}
+
+// SetGroupMember adds a user to a group or removes them (R77f). Unlike
+// AddToGroup, a user Authentik doesn't have is an error: the caller is
+// changing that one person's membership.
+func (c *Client) SetGroupMember(ctx context.Context, groupID, subject string, member bool) error {
+	pk, err := strconv.ParseInt(subject, 10, 64)
+	if err != nil {
+		return errors.New("set group member: not an Authentik user's ID")
+	}
+	op, action := "add to group", "add_user"
+	if !member {
+		op, action = "remove from group", "remove_user"
+	}
+	_, err = c.do(ctx, op, http.MethodPost, "/api/v3/core/groups/"+url.PathEscape(groupID)+"/"+action+"/",
+		map[string]any{"pk": pk}, nil, http.StatusNoContent)
+	return err
 }
 
 // AddToGroup adds a user to a group; already a member is fine, and so is a

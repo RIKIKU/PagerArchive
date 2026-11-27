@@ -66,8 +66,8 @@ type Me struct {
 	// (R62a: 90 days after create or rotate). Absent for a person.
 	CredentialExpiresAt *time.Time `json:"credential_expires_at,omitempty"`
 	// ShowSwitcher: the frame shows them the app switcher (R77e, R77f),
-	// worked out by the server: RADIOARCHIVE_URL is set, and they're marked
-	// or it's shown to everyone.
+	// worked out by the server: RADIOARCHIVE_URL is set, and they're in the
+	// switcher's Authentik group or it's shown to everyone.
 	ShowSwitcher bool `json:"show_switcher"`
 }
 
@@ -285,7 +285,8 @@ type UserRow struct {
 	Trusted *TrustedMark `json:"trusted"`
 	// ServiceAccount marks a service account (R62a): a tool, not a person.
 	ServiceAccount bool `json:"service_account"`
-	// SeesSwitcher: an admin marked them to see the app switcher (R77f).
+	// SeesSwitcher: they were in the switcher's Authentik group when it was
+	// last read, or an admin added them since (R77f).
 	SeesSwitcher bool `json:"sees_switcher"`
 }
 
@@ -318,7 +319,7 @@ func (s *Server) userRows(ctx context.Context) ([]UserRow, error) {
 	for _, u := range rows {
 		row := UserRow{ID: u.ID, Email: deref(u.Email), Name: u.Name, Role: u.Role, Status: u.Status,
 			CreatedAt: u.CreatedAt.UTC(), DeactivatedAt: u.DeactivatedAt, InvitedByID: u.InvitedBy,
-			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing, ServiceAccount: u.Kind == accounts.KindService, SeesSwitcher: u.SeesSwitcher}
+			Integrations: u.Integrations, IntegrationsFailing: u.IntegrationsFailing, ServiceAccount: u.Kind == accounts.KindService, SeesSwitcher: u.Kind != accounts.KindService && s.inSwitcherGroup(u.Subject)}
 		if u.InvitedBy != nil {
 			status := "active"
 			if u.InviterStatus != nil {
