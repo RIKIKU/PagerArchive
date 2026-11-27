@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (the implementer's call, 2026-11-27), for the owner's review on the pull request. A hardening item on the owner's backlog. SPEC.md R36a, A153.
+Proposed (the implementer's call, 2026-11-27), for the owner's review on the pull request. A hardening item on the owner's backlog. SPEC.md R36a, A154.
 
 ## Context
 
@@ -30,5 +30,5 @@ Options not taken:
 ## Consequences
 
 - A script written into the page by anything but the build, an injected `<script>`, an inline event handler or a `javascript:` link, doesn't run, and the browser reports it.
-- The browser tests collect every `securitypolicyviolation` event on the pages each test opens and fail on any but the one A57 causes on purpose (A153), in Chromium, Firefox and WebKit. A hash that didn't match would stop the app booting, which every browser test would see first.
+- The browser tests collect every `securitypolicyviolation` event on the pages each test opens and fail on any but the one A57 causes on purpose (A154), in Chromium, Firefox and WebKit. A hash that didn't match would stop the app booting, which every browser test would see first.
 - ADR 0037, section 6's "the registration is in SvelteKit's inline start-up script, which `'unsafe-inline'` already allowed": the registration is still there, and now runs by its hash.

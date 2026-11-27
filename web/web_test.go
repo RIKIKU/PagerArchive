@@ -114,7 +114,7 @@ func TestInstalledAppFiles(t *testing.T) {
 // worker: R36a's, with scripts from this origin only.
 const selfOnly = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'self'; form-action 'self'"
 
-// A153 (R36a, ADR 0053): the app's page goes out with the SHA-256 of each of
+// A154 (R36a, ADR 0053): the app's page goes out with the SHA-256 of each of
 // its own inline scripts in script-src, worked out from the page as built,
 // and never 'unsafe-inline' or 'unsafe-eval' for scripts.
 func TestPolicyHashesThePagesOwnInlineScripts(t *testing.T) {

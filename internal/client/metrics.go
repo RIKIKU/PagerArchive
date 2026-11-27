@@ -62,7 +62,7 @@ func NewMetrics(m metric.Meter, buf *Buffer, health *radio.Health) (*Metrics, er
 	}
 	observed := []metric.Observable{buffered, lastDecoded, lastSent}
 	var running metric.Int64ObservableGauge
-	var audio, messages metric.Int64ObservableCounter
+	var audio, messages, restarts metric.Int64ObservableCounter
 	var level, silent metric.Float64ObservableGauge
 	if health != nil {
 		if running, err = m.Int64ObservableGauge("pagerarchive.client.radio_running",
@@ -86,7 +86,11 @@ func NewMetrics(m metric.Meter, buf *Buffer, health *radio.Health) (*Metrics, er
 			metric.WithDescription("rtl_fm's messages, by kind: no_device, open_failed, usb_transfer_failed, tuner_not_locked or other.")); err != nil {
 			return nil, err
 		}
-		observed = append(observed, running, audio, level, silent, messages)
+		if restarts, err = m.Int64ObservableCounter("pagerarchive.client.radio.restarts", metric.WithUnit("{restart}"),
+			metric.WithDescription("Times the client started rtl_fm and multimon-ng again (R13b), by reason: lost_device, stalled or exited.")); err != nil {
+			return nil, err
+		}
+		observed = append(observed, running, audio, level, silent, messages, restarts)
 	}
 	_, err = m.RegisterCallback(func(_ context.Context, o metric.Observer) error {
 		o.ObserveInt64(buffered, int64(buf.Len()))
@@ -105,6 +109,9 @@ func NewMetrics(m metric.Meter, buf *Buffer, health *radio.Health) (*Metrics, er
 			o.ObserveFloat64(silent, health.Silent().Seconds())
 			for kind, n := range health.Messages() {
 				o.ObserveInt64(messages, n, metric.WithAttributes(attribute.String("kind", kind)))
+			}
+			for reason, n := range health.Restarts() {
+				o.ObserveInt64(restarts, n, metric.WithAttributes(attribute.String("reason", reason)))
 			}
 		}
 		return nil
