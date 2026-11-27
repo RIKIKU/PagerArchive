@@ -106,7 +106,7 @@
 									if (fc.check(ev.currentTarget)) reject(r);
 								}}
 							>
-								<FormSummary check={fc} />
+								<FormSummary check={fc} level={3} />
 								<label for="feedback-{r.id}">Feedback for the person who asked <span class="required">required</span></label>
 								<textarea id="feedback-{r.id}" bind:value={feedback} maxlength="500" rows="2" required
 									data-problem="Say why it's rejected: they'll see this."

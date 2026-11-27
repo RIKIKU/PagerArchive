@@ -57,7 +57,7 @@
 
 <form class="alias-form" novalidate onsubmit={submit} oninput={fc.cleared} aria-labelledby="{uid}-h" data-testid="alias-form">
 	<h2 id="{uid}-h">{heading}</h2>
-	<FormSummary check={fc} />
+	<FormSummary check={fc} level={3} />
 	<div class="grid">
 		<div class="field">
 			<label for="{uid}-pattern">Capcode or pattern <span class="required">required</span></label>

@@ -3,9 +3,11 @@
 // novalidate, so the browser shows none of its own bubbles; on save it runs
 // check(): each control the browser finds invalid (required, type, min, max,
 // maxlength…), and each of the form's own rules (a group, a condition), gets
-// a message under it, aria-invalid and aria-describedby to that message;
-// focus moves to the first; and the top line only counts them. A control's
-// problem goes when it's changed (cleared()), or at the next save.
+// a message under it, aria-invalid and aria-describedby to that message.
+// At the top, ArchiveUx's ErrorSummary (FormSummary.svelte; its forms rule
+// 4, 0.6.0) names each problem's field and links to it (listed), and focus
+// moves to the summary. A control's problem goes when it's changed
+// (cleared()), with its link, or at the next save.
 import { tick } from 'svelte';
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -44,14 +46,40 @@ export function messageFor(el: Control): string {
 const isControl = (el: Element): el is Control =>
 	el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement;
 
+const firstControl = (el: Element): Control | null =>
+	isControl(el) ? el : el.querySelector<Control>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
+
+/**
+ * A field's name as its label or legend says it, without the Required tag,
+ * its "when" or a hint in brackets: "Name", "Which pages".
+ */
+export function fieldLabel(el: Element): string {
+	const named = isControl(el) ? el.labels?.[0] : el instanceof HTMLFieldSetElement ? el.querySelector(':scope > legend') : null;
+	if (!named) return el.getAttribute('aria-label') ?? '';
+	const copy = named.cloneNode(true) as Element;
+	for (const extra of Array.from(copy.querySelectorAll('.required, .required-when, .hint, input, select, textarea'))) extra.remove();
+	return (copy.textContent ?? '').replace(/\s+/g, ' ').trim();
+}
+
+/** A problem as the error summary lists it: the control its link moves to, its field's name, what to do. */
+export type Listed = { id: string; label: string; message: string };
+
 /** One form's problems, by the id of the control or group each is under. */
 export class FormCheck {
 	problems: Record<string, string> = $state({});
+	/** The problems found at the last save, in the form's order: each one's key, its link's control and its field's name. */
+	#found: { key: string; id: string; label: string }[] = $state([]);
+	/** Moves focus to the form's summary (FormSummary sets it). */
+	#focusSummary: (() => void) | undefined;
 
-	/** "2 fields need attention", or nothing. */
-	get summary(): string {
-		const n = Object.keys(this.problems).length;
-		return n ? `${n} ${n === 1 ? 'field needs' : 'fields need'} attention` : '';
+	/** The error summary's problems, in the form's order (those not cleared since the save). */
+	get listed(): Listed[] {
+		return this.#found.filter((f) => this.problems[f.key]).map((f) => ({ id: f.id, label: f.label, message: this.problems[f.key] }));
+	}
+
+	/** FormSummary's way to take the focus after a save with problems. */
+	summaryFocus(focus: (() => void) | undefined) {
+		this.#focusSummary = focus;
 	}
 
 	/** aria-invalid for the control with this id. */
@@ -66,8 +94,9 @@ export class FormCheck {
 	/**
 	 * Checks the form: the browser's own constraints on each control with an
 	 * id, then rules, the form's own (by id, a message, or nothing when the
-	 * rule holds). Shows each problem, moves focus to the first, and says if
-	 * the form can be sent.
+	 * rule holds). Shows each problem, lists it in the summary, moves focus
+	 * to the summary (to the first problem in a form without one), and says
+	 * if the form can be sent.
 	 */
 	check(form: HTMLFormElement, rules: Record<string, string | false | null | undefined> = {}): boolean {
 		const found: Record<string, string> = {};
@@ -76,16 +105,19 @@ export class FormCheck {
 			if (!el.checkValidity()) found[el.id] = messageFor(el);
 		}
 		for (const [id, message] of Object.entries(rules)) if (message && !found[id]) found[id] = message;
+		const shown = Object.keys(found)
+			.map((key) => ({ key, el: document.getElementById(key) }))
+			.filter((p): p is { key: string; el: HTMLElement } => !!p.el)
+			.sort((a, b) => (a.el.compareDocumentPosition(b.el) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
+		// A group's link goes to its first control (the one its problem is about).
+		this.#found = shown.map(({ key, el }) => ({ key, id: firstControl(el)?.id || key, label: fieldLabel(el) }));
 		this.problems = found;
-		const first = Object.keys(found)
-			.map((id) => document.getElementById(id))
-			.filter((el): el is HTMLElement => !!el)
-			.sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))[0];
+		const first = shown[0]?.el;
 		if (!first) return true;
-		// After the messages and aria-describedby are drawn, so moving there reads them.
+		// After the messages, aria-describedby and the summary are drawn, so moving there reads them.
 		tick().then(() => {
-			const target = isControl(first) ? first : first.querySelector<HTMLElement>('input:not([disabled]), select:not([disabled]), textarea:not([disabled])');
-			(target ?? first).focus();
+			if (this.#focusSummary) return this.#focusSummary();
+			(firstControl(first) ?? first).focus();
 		});
 		return false;
 	}
@@ -109,5 +141,6 @@ export class FormCheck {
 	/** Clears every problem (a form closed or reset). */
 	reset() {
 		this.problems = {};
+		this.#found = [];
 	}
 }
