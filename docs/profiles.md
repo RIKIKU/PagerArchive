@@ -19,7 +19,7 @@ A JSON file is a profile when its top-level `kind` is `network` or `agency`. Key
 | `address_dataset` | `{path, attribution}`. `path` is relative to the profile file. The attribution is shown in the app (R24). See [Address dataset](#address-dataset) |
 | `street_types` | Spelling to abbreviation, e.g. `"STREET": "ST"`, used to match streets |
 | `grid_reference` | `{system}`: how grid references are read (R25). `mgrs-6-digit-in-locality-square`: 3 digits of easting then 3 of northing, in 100 m, with no zone or 100 km square. The app completes them from the UTM zone and 100 km square that the page's locality lies in, and uses the centre of the 100 m cell |
-| `areas` | Optional. A list of layers, each `{id, path, label, name_property, attribution, outline}`: a GeoJSON file of named polygons a located page can fall in, such as districts, outlined on the map (R88). See [Areas](#areas) |
+| `areas` | Optional. A list of layers, each `{id, path, label, name_property, attribution, outline, dispatch_channel, dispatch_channels}`: a GeoJSON file of named polygons a located page can fall in, such as districts, outlined on the map (R88). See [Areas](#areas) |
 
 ## Address dataset
 
@@ -72,6 +72,10 @@ A network profile may name **layers** of **areas** (R88, ADR 0035): named polygo
 - `name_property`: the feature property that names each area: a string (trimmed), or a number as the file writes it, at most 40 characters. Features with the same name are one area (a district's land and its water, say).
 - `attribution`: the data's credit, shown in the map's credits while the layer is shown. Many open datasets require one.
 - `outline`: optional, `solid`, `dashed` or `dotted`: how the map draws the layer, in colours the look sets (light and dark). By default the first layer is solid, the second dashed and the third dotted.
+- `dispatch_channel`: optional (R92f). Some networks dispatch each district on a channel numbered after it, so district 8 is dispatched on channel 508. A template for areas named by a number: digits around one `{name}` or `{name:0N}`. An area whose name is all digits gets its number with leading zeros dropped, padded with zeros to N digits, between the template's digits: `"5{name:02}"` makes `08` channel 508 and `13` 513. Other names get none from it.
+- `dispatch_channels`: optional (R92f). Named areas' own channel numbers, for names a template can't reach: `{"Central": 701}`, from 0 to 999999999. A listed name's number wins over the template's.
+
+  With `RADIOARCHIVE_URL` set, a located page in an area with a dispatch channel shows a "Dispatch 508" chip under its text, before its fireground chips, linking to `<RADIOARCHIVE_URL>/?fireground=508`, and a job's view shows its areas' channels under their tags, to those who see the app switcher (R77f). It's worked out as the API answers, from the profile as it is, so adding or changing it re-parses nothing and works out no page's areas again. The example gives Zone A 501 and Zone B 502.
 
 The layers are shown in the order listed. Areas of one layer shouldn't overlap each other (a point in two is in neither); layers overlap freely.
 
@@ -127,6 +131,7 @@ The API loads each layer into the database before it starts listening, when its 
   A field's options take `split` or `address_split`, not both.
 - `fields.<group>.address_split: {"description": "...", "address": "..."}`: for formats where a description runs into an address with no delimiter. The address is the longest suffix that reads `[house number] <street> <locality>`, with the street listed in that locality in the address dataset. Everything before it is the description. If no street matches, the whole text is the description, the address is null, and the message gets the admin-only `address_unsplit` flag. See ADR 0001 section 2.
 - `labels`: display labels per field, e.g. `{"event_type": {"HSF1": "House fire"}}`.
+- `field_names` (optional): what the app calls extra fields, shown in place of their machine names on a message's detail view (R9), e.g. `{"channel": "Fireground channel"}`. A field not named is shown by its name with `_` as a space and its first letter capitalised (`channel_2` is "Channel 2"). Display only.
 - `large_event_fields` (optional): field values that open a **large event** (R87). Some agencies dispatch with a level on each page, such as an alarm level, and a high enough level means something big. Each rule names one text field the formats extract and lists every value of it that opens an event:
 
   ```json
@@ -160,7 +165,7 @@ The API loads each layer into the database before it starts listening, when its 
 
   Problems that stop the server and fail `validate-profile`: a field no format extracts or a list field (as for `large_event_fields`), the same field in two rules, no values, a value listed twice or with a space at either end, a blank label, two levels with the same label, and a rule or value without its keys or with any other key.
 
-**What re-parses** (R23a, ADR 0045). A changed agency profile re-parses every page at start-up, which takes hours on a large archive, so changing what doesn't change a page re-parses nothing: the top-level `labels`, `levels`, `description` and comments (`_…` keys) are left out of the profile's hash. Changing a format (its comments included), `large_event_fields` or the name re-parses. So does changing the values in a file a format's `into` reads (ADR 0047), as they change what pages say; its comments and blank lines don't count. Adding `into` to a profile re-parses its pages once, which fills their `call_signs`: until the re-parse reaches a page, it keeps its old `units` and no `call_signs`.
+**What re-parses** (R23a, ADR 0045). A changed agency profile re-parses every page at start-up, which takes hours on a large archive, so changing what doesn't change a page re-parses nothing: the top-level `labels`, `field_names`, `levels`, `description` and comments (`_…` keys) are left out of the profile's hash. Changing a format (its comments included), `large_event_fields` or the name re-parses. So does changing the values in a file a format's `into` reads (ADR 0047), as they change what pages say; its comments and blank lines don't count. Adding `into` to a profile re-parses its pages once, which fills their `call_signs`: until the re-parse reaches a page, it keeps its old `units` and no `call_signs`.
 
 A page whose capcode has an agency profile but matches no format is stored in full and flagged `parse_failed` (admins only).
 

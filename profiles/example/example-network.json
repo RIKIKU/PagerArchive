@@ -57,13 +57,14 @@
   },
   "areas": [
     {
-      "_comment": "Made-up zones the example's pages can fall in, outlined on the map (R88).",
+      "_comment": "Made-up zones the example's pages can fall in, outlined on the map (R88). Each zone has a made-up dispatch channel (R92f): Zone A 501, Zone B 502.",
       "id": "zones",
       "path": "example-areas.geojson",
       "label": "Zone",
       "name_property": "zone",
       "attribution": "Example zones, made up for PagerArchive",
-      "outline": "solid"
+      "outline": "solid",
+      "dispatch_channels": { "A": 501, "B": 502 }
     },
     {
       "_comment": "A second, made-up layer over the zones: a page is in one zone and one region (R88).",

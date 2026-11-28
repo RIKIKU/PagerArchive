@@ -50,6 +50,8 @@ export interface Message {
 	fireground_channels: number[] | null;
 	extra: Record<string, string | string[]>;
 	labels: Record<string, string>;
+	/** R9: what its agency profile calls some of its extra fields, shown in place of their machine names. */
+	field_names?: Record<string, string>;
 	location: Location | null;
 	/** The areas it's in, one of each layer at most, in the profile's order (R88b), derived from where it's placed: left out when it's in none. */
 	areas?: AreaRef[];
@@ -234,6 +236,8 @@ export interface MetaAreas {
 export interface AreaRef {
 	layer: string;
 	name: string;
+	/** R92f: its dispatch channel, when its layer in the network profile gives it one. */
+	dispatch_channel?: number;
 }
 
 /** Administration's view of one layer of areas (R88e). */

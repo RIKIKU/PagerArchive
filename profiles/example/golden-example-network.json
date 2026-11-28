@@ -52,6 +52,18 @@
       "name": "not a large-event code: 5 digits, or letters run on (R87)",
       "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000103 GRS3 DG08011 XDG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1",
       "expect": { "priority": "Emergency", "stored_text": "@@EX0000103 GRS3 DG08011 XDG0801 GRASS FIRE @ SAMPLE RD, MADEUPTON #STN1", "deployment_codes": null }
+    },
+    {
+      "name": "fireground channels: leading zeros dropped, each once, in text order (R92a)",
+      "status": "proposed",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000137 GRS3 GRASS FIRE FGND09 FGND 41 FGND 9 @ SAMPLE RD, MADEUPTON #STN1",
+      "expect": { "priority": "Emergency", "stored_text": "@@EX0000137 GRS3 GRASS FIRE FGND09 FGND 41 FGND 9 @ SAMPLE RD, MADEUPTON #STN1", "fireground_channels": [9, 41] }
+    },
+    {
+      "name": "no fireground channel: letters in the number (R92a)",
+      "status": "proposed",
+      "raw": "POCSAG512: Address:  100001  Function: 0  Alpha:   @@EX0000138 GRS3 GRASS FIRE FGND 4A @ SAMPLE RD, MADEUPTON #STN1",
+      "expect": { "priority": "Emergency", "stored_text": "@@EX0000138 GRS3 GRASS FIRE FGND 4A @ SAMPLE RD, MADEUPTON #STN1", "fireground_channels": null }
     }
   ]
 }

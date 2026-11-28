@@ -7446,7 +7446,8 @@ test("A142 the frame is ArchiveUx's", async ({ browser }) => {
 
 // A135 (R92, R92a; owner, 2026-11-24; #106): fireground chips. With
 // RADIOARCHIVE_URL set (meta's radioarchive_url, stood in here: the test
-// API runs standalone), a page naming made-up fireground channels shows a
+// API runs standalone) and the user seeing the switcher (R77f: me's
+// show_switcher, stood in too; who that is, is A140's), a page naming made-up fireground channels shows a
 // chip for each under its unchanged text, in the list and its detail view,
 // linking to the radio in a new tab; at 375 px they're on their own line,
 // each at least the minimum tap target. Unset, there are none. (The
@@ -7469,6 +7470,7 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 	] as const) {
 		const ctx = await signedIn(browser, 'user', { viewport, hasTouch: label === 'phone' });
 		await ctx.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), radioarchive_url: radio } }));
+		await seesSwitcher(ctx);
 		await ctx.route(`${radio}/**`, (r) => r.fulfill({ contentType: 'text/html', body: '<title>Radio</title><p>Radio</p>' }));
 		const page = await ctx.newPage();
 		for (const where of ['list', 'detail'] as const) {
@@ -7476,7 +7478,7 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 			const scope = where === 'list' ? page.getByTestId('message-list').locator('article').first() : page.locator('article.detail');
 			const textEl = scope.locator('p.text').first();
 			await expect(textEl).toHaveText(text.slice(2));
-			const chips = scope.getByTestId('fireground').getByRole('link');
+			const chips = scope.getByTestId('radio-channels').locator('a[data-kind="fireground"]');
 			await expect(chips).toHaveCount(2);
 			for (const [i, n] of [41, 7].entries()) {
 				const chip = chips.nth(i);
@@ -7527,13 +7529,130 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 	await page.goto(`/?job=${job}`);
 	const row = page.getByTestId('message-list').locator('article').first();
 	await expect(row.locator('p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('fireground')).toHaveCount(0);
+	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
 	await page.goto(`/messages/${m.id}`);
 	await expect(page.locator('article.detail p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('fireground')).toHaveCount(0);
+	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
 	await expect(page.getByRole('link', { name: /fireground/i })).toHaveCount(0);
 	await ctx.close();
 	console.log(`A135 (${info.project.name}): chips 41 and 7 in the list and detail view with RADIOARCHIVE_URL set, none unset; ${report.join('; ')}`);
+});
+
+/** R77f's soft launch, stood in: me says this context's user sees the switcher. */
+async function seesSwitcher(ctx: BrowserContext) {
+	await ctx.route('**/api/v1/me', async (r) => {
+		if (r.request().method() !== 'GET') return r.continue();
+		await r.fulfill({ json: { ...(await (await r.fetch()).json()), show_switcher: true } });
+	});
+}
+
+// A161 (R77f, R92a, R92f; owner, 2026-11-28): the radio chips, a page's
+// dispatch channel (from its area: the example's Zone A is 501) before its
+// fireground channels, only for a user who sees the switcher. RADIOARCHIVE_URL
+// and me's show_switcher are stood in, as in A135 (who sees the switcher is
+// A140's). At 1,280 and 375 px, light and dark: the list, the detail view
+// and the job's view. (The numbers in the API: internal/acceptance/a160_test.go.)
+test('A161 dispatch and fireground chips, for those who see the switcher', async ({ browser, request }, info) => {
+	test.setTimeout(180_000);
+	const radio = 'https://radio.example.test';
+	const job = uniqueJob();
+	const text = `@@${job} HSF1 SMOKE FROM ROOF FGND 041 FGND 7 @ 3 FICTION ST, MADEUPTON #STN1`;
+	const id = await postId(request, '0100001', text);
+	const far = uniqueJob();
+	const farId = await postId(request, '0100001', `@@${far} GRS3 GRASS FIRE FGND 7 @ 4 FICTION ST, TESTVILLE #STN1`);
+	const withRadio = (ctx: BrowserContext) => ctx.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), radioarchive_url: radio } }));
+	const want = ['Dispatch 501', 'Fireground 41', 'Fireground 7'];
+	const report: string[] = [];
+
+	for (const [label, width] of [
+		['desktop', 1280],
+		['phone', 375]
+	] as const) {
+		for (const colorScheme of ['light', 'dark'] as const) {
+			const ctx = await signedIn(browser, 'user', { viewport: { width, height: width < 768 ? 740 : 900 }, colorScheme, hasTouch: label === 'phone' });
+			await withRadio(ctx);
+			await seesSwitcher(ctx);
+			const page = await ctx.newPage();
+			const noSideways = async (where: string) =>
+				expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${label} ${colorScheme} ${where}: no sideways scroll`).toBeLessThanOrEqual(0);
+			for (const where of ['list', 'detail'] as const) {
+				await page.goto(where === 'list' ? `/?job=${job}` : `/messages/${id}`);
+				const scope = where === 'list' ? page.getByTestId('message-list').locator('article').first() : page.locator('article.detail');
+				await expect(scope.locator('p.text').first()).toHaveText(text.slice(2));
+				const chips = scope.getByTestId('radio-channels').getByRole('link');
+				await expect(chips).toHaveText(want);
+				const dispatch = chips.first();
+				await expect(dispatch).toHaveAccessibleName('Listen to dispatch channel 501 (opens in a new tab)');
+				await expect(dispatch).toHaveAttribute('href', `${radio}/?fireground=501`);
+				await expect(dispatch).toHaveAttribute('target', '_blank');
+				await expect(dispatch).toHaveAttribute('rel', /\bnoopener\b/);
+				await expect(chips.nth(1)).toHaveAccessibleName('Listen to fireground 41 (opens in a new tab)');
+				if (label === 'phone') {
+					const target = await page.evaluate(() => {
+						const probe = document.createElement('div');
+						probe.style.height = 'var(--target)';
+						document.body.append(probe);
+						const h = probe.getBoundingClientRect().height;
+						probe.remove();
+						return h;
+					});
+					for (let i = 0; i < want.length; i++) {
+						const b = (await chips.nth(i).boundingBox())!;
+						expect(Math.min(b.width, b.height), `${where}: ${want[i]} at least the tap target`).toBeGreaterThanOrEqual(target - 0.5);
+					}
+				}
+				await noSideways(where);
+				if (where === 'list') {
+					const axe = await new AxeBuilder({ page }).include('[data-testid="message-list"]').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+					expect(axe.violations.map((v) => v.id)).toEqual([]);
+				}
+				await page.screenshot({ path: info.outputPath(`a161-${where}-${width}-${colorScheme}.png`) });
+			}
+			// The job's view: its dispatch channel under its area tags.
+			await page.goto(`/jobs/${job}`);
+			await expect(page.getByTestId('job-areas').getByRole('listitem')).toHaveText(['Zone A', 'Region North']);
+			const jobChips = page.getByTestId('job-channels').getByRole('link');
+			await expect(jobChips).toHaveText(['Dispatch 501']);
+			await expect(jobChips).toHaveAttribute('href', `${radio}/?fireground=501`);
+			const tags = (await page.getByTestId('job-areas').boundingBox())!;
+			expect((await jobChips.first().boundingBox())!.y, 'the job\'s chip under its area tags').toBeGreaterThanOrEqual(tags.y + tags.height - 1);
+			await noSideways('job');
+			await page.screenshot({ path: info.outputPath(`a161-job-${width}-${colorScheme}.png`) });
+			// A page in no area: its fireground chip only.
+			await page.goto(`/messages/${farId}`);
+			await expect(page.locator('article.detail').getByTestId('radio-channels').getByRole('link')).toHaveText(['Fireground 7']);
+			await ctx.close();
+			report.push(`${label} ${colorScheme}: ${want.join(', ')}; job Dispatch 501`);
+		}
+	}
+
+	// Someone who doesn't see the switcher: no chip anywhere, and the API's
+	// numbers are the same.
+	const ctx = await signedIn(browser, 'userC');
+	await withRadio(ctx);
+	const page = await ctx.newPage();
+	await page.goto(`/?job=${job}`);
+	await expect(page.getByTestId('message-list').locator('article').first().locator('p.text')).toHaveText(text.slice(2));
+	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
+	await page.goto(`/messages/${id}`);
+	await expect(page.locator('article.detail p.text')).toHaveText(text.slice(2));
+	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
+	await page.goto(`/jobs/${job}`);
+	await expect(page.getByTestId('job-areas')).toBeVisible();
+	await expect(page.getByTestId('job-channels')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: /dispatch|fireground/i })).toHaveCount(0);
+	await ctx.close();
+	for (const role of ['user', 'userC'] as const) {
+		const m = (await (await request.get(`${URL}/api/v1/messages/${id}`, { headers: asRole(role) })).json()) as { fireground_channels: number[]; areas: { layer: string; name: string; dispatch_channel?: number }[] };
+		expect([m.fireground_channels, m.areas], role).toEqual([
+			[41, 7],
+			[
+				{ layer: 'zones', name: 'A', dispatch_channel: 501 },
+				{ layer: 'regions', name: 'North' }
+			]
+		]);
+	}
+	console.log(`A161 (${info.project.name}): ${report.join('; ')}; none for userC, whose API numbers are the same`);
 });
 
 // A148 (R92b): beside RadioArchive with LOOK_COOKIE_DOMAIN set, the shared
