@@ -38,6 +38,7 @@
 		onremoved,
 		count = $bindable(0),
 		more = $bindable(false),
+		shown = $bindable([]),
 		children
 	}: {
 		query: URLSearchParams;
@@ -57,12 +58,17 @@
 		onremoved?: (id: number) => void;
 		count?: number;
 		more?: boolean;
+		/** The messages it lists now (a job's Listen link, R92g). */
+		shown?: Message[];
 		/** A line under the heading. */
 		children?: Snippet;
 	} = $props();
 
 	let meta: Meta | undefined = $state();
 	let messages: Message[] = $state([]);
+	$effect(() => {
+		shown = messages;
+	});
 	let next: string | undefined = $state();
 	// R81b: after a jump, the cursor for the newer messages not loaded; none
 	// when the list starts at the newest.

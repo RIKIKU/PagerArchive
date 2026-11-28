@@ -5,7 +5,7 @@
 	import PriorityBadge from './PriorityBadge.svelte';
 	import PrintTick from './PrintTick.svelte';
 	import AlbumNote from './AlbumNote.svelte';
-	import RadioChips from './RadioChips.svelte';
+	import ListenLink from './ListenLink.svelte';
 
 	// pick: a tick box for the print sheet, on the print page only (R67).
 	// selected: the message open beside the list (R80); keepScroll: opening
@@ -65,7 +65,7 @@
 			>{m.display_text || '(no text)'}</a
 		>
 	</p>
-	<RadioChips {m} />
+	<ListenLink {m} />
 	{#if album !== undefined}<AlbumNote {m} {album} {onremoved} />{/if}
 	{#if m.flags?.parse_failed || m.flags?.address_unsplit || m.flags?.location_mismatch}
 		<footer>

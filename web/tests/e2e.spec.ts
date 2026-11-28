@@ -8,6 +8,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { listen, listenChannels, listenHref, listenName } from '../src/lib/listen.ts';
 
 const URL = process.env.PA_URL ?? 'http://127.0.0.1:18080';
 // userC: a second user, for the print sheet kept per user (M11).
@@ -7444,24 +7445,26 @@ test("A142 the frame is ArchiveUx's", async ({ browser }) => {
 	await phone.context().close();
 });
 
-// A135 (R92, R92a; owner, 2026-11-24; #106): fireground chips. With
+// A135 (R92, R92a, R92g; owner, 2026-11-24; #106): fireground links. With
 // RADIOARCHIVE_URL set (meta's radioarchive_url, stood in here: the test
 // API runs standalone) and the user seeing the switcher (R77f: me's
-// show_switcher, stood in too; who that is, is A140's), a page naming made-up fireground channels shows a
-// chip for each under its unchanged text, in the list and its detail view,
-// linking to the radio in a new tab; at 375 px they're on their own line,
-// each at least the minimum tap target. Unset, there are none. (The
-// numbers' extraction and the API field: internal/acceptance/a135_test.go.)
-test('A135 fireground chips link to the radio', async ({ browser, request }, info) => {
+// show_switcher, stood in too; who that is, is A140's), a page naming made-up
+// fireground channels shows one Listen link for them under its unchanged
+// text, in the list and its detail view, opening the radio in a new tab; at
+// 375 px it's on its own line, at least the minimum tap target. Unset, there
+// is none. (The numbers' extraction and the API field:
+// internal/acceptance/a135_test.go.)
+test('A135 fireground channels in the Listen link', async ({ browser, request }, info) => {
 	// Two sizes, two views, a new tab each and an axe check per size.
 	test.setTimeout(120_000);
 	const radio = 'https://radio.example.test';
 	const job = uniqueJob();
-	const text = `@@${job} GRS3 GRASS FIRE FGND 041 FGND 7 @ SAMPLE RD, MADEUPTON #STN1`;
+	const text = `@@${job} GRS3 GRASS FIRE FGND 041 FGND 7 @ 4 FICTION ST, TESTVILLE #STN1`;
 	await post(request, '0100001', text);
 	const res = await request.get(`${URL}/api/v1/messages?job=${job}`, { headers: { Cookie: `pa_session=${SESSIONS.user}` } });
-	const m = (await res.json()).messages[0] as { id: number; fireground_channels: number[] | null };
+	const m = (await res.json()).messages[0] as { id: number; fireground_channels: number[] | null; areas?: unknown[] };
 	expect(m.fireground_channels).toEqual([41, 7]);
+	expect(m.areas ?? [], 'a page in no area: no dispatch channel before its fireground ones').toEqual([]);
 	const report: string[] = [];
 
 	for (const [label, viewport] of [
@@ -7478,41 +7481,30 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 			const scope = where === 'list' ? page.getByTestId('message-list').locator('article').first() : page.locator('article.detail');
 			const textEl = scope.locator('p.text').first();
 			await expect(textEl).toHaveText(text.slice(2));
-			const chips = scope.getByTestId('radio-channels').locator('a[data-kind="fireground"]');
-			await expect(chips).toHaveCount(2);
-			for (const [i, n] of [41, 7].entries()) {
-				const chip = chips.nth(i);
-				await expect(chip).toHaveAccessibleName(`Listen to fireground ${n} (opens in a new tab)`);
-				await expect(chip).toHaveText(`Fireground ${n}`);
-				await expect(chip).toHaveAttribute('href', `${radio}/?fireground=${n}`);
-				await expect(chip).toHaveAttribute('target', '_blank');
-				await expect(chip).toHaveAttribute('rel', /\bnoopener\b/);
-			}
-			// Under the text, on their own line.
+			const link = scope.getByTestId('listen');
+			await expect(link).toHaveCount(1);
+			await expect(link).toHaveAccessibleName('Listen on RadioArchive: fireground 41 and 7 (opens in a new tab)');
+			await expect(link.locator('.label')).toHaveText('Listen');
+			await expect(link.locator('.which')).toHaveText('fireground 41 and 7');
+			await expect(link).toHaveAttribute('href', `${radio}/?fireground=41&fireground=7`);
+			await expect(link).toHaveAttribute('target', '_blank');
+			await expect(link).toHaveAttribute('rel', /\bnoopener\b/);
+			// Under the text, on its own line.
 			const t = (await textEl.boundingBox())!;
-			const boxes = await Promise.all([0, 1].map(async (i) => (await chips.nth(i).boundingBox())!));
-			for (const b of boxes) expect(b.y, `${label} ${where}: a chip under the text`).toBeGreaterThanOrEqual(t.y + t.height - 1);
+			const b = (await link.boundingBox())!;
+			expect(b.y, `${label} ${where}: the link under the text`).toBeGreaterThanOrEqual(t.y + t.height - 1);
 			if (label === 'phone') {
-				const target = await page.evaluate(() => {
-					const probe = document.createElement('div');
-					probe.style.height = 'var(--target)';
-					document.body.append(probe);
-					const h = probe.getBoundingClientRect().height;
-					probe.remove();
-					return h;
-				});
+				const target = await tapTarget(page);
 				expect(target).toBeGreaterThan(0);
-				for (const b of boxes) {
-					expect(b.height, `${label} ${where}: chip height`).toBeGreaterThanOrEqual(target - 0.5);
-					expect(b.width, `${label} ${where}: chip width`).toBeGreaterThanOrEqual(target - 0.5);
-				}
-				report.push(`phone ${where}: chips ${boxes.map((b) => `${Math.round(b.width)}x${Math.round(b.height)}`).join(', ')} (target ${target} px)`);
+				expect(b.height, `${label} ${where}: link height`).toBeGreaterThanOrEqual(target - 0.5);
+				expect(b.width, `${label} ${where}: link width`).toBeGreaterThanOrEqual(target - 0.5);
+				report.push(`phone ${where}: link ${Math.round(b.width)}x${Math.round(b.height)} (target ${target} px)`);
 			}
-			// Clicking one opens the radio in a new tab, not the detail view.
+			// Clicking it opens the radio in a new tab, not the detail view.
 			const before = page.url();
-			const [tab] = await Promise.all([ctx.waitForEvent('page'), chips.first().click()]);
+			const [tab] = await Promise.all([ctx.waitForEvent('page'), link.click()]);
 			await tab.waitForLoadState();
-			expect(tab.url()).toBe(`${radio}/?fireground=41`);
+			expect(tab.url()).toBe(`${radio}/?fireground=41&fireground=7`);
 			await tab.close();
 			expect(page.url()).toBe(before);
 			if (where === 'list') {
@@ -7523,20 +7515,32 @@ test('A135 fireground chips link to the radio', async ({ browser, request }, inf
 		await ctx.close();
 	}
 
-	// Unset: no chip anywhere.
+	// Unset: no link anywhere.
 	const ctx = await signedIn(browser, 'user');
 	const page = await ctx.newPage();
 	await page.goto(`/?job=${job}`);
 	const row = page.getByTestId('message-list').locator('article').first();
 	await expect(row.locator('p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
+	await expect(page.getByTestId('listen')).toHaveCount(0);
 	await page.goto(`/messages/${m.id}`);
 	await expect(page.locator('article.detail p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
-	await expect(page.getByRole('link', { name: /fireground/i })).toHaveCount(0);
+	await expect(page.getByTestId('listen')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: /fireground|listen/i })).toHaveCount(0);
 	await ctx.close();
-	console.log(`A135 (${info.project.name}): chips 41 and 7 in the list and detail view with RADIOARCHIVE_URL set, none unset; ${report.join('; ')}`);
+	console.log(`A135 (${info.project.name}): one link for 41 and 7 in the list and detail view with RADIOARCHIVE_URL set, none unset; ${report.join('; ')}`);
 });
+
+/** The minimum tap target (--target), in px. */
+async function tapTarget(page: Page): Promise<number> {
+	return page.evaluate(() => {
+		const probe = document.createElement('div');
+		probe.style.height = 'var(--target)';
+		document.body.append(probe);
+		const h = probe.getBoundingClientRect().height;
+		probe.remove();
+		return h;
+	});
+}
 
 /** R77f's soft launch, stood in: me says this context's user sees the switcher. */
 async function seesSwitcher(ctx: BrowserContext) {
@@ -7546,22 +7550,55 @@ async function seesSwitcher(ctx: BrowserContext) {
 	});
 }
 
-// A161 (R77f, R92a, R92f; owner, 2026-11-28): the radio chips, a page's
-// dispatch channel (from its area: the example's Zone A is 501) before its
-// fireground channels, only for a user who sees the switcher. RADIOARCHIVE_URL
-// and me's show_switcher are stood in, as in A135 (who sees the switcher is
-// A140's). At 1,280 and 375 px, light and dark: the list, the detail view
-// and the job's view. (The numbers in the API: internal/acceptance/a160_test.go.)
-test('A161 dispatch and fireground chips, for those who see the switcher', async ({ browser, request }, info) => {
+// A161 (R92g): the Listen link's channels, order, de-duplication, zeros and
+// cap, and its words, from web/src/lib/listen.ts on its own.
+test('A161 unit: the Listen link', () => {
+	const radio = 'https://radio.example.test';
+	const link = (d: (number | string)[], f: (number | string)[]) => {
+		const l = listen(d, f);
+		return l && { href: listenHref(radio, l), name: listenName(l), which: listenChannels(l) };
+	};
+	expect(link([508], [540, 542])).toEqual({
+		href: `${radio}/?fireground=508&fireground=540&fireground=542`,
+		name: 'Listen on RadioArchive: dispatch 508, fireground 540 and 542 (opens in a new tab)',
+		which: 'dispatch 508, fireground 540 and 542'
+	});
+	// Dispatch first, each in its own order.
+	expect(link([508, 502], [7, 41])?.href).toBe(`${radio}/?fireground=508&fireground=502&fireground=7&fireground=41`);
+	expect(link([508, 502], [7, 41])?.name).toBe('Listen on RadioArchive: dispatch 508 and 502, fireground 7 and 41 (opens in a new tab)');
+	// Each once, the first time; a fireground number that's a dispatch channel is the dispatch one.
+	expect(link([508, 508], [41, 508, 7, 41])?.href).toBe(`${radio}/?fireground=508&fireground=41&fireground=7`);
+	expect(link([508, 508], [41, 508, 7, 41])?.which).toBe('dispatch 508, fireground 41 and 7');
+	// No leading zeros; a number that isn't one is left out.
+	expect(link(['0508'], ['041', '000', '4A', '', '1234567890'])?.href).toBe(`${radio}/?fireground=508&fireground=41&fireground=0`);
+	// At most 10, the first in order.
+	const twelve = link([501, 502], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+	expect(twelve?.href).toBe(`${radio}/?${[501, 502, 1, 2, 3, 4, 5, 6, 7, 8].map((n) => `fireground=${n}`).join('&')}`);
+	expect(twelve?.which).toBe('dispatch 501 and 502, fireground 1, 2, 3, 4, 5, 6, 7 and 8');
+	// One, of either kind; none is no link.
+	expect(link([508], [])).toEqual({ href: `${radio}/?fireground=508`, name: 'Listen on RadioArchive: dispatch 508 (opens in a new tab)', which: 'dispatch 508' });
+	expect(link([], [7])?.name).toBe('Listen on RadioArchive: fireground 7 (opens in a new tab)');
+	expect(link([], [])).toBeUndefined();
+	expect(link(['x'], [])).toBeUndefined();
+});
+
+// A161 (R77f, R92a, R92f, R92g; owner, 2026-11-28): one Listen link per page
+// and per job, a page's dispatch channel (from its area: the example's Zone A
+// is 501) before its fireground channels, only for a user who sees the
+// switcher. RADIOARCHIVE_URL and me's show_switcher are stood in, as in A135
+// (who sees the switcher is A140's). At 1,280 and 375 px, light and dark: the
+// list, the detail view and the job's view. (The numbers in the API:
+// internal/acceptance/a160_test.go.)
+test('A161 one Listen link, for those who see the switcher', async ({ browser, request }, info) => {
 	test.setTimeout(180_000);
 	const radio = 'https://radio.example.test';
 	const job = uniqueJob();
 	const text = `@@${job} HSF1 SMOKE FROM ROOF FGND 041 FGND 7 @ 3 FICTION ST, MADEUPTON #STN1`;
 	const id = await postId(request, '0100001', text);
+	await postId(request, '0100002', `@@${job} HSF1 SMOKE FROM ROOF FGND 7 FGND 9 @ 5 EXAMPLE ST, MADEUPTON #STN2`);
 	const far = uniqueJob();
 	const farId = await postId(request, '0100001', `@@${far} GRS3 GRASS FIRE FGND 7 @ 4 FICTION ST, TESTVILLE #STN1`);
 	const withRadio = (ctx: BrowserContext) => ctx.route('**/api/v1/meta', async (r) => r.fulfill({ json: { ...(await (await r.fetch()).json()), radioarchive_url: radio } }));
-	const want = ['Dispatch 501', 'Fireground 41', 'Fireground 7'];
 	const report: string[] = [];
 
 	for (const [label, width] of [
@@ -7572,34 +7609,26 @@ test('A161 dispatch and fireground chips, for those who see the switcher', async
 			const ctx = await signedIn(browser, 'user', { viewport: { width, height: width < 768 ? 740 : 900 }, colorScheme, hasTouch: label === 'phone' });
 			await withRadio(ctx);
 			await seesSwitcher(ctx);
+			await ctx.route(`${radio}/**`, (r) => r.fulfill({ contentType: 'text/html', body: '<title>Radio</title><p>Radio</p>' }));
 			const page = await ctx.newPage();
 			const noSideways = async (where: string) =>
 				expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), `${label} ${colorScheme} ${where}: no sideways scroll`).toBeLessThanOrEqual(0);
+			const target = await (async () => (label === 'phone' ? (await page.goto('/'), await tapTarget(page)) : 0))();
 			for (const where of ['list', 'detail'] as const) {
 				await page.goto(where === 'list' ? `/?job=${job}` : `/messages/${id}`);
-				const scope = where === 'list' ? page.getByTestId('message-list').locator('article').first() : page.locator('article.detail');
+				const scope = where === 'list' ? page.getByTestId('message-list').locator('article').filter({ hasText: 'FGND 041' }) : page.locator('article.detail');
 				await expect(scope.locator('p.text').first()).toHaveText(text.slice(2));
-				const chips = scope.getByTestId('radio-channels').getByRole('link');
-				await expect(chips).toHaveText(want);
-				const dispatch = chips.first();
-				await expect(dispatch).toHaveAccessibleName('Listen to dispatch channel 501 (opens in a new tab)');
-				await expect(dispatch).toHaveAttribute('href', `${radio}/?fireground=501`);
-				await expect(dispatch).toHaveAttribute('target', '_blank');
-				await expect(dispatch).toHaveAttribute('rel', /\bnoopener\b/);
-				await expect(chips.nth(1)).toHaveAccessibleName('Listen to fireground 41 (opens in a new tab)');
+				const link = scope.getByTestId('listen');
+				await expect(link).toHaveCount(1);
+				await expect(link.locator('.label')).toHaveText('Listen');
+				await expect(link.locator('.which')).toHaveText('dispatch 501, fireground 41 and 7');
+				await expect(link).toHaveAccessibleName('Listen on RadioArchive: dispatch 501, fireground 41 and 7 (opens in a new tab)');
+				await expect(link).toHaveAttribute('href', `${radio}/?fireground=501&fireground=41&fireground=7`);
+				await expect(link).toHaveAttribute('target', '_blank');
+				await expect(link).toHaveAttribute('rel', /\bnoopener\b/);
 				if (label === 'phone') {
-					const target = await page.evaluate(() => {
-						const probe = document.createElement('div');
-						probe.style.height = 'var(--target)';
-						document.body.append(probe);
-						const h = probe.getBoundingClientRect().height;
-						probe.remove();
-						return h;
-					});
-					for (let i = 0; i < want.length; i++) {
-						const b = (await chips.nth(i).boundingBox())!;
-						expect(Math.min(b.width, b.height), `${where}: ${want[i]} at least the tap target`).toBeGreaterThanOrEqual(target - 0.5);
-					}
+					const b = (await link.boundingBox())!;
+					expect(Math.min(b.width, b.height), `${where}: the link at least the tap target`).toBeGreaterThanOrEqual(target - 0.5);
 				}
 				await noSideways(where);
 				if (where === 'list') {
@@ -7607,40 +7636,58 @@ test('A161 dispatch and fireground chips, for those who see the switcher', async
 					expect(axe.violations.map((v) => v.id)).toEqual([]);
 				}
 				await page.screenshot({ path: info.outputPath(`a161-${where}-${width}-${colorScheme}.png`) });
+				// Clicking it opens the radio, not the detail view.
+				if (colorScheme === 'light') {
+					const before = page.url();
+					const [tab] = await Promise.all([ctx.waitForEvent('page'), link.click()]);
+					await tab.waitForLoadState();
+					expect(tab.url()).toBe(`${radio}/?fireground=501&fireground=41&fireground=7`);
+					await tab.close();
+					expect(page.url()).toBe(before);
+				}
 			}
-			// The job's view: its dispatch channel under its area tags.
+			// The job's view: one link for the whole job under its area tags,
+			// its areas' dispatch channels, then its pages' fireground ones,
+			// oldest page first.
 			await page.goto(`/jobs/${job}`);
-			await expect(page.getByTestId('job-areas').getByRole('listitem')).toHaveText(['Zone A', 'Region North']);
-			const jobChips = page.getByTestId('job-channels').getByRole('link');
-			await expect(jobChips).toHaveText(['Dispatch 501']);
-			await expect(jobChips).toHaveAttribute('href', `${radio}/?fireground=501`);
+			await expect(page.getByTestId('job-areas').getByRole('listitem')).toHaveText(['Zone A', 'Zone B', 'Region North']);
+			const jobLink = page.getByTestId('job-listen');
+			await expect(jobLink).toHaveAttribute('href', `${radio}/?fireground=501&fireground=502&fireground=41&fireground=7&fireground=9`);
+			await expect(jobLink).toHaveAccessibleName('Listen on RadioArchive: dispatch 501 and 502, fireground 41, 7 and 9 (opens in a new tab)');
+			await expect(jobLink).toHaveAttribute('target', '_blank');
 			const tags = (await page.getByTestId('job-areas').boundingBox())!;
-			expect((await jobChips.first().boundingBox())!.y, 'the job\'s chip under its area tags').toBeGreaterThanOrEqual(tags.y + tags.height - 1);
+			const jb = (await jobLink.boundingBox())!;
+			expect(jb.y, "the job's link under its area tags").toBeGreaterThanOrEqual(tags.y + tags.height - 1);
+			if (label === 'phone') expect(Math.min(jb.width, jb.height), 'the job link at least the tap target').toBeGreaterThanOrEqual(target - 0.5);
 			await noSideways('job');
+			const axe = await new AxeBuilder({ page }).include('.areas').withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa']).analyze();
+			expect(axe.violations.map((v) => v.id)).toEqual([]);
 			await page.screenshot({ path: info.outputPath(`a161-job-${width}-${colorScheme}.png`) });
-			// A page in no area: its fireground chip only.
+			// A page in no area: its fireground channel only.
 			await page.goto(`/messages/${farId}`);
-			await expect(page.locator('article.detail').getByTestId('radio-channels').getByRole('link')).toHaveText(['Fireground 7']);
+			const farLink = page.locator('article.detail').getByTestId('listen');
+			await expect(farLink).toHaveAccessibleName('Listen on RadioArchive: fireground 7 (opens in a new tab)');
+			await expect(farLink).toHaveAttribute('href', `${radio}/?fireground=7`);
 			await ctx.close();
-			report.push(`${label} ${colorScheme}: ${want.join(', ')}; job Dispatch 501`);
+			report.push(`${label} ${colorScheme}: page 501,41,7; job 501,502,41,7,9`);
 		}
 	}
 
-	// Someone who doesn't see the switcher: no chip anywhere, and the API's
+	// Someone who doesn't see the switcher: no link anywhere, and the API's
 	// numbers are the same.
 	const ctx = await signedIn(browser, 'userC');
 	await withRadio(ctx);
 	const page = await ctx.newPage();
 	await page.goto(`/?job=${job}`);
-	await expect(page.getByTestId('message-list').locator('article').first().locator('p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
+	await expect(page.getByTestId('message-list').locator('article').filter({ hasText: 'FGND 041' }).locator('p.text')).toHaveText(text.slice(2));
+	await expect(page.getByTestId('listen')).toHaveCount(0);
 	await page.goto(`/messages/${id}`);
 	await expect(page.locator('article.detail p.text')).toHaveText(text.slice(2));
-	await expect(page.getByTestId('radio-channels')).toHaveCount(0);
+	await expect(page.getByTestId('listen')).toHaveCount(0);
 	await page.goto(`/jobs/${job}`);
 	await expect(page.getByTestId('job-areas')).toBeVisible();
-	await expect(page.getByTestId('job-channels')).toHaveCount(0);
-	await expect(page.getByRole('link', { name: /dispatch|fireground/i })).toHaveCount(0);
+	await expect(page.getByTestId('job-listen')).toHaveCount(0);
+	await expect(page.getByRole('link', { name: /dispatch|fireground|listen/i })).toHaveCount(0);
 	await ctx.close();
 	for (const role of ['user', 'userC'] as const) {
 		const m = (await (await request.get(`${URL}/api/v1/messages/${id}`, { headers: asRole(role) })).json()) as { fireground_channels: number[]; areas: { layer: string; name: string; dispatch_channel?: number }[] };

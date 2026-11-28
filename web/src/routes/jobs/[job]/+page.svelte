@@ -2,16 +2,17 @@
 	// R34: every message of a job, ignored aliases' too, newest first, live,
 	// within the search box's search (R33a).
 	import { page } from '$app/state';
-	import { api, type AreaRef, type Meta } from '#lib/api.ts';
+	import { api, type AreaRef, type Message, type Meta } from '#lib/api.ts';
 	import AreaTags from '#lib/AreaTags.svelte';
 	import MessageList from '#lib/MessageList.svelte';
-	import RadioChips from '#lib/RadioChips.svelte';
+	import ListenLink from '#lib/ListenLink.svelte';
 	import { criteria } from '#lib/search.ts';
 
 	const job = $derived(page.params.job ?? '');
 	const query = $derived(criteria(page.url));
 	let count = $state(0);
 	let more = $state(false);
+	let shown: Message[] = $state([]);
 
 	// R88b: the areas its pages are in, at a glance, asked again as pages
 	// arrive (a new page may be in another).
@@ -29,18 +30,24 @@
 			})
 			.catch(() => {});
 	});
+
+	// R92g: one Listen link for the whole job: its areas' dispatch channels,
+	// then every fireground channel its listed pages name, oldest page first.
+	const dispatch = $derived(areas.flatMap((a) => (a.dispatch_channel != null ? [a.dispatch_channel] : [])));
+	const fireground = $derived([...shown].reverse().flatMap((m) => m.fireground_channels ?? []));
 </script>
 
 <svelte:head><title>Job {job} · PagerArchive</title></svelte:head>
 
 <div class="job">
-	<MessageList {query} base={{ job, ignored: 'true' }} title="Job {job}" bind:count bind:more>
+	<MessageList {query} base={{ job, ignored: 'true' }} title="Job {job}" bind:count bind:more bind:shown>
 		{#if meta?.areas?.length && areas.length}
 			<div class="areas">
 				<AreaTags {meta} {areas} label="Areas, from where its pages were placed" testid="job-areas" />
-				<!-- R92f: the dispatch channel of each of its areas that has one, linking to the radio. -->
-				<RadioChips dispatch={areas.flatMap((a) => (a.dispatch_channel != null ? [a.dispatch_channel] : []))} testid="job-channels" />
+				<ListenLink {dispatch} {fireground} testid="job-listen" />
 			</div>
+		{:else if fireground.length}
+			<div class="areas"><ListenLink {fireground} testid="job-listen" /></div>
 		{/if}
 		<p class="status">
 			{count} message{count === 1 ? '' : 's'}{more ? ' so far' : ''}, newest first. Pages are grouped by job number on a best-effort
