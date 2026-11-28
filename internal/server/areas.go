@@ -15,6 +15,9 @@ import (
 type AreaRef struct {
 	Layer string `json:"layer"`
 	Name  string `json:"name"`
+	// DispatchChannel is the area's dispatch channel (R92f), when its
+	// layer in the network profile gives it one; left out when it has none.
+	DispatchChannel *int32 `json:"dispatch_channel,omitempty"`
 }
 
 // MetaAreas tells the browser about one layer of the network profile's
@@ -55,12 +58,17 @@ func (s *Server) metaAreas() []MetaAreas {
 // since, until it's gone).
 func (s *Server) sortRefs(refs []AreaRef) []AreaRef {
 	order := map[string]int{}
-	for i, l := range s.shownAreas() {
+	layers := s.shownAreas()
+	for i, l := range layers {
 		order[l.ID] = i
 	}
 	out := refs[:0]
 	for _, r := range refs {
-		if _, ok := order[r.Layer]; ok {
+		if i, ok := order[r.Layer]; ok {
+			// R92f: its dispatch channel, from the profile, as it is now.
+			if n, ok := layers[i].Dispatch.Channel(r.Name); ok {
+				r.DispatchChannel = &n
+			}
 			out = append(out, r)
 		}
 	}

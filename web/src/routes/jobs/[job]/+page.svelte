@@ -5,6 +5,7 @@
 	import { api, type AreaRef, type Meta } from '#lib/api.ts';
 	import AreaTags from '#lib/AreaTags.svelte';
 	import MessageList from '#lib/MessageList.svelte';
+	import RadioChips from '#lib/RadioChips.svelte';
 	import { criteria } from '#lib/search.ts';
 
 	const job = $derived(page.params.job ?? '');
@@ -35,7 +36,11 @@
 <div class="job">
 	<MessageList {query} base={{ job, ignored: 'true' }} title="Job {job}" bind:count bind:more>
 		{#if meta?.areas?.length && areas.length}
-			<div class="areas"><AreaTags {meta} {areas} label="Areas, from where its pages were placed" testid="job-areas" /></div>
+			<div class="areas">
+				<AreaTags {meta} {areas} label="Areas, from where its pages were placed" testid="job-areas" />
+				<!-- R92f: the dispatch channel of each of its areas that has one, linking to the radio. -->
+				<RadioChips dispatch={areas.flatMap((a) => (a.dispatch_channel != null ? [a.dispatch_channel] : []))} testid="job-channels" />
+			</div>
 		{/if}
 		<p class="status">
 			{count} message{count === 1 ? '' : 's'}{more ? ' so far' : ''}, newest first. Pages are grouped by job number on a best-effort

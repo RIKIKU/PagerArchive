@@ -15,12 +15,14 @@ import (
 
 // Layer is one layer of areas as the API serves it (R88b-R88e).
 type Layer struct {
-	ID          string   // the profile's id for it, such as "districts"
-	Label       string   // shown before each name, such as "District"
-	Attribution string   // the data's credit, shown on the map
-	Outline     string   // how the map draws it: solid, dashed or dotted
-	Source      string   // the file's name, for admins
-	Names       []string // every area's name, in order
+	ID          string // the profile's id for it, such as "districts"
+	Label       string // shown before each name, such as "District"
+	Attribution string // the data's credit, shown on the map
+	Outline     string // how the map draws it: solid, dashed or dotted
+	// Dispatch gives its areas their dispatch channels (R92f); nil: none.
+	Dispatch *profile.DispatchChannels
+	Source   string   // the file's name, for admins
+	Names    []string // every area's name, in order
 	// Version names this set of outlines in the map's URL, so a browser
 	// keeps them until the areas change (R88c).
 	Version string
@@ -69,7 +71,7 @@ func Start(ctx context.Context, st *store.Store, cfgs []*profile.Areas, log *slo
 	}
 	out := make([]*Layer, 0, len(cfgs))
 	for _, cfg := range cfgs {
-		l := &Layer{ID: cfg.ID, Label: cfg.Label, Attribution: cfg.Attribution, Outline: cfg.Outline, Source: filepath.Base(cfg.Path)}
+		l := &Layer{ID: cfg.ID, Label: cfg.Label, Attribution: cfg.Attribution, Outline: cfg.Outline, Dispatch: cfg.Dispatch, Source: filepath.Base(cfg.Path)}
 		out = append(out, l)
 		started := time.Now()
 		f, err := ReadFile(cfg.Path, cfg.NameProperty)

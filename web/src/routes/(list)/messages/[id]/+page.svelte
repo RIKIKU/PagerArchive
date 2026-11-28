@@ -7,7 +7,7 @@
 	import { date, dateTime, isoAttr, isoDate, time } from '#lib/format.ts';
 	import AddToAlbum from '#lib/AddToAlbum.svelte';
 	import AgencyIcon from '#lib/AgencyIcon.svelte';
-	import FiregroundChips from '#lib/FiregroundChips.svelte';
+	import RadioChips from '#lib/RadioChips.svelte';
 	import { setTitle } from '#lib/here.svelte.ts';
 	import MapView from '#lib/MapView.svelte';
 	import PriorityBadge from '#lib/PriorityBadge.svelte';
@@ -87,8 +87,8 @@
 				</header>
 				<!-- P2: the full message, always. -->
 				<p class="text">{m.display_text}</p>
-				<!-- R92a: its fireground channels, under the text, linking to the radio. -->
-				<FiregroundChips {m} spaced />
+				<!-- R92a, R92f: its dispatch and fireground channels, under the text, linking to the radio. -->
+				<RadioChips {m} spaced />
 				<!-- R82: kept in the person's albums, from here only. -->
 				<div class="keep"><AddToAlbum message={m.id} /></div>
 			</div>
@@ -134,7 +134,7 @@
 							<dd data-testid="area">{areaName(meta, a)}</dd>{/if}
 					{/each}
 					{#each Object.entries(m.extra) as [k, v] (k)}
-						<dt>{humanise(k)}</dt>
+						<dt>{m.field_names?.[k] ?? humanise(k)}</dt>
 						<dd>{label(k, v)}</dd>
 					{/each}
 					<dt>Stored text</dt>

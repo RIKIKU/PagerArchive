@@ -87,6 +87,9 @@ type Message struct {
 	FiregroundChannels []int32           `json:"fireground_channels"`
 	Extra              map[string]any    `json:"extra"`
 	Labels             map[string]string `json:"labels"` // field -> display label (R9, P3)
+	// FieldNames are what its agency profile calls its extra fields (R9),
+	// for those it names: shown in place of the machine name.
+	FieldNames map[string]string `json:"field_names,omitempty"`
 
 	Location *Location `json:"location"` // null when not placed (R24-R25)
 	// Areas are the areas the message is in, one of each layer at most, in
@@ -158,6 +161,14 @@ func (s *Server) toMessage(m db.SearchMessagesRow, admin bool) Message {
 					if label, ok := table[*v]; ok {
 						out.Labels[field] = label
 					}
+				}
+			}
+			for field, name := range a.FieldNames {
+				if _, ok := out.Extra[field]; ok {
+					if out.FieldNames == nil {
+						out.FieldNames = map[string]string{}
+					}
+					out.FieldNames[field] = name
 				}
 			}
 		}
