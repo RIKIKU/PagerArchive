@@ -38,7 +38,7 @@ jobs:
     timeout-minutes: 55
     services:
       postgres:
-        image: postgis/postgis:18-3.7
+        image: postgis/postgis:19-3.7
         env:
           POSTGRES_PASSWORD: test
         ports:

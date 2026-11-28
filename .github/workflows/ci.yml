@@ -218,7 +218,7 @@ jobs:
     timeout-minutes: 30
     services:
       postgres:
-        image: postgis/postgis:18-3.7
+        image: postgis/postgis:19-3.7
         env:
           POSTGRES_PASSWORD: test
         ports:
@@ -296,7 +296,7 @@ jobs:
     timeout-minutes: 55
     services:
       postgres:
-        image: postgis/postgis:18-3.7
+        image: postgis/postgis:19-3.7
         env:
           POSTGRES_PASSWORD: test
         ports:
@@ -392,7 +392,7 @@ jobs:
       options: --ipc=host
     services:
       postgres:
-        image: postgis/postgis:18-3.7
+        image: postgis/postgis:19-3.7
         env:
           POSTGRES_PASSWORD: test
         options: >-
