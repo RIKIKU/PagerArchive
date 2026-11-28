@@ -23,6 +23,12 @@
         "additionalProperties": { "type": "string" }
       }
     },
+    "field_names": {
+      "description": "What the app calls extra fields (R9): field name to the name shown in place of it, such as \"channel\": \"Fireground channel\". Display only: changing it re-parses nothing.",
+      "type": "object",
+      "propertyNames": { "pattern": "^[a-z][a-z0-9_]*$" },
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 40 }
+    },
     "large_event_fields": {
       "description": "Field values that open a large event (R87): an Emergency page to an aliased capcode whose field holds one of the listed values opens or joins one, as a page with a code does. Values are compared exactly, as extracted (P3).",
       "type": "array",

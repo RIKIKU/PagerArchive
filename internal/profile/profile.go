@@ -96,6 +96,65 @@ type Areas struct {
 	NameProperty string // the feature property holding each one's name
 	Attribution  string
 	Outline      string // how the map draws it: "solid", "dashed" or "dotted"
+	// Dispatch gives an area of the layer its dispatch channel (R92f), if
+	// the profile names how; nil: the layer's areas have none.
+	Dispatch *DispatchChannels
+}
+
+// DispatchChannels is how a layer's areas map to their dispatch channels
+// (R92f): a name listed in Names has its number, and any other name that's
+// all digits (ASCII 0-9) goes through the template, if there is one: its
+// number (leading zeros dropped) padded with zeros to Width digits, between
+// Prefix and Suffix. "5{name:02}" makes "08" 508 and "13" 513.
+type DispatchChannels struct {
+	Template       bool
+	Prefix, Suffix string
+	Width          int
+	Names          map[string]int32
+}
+
+// dispatchTemplate is a dispatch_channel template: digits around exactly
+// one {name} or {name:0N}.
+var dispatchTemplate = regexp.MustCompile(`^([0-9]*)\{name(?::0([1-9]))?\}([0-9]*)$`)
+
+// Channel is the dispatch channel of the area named name, and whether it
+// has one. A number is as R92a counts one: leading zeros dropped, at most 9
+// digits.
+func (d *DispatchChannels) Channel(name string) (int32, bool) {
+	if d == nil {
+		return 0, false
+	}
+	if n, ok := d.Names[name]; ok {
+		return n, true
+	}
+	if !d.Template || name == "" || strings.Trim(name, "0123456789") != "" {
+		return 0, false
+	}
+	digits := strings.TrimLeft(name, "0")
+	if digits == "" {
+		digits = "0"
+	}
+	if len(digits) < d.Width {
+		digits = strings.Repeat("0", d.Width-len(digits)) + digits
+	}
+	return ChannelNumber(d.Prefix + digits + d.Suffix)
+}
+
+// ChannelNumber reads a channel number as R92a does: all ASCII digits,
+// leading zeros dropped, at most 9 digits left.
+func ChannelNumber(s string) (int32, bool) {
+	if s == "" || strings.Trim(s, "0123456789") != "" {
+		return 0, false
+	}
+	s = strings.TrimLeft(s, "0")
+	if len(s) > 9 {
+		return 0, false
+	}
+	var n int32
+	for _, c := range s {
+		n = n*10 + int32(c-'0')
+	}
+	return n, true
 }
 
 // Outlines are the map's outline styles (R88c), and the default of each
@@ -158,6 +217,9 @@ type Agency struct {
 	FileHash string
 	Formats  []Format
 	Labels   map[string]map[string]string
+	// FieldNames are what the app calls some of its extra fields (R9), in
+	// place of their machine names: display only.
+	FieldNames map[string]string
 	// Levels are the agency's ordered level fields (R7, R49a), such as an
 	// alarm level, in the profile's order: an integration's filter can keep
 	// pages at or above one of a field's levels. Display and filter only:
@@ -391,6 +453,9 @@ type networkJSON struct {
 		NameProperty string `json:"name_property"`
 		Attribution  string `json:"attribution"`
 		Outline      string `json:"outline"`
+		// R92f: the template, and named areas' own numbers.
+		DispatchChannel  string           `json:"dispatch_channel"`
+		DispatchChannels map[string]int64 `json:"dispatch_channels"`
 	} `json:"areas"`
 }
 
@@ -424,7 +489,7 @@ func agencyHash(data []byte, fileValues []string) string {
 // displayOnly names an agency profile's top-level members that change
 // nothing a page says (ADR 0045).
 func displayOnly(key string) bool {
-	return key == "labels" || key == "levels" || key == "description" || strings.HasPrefix(key, "_")
+	return key == "labels" || key == "field_names" || key == "levels" || key == "description" || strings.HasPrefix(key, "_")
 }
 
 // withoutMembers is data with every top-level member whose key drop names
@@ -532,6 +597,28 @@ func loadNetwork(path string, data []byte) (*Network, []error) {
 		}
 		if ids[l.ID] {
 			fail(fmt.Sprintf("/areas/%d/id", i), fmt.Sprintf("duplicate areas id %q", l.ID))
+		}
+		if a.DispatchChannel != "" || len(a.DispatchChannels) > 0 {
+			d := &DispatchChannels{Names: map[string]int32{}}
+			if a.DispatchChannel != "" {
+				m := dispatchTemplate.FindStringSubmatch(a.DispatchChannel)
+				if m == nil {
+					fail(fmt.Sprintf("/areas/%d/dispatch_channel", i), fmt.Sprintf("dispatch_channel %q must be digits around one {name} or {name:0N} (N 1-9), such as \"5{name:02}\"", a.DispatchChannel))
+				} else {
+					d.Template, d.Prefix, d.Suffix = true, m[1], m[3]
+					if m[2] != "" {
+						d.Width = int(m[2][0] - '0')
+					}
+				}
+			}
+			for name, v := range a.DispatchChannels {
+				if v < 0 || v > 999999999 {
+					fail(fmt.Sprintf("/areas/%d/dispatch_channels/%s", i, name), fmt.Sprintf("dispatch channel %d must be from 0 to 999999999", v))
+					continue
+				}
+				d.Names[name] = int32(v)
+			}
+			l.Dispatch = d
 		}
 		ids[l.ID] = true
 		n.Areas = append(n.Areas, l)
@@ -642,6 +729,7 @@ type agencyJSON struct {
 	Description      string                       `json:"description"`
 	Formats          []formatJSON                 `json:"formats"`
 	Labels           map[string]map[string]string `json:"labels"`
+	FieldNames       map[string]string            `json:"field_names"`
 	LargeEventFields []largeEventFieldJSON        `json:"large_event_fields"`
 	Levels           []levelFieldJSON             `json:"levels"`
 }
@@ -697,7 +785,7 @@ func loadAgency(path string, data []byte) (*Agency, []error) {
 	warn := func(p, msg string) { warnings = append(warnings, (&Error{File: path, Path: p, Msg: msg}).Error()) }
 	renameOldCallSign(&j, warn, fail)
 
-	a := &Agency{Name: j.Name, Description: j.Description, File: path, FileHash: hashOf(data), Labels: j.Labels, Warnings: warnings}
+	a := &Agency{Name: j.Name, Description: j.Description, File: path, FileHash: hashOf(data), Labels: j.Labels, FieldNames: j.FieldNames, Warnings: warnings}
 	// The values its formats' into read from files, which count in the
 	// hash (R23a, ADR 0047).
 	var fileValues []string

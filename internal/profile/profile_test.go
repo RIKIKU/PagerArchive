@@ -493,6 +493,8 @@ func TestAgencyHashLeavesOutDisplayOnly(t *testing.T) {
 		"the description":  strings.Replace(s, `"Example Fire Service"`, `"Example Fire Brigade"`, 1),
 		"a comment":        strings.Replace(s, `(SPEC.md section 10).`, `(SPEC.md section 10, made up).`, 1),
 		"no levels at all": cutLevels(t, s),
+		"field names": strings.Replace(s, `"labels": {`, `"field_names": {"alarm_level": "Alarm"},
+  "labels": {`, 1),
 	} {
 		if doc == s {
 			t.Fatalf("%s: nothing changed", name)
