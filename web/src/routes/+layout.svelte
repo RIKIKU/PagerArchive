@@ -14,7 +14,7 @@
 	import { page, updated } from '$app/state';
 	import { onMount } from 'svelte';
 	import { AccountMenu, BottomBar, Frame, Menu } from 'archiveux/components';
-	import { pickLook } from 'archiveux/look.js';
+	import { applyTheme, isTheme, pickLook, pickTheme } from 'archiveux/look.js';
 	import { api, type Look, type Me, type Meta } from '#lib/api.ts';
 	import { albums, refreshAlbums } from '#lib/albums.svelte.ts';
 	import Crumbs from '#lib/Crumbs.svelte';
@@ -38,7 +38,18 @@
 	let { children } = $props();
 	let meta: Meta | undefined = $state();
 	let me: Me | undefined = $state();
-	let theme: 'system' | 'light' | 'dark' = $state('system');
+	// R92b: the colour theme, from the theme cookie, which the server already
+	// put on the root (data-theme) for the first paint; none is the system's.
+	// A change is written to the cookie: on the parent domain beside
+	// RadioArchive (data-cookie-domain), so its next page has it too, else
+	// host-only (ArchiveUx's applyTheme, look.js).
+	const sentTheme = document.documentElement.dataset.theme;
+	let theme: 'system' | 'light' | 'dark' = $state(isTheme(sentTheme) ? (sentTheme as 'light' | 'dark') : 'system');
+	const themeCookie = {
+		name: 'theme',
+		domain: document.documentElement.dataset.cookieDomain || undefined,
+		secure: location.protocol === 'https:'
+	};
 	// R82d: the user's look, from their account. The server sent the page
 	// with it already on the root (data-look), so the first paint is theirs.
 	// Until their account loads, the one the server put there.
@@ -75,11 +86,21 @@
 					refreshAlbums();
 				})
 				.catch(() => {});
+		// R92b: a theme this browser kept in localStorage before the cookie is
+		// moved into the cookie once, unless the cookie holds one already
+		// (it wins), and forgotten either way, so it can't bring an old choice
+		// back after the other app chose Auto.
 		try {
 			const saved = localStorage.getItem('theme');
-			if (saved === 'light' || saved === 'dark') theme = saved;
+			if (saved !== null) {
+				if (isTheme(saved) && pickTheme({ cookies: document.cookie, cookie: 'theme' }) === 'system') {
+					theme = saved as 'light' | 'dark';
+					applyTheme(theme, themeCookie);
+				}
+				localStorage.removeItem('theme');
+			}
 		} catch {
-			// storage unavailable: follow the system
+			// storage unavailable: nothing kept there to move
 		}
 		// R90: an installed app's title and status bars follow the look and theme.
 		const unfollowTopBar = followTopBar();
@@ -102,14 +123,11 @@
 		if (updated.current && !willUnload && to?.url) location.href = to.url.href;
 	});
 
+	// The theme on the root, as it is now, when it's changed (the cookie is
+	// written by the account menu's ontheme, below). The server's first
+	// paint is left alone: the root never changes as the page loads.
 	$effect(() => {
-		if (theme === 'system') delete document.documentElement.dataset.theme;
-		else document.documentElement.dataset.theme = theme;
-		try {
-			localStorage.setItem('theme', theme);
-		} catch {
-			// ignore
-		}
+		if ((document.documentElement.dataset.theme ?? 'system') !== theme) applyTheme(theme);
 	});
 
 	// A look chosen in the account menu applies at once, without reloading
@@ -211,6 +229,7 @@
 			<AccountMenu
 				account={me ? { name: me.name ?? undefined, email: me.email } : {}}
 				bind:theme
+				ontheme={(t: 'system' | 'light' | 'dark') => applyTheme(t, themeCookie)}
 				bind:look
 				onlook={(l: Look) => api.setLook(l)}
 				onsignout={() => api.signOut()}

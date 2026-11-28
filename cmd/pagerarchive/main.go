@@ -593,7 +593,7 @@ func serve(stderr io.Writer) error {
 			"groups", len(groups), "aliases", strings.Join(list, "; "))
 	}
 	// The app's page is sent in the signed-in user's look (R82d).
-	srv.UI = web.Handler(srv.PageLook)
+	srv.UI = web.Handler(srv.PageLook, lookDomain)
 	addr := getenv("LISTEN_ADDR", ":8080")
 	hs := &http.Server{Addr: addr, Handler: srv.Handler(), ReadHeaderTimeout: 10 * time.Second}
 	errc := make(chan error, 1)
