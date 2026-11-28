@@ -178,6 +178,14 @@
       automerge: false,
       commitBody: "Waits for the owner's review (SPEC.md R85a, R85b).",
     },
+    // A new PostgreSQL major (the tag's first part) can't open the old one's
+    // data files without a planned conversion, so Renovate doesn't propose it:
+    // moving to one is planned work, by hand (owner, 2026-11-28: "Park it").
+    {
+      matchPackageNames: ["postgis/postgis"],
+      matchUpdateTypes: ["major"],
+      enabled: false,
+    },
     // Our own image in compose.yaml is the release's (stamp-version.sh, ADR 0024).
     {
       matchPackageNames: ["ghcr.io/rikiku/pagerarchive", "pagerarchive"],
